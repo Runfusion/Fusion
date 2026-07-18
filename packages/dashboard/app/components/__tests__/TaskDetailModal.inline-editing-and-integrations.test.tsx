@@ -3372,6 +3372,29 @@ describe("TaskDetailModal inline action row parity (FN-8194)", () => {
     expect(fileInputClick).toHaveBeenCalledOnce();
   });
 
+  it("opens the shared file picker from Activity without rendering Definition", () => {
+    render(
+      <TaskDetailModal
+        initialTab="chat"
+        task={makeTask({ id: "FN-8232", column: "todo" })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const fileInputs = document.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    expect(fileInputs).toHaveLength(1);
+    const fileInputClick = vi.spyOn(fileInputs[0], "click");
+
+    fireEvent.click(screen.getByTestId("detail-inline-attach"));
+
+    expect(fileInputClick).toHaveBeenCalledOnce();
+  });
+
   it("toggles GitHub tracking through the existing update path and reflects enabled state", async () => {
     const { updateTask } = await import("../../api");
     const mockUpdate = vi.mocked(updateTask);

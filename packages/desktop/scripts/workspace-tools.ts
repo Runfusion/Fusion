@@ -85,6 +85,7 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
   "plugins/fusion-plugin-paperclip-runtime",
   "plugins/fusion-plugin-cursor-runtime",
   "plugins/fusion-plugin-grok-runtime",
+  "plugins/fusion-plugin-claude-runtime",
   "plugins/fusion-plugin-omp-runtime",
   "plugins/fusion-plugin-droid-runtime",
   "plugins/fusion-plugin-roadmap",

@@ -508,6 +508,48 @@ Compact row under metadata so title/body stay readable; error uses the same toke
   color: var(--color-error);
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-17-15:48:
+The issues list must disclose background auto-translation without blocking browsing. Reuse the global
+status-dot state colors and the existing spinner; the wrapper exists only for active or failed work so
+idle and auto-translate-off views retain their original layout.
+*/
+.github-import-autotranslate-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+}
+
+.github-import-autotranslate-status__working,
+.github-import-autotranslate-status__error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.github-import-autotranslate-status__working {
+  color: var(--color-warning);
+}
+
+.github-import-autotranslate-status__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .github-import-autotranslate-status {
+    align-items: flex-start;
+  }
+
+  .github-import-autotranslate-status__error {
+    flex-basis: 100%;
+  }
+}
+
 .github-import-pane-content {
   flex: 1;
   min-height: 0;

@@ -169,7 +169,10 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
     /**
      * FNXC:SubtaskBreakdown 2026-06-16-21:10:
-     * Closing the modal is an exit affordance, not an explicit discard. Preserve running and review-ready subtask sessions in the background-session list so users can resume from BackgroundTasksIndicator instead of losing AI work.
+     * FNXC:SessionBanner 2026-07-16-20:55:
+     * FN-8229 removes the footer AI pill. Closing this modal remains an exit
+     * affordance, so preserve running and review-ready sessions for resuming
+     * through the session notification banner rather than losing AI work.
      */
     if (view.type !== "generating" && view.type !== "editing") return;
 
@@ -196,7 +199,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     if (hasUnsavedChanges) {
       const shouldClose = await confirm({
         title: t("subtasks.keepSessionTitle", "Keep subtask session available?"),
-        message: t("subtasks.keepSessionMessage", "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume."),
+        message: t("subtasks.keepSessionMessage", "Close this modal and keep the subtask session available from the session notification banner? Edited fields that have not been saved to the session may be reset when you resume."),
       });
       if (!shouldClose) {
         return;

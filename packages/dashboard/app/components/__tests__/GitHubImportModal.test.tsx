@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useEffect, type ReactNode } from "react";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -22,6 +24,7 @@ import {
   fetchGitRemotes,
   createTask,
   translateImportContent,
+  autoTranslateImportIssues,
 } from "../../api";
 import type { Task } from "@fusion/core";
 import type { GitRemote } from "../../api";
@@ -52,6 +55,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchGitRemotes: vi.fn(),
     createTask: vi.fn(),
     translateImportContent: vi.fn(),
+    autoTranslateImportIssues: vi.fn(),
   };
 });
 
@@ -202,8 +206,15 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiImportGitLabMergeRequest).mockReset();
     vi.mocked(fetchSettings).mockReset();
     vi.mocked(createTask).mockReset();
+    vi.mocked(autoTranslateImportIssues).mockReset();
     vi.mocked(createTask).mockResolvedValue(mockTask);
     vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true } as never);
+    vi.mocked(autoTranslateImportIssues).mockImplementation(async (_owner, _repo, items) => ({
+      enabled: true,
+      targetLocale: "en",
+      capped: false,
+      translations: Object.fromEntries(items.map((item) => [item.number, { title: `Translated ${item.number}`, body: item.body ?? "" }])),
+    }));
     // Set default mock for apiFetchGitHubIssues to return empty array (prevents undefined issues state)
     vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
     vi.mocked(apiFetchGitHubPulls).mockResolvedValue([]);
@@ -249,6 +260,132 @@ describe("GitHubImportModal", () => {
     await screen.findByText("Fixable PR");
     fireEvent.click(screen.getByRole("button", { name: /Select pull request #81/i }));
   };
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  This harness supplies the same nested history arrangement as AppModals: the import form owns the modal entry, and GitHubImportModal must add/remove its detail entry above it without requiring a provider in ordinary standalone tests.
+  */
+  function MobileNavigationHarness({ children, onModalClose }: { children: ReactNode; onModalClose: () => void }) {
+    const navigationHistory = useNavigationHistory({ enabled: true });
+
+    useEffect(() => {
+      navigationHistory.pushNav({ type: "modal", close: onModalClose });
+      return () => navigationHistory.removeNav(onModalClose);
+    }, [navigationHistory, onModalClose]);
+
+    return <NavigationHistoryProvider value={navigationHistory}>{children}</NavigationHistoryProvider>;
+  }
+
+  const renderWithMobileNavigation = () => render(
+    <MobileNavigationHarness onModalClose={onClose}>
+      <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />
+    </MobileNavigationHarness>,
+  );
+
+  const dispatchDetailBack = (delivery: "popstate" | "native") => {
+    if (delivery === "native") {
+      const event = new CustomEvent("fusion:native-back", { cancelable: true, detail: { source: "android-back" } });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
+  };
+
+  it("keeps provider-less detail selection and close behavior available", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+      { number: 71, title: "Provider-less issue", body: "Body", html_url: "https://github.com/owner/repo/issues/71", labels: [], state: "open" },
+    ]);
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #71/i }));
+    fireEvent.click(await screen.findByTestId("floating-window-close-github-import-detail"));
+
+    expect(screen.queryByTestId("github-import-preview-card")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["issue", "popstate"],
+    ["issue", "native"],
+    ["pull", "popstate"],
+    ["pull", "native"],
+    ["gitlab", "popstate"],
+    ["gitlab", "native"],
+  ] as const)("dismisses the %s detail before the import modal on %s Back", async (surface, delivery) => {
+    const originalBack = window.history.back;
+    window.history.back = vi.fn();
+    try {
+      if (surface === "issue") {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+        vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+          { number: 72, title: "Swipe issue", body: "Body", html_url: "https://github.com/owner/repo/issues/72", labels: [], state: "open" },
+        ]);
+      } else if (surface === "pull") {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+        vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([
+          { number: 73, title: "Swipe pull", body: "Body", html_url: "https://github.com/owner/repo/pull/73", headBranch: "feature", baseBranch: "main" },
+        ]);
+      } else {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+        vi.mocked(apiFetchGitLabProjectIssues).mockResolvedValueOnce([
+          { resourceKind: "project_issue", id: 73, iid: 73, projectId: 3, projectPath: "group/project", title: "Swipe GitLab issue", description: "Body", webUrl: "https://gitlab.example.com/group/project/-/issues/73", state: "opened", labels: [] },
+        ]);
+      }
+
+      renderWithMobileNavigation();
+      if (surface === "issue") {
+        fireEvent.click(await screen.findByRole("button", { name: /Select issue #72/i }));
+      } else if (surface === "pull") {
+        fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+        fireEvent.click(await screen.findByRole("button", { name: /Select pull request #73/i }));
+      } else {
+        fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
+        fireEvent.change(screen.getByLabelText("GitLab project path or ID"), { target: { value: "group/project" } });
+        fireEvent.click(screen.getByRole("button", { name: /Load/ }));
+        fireEvent.click(await screen.findByText(/#73 Swipe GitLab issue/));
+      }
+
+      await screen.findByTestId(surface === "gitlab" ? "gitlab-import-preview-card" : "github-import-preview-card");
+      dispatchDetailBack(delivery);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId(surface === "gitlab" ? "gitlab-import-preview-card" : "github-import-preview-card")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      window.history.back = originalBack;
+    }
+  });
+
+  it("drains the detail entry when the sheet closes before a rapid reopen", async () => {
+    const originalBack = window.history.back;
+    window.history.back = vi.fn();
+    try {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 74, title: "Reopen issue", body: "Body", html_url: "https://github.com/owner/repo/issues/74", labels: [], state: "open" },
+      ]);
+      renderWithMobileNavigation();
+      const row = await screen.findByRole("button", { name: /Select issue #74/i });
+      fireEvent.click(row);
+      await screen.findByTestId("github-import-preview-card");
+      fireEvent.click(screen.getByTestId("floating-window-close-github-import-detail"));
+      expect(window.history.back).toHaveBeenCalledTimes(1);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
+
+      fireEvent.click(row);
+      await screen.findByTestId("github-import-preview-card");
+      dispatchDetailBack("popstate");
+      await waitFor(() => expect(screen.queryByTestId("github-import-preview-card")).toBeNull());
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      window.history.back = originalBack;
+    }
+  });
 
   describe("PR checks refresh", () => {
     const pullOne = mockPulls[0];
@@ -1099,6 +1236,96 @@ describe("GitHubImportModal", () => {
     });
 
     /*
+    FNXC:GitHubImportTranslate 2026-07-17-15:48:
+    List-level translation remains non-blocking, but its asynchronous state must be visible while a page
+    is translating and must leave no aria-live shell after success, error, disabled auto-translate, or tab changes.
+    */
+    it("announces auto-translation progress, completion, and fail-soft errors", async () => {
+      const issue = { number: 1, title: "Foreign issue", body: "Foreign body", html_url: "https://github.com/owner/repo/issues/1", labels: [] };
+      let resolveTranslation: ((value: { enabled: boolean; targetLocale: string; capped: boolean; translations: Record<string, { title: string; body: string }> }) => void) | undefined;
+      const pendingTranslation = new Promise<{ enabled: boolean; targetLocale: string; capped: boolean; translations: Record<string, { title: string; body: string }> }>((resolve) => {
+        resolveTranslation = resolve;
+      });
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true, githubImportAutoTranslate: true } as never);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+      vi.mocked(autoTranslateImportIssues).mockReturnValueOnce(pendingTranslation as never);
+
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      const status = await screen.findByTestId("github-import-autotranslate-status");
+      expect(status).toHaveAttribute("role", "status");
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(within(status).getByText("Translating…")).toBeTruthy();
+
+      resolveTranslation?.({
+        enabled: true,
+        targetLocale: "en",
+        capped: false,
+        translations: { 1: { title: "Translated issue", body: "Translated body" } },
+      });
+      await screen.findByText("Translated issue");
+      await waitFor(() => expect(screen.queryByTestId("github-import-autotranslate-status")).toBeNull());
+
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+      vi.mocked(autoTranslateImportIssues).mockRejectedValueOnce(new Error("Translation unavailable"));
+      fireEvent.click(screen.getByRole("button", { name: /Load issues/i }));
+      const errorStatus = await screen.findByTestId("github-import-autotranslate-status");
+      expect(within(errorStatus).getByText("Failed to translate content. Please try again.")).toBeTruthy();
+    });
+
+    it("keeps translation status visible after earlier chunks have landed", async () => {
+      const issues = Array.from({ length: 9 }, (_, index) => ({
+        number: index + 1,
+        title: `Foreign issue ${index + 1}`,
+        body: `Foreign body ${index + 1}`,
+        html_url: `https://github.com/owner/repo/issues/${index + 1}`,
+        labels: [],
+      }));
+      let resolveFinalChunk: ((value: { enabled: boolean; targetLocale: string; capped: boolean; translations: Record<string, { title: string; body: string }> }) => void) | undefined;
+      const finalChunk = new Promise<{ enabled: boolean; targetLocale: string; capped: boolean; translations: Record<string, { title: string; body: string }> }>((resolve) => {
+        resolveFinalChunk = resolve;
+      });
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true, githubImportAutoTranslate: true } as never);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+      vi.mocked(autoTranslateImportIssues)
+        .mockResolvedValueOnce({
+          enabled: true,
+          targetLocale: "en",
+          capped: false,
+          translations: Object.fromEntries(issues.slice(0, 8).map((issue) => [issue.number, { title: `Translated ${issue.number}`, body: issue.body }])),
+        })
+        .mockReturnValueOnce(finalChunk as never);
+
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await screen.findByText("Translated 1");
+      expect(screen.getByTestId("github-import-autotranslate-status")).toBeTruthy();
+      resolveFinalChunk?.({
+        enabled: true,
+        targetLocale: "en",
+        capped: false,
+        translations: { 9: { title: "Translated 9", body: "Translated body" } },
+      });
+      await screen.findByText("Translated 9");
+      await waitFor(() => expect(screen.queryByTestId("github-import-autotranslate-status")).toBeNull());
+    });
+
+    it("omits auto-translation status when disabled or outside the issues tab", async () => {
+      const issue = { number: 1, title: "Foreign issue", body: "Foreign body", html_url: "https://github.com/owner/repo/issues/1", labels: [] };
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+      await screen.findByText("Foreign issue");
+      expect(screen.queryByTestId("github-import-autotranslate-status")).toBeNull();
+
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+      expect(screen.queryByTestId("github-import-autotranslate-status")).toBeNull();
+    });
+
+    /*
     FNXC:GitHubImport 2026-07-16-16:20:
     Page controls for repos with >1 page (30/page). Asserts page 1 shows only the first 30, the pager reports
     the right page/total, and Next reveals the next page — the behavior missing when the list was capped at 30.
@@ -1129,6 +1356,29 @@ describe("GitHubImportModal", () => {
       expect(screen.queryByText("Issue 1")).toBeNull();
       expect(screen.getByText("Issue 60")).toBeTruthy();
       expect(screen.getByText(/Page 2 of 3/)).toBeTruthy();
+    });
+
+    /*
+    FNXC:GitHubImportTranslate 2026-07-17-12:50:
+    FN-8230 verifies the render surface, not only the hook: page 2 row #55 must receive the
+    accumulated page-scoped translation and expose its data-translated contract.
+    */
+    it("renders translated titles on page 2 beyond the former 50-item cap", async () => {
+      const manyIssues = Array.from({ length: 60 }, (_, i) => ({
+        number: i + 1, title: `Foreign ${i + 1}`, body: `Foreign body ${i + 1}`,
+        html_url: `https://github.com/owner/repo/issues/${i + 1}`, labels: [],
+      }));
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true, githubImportAutoTranslate: true } as never);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(manyIssues);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+      await screen.findByText("Translated 1");
+      fireEvent.click(screen.getByRole("button", { name: /Next/i }));
+
+      await waitFor(() => expect(screen.getByText("Translated 55")).toBeTruthy());
+      const row = screen.getByText("Translated 55").closest(".issue-item") as HTMLElement;
+      expect(row.querySelector('[data-translated="true"]')).toBeTruthy();
     });
 
     it("shows no page controls when the issue list fits on one page", async () => {
@@ -1688,8 +1938,8 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(apiCloseGitHubIssue).toHaveBeenCalledTimes(1);
         expect(apiCloseGitHubIssue).toHaveBeenCalledWith("dustinbyrne/kb", 8);
-        expect(screen.getByTestId("github-import-issue-close-toast")).toHaveTextContent("Issue #8 closed");
-        expect(screen.queryByTestId("github-import-issue-close")).toBeNull();
+        expect(screen.queryByTestId("github-import-preview-card")).toBeNull();
+        expect(screen.getByRole("button", { name: /Select issue #8/i })).toHaveAttribute("aria-pressed", "false");
       });
     });
 

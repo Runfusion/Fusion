@@ -1,7 +1,7 @@
 import "./SessionNotificationBanner.css";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Lightbulb, Layers, Target, Terminal, X } from "lucide-react";
+import { AlertCircle, Lightbulb, Layers, LoaderCircle, Target, Terminal, X } from "lucide-react";
 import type { AiSessionSummary, CliNeedsAttentionVariant } from "../api";
 
 export type CliActionId = "advance" | "retry" | "cancel" | "reauthenticate" | "relaunch";
@@ -114,15 +114,16 @@ function persistDismissed(map: Map<string, number>): void {
 /**
  * Statuses that warrant a banner entry. Extended for CLI agent sessions:
  * `waiting_on_input` (F2) and `needs_attention` (pinned variants) join the
- * existing `awaiting_input` / `error`. A CLI session returning to `busy`
- * (no longer in this set) clears the banner entry — covering F2.
+ * existing `awaiting_input` / `error`; FN-8229 also retains non-planning
+ * `generating` progress after removing the footer AI pill.
  */
 function isNotifyingStatus(status: AiSessionSummary["status"]): boolean {
   return (
     status === "awaiting_input" ||
     status === "error" ||
     status === "waiting_on_input" ||
-    status === "needs_attention"
+    status === "needs_attention" ||
+    status === "generating"
   );
 }
 
@@ -199,9 +200,22 @@ export function SessionNotificationBanner({
   const errorCount = sessionsNeedingInput.filter(
     (s) => s.status === "error" || s.status === "needs_attention",
   ).length;
+  const generatingCount = sessionsNeedingInput.filter((s) => s.status === "generating").length;
 
   let headerText = "";
-  if (awaitingInputCount > 0 && errorCount > 0) {
+  if (generatingCount > 0 && (awaitingInputCount > 0 || errorCount > 0)) {
+    headerText = t(
+      "sessionBanner.headerMixed",
+      "{{generatingCount}} AI sessions in progress, {{actionableCount}} need attention",
+      { generatingCount, actionableCount: awaitingInputCount + errorCount },
+    );
+  } else if (generatingCount > 0) {
+    headerText = t(
+      generatingCount === 1 ? "sessionBanner.headerGeneratingSingular" : "sessionBanner.headerGeneratingPlural",
+      generatingCount === 1 ? "{{count}} AI session in progress" : "{{count}} AI sessions in progress",
+      { count: generatingCount },
+    );
+  } else if (awaitingInputCount > 0 && errorCount > 0) {
     headerText = t(
       awaitingInputCount === 1
         ? "sessionBanner.headerAwaitingAndErrorSingular"
@@ -259,7 +273,7 @@ export function SessionNotificationBanner({
   };
 
   return (
-    <section className="session-notification-banner" role="region" aria-live="polite" aria-label={t("sessionBanner.regionLabel", "AI sessions needing input or failed")}>
+    <section className="session-notification-banner" role="region" aria-live="polite" aria-label={t("sessionBanner.regionLabel", "AI sessions in progress, needing input, or failed")}>
       <div className="session-notification-banner__header">
         <div className="session-notification-banner__headline">
           <AlertCircle size={16} aria-hidden="true" />
@@ -275,6 +289,10 @@ export function SessionNotificationBanner({
         {sessionsNeedingInput.map((session) => {
           const Icon = TYPE_ICONS[session.type];
           const isError = session.status === "error";
+          const isGenerating = session.status === "generating";
+          const isObservationalCliProgress = session.type === "cli-agent" && (
+            session.status === "generating" || session.status === "waiting_on_input"
+          );
           const variantSpec =
             session.type === "cli-agent" && session.cliVariant
               ? CLI_VARIANT_SPEC[session.cliVariant]
@@ -359,21 +377,35 @@ export function SessionNotificationBanner({
               <div className="session-notification-banner__item-main">
                 {isError ? (
                   <AlertCircle size={16} className="session-notification-banner__type-icon session-notification-banner__type-icon--error" aria-hidden="true" />
+                ) : isGenerating ? (
+                  <LoaderCircle size={16} className="session-notification-banner__type-icon session-notification-banner__type-icon--progress animate-spin" aria-hidden="true" />
                 ) : (
                   <Icon size={16} className="session-notification-banner__type-icon" aria-hidden="true" />
                 )}
                 <div className="session-notification-banner__text">
                   <p className="session-notification-banner__title" title={session.title}>{session.title}</p>
                   <p className="session-notification-banner__meta">
-                    {isError ? t("sessionBanner.failed", "Failed") : t(TYPE_LABEL_KEYS[session.type].key, TYPE_LABEL_KEYS[session.type].defaultVal)}
+                    {isError
+                      ? t("sessionBanner.failed", "Failed")
+                      : isGenerating
+                        ? t("sessionBanner.inProgress", "In progress")
+                        : t(TYPE_LABEL_KEYS[session.type].key, TYPE_LABEL_KEYS[session.type].defaultVal)}
                   </p>
                 </div>
               </div>
 
               <div className="session-notification-banner__actions">
-                <button className="session-notification-banner__resume" onClick={() => handleResume(session)}>
-                  {isError ? t("sessionBanner.retry", "Retry") : t("sessionBanner.resume", "Resume")}
-                </button>
+                {/*
+                 * FNXC:SessionBanner 2026-07-16-20:55:
+                 * FN-8229 moves in-progress sessions from the footer pill here.
+                 * CLI progress has no dashboard resume destination, so it is
+                 * observational rather than exposing a silent Resume action.
+                 */}
+                {!isObservationalCliProgress && (
+                  <button className="session-notification-banner__resume" onClick={() => handleResume(session)}>
+                    {isError ? t("sessionBanner.retry", "Retry") : t("sessionBanner.resume", "Resume")}
+                  </button>
+                )}
                 <button
                   className="session-notification-banner__dismiss"
                   onClick={() => {

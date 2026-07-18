@@ -1166,29 +1166,6 @@
     "retryConnection": "Réessayer la connexion",
     "retrying": "Nouvelle tentative…"
   },
-  "backgroundTasks": {
-    "dismissButton": "Rejeter",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "Tâches de fond",
-    "status": {
-      "failed": "Échec",
-      "generating": "génération...",
-      "needsInput": "nécessite une entrée"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "Entretien Jalon",
-      "missionInterview": "Entretien de mission",
-      "planning": "Planification",
-      "sliceInterview": "Entrevue de tranche",
-      "subtask": "Décomposition des sous-tâches"
-    }
-  },
   "board": {
     "archived": "Archivé",
     "done": "Terminé",
@@ -5657,7 +5634,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "Sessions IA nécessitant une entrée ou ayant échoué",
     "resume": "Reprendre",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5909,7 +5890,10 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "Actions rapides du bas mobile",
-      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Tâches, Agents, Missions, Chat, Boîte de réception. Les destinations non sélectionnées restent dans le menu Plus.",
+      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Tâches, Agents, Missions, Chat, Boîte de réception. Ajoutez des destinations éligibles ; les non sélectionnées restent dans Plus.",
+      "addNavItem": "Ajouter une action rapide",
+      "selectNavItem": "Choisir une destination",
+      "removeNavItem": "Retirer {{item}}",
       "moveNavItemEarlier": "Déplacer {{item}} plus tôt",
       "moveNavItemLater": "Déplacer {{item}} plus tard"
     },

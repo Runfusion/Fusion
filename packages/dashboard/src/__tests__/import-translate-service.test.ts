@@ -8,6 +8,11 @@ Covers the invariants of import auto-translation across every surface that can s
 */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createConnectionSetFromUrl } from "../../../core/src/postgres/connection.js";
+import { createAsyncDataLayer, type AsyncDataLayer } from "../../../core/src/postgres/data-layer.js";
+import type { ResolvedBackend } from "../../../core/src/postgres/backend-resolver.js";
+import { TaskStore } from "../../../core/src/store.js";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 const translateTextMock = vi.fn();
 
@@ -53,6 +58,23 @@ function makeStore(
 }
 
 const ctx = (store: any) => ({ store, rootDir: "/tmp/root", provider: "github" as const, repoKey: "o/r", targetLocale: "es" as const });
+
+async function reopenStore(harness: PgTestHarness): Promise<{ store: TaskStore; layer: AsyncDataLayer }> {
+  const backend: ResolvedBackend = {
+    mode: "external",
+    runtimeUrl: harness.testUrl,
+    migrationUrl: harness.testUrl,
+    migrationUrlOverridden: false,
+  };
+  const connections = await createConnectionSetFromUrl(backend, {
+    poolMax: 1,
+    connectTimeoutSeconds: 5,
+  });
+  const layer = createAsyncDataLayer(connections);
+  const store = new TaskStore(harness.rootDir, undefined, { asyncLayer: layer });
+  await store.init();
+  return { store, layer };
+}
 
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:
@@ -298,6 +320,46 @@ describe("partitionImportItemsByCache (what the rate-limit budget is charged fro
     expect(translateTextMock).toHaveBeenCalledTimes(1); // only the uncached one
     expect(out.get(1)?.cached).toBe(true);
     expect(out.get(2)?.cached).toBe(false);
+  });
+});
+
+/*
+FNXC:GitHubImportTranslate 2026-07-17-23:30:
+This exercises the production auto-translate service across a real TaskStore
+restart, rather than only testing the cache primitive or an in-memory fake.
+The reopened GitHub request must be cache-served and make zero model calls.
+*/
+pgDescribe("translateImportItems durable GitHub cache integration", () => {
+  it("serves a fresh-store GitHub auto-translate request from PostgreSQL without re-billing", async () => {
+    const harness = await createTaskStoreForTest({ prefix: "fusion_import_translate_service" });
+    let reopened: { store: TaskStore; layer: AsyncDataLayer } | null = null;
+    const item = { number: 91, title: "Error del servidor", body: SPANISH_BODY, state: "open" as const };
+    try {
+      const firstContext = {
+        store: harness.store,
+        rootDir: harness.rootDir,
+        provider: "github" as const,
+        repoKey: "owner/repo",
+        targetLocale: "en" as const,
+      };
+      await translateImportItems(firstContext, [item]);
+      expect(translateTextMock).toHaveBeenCalledTimes(1);
+
+      await harness.store.close();
+      reopened = await reopenStore(harness);
+      translateTextMock.mockClear();
+
+      const secondContext = { ...firstContext, store: reopened.store };
+      const partition = await partitionImportItemsByCache(secondContext, [item]);
+      const result = await translateImportItems(secondContext, [item], partition);
+
+      expect(partition.uncached).toHaveLength(0);
+      expect(translateTextMock).not.toHaveBeenCalled();
+      expect(result.get(item.number)).toMatchObject({ title: "TRANSLATED", body: "TRANSLATED BODY", cached: true });
+    } finally {
+      await reopened?.store.close();
+      await harness.teardown();
+    }
   });
 });
 

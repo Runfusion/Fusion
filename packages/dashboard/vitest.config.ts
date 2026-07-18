@@ -333,35 +333,19 @@ FN-8077 removed routes-system.test.ts from this list and the ledger in lockstep.
 */
 const quarantinedDashboardTests: string[] = [
   /*
-  FNXC:DashboardTests 2026-07-16-12:25:
-  RuntimeFallbackBadge hang was a toast-context identity loop (PR #2229); component
-  now depends on stable addToast. File re-admitted. Oversight-mobile focus flake
-  quarantined on sight (ledger lockstep) instead of it.skip source skips.
+  FNXC:DashboardTestQuarantine 2026-07-17-16:50:
+  FN-8245 re-admits all three UI files with their ledger rows removed in lockstep.
+  QuickEntryBox restores focus from its resolved submit path while isolated jsdom
+  globals prevent cross-file focus leakage; PlanningModeModal stream doubles use
+  deterministic microtasks instead of wall-clock timers; and the oversight menu
+  focuses its first button after the opening frame, never the native select.
   */
-  "app/components/__tests__/TaskDetailModal.oversight-mobile.test.tsx",
-  "app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
-  "app/components/__tests__/QuickEntryBox.test.tsx",
-  // FNXC:DashboardTests 2026-07-14-22:15: VAL-REMOVAL-005 — API backfill suites still boot sync SQLite Database via TaskStore.init; quarantine until PG harness conversion (ledger lockstep).
-  "src/__tests__/chat-project-services.test.ts",
-  "src/__tests__/planning-generation-cancellation.test.ts",
-  "src/__tests__/process-lifecycle.test.ts",
-  "src/__tests__/register-signal-routes.test.ts",
-  "src/__tests__/routes-agent-prompt-sizes-integration.test.ts",
-  "src/__tests__/routes-remote-access.test.ts",
-  "src/__tests__/routes-system.test.ts",
-  "src/routes/__tests__/register-settings-memory-worktrunk.test.ts",
-  "src/routes/__tests__/tasks-overseer-controls.test.ts",
-  "src/routes/__tests__/tasks-planner-overseer-state.test.ts",
-  "src/__tests__/mcp-helper-forwarding.test.ts",
-  "src/__tests__/gitlab-source-issue-reconciler.test.ts",
-  "src/__tests__/server-view-preload.test.ts",
-  "src/__tests__/task-effective-settings-route.test.ts",
-  "src/routes/__tests__/agent-avatar-routes.test.ts",
-  "src/routes/__tests__/mission-workflow-triage-route.test.ts",
-  "src/routes/__tests__/workflow-validate-route.test.ts",
-  "src/__tests__/mesh-routes.test.ts",
-  // FNXC:DashboardTests 2026-07-17-06:35: inventory + ledger lockstep — build-only dist assert not in quality projects.
-  "src/__tests__/plugin-registry-dist.test.ts",
+  /*
+  FNXC:DashboardTests 2026-07-17-22:10:
+  FN-8240 verified the 18 VAL-REMOVAL-005 dashboard API tests on their PG-backed
+  async-store or applicable mock/non-store contracts. Remove their ledger/exclude
+  pairs so dashboard-api-quality-backfill collects the restored coverage.
+  */
 ];
 
 const qualityApiTests = [
@@ -408,9 +392,12 @@ const qualityAppBackfillTests = ["app/**/*.test.{ts,tsx}"];
 
 const backfillApiExclude = [
   ...qualityApiTests,
-  // FNXC:DashboardDistArtifacts 2026-07-16-08:20: plugin-registry-dist asserts
-  // emitted server files and runs through the explicit test:build command after
-  // its dist bootstrap, rather than adding a full build to API backfill shards.
+  /*
+  FNXC:DashboardDistArtifacts 2026-07-17-15:10:
+  FN-8245 reclassified plugin-registry-dist as a curated skip-list build-only
+  assertion, not a flake. Keep this lane exclusion: test:build supplies its
+  required emitted dist artifact without making every API backfill shard build.
+  */
   "src/__tests__/plugin-registry-dist.test.ts",
   ...skipListDashboardGlobs.filter((file) => file.startsWith("src/")),
 ];
@@ -595,6 +582,10 @@ export default defineConfig({
       "@fusion-plugin-examples/grok-runtime": resolve(
         __dirname,
         "../../plugins/fusion-plugin-grok-runtime/src/index.ts",
+      ),
+      "@fusion-plugin-examples/claude-runtime": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-claude-runtime/src/index.ts",
       ),
       /*
       FNXC:OmpAcp 2026-07-11-23:35:

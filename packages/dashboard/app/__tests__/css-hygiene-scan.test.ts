@@ -15,7 +15,6 @@ const recentlyLandedResponsiveFiles = [
 const recentlyLandedHygieneFiles = [
   ...recentlyLandedResponsiveFiles,
   "MobileWorkflowGraphView.css",
-  "BackgroundTasksIndicator.css",
   "PullRequestView.css",
   "TaskCard.css",
   "TaskFieldsSection.css",
@@ -69,7 +68,6 @@ function extractSelectorBlocks(source: string, selector: string): string[] {
 describe("component CSS hygiene scan regressions", () => {
   it("keeps fixed text-on-accent CSS on --cta-text instead of hardcoded white", () => {
     const fixedSelectors: Array<[string, string]> = [
-      ["BackgroundTasksIndicator.css", ".background-tasks-indicator__pill--attention"],
       ["PullRequestView.css", ".pr-action--merge-confirm"],
       ["TaskCard.css", ".card-field-badge--boolean"],
       ["TaskFieldsSection.css", ".task-field-chip.is-active"],

@@ -56,6 +56,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.28.0(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
+      claude-code-cli-acp:
+        specifier: 0.1.1
+        version: 0.1.1
       dockerode:
         specifier: ^4.0.12
         version: 4.0.12
@@ -248,6 +251,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.10
         version: 0.80.10(ws@8.20.0)(zod@3.25.76)
+      '@fusion-plugin-examples/claude-runtime':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-claude-runtime
       '@fusion-plugin-examples/cli-printing-press':
         specifier: workspace:*
         version: link:../../plugins/fusion-plugin-cli-printing-press
@@ -803,6 +809,37 @@ importers:
       vitest:
         specifier: ^4.1.0
         version: 4.1.8(@opentelemetry/api@1.9.0)(@types/node@25.5.2)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.1)(jsdom@29.0.1)(vite@6.4.1(@types/node@25.5.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
+  plugins/fusion-plugin-claude-runtime:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.24.0
+        version: 0.24.0(zod@4.3.6)
+      '@earendil-works/pi-ai':
+        specifier: 0.80.10
+        version: 0.80.10(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.21.1)(zod@4.3.6)
+      '@earendil-works/pi-coding-agent':
+        specifier: 0.80.10
+        version: 0.80.10(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.21.1)(zod@4.3.6)
+      '@fusion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@fusion/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      claude-code-cli-acp:
+        specifier: 0.1.1
+        version: 0.1.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.9.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.8(@opentelemetry/api@1.9.0)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.1)(jsdom@29.0.1)(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   plugins/fusion-plugin-cli-printing-press:
     dependencies:
@@ -9886,7 +9923,7 @@ snapshots:
   '@manypkg/find-root@1.1.0':
     dependencies:
       '@babel/runtime': 7.29.2
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       find-up: 4.1.0
       fs-extra: 8.1.0
 
@@ -10356,13 +10393,13 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/cacheable-request@6.0.3':
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -10372,7 +10409,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/d3-array@3.2.2': {}
 
@@ -10499,7 +10536,7 @@ snapshots:
 
   '@types/docker-modem@3.0.6':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       '@types/ssh2': 1.15.5
 
   '@types/dockerode@3.3.47':
@@ -10516,7 +10553,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       '@types/qs': 6.15.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -10529,11 +10566,11 @@ snapshots:
 
   '@types/fs-extra@8.1.5':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/geojson@7946.0.16': {}
 
@@ -10549,7 +10586,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/mdast@4.0.4':
     dependencies:
@@ -10568,11 +10605,10 @@ snapshots:
   '@types/node@25.9.5':
     dependencies:
       undici-types: 7.24.6
-    optional: true
 
   '@types/plist@3.0.5':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       xmlbuilder: 15.1.1
     optional: true
 
@@ -10598,28 +10634,28 @@ snapshots:
 
   '@types/readdir-glob@1.1.5':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/retry@0.12.0': {}
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/slice-ansi@4.0.0': {}
 
   '@types/ssh2@1.15.5':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
 
   '@types/trusted-types@2.0.7':
     optional: true
@@ -10642,7 +10678,7 @@ snapshots:
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
     optional: true
 
   '@typescript-eslint/eslint-plugin@8.58.1(@typescript-eslint/parser@8.58.1(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)':
@@ -10884,6 +10920,14 @@ snapshots:
       magic-string: 0.30.21
     optionalDependencies:
       vite: 6.4.1(@types/node@25.5.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0)
+
+  '@vitest/mocker@4.1.8(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))':
+    dependencies:
+      '@vitest/spy': 4.1.8
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.8':
     dependencies:
@@ -14541,7 +14585,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 25.5.2
+      '@types/node': 25.9.5
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -15084,7 +15128,7 @@ snapshots:
 
   simple-update-notifier@2.0.0:
     dependencies:
-      semver: 7.8.0
+      semver: 7.8.5
 
   simple-yenc@1.0.4: {}
 
@@ -15535,8 +15579,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici-types@7.24.6:
-    optional: true
+  undici-types@7.24.6: {}
 
   undici@7.24.6: {}
 
@@ -15690,6 +15733,21 @@ snapshots:
       tsx: 4.21.0
       yaml: 2.9.0
 
+  vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0):
+    dependencies:
+      esbuild: 0.25.12
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
+      postcss: 8.5.8
+      rollup: 4.60.0
+      tinyglobby: 0.2.15
+    optionalDependencies:
+      '@types/node': 25.9.5
+      fsevents: 2.3.3
+      jiti: 2.7.0
+      tsx: 4.21.0
+      yaml: 2.9.0
+
   vitest@4.1.8(@opentelemetry/api@1.9.0)(@types/node@25.5.2)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.1)(jsdom@29.0.1)(vite@6.4.1(@types/node@25.5.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.8.3)):
     dependencies:
       '@vitest/expect': 4.1.8
@@ -15746,6 +15804,37 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 25.5.2
+      '@vitest/coverage-v8': 4.1.8(vitest@4.1.8)
+      happy-dom: 20.10.1
+      jsdom: 29.0.1
+    transitivePeerDependencies:
+      - msw
+
+  vitest@4.1.8(@opentelemetry/api@1.9.0)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.1)(jsdom@29.0.1)(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0)):
+    dependencies:
+      '@vitest/expect': 4.1.8
+      '@vitest/mocker': 4.1.8(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+      '@vitest/pretty-format': 4.1.8
+      '@vitest/runner': 4.1.8
+      '@vitest/snapshot': 4.1.8
+      '@vitest/spy': 4.1.8
+      '@vitest/utils': 4.1.8
+      es-module-lexer: 2.1.0
+      expect-type: 1.3.0
+      magic-string: 0.30.21
+      obug: 2.1.2
+      pathe: 2.0.3
+      picomatch: 4.0.4
+      std-env: 4.1.0
+      tinybench: 2.9.0
+      tinyexec: 1.2.4
+      tinyglobby: 0.2.15
+      tinyrainbow: 3.1.0
+      vite: 6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
+      '@types/node': 25.9.5
       '@vitest/coverage-v8': 4.1.8(vitest@4.1.8)
       happy-dom: 20.10.1
       jsdom: 29.0.1

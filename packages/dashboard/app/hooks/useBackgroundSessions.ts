@@ -29,21 +29,24 @@ function parseTimestamp(updatedAt: string | undefined): number {
 
 function shouldIncludeSession(session: AiSessionSummary): boolean {
   /*
-   * FNXC:SessionBanner 2026-06-14-19:32:
-   * Background session consumers need CLI agent `waiting_on_input` and `needs_attention` rows available so App can route them to SessionNotificationBanner. Counts below remain scoped to their legacy meanings, so BackgroundTasksIndicator panels are not reclassified by this inclusion.
+   * FNXC:SessionBanner 2026-07-16-20:55:
+   * FN-8229 removes the redundant footer AI pill, so this retained session model
+   * must feed the notification banner and Planning badge for every non-terminal
+   * status, including errors. Legacy counts remain scoped to their meanings.
    */
   return (
     session.status === "generating" ||
     session.status === "awaiting_input" ||
     session.status === "waiting_on_input" ||
-    session.status === "needs_attention"
+    session.status === "needs_attention" ||
+    session.status === "error"
   );
 }
 
 function isTerminalStatus(
   status: AiSessionSummary["status"],
-): status is Extract<AiSessionSummary["status"], "complete" | "error"> {
-  return status === "complete" || status === "error";
+): status is Extract<AiSessionSummary["status"], "complete"> {
+  return status === "complete";
 }
 
 export function useBackgroundSessions(projectId?: string): UseBackgroundSessionsResult {
@@ -85,7 +88,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
         }
 
         /*
-         * FNXC:BackgroundTasks 2026-07-11-19:08:
+         * FNXC:SessionSync 2026-07-11-19:08:
          * Planning must never advertise a cached cross-tab session that the
          * server's current project-scoped list does not contain. A late sync
          * response is only a latency aid, so suppress updates older than this
@@ -256,7 +259,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           timestamp: eventTimestamp,
         });
 
-        if (isTerminalStatus(updated.status)) {
+        if (updated.status === "complete") {
           broadcastCompleted({
             sessionId: updated.id,
             status: updated.status,
@@ -303,8 +306,8 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
       },
       // When the SSE channel reconnects after a drop, pull the authoritative
       // list. Without this, terminal events (deleted/completed) emitted while
-      // the channel was down stay invisible to this hook and the AI pill
-      // count gets stuck on stale sessions.
+      // the channel was down stay invisible to this hook and the retained
+      // session model gets stuck on stale entries.
       onReconnect: () => {
         recordResumeEvent({
           view: "useBackgroundSessions",

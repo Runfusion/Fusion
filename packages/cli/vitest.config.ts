@@ -65,8 +65,8 @@ const quarantinedCliTests: string[] = [
   (async-layer mock drift), skill-sync (undocumented engine tools), version
   (release-script assertion drift), dashboard (mesh lifecycle mock drift), and
   bundled-plugin-freshness (build freshness drift) are now git-history-only.
-  The quarantine ledger has no packages/cli rows. FN-8210 owns the separate
-  package-config.test.ts resolution; future lockstep coverage must include it.
+  The quarantine ledger has no packages/cli rows. FN-8223 now enforces full
+  CLI config↔ledger lockstep, including package-config.test.ts if re-quarantined.
   */
   /*
   FNXC:CliTests 2026-06-25-16:30:

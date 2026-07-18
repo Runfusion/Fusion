@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": fix
+"@runfusion/fusion": patch
 ---
 
 summary: Incident-signal ingestion records incidents on the PostgreSQL backend instead of being skipped.

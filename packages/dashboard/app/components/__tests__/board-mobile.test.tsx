@@ -89,7 +89,19 @@ function getMainMobileSection(css: string): string {
   return blocks.join("\n");
 }
 
-describe("getMainMobileSection — compound media queries", () => {
+describe("mobile board magnetic column snap wiring (FN-8235)", () => {
+  it("shares the mobile scroll-end hook across legacy, selected, and aggregate live board renders", () => {
+    const boardSource = fs.readFileSync(path.join(process.cwd(), "app/components/Board.tsx"), "utf8");
+
+    expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
+    expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
+    expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(3);
+    expect(boardSource.match(/className="board board-workflow-columns"/g)).toHaveLength(2);
+    expect(boardSource).toContain('<main className="board" id="board" ref={setBoardRef}>');
+  });
+});
+
+describe("getMainMobileSection — compound media queries",  () => {
   it("matches simple and compound 768px blocks but excludes other breakpoints", () => {
     const syntheticCss = `
       @media (max-width: 768px)

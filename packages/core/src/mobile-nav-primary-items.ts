@@ -9,6 +9,25 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "chat",
   "mailbox",
   "planning",
+  "activity",
+  "git",
+  "files",
+  "workflows",
+  "automation",
+  "github-import",
+  "usage",
+  "projects",
+  "documents",
+  "secrets",
+  "settings",
+  "skills",
+  "insights",
+  "memory",
+  "research",
+  "evals",
+  "goals",
+  "todos",
+  "dev-server",
 ] as const;
 
 export type MobileNavSelectableItem = (typeof MOBILE_NAV_SELECTABLE_ITEMS)[number];
@@ -22,6 +41,25 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   chat: "nav.chat",
   mailbox: "nav.mailbox",
   planning: "nav.planning",
+  activity: "nav.activityLog",
+  git: "nav.gitManager",
+  files: "nav.files",
+  workflows: "nav.workflows",
+  automation: "nav.automation",
+  "github-import": "nav.importFromGitHub",
+  usage: "nav.usage",
+  projects: "nav.projects",
+  documents: "nav.documents",
+  secrets: "nav.secrets",
+  settings: "nav.settings",
+  skills: "nav.skills",
+  insights: "nav.insights",
+  memory: "nav.memory",
+  research: "nav.research",
+  evals: "nav.evals",
+  goals: "nav.goals",
+  todos: "nav.todos",
+  "dev-server": "nav.devServer",
 };
 
 export const DEFAULT_MOBILE_NAV_PRIMARY_ITEMS: MobileNavSelectableItem[] = [
@@ -37,9 +75,9 @@ export interface ResolvedMobileNavPrimaryItems {
 
 /*
 FNXC:Navigation 2026-07-17-00:00:
-Mobile footer customization is intentionally limited to these seven quick-action ids. Invalid,
-overflow-only, and `more` ids cannot become footer tabs; omitted selectable destinations remain
-reachable in More, and More itself is always rendered separately as the trailing tab.
+Mobile footer customization includes every navigable sidebar and More-sheet destination, while Terminal,
+scripts, shell controls, plugin views, separators, and `more` remain overflow-only. The resolver is gate-agnostic:
+the render layer suppresses disabled experimental destinations, and More remains the separate trailing tab.
 */
 export function resolveMobileNavPrimaryItems(settings?: Pick<ProjectSettings, "mobileNavPrimaryItems">): ResolvedMobileNavPrimaryItems {
   const selected = Array.isArray(settings?.mobileNavPrimaryItems) ? settings.mobileNavPrimaryItems : [];

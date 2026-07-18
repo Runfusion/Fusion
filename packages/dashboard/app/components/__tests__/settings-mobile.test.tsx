@@ -971,4 +971,84 @@ describe("SettingsModal mobile adaptations", () => {
       expectBaseRule(css, ".settings-search-toggle", "display: none;");
     });
   });
+
+  describe("mobile section picker groups (FN-8236)", () => {
+    it("mirrors desktop groups, omits advanced-only entries until enabled, and keeps scoped pairs global first", async () => {
+      mockSettingsViewport(true);
+      localStorage.setItem("fusion:settings:show-advanced", "false");
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      const { getByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      const select = getByLabelText("Settings Section") as HTMLSelectElement;
+      const groupLabels = Array.from(select.querySelectorAll("optgroup")).map((group) => group.label);
+      expect(groupLabels).toEqual(["Preferences", "Project", "AI & Models", "Automation", "Integrations", "Infrastructure"]);
+      expect(Array.from(select.querySelectorAll("optgroup")).every((group) => group.querySelectorAll("option").length > 0)).toBe(true);
+      expect(Array.from(select.options).map((option) => option.text)).not.toContain("MCP Servers · Global");
+
+      const scopedPairs = [
+        ["global-models", "project-models"],
+        ["research-global", "research-project"],
+        ["scheduling-global", "scheduling"],
+        ["source-control-global", "source-control"],
+        ["backups-global", "backups"],
+      ];
+      const optionIds = Array.from(select.options).map((option) => option.value);
+      const visibleScopedPairs = scopedPairs.filter(([globalId, projectId]) => optionIds.includes(globalId) && optionIds.includes(projectId));
+      expect(visibleScopedPairs).toEqual(expect.arrayContaining([
+        ["global-models", "project-models"],
+        ["scheduling-global", "scheduling"],
+        ["source-control-global", "source-control"],
+      ]));
+      for (const [globalId, projectId] of visibleScopedPairs) {
+        expect(optionIds.indexOf(globalId)).toBe(optionIds.indexOf(projectId) - 1);
+      }
+
+      await user.click(getByLabelText("Advanced settings"));
+      await waitFor(() => expect(Array.from(select.options).map((option) => option.text)).toContain("MCP Servers · Global"));
+      const advancedGroups = Array.from(select.querySelectorAll("optgroup")).map((group) => group.label);
+      expect(advancedGroups).toContain("Advanced");
+
+      const advancedOptionIds = Array.from(select.options).map((option) => option.value);
+      for (const [globalId, projectId] of [
+        ["global-mcp", "mcp"],
+        ["research-global", "research-project"],
+      ]) {
+        const globalIndex = advancedOptionIds.indexOf(globalId);
+        const projectIndex = advancedOptionIds.indexOf(projectId);
+        if (globalIndex >= 0 && projectIndex >= 0) {
+          expect(globalIndex).toBe(projectIndex - 1);
+        }
+      }
+    });
+
+    it("keeps only matching non-empty groups during search and replaces the picker with the empty hint for no matches", async () => {
+      mockSettingsViewport(true);
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      const { container, getByLabelText, getByTestId, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      await user.click(getByLabelText("Show search"));
+      await user.type(getByTestId("settings-search-input"), "mcp");
+
+      const select = getByLabelText("Settings Section") as HTMLSelectElement;
+      expect(Array.from(select.querySelectorAll("optgroup")).map((group) => group.label)).toEqual(["Integrations"]);
+      expect(Array.from(select.options).map((option) => option.text)).toEqual(["MCP Servers · Global", "MCP Servers · Project"]);
+
+      await user.clear(getByTestId("settings-search-input"));
+      await user.type(getByTestId("settings-search-input"), "zzzzzz-no-match");
+      await findByText("No sections match this search.");
+      expect(container.querySelector("#settings-mobile-section")).toBeNull();
+      expect(container.querySelector(".settings-mobile-section-picker optgroup")).toBeNull();
+    });
+
+    it("leaves desktop navigation as the sidebar without a mobile picker", async () => {
+      mockSettingsViewport(false);
+      const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      expect(container.querySelector(".settings-sidebar")).toBeTruthy();
+      expect(container.querySelector(".settings-mobile-section-picker")).toBeNull();
+    });
+  });
 });

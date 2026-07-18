@@ -44,6 +44,7 @@ import {
   MISSION_FIX_IDEMPOTENCY_VERSION,
   IMPORT_TRANSLATION_CACHE_VERSION,
   IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
+  IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -143,6 +144,12 @@ describe("schema-applier: immutable migration identities", () => {
     // past 0016 (0017 merger lane, 0018 bulk-completion-refusal). 0016 keeps its
     // immutable identity and remains applied at-or-before the latest marker.
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION));
+  });
+
+  it("keeps the import translation legacy-partition backfill assigned to version 0019", () => {
+    expect(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION).toBe("0019");
+    expect(Number(SCHEMA_BASELINE_VERSION))
+      .toBeGreaterThanOrEqual(Number(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION));
   });
 
   it("keeps the per-task merger model lane assigned to version 0017", () => {
@@ -1135,6 +1142,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1179,6 +1187,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
     ]);
   });
 
@@ -1221,6 +1230,42 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     `)) as unknown as Array<{ qual: string }>;
     expect(policies[0]?.qual).toContain("__legacy_unscoped__");
     expect(await getAppliedMigrations(ctx.db)).toContain(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-23:48:
+  Existing deployments can contain a blank cache partition from pre-0016
+  writes. Recreate that durable row, then apply only the new forward migration
+  and prove the post-restart legacy scope can discover it.
+  */
+  it("backfills historic blank import translation cache partitions", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.import_translation_cache DISABLE TRIGGER fusion_assign_project_id;
+      ALTER TABLE project.import_translation_cache DISABLE ROW LEVEL SECURITY;
+      INSERT INTO project.import_translation_cache (
+        project_id, provider, repo_key, issue_number, target_locale, source_hash,
+        translated_title, translated_body, detected_locale, recorded_at
+      ) VALUES (
+        '', 'github', 'owner/repo', 42, 'en', 'legacy-source-hash',
+        'Translated title', 'Translated body', NULL, '2026-07-16T00:00:00.000Z'
+      );
+      ALTER TABLE project.import_translation_cache ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE project.import_translation_cache ENABLE TRIGGER fusion_assign_project_id;
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0019';
+    `));
+
+    expect(await getAppliedMigrations(ctx.db))
+      .not.toContain(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    await expect(ctx.db.execute(sql`
+      SELECT project_id FROM project.import_translation_cache
+      WHERE provider = 'github' AND repo_key = 'owner/repo' AND issue_number = 42
+    `)).resolves.toEqual([{ project_id: "__legacy_unscoped__" }]);
+    expect(await getAppliedMigrations(ctx.db))
+      .toContain(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
@@ -1276,6 +1321,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
     ]);
   });
 
@@ -1334,6 +1380,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
     ]);
   });
 
@@ -1392,6 +1439,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
     ]);
   });
 });

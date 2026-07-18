@@ -164,9 +164,12 @@ describe("triage deterministic plan validation for external integration evidence
       expect(result).toBe("blocked");
       expect(reviewStep).not.toHaveBeenCalled();
       expect(store.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "needs-replan" }));
+      expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([id, action]) => id === taskId && action === "[pre-merge] Workflow step failed: Plan Review",
+      )).toBe(false);
       expect(store.logEntry).toHaveBeenCalledWith(
         taskId,
-        "[pre-merge] Workflow step failed: Plan Review",
+        "AI spec revision requested",
         expect.stringContaining("External-integration evidence gaps"),
       );
     } finally {

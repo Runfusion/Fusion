@@ -98,7 +98,14 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 const noop = () => {};
 
-function renderCard(overrides: Partial<Task> = {}, cardProps: { workflowBadge?: { workflowId: string; workflowName: string; workflowIcon?: string } } = {}) {
+function renderCard(
+  overrides: Partial<Task> = {},
+  cardProps: {
+    workflowBadge?: { workflowId: string; workflowName: string; workflowIcon?: string };
+    planningWorkflowId?: string | null;
+    projectId?: string;
+  } = {},
+) {
   return render(<TaskCard task={makeTask(overrides)} onOpenDetail={noop} addToast={noop} {...cardProps} />);
 }
 
@@ -231,6 +238,46 @@ describe("TaskCard overseer-state badge removed (FN-7542)", () => {
 });
 
 describe("TaskCard workflow-effective oversight level (FN-7516 code-review fix)", () => {
+  it.each(["in-progress", "in-review"] as const)("hides the stale non-off overseer snapshot and header wrapper when workflow-effective oversight resolves off in %s", async (column) => {
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { plannerOversightLevel: "off" },
+      effective: { plannerOversightLevel: "off" },
+      orphaned: [],
+    });
+
+    renderCard(
+      {
+        column,
+        status: undefined,
+        plannerOverseerState: {
+          state: "watching",
+          oversightLevel: "autonomous",
+          watchedStage: column === "in-review" ? "reviewer" : "executor",
+          signal: "progressing",
+          attemptCount: 0,
+          attemptLimit: 3,
+          pendingConfirmation: false,
+          observedAt: 1700000000000,
+        },
+      },
+      { workflowBadge: { workflowId: `wf-stale-snapshot-off-${column}`, workflowName: "Configured Off" } },
+    );
+
+    // FNXC:PlannerOversight 2026-07-18-00:00: An inherited workflow's tier is
+    // unresolved on first render. The stale runtime snapshot must not leak an
+    // Eye badge or header wrapper before the configured-off response arrives.
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+
+    await waitFor(() => {
+      expect(fetchWorkflowSettingValues).toHaveBeenCalledWith(`wf-stale-snapshot-off-${column}`, undefined);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    });
+  });
+
   it("resolves the workflow's effective plannerOversightLevel (not the schema default) when no per-task override is set", async () => {
     vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
       stored: { plannerOversightLevel: "off" },
@@ -341,6 +388,147 @@ describe("TaskCard workflow-effective oversight level (FN-7516 code-review fix)"
 });
 
 /*
+ * FNXC:PlannerOversight 2026-07-17-15:50:
+ * FN-8251 regression coverage keeps card-level inherited workflow resolution
+ * fail-closed. Selected-workflow boards provide `planningWorkflowId` without
+ * aggregate `workflowBadge` metadata, so no stale runtime Eye may appear
+ * unless the selected workflow's effective oversight is positively active.
+ */
+describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
+  const staleSnapshot = (column: "in-progress" | "in-review") => ({
+    column,
+    status: undefined,
+    plannerOverseerState: {
+      state: "watching" as const,
+      oversightLevel: "autonomous" as const,
+      watchedStage: column === "in-review" ? "reviewer" as const : "executor" as const,
+      signal: "progressing" as const,
+      attemptCount: 0,
+      attemptLimit: 3,
+      pendingConfirmation: false,
+      observedAt: 1700000000000,
+    },
+  });
+
+  it.each(["in-progress", "in-review"] as const)("uses planningWorkflowId and hides the stale eye before and after selected-workflow off resolves in %s", async (column) => {
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { plannerOversightLevel: "off" },
+      effective: { plannerOversightLevel: "off" },
+      orphaned: [],
+    });
+
+    renderCard(staleSnapshot(column), { planningWorkflowId: " selected-workflow-off ", projectId: "project-8251" });
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    await waitFor(() => {
+      expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("selected-workflow-off", "project-8251");
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    });
+  });
+
+  it.each([
+    ["rejected", () => vi.mocked(fetchWorkflowSettingValues).mockRejectedValueOnce(new Error("unavailable"))],
+    ["missing", () => vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({ stored: {}, effective: {}, orphaned: [] })],
+    ["invalid", () => vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({ stored: {}, effective: { plannerOversightLevel: "unknown" }, orphaned: [] })],
+  ])("fails closed after a %s inherited workflow resolution", async (_state, arrange) => {
+    arrange();
+    renderCard(staleSnapshot("in-progress"), { planningWorkflowId: `workflow-${_state}` });
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expect(screen.queryByLabelText(/overseer/i)).toBeNull();
+    });
+  });
+
+  it("fails closed without workflow identity but keeps a valid active task override authoritative", () => {
+    const { rerender } = renderCard(staleSnapshot("in-progress"));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ ...staleSnapshot("in-progress"), plannerOversightLevel: "steer" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByTestId("planner-overseer-state-badge")).toBeTruthy();
+  });
+
+  it.each([
+    ["aggregate", { workflowBadge: { workflowId: "aggregate-active", workflowName: "Aggregate active" } }],
+    ["selected workflow", { planningWorkflowId: "selected-active" }],
+  ])("renders the eye only after positively resolved active oversight for %s cards", async (_surface, props) => {
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { plannerOversightLevel: "steer" },
+      effective: { plannerOversightLevel: "steer" },
+      orphaned: [],
+    });
+    renderCard(staleSnapshot("in-progress"), props);
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+  });
+
+  it("re-resolves when the selected workflow identity changes", async () => {
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] })
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "observe" }, effective: { plannerOversightLevel: "observe" }, orphaned: [] });
+    const task = makeTask(staleSnapshot("in-progress"));
+    const { rerender } = render(
+      <TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="first-workflow" />,
+    );
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("first-workflow", undefined));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    rerender(<TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="second-workflow" />);
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("second-workflow", undefined));
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+  });
+
+  it("hides the eye synchronously when an active selected workflow changes to an unresolved off workflow", async () => {
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] })
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] });
+    const task = makeTask(staleSnapshot("in-progress"));
+    const { rerender } = render(
+      <TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="active-workflow" />,
+    );
+
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    rerender(<TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="off-workflow" />);
+
+    // FNXC:PlannerOversight 2026-07-17-15:50: A useEffect reset is too late:
+    // this render must not reuse the prior workflow's active resolution while
+    // the selected off workflow is loading.
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("off-workflow", undefined));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+  });
+
+  it("keeps selected-workflow suppression at the 375px mobile viewport", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { plannerOversightLevel: "off" },
+      effective: { plannerOversightLevel: "off" },
+      orphaned: [],
+    });
+    renderCard(staleSnapshot("in-review"), { planningWorkflowId: "mobile-off" });
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("mobile-off", undefined));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+  });
+});
+
+/*
  * FNXC:PlannerOversight 2026-07-04-HH:MM:
  * FN-7542 dropped the `pausedReason`/`reviewState`/`workflowTransitionNotification`
  * memo-comparator compares — they existed solely to repaint the now-removed
@@ -368,6 +556,17 @@ describe("TaskCard memo comparator — oversight level (FN-7516)", () => {
       __test_areTaskCardPropsEqual(
         { task, workflowBadge: { workflowId: "wf-a", workflowName: "A" }, onOpenDetail: noop, addToast: noop } as any,
         { task, workflowBadge: { workflowId: "wf-b", workflowName: "B" }, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when planningWorkflowId changes, so selected-workflow cards re-resolve their effective tier", () => {
+    const task = makeTask({});
+
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task, planningWorkflowId: "wf-a", onOpenDetail: noop, addToast: noop } as any,
+        { task, planningWorkflowId: "wf-b", onOpenDetail: noop, addToast: noop } as any,
       ),
     ).toBe(false);
   });

@@ -1554,6 +1554,12 @@ export class ProjectEngine {
    * recovery-controller ring buffers for this task (mirrors the poll's
    * leave-in-flight cleanup). This is a user action; it never mutates task
    * lifecycle/column and never performs a merge/PR/destructive side effect.
+   *
+   * FNXC:PlannerOversight 2026-07-18-12:00:
+   * FN-8247 requires Stop to disable BOTH lifecycle oversight and the
+   * independently-gated session advisor. Persisting explicit false wins over
+   * project/workflow defaults, then immediate runtime teardown prevents a
+   * live advisor from spending or injecting after the operator stops it.
    */
   async stopOverseerTask(taskId: string): Promise<{ applied: boolean; reason: string; task?: Task }> {
     try {
@@ -1568,9 +1574,14 @@ export class ProjectEngine {
         this.plannerRecoveryController?.recordManualAction(taskId, observation.stage, "manual_stop");
       }
 
-      const updatedTask = await store.updateTask(taskId, { plannerOversightLevel: "off" });
+      const updatedTask = await store.updateTask(taskId, {
+        plannerOversightLevel: "off",
+        sessionAdvisorEnabled: false,
+      });
       this.plannerOverseer?.clear(taskId);
       this.plannerRecoveryController?.clear(taskId);
+      this.sessionAdvisor?.clear(taskId);
+      this.sessionAdvisorLogCursor.delete(taskId);
       // FN-7551: release the observation/escalation emission-dedup state too,
       // so if oversight is later re-enabled for this task, the first new
       // observation/escalation emits rather than staying suppressed by stale

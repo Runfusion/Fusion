@@ -1166,29 +1166,6 @@
     "retryConnection": "Reintentar conexión",
     "retrying": "Reintentando…"
   },
-  "backgroundTasks": {
-    "dismissButton": "Descartar",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "Tareas de fondo",
-    "status": {
-      "failed": "Fallido",
-      "generating": "generando...",
-      "needsInput": "necesita entrada"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "Entrevista de hito",
-      "missionInterview": "Entrevista de misión",
-      "planning": "Planificación",
-      "sliceInterview": "Entrevista de segmento",
-      "subtask": "Desglose de subtareas"
-    }
-  },
   "board": {
     "archived": "Archivado",
     "done": "Hecho",
@@ -5657,7 +5634,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "Sesiones de IA que necesitan entrada o han fallado",
     "resume": "Reanudar",
-    "retry": "Reintentar"
+    "retry": "Reintentar",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5909,7 +5890,10 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "Acciones rápidas del pie móvil",
-      "mobileNavPrimaryItemsHint": "Predeterminado: Panel, Tareas, Agentes, Misiones, Chat, Buzón. Los destinos no seleccionados permanecen en el menú Más.",
+      "mobileNavPrimaryItemsHint": "Predeterminado: Panel, Tareas, Agentes, Misiones, Chat, Buzón. Añade destinos elegibles; los no seleccionados permanecen en Más.",
+      "addNavItem": "Añadir acción rápida",
+      "selectNavItem": "Elegir un destino",
+      "removeNavItem": "Quitar {{item}}",
       "moveNavItemEarlier": "Mover {{item}} antes",
       "moveNavItemLater": "Mover {{item}} después"
     },

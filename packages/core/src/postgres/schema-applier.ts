@@ -28,10 +28,10 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
-FNXC:MultiProjectIsolation 2026-07-15-23:40:
-Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0018";
+export const SCHEMA_BASELINE_VERSION = "0019";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -62,6 +62,14 @@ export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
  * deliberately a new forward migration rather than a retroactive SQL edit.
  */
 export const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION = "0016";
+/*
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+0016 aligned future cache writes with the normalized legacy partition, but a
+pre-0016 cache row can still carry a historic blank project_id. Migration 0019
+backfills that durable data before a restarted store scopes cache reads to
+__legacy_unscoped__, preventing an avoidable re-translation.
+*/
+export const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION = "0019";
 /*
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
 Version 0011 splits the domain "project" field from the RLS partition on the tables
@@ -154,6 +162,11 @@ const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0016_import_translation_cache_scope_fix.sql",
+);
+const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0019_import_translation_cache_legacy_partition_backfill.sql",
 );
 const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
   __dirname,
@@ -262,6 +275,7 @@ export async function applySchemaBaseline(
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
     const importTranslationCacheScopeFixAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+    const importTranslationCacheLegacyPartitionBackfillAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
     const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
     const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
@@ -596,6 +610,15 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!importTranslationCacheLegacyPartitionBackfillAlreadyApplied) {
+      const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

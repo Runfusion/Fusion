@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuildBuild } from "esbuild";
@@ -29,6 +30,7 @@ const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   // FNXC:GrokAcp 2026-07-11-14:00: Grok ACP ships mcp-schema-server.cjs so
   // session/new can forward executable Fusion fn_* tools to grok agent stdio.
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
   "fusion-plugin-omp-runtime",
 ]);
@@ -243,6 +245,42 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
       );
     }
     cpSync(mcpServerAsset, join(destDir, "mcp-schema-server.cjs"));
+  }
+
+  if (pluginId === "fusion-plugin-claude-runtime") {
+    /*
+     * FNXC:ClaudeAcpRuntime 2026-07-18-12:30:
+     * A published CLI npm package is portable, while ACP's native binary is
+     * platform-specific. Do not bake the build host's binary into the staged
+     * plugin: stage the identity-pinned JS launcher and declare it as a CLI
+     * dependency so npm installs exactly the matching optional native package
+     * on every operator platform. The launcher resolves that package by name
+     * through the installed CLI's ancestor node_modules.
+     */
+    const bridgeRequire = createRequire(join(srcDir, "package.json"));
+    const launcherPackageJson = bridgeRequire.resolve("claude-code-cli-acp/package.json");
+    const launcherSourceDir = dirname(launcherPackageJson);
+    const bridgeDest = join(destDir, "bridge");
+    const launcherDestDir = join(bridgeDest, "node_modules", "claude-code-cli-acp");
+
+    mkdirSync(launcherDestDir, { recursive: true });
+    cpSync(join(launcherSourceDir, "bin"), join(launcherDestDir, "bin"), { recursive: true });
+    cpSync(launcherPackageJson, join(launcherDestDir, "package.json"));
+
+    const bridgeWrapper = join(bridgeDest, `claude-code-cli-acp${process.platform === "win32" ? ".cmd" : ""}`);
+    if (process.platform === "win32") {
+      writeFileSync(bridgeWrapper, "@echo off\r\nnode \"%~dp0node_modules\\claude-code-cli-acp\\bin\\claude-code-cli-acp.js\" %*\r\n");
+    } else {
+      writeFileSync(
+        bridgeWrapper,
+        "#!/usr/bin/env node\nimport \"./node_modules/claude-code-cli-acp/bin/claude-code-cli-acp.js\";\n",
+      );
+      chmodSync(bridgeWrapper, 0o755);
+    }
+
+    if (!existsSync(join(launcherDestDir, "bin", "claude-code-cli-acp.js"))) {
+      throw new Error(`[tsup] Missing required Claude ACP launcher after staging`);
+    }
   }
 
   const bundledOutput = join(destDir, "bundled.js");

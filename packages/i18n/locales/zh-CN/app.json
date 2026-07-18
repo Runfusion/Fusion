@@ -1166,29 +1166,6 @@
     "retryConnection": "重新连接",
     "retrying": "重试中…"
   },
-  "backgroundTasks": {
-    "dismissButton": "关闭",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "后台任务",
-    "status": {
-      "failed": "失败",
-      "generating": "生成中...",
-      "needsInput": "需要输入"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "里程碑采访",
-      "missionInterview": "任务采访",
-      "planning": "规划",
-      "sliceInterview": "切片采访",
-      "subtask": "子任务分解"
-    }
-  },
   "board": {
     "archived": "已归档",
     "done": "完成",
@@ -5657,7 +5634,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "需要输入或已失败的 AI 会话",
     "resume": "继续",
-    "retry": "重试"
+    "retry": "重试",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5909,7 +5890,10 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "移动端底部快捷操作",
-      "mobileNavPrimaryItemsHint": "默认：仪表盘、任务、代理、任务组、聊天、邮箱。未选中的目标仍保留在“更多”菜单中。",
+      "mobileNavPrimaryItemsHint": "默认：仪表盘、任务、代理、任务组、聊天、邮箱。可添加符合条件的目标；未选中的目标仍在“更多”中。",
+      "addNavItem": "添加快捷操作",
+      "selectNavItem": "选择目标",
+      "removeNavItem": "移除 {{item}}",
       "moveNavItemEarlier": "将 {{item}} 前移",
       "moveNavItemLater": "将 {{item}} 后移"
     },

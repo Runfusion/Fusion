@@ -151,7 +151,8 @@
     "remark-gfm": "^4.0.1",
     "unified": "^11.0.5",
     "ws": "^8.18.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@fusion-plugin-examples/claude-runtime": "workspace:*"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

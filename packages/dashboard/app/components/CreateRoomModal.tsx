@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { fetchAgents } from "../api";
 import type { Agent } from "@fusion/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { nextFloatingZ } from "./floatingWindowStack";
 import "./CreateRoomModal.css";
 
 export interface RoomDraft {
@@ -50,6 +51,16 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   const [isSubmitting, setIsSubmitting] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  /*
+  FNXC:ChatRoomModal 2026-07-17-15:56:
+  Create Room is a blocking dialog launched from Quick Chat's non-blocking FloatingWindow. Because
+  both surfaces portal to body, claim a fresh shared top-layer z-index on every open so the dialog
+  stays above its parent on desktop and the mobile full-screen Chat sheet, including after reopen.
+  */
+  const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (isOpen) setOverlayZ(nextFloatingZ());
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -140,7 +151,7 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   };
 
   return createPortal(
-    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && onClose()} style={overlayZ ? { zIndex: overlayZ } : undefined}>
       <div className="modal modal-lg create-room-modal" role="dialog" aria-modal="true" aria-label={t("createRoom.title", "Create room")} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h3>{t("createRoom.title", "Create room")}</h3>

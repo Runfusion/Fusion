@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { AiSessionSummary } from "../../api";
 import { SessionNotificationBanner, dismissedIds } from "../SessionNotificationBanner";
-import { isPlanningAwaitingInput, isSessionNeedingInputForBanner } from "../../utils/appLifecycle";
+import { shouldShowSessionInBanner } from "../../utils/appLifecycle";
 
 function buildSession(overrides: Partial<AiSessionSummary>): AiSessionSummary {
   return {
@@ -20,11 +20,11 @@ describe("SessionNotificationBanner", () => {
     dismissedIds.clear();
   });
 
-  it("renders nothing when no sessions need input", () => {
+  it("renders nothing when no sessions need input or are in progress", () => {
     const { container } = render(
       <SessionNotificationBanner
         sessions={[
-          buildSession({ id: "a", status: "generating" }),
+          buildSession({ id: "a", status: "complete" }),
           buildSession({ id: "b", status: "complete" }),
         ]}
         onResumeSession={vi.fn()}
@@ -56,23 +56,21 @@ describe("SessionNotificationBanner", () => {
     expect(screen.queryByText("Done")).not.toBeInTheDocument();
   });
 
-  it("does not render sessions that are generating or complete", () => {
-    render(
-      <SessionNotificationBanner
-        sessions={[
-          buildSession({ id: "planning", type: "planning", title: "Planning Session", status: "awaiting_input" }),
-          buildSession({ id: "gen", title: "Generating", status: "generating" }),
-          buildSession({ id: "complete", title: "Complete", status: "complete" }),
-        ]}
-        onResumeSession={vi.fn()}
-        onDismissSession={vi.fn()}
-        onDismissAll={vi.fn()}
-      />,
-    );
+  it("renders an in-progress entry and resumes non-planning work", () => {
+    const onResumeSession = vi.fn();
+    const generating = buildSession({ id: "gen", type: "subtask", title: "Generating", status: "generating" });
+    render(<SessionNotificationBanner sessions={[generating]} onResumeSession={onResumeSession} onDismissSession={vi.fn()} onDismissAll={vi.fn()} />);
+    expect(screen.getByText("1 AI session in progress")).toBeInTheDocument();
+    expect(screen.getByText("Generating")).toBeInTheDocument();
+    expect(screen.getByText("In progress")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(onResumeSession).toHaveBeenCalledWith(generating);
+  });
 
-    expect(screen.getByText("Planning Session")).toBeInTheDocument();
-    expect(screen.queryByText("Generating")).not.toBeInTheDocument();
-    expect(screen.queryByText("Complete")).not.toBeInTheDocument();
+  it("renders cli progress observationally without a dead Resume button", () => {
+    render(<SessionNotificationBanner sessions={[buildSession({ id: "cli-progress", type: "cli-agent", title: "CLI progress", status: "generating" })]} onResumeSession={vi.fn()} onDismissSession={vi.fn()} onDismissAll={vi.fn()} />);
+    expect(screen.getByText("CLI progress")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
   it("calls onResumeSession with the selected session", () => {
@@ -283,46 +281,23 @@ describe("SessionNotificationBanner", () => {
     expect(onDismissSession).toHaveBeenCalledWith("error-dismiss");
   });
 
-  /*
-  FNXC:SessionBanner 2026-07-05-00:00:
-  Symptom Verification (FN-7614): the production banner feed (App.tsx `sessionsNeedingInput`) filters via
-  `isSessionNeedingInputForBanner(s) && !isPlanningAwaitingInput(s)` before it ever reaches this component. Given a
-  lone planning awaiting_input session, that filter yields an empty array, so the banner must render NO entry
-  (and no banner region at all) — reproducing the original broken-Resume-button symptom being fixed by the nav badge.
-  */
-  it("renders no banner entry (and no banner region) for a lone planning awaiting_input session, using the production banner filter", () => {
-    const planningAwaitingInput = buildSession({ id: "planning-solo", type: "planning", status: "awaiting_input", title: "Solo planning session" });
-    const filtered = [planningAwaitingInput].filter((s) => isSessionNeedingInputForBanner(s) && !isPlanningAwaitingInput(s));
-
-    const { container } = render(
-      <SessionNotificationBanner
-        sessions={filtered}
-        onResumeSession={vi.fn()}
-        onDismissSession={vi.fn()}
-        onDismissAll={vi.fn()}
-      />,
+  it("keeps planning sessions out through the production banner predicate", () => {
+    const planningSessions = ["generating", "awaiting_input", "error"].map((status) =>
+      buildSession({ id: `planning-${status}`, type: "planning", status: status as AiSessionSummary["status"], title: `Planning ${status}` }),
     );
-
+    const filtered = planningSessions.filter(shouldShowSessionInBanner);
+    const { container } = render(<SessionNotificationBanner sessions={filtered} onResumeSession={vi.fn()} onDismissSession={vi.fn()} onDismissAll={vi.fn()} />);
     expect(filtered).toEqual([]);
-    expect(screen.queryByText("Solo planning session")).not.toBeInTheDocument();
     expect(container.firstChild).toBeNull();
   });
 
-  it("keeps a mixed non-planning awaiting-input session visible while excluding planning-awaiting-input via the production filter", () => {
-    const planningAwaitingInput = buildSession({ id: "planning-solo2", type: "planning", status: "awaiting_input", title: "Excluded planning session" });
-    const cliAwaitingInput = buildSession({ id: "cli-mixed", type: "cli-agent", status: "waiting_on_input", title: "Visible CLI session" });
-    const filtered = [planningAwaitingInput, cliAwaitingInput].filter((s) => isSessionNeedingInputForBanner(s) && !isPlanningAwaitingInput(s));
-
-    render(
-      <SessionNotificationBanner
-        sessions={filtered}
-        onResumeSession={vi.fn()}
-        onDismissSession={vi.fn()}
-        onDismissAll={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByText("Excluded planning session")).not.toBeInTheDocument();
+  it("keeps a mixed non-planning entry visible through the production filter", () => {
+    const sessions = [
+      buildSession({ id: "planning", type: "planning", status: "error", title: "Excluded planning" }),
+      buildSession({ id: "cli", type: "cli-agent", status: "waiting_on_input", title: "Visible CLI session" }),
+    ].filter(shouldShowSessionInBanner);
+    render(<SessionNotificationBanner sessions={sessions} onResumeSession={vi.fn()} onDismissSession={vi.fn()} onDismissAll={vi.fn()} />);
+    expect(screen.queryByText("Excluded planning")).not.toBeInTheDocument();
     expect(screen.getByText("Visible CLI session")).toBeInTheDocument();
   });
 
@@ -390,7 +365,7 @@ describe("SessionNotificationBanner — cli-agent (U11)", () => {
     expect(screen.getByText("Implement FN-1")).toBeInTheDocument();
   });
 
-  it("waiting_on_input surfaces a banner entry; busy clears it (F2)", () => {
+  it("waiting_on_input transitions to observable generating progress (F2)", () => {
     const { rerender, container } = render(
       <SessionNotificationBanner
         sessions={[buildCliSession({ status: "waiting_on_input" })]}
@@ -409,7 +384,8 @@ describe("SessionNotificationBanner — cli-agent (U11)", () => {
         onDismissAll={vi.fn()}
       />,
     );
-    expect(container.querySelector(".session-notification-banner")).toBeFalsy();
+    expect(container.querySelector(".session-notification-banner")).toBeTruthy();
+    expect(screen.getByText("In progress")).toBeInTheDocument();
   });
 
   it("userExited needs-attention renders pinned copy + Advance/Retry/Cancel task", () => {

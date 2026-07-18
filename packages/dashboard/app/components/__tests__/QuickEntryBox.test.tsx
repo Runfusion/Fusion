@@ -482,6 +482,16 @@ function expectQuickEntryPrimaryIconCluster() {
 describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:QuickEntryFocus 2026-07-17-15:15:
+    FN-8245 found the fourth QuickEntryBox focus failure was cross-test jsdom
+    focus leakage, not a component refocus. Clear any detached predecessor's
+    active element before rendering so submit and action-button assertions start
+    from the same browser focus baseline under loaded worker execution.
+    */
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
     vi.mocked(fetchAgents).mockResolvedValue([]);
@@ -530,6 +540,9 @@ describe("QuickEntryBox", () => {
       vi.runOnlyPendingTimers();
     });
     vi.useRealTimers();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     localStorage.clear();
     restoreQuickEntryTestGlobals();
   });

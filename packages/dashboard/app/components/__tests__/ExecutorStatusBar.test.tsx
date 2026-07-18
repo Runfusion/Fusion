@@ -196,7 +196,6 @@ describe("ExecutorStatusBar", () => {
       expectSegmentCount("In Review", "1");
       expect(statusBar).toHaveTextContent("Overlap queue");
       expect(statusBar).toHaveTextContent("FN-010 · 5 todo");
-      expect(statusBar).toHaveTextContent("AI 2");
       expect(statusBar).not.toHaveTextContent("Done");
       expect(statusBar.firstElementChild).not.toHaveClass("executor-status-bar__divider");
       expect(statusBar.lastElementChild).toHaveClass("executor-status-bar__segment--engine-controls");

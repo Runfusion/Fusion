@@ -46,6 +46,7 @@ packages:
   - "plugins/fusion-plugin-acp-runtime"
   - "plugins/fusion-plugin-cursor-runtime"
   - "plugins/fusion-plugin-grok-runtime"
+  - "plugins/fusion-plugin-claude-runtime"
   - "plugins/fusion-plugin-omp-runtime"
   - "plugins/fusion-plugin-agent-browser"
   - "plugins/fusion-plugin-whatsapp-chat"

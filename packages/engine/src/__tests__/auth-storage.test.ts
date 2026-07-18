@@ -484,6 +484,12 @@ describe("createFusionAuthStorage", () => {
           body: expect.not.stringContaining("\"scope\""),
         }),
       );
+      const refreshRequest = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(JSON.parse(String(refreshRequest?.body))).toMatchObject({
+        grant_type: "refresh_token",
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        refresh_token: "subscription-refresh-token",
+      });
       expect(authStorage.get("anthropic-subscription")).toEqual({
         type: "oauth",
         access: "refreshed-subscription-access-token",

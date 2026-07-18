@@ -83,17 +83,18 @@ export interface UseGitHubImportAutoTranslateArgs {
   enabled: boolean;
   owner: string;
   repo: string;
+  /** The caller's current client-side page window, never the entire fetched set. */
   items: AutoTranslateListItem[];
+  /** Monotonic identity bumped only after a successful issues reload. */
+  reloadGeneration: number;
   targetLocale: Locale;
   projectId?: string;
 }
 
 export interface GitHubImportAutoTranslateState {
-  /** number -> translated fields, for issues the server translated. */
+  /** number -> translated fields, accumulated while paging within one reload. */
   translations: Map<number, ImportTranslateFields>;
   loading: boolean;
-  /** True when more foreign issues existed than the per-load cap. */
-  capped: boolean;
   error: string | null;
 }
 
@@ -107,6 +108,7 @@ export function useGitHubImportAutoTranslate({
   owner,
   repo,
   items,
+  reloadGeneration,
   targetLocale,
   projectId,
 }: UseGitHubImportAutoTranslateArgs): GitHubImportAutoTranslateState {
@@ -121,21 +123,20 @@ export function useGitHubImportAutoTranslate({
   `items` is a fresh ARRAY IDENTITY on most renders, so neither it nor anything derived from it may sit in the effect's dependency list: the effect calls setState, setState re-renders, the re-render mints a new array, and the effect fires again — an infinite render loop (caught as an OOM under renderHook).
   Everything the effect depends on is therefore reduced to STRING keys (stable by value), and the live issue data is read from a ref at run time instead of being a dependency.
   */
-  // Only the 50 most recent OPEN issues are eligible. GitHub returns issues
-  // newest-first, so list order is already "most recent".
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  FN-8230 passes the already-paged window from GitHubImportModal rather than a page index here.
+  That keeps this hook independent of the modal's hide-imported filtering while ensuring every
+  reachable page is eligible; the retained 50-item slice remains a defensive per-request bound.
+  */
   const eligible = useMemo(
     () => items.filter((item) => item.state !== "closed").slice(0, AUTO_TRANSLATE_MAX_ISSUES),
     [items],
   );
 
-  /** True when more open issues exist than a single load will translate. */
-  const openCount = useMemo(
-    () => items.filter((item) => item.state !== "closed").length,
-    [items],
-  );
-
   const eligibleRef = useRef(eligible);
   eligibleRef.current = eligible;
+  const translationSignaturesRef = useRef<Map<number, string>>(new Map());
 
   /*
   FNXC:GitHubImportTranslate 2026-07-15-18:40:
@@ -147,39 +148,53 @@ export function useGitHubImportAutoTranslate({
     [eligible],
   );
 
-  /* Stable-by-value key: re-runs only when the actual issue set / content / repo
-     / locale changes, not on unrelated list re-renders. */
+  /* Stable-by-value key: re-runs only when the actual visible page content changes,
+     not on unrelated list re-renders. */
   const requestKey = useMemo(
     () =>
       enabled && owner && repo && eligible.length > 0
-        ? `${owner}/${repo}|${targetLocale}|${eligible.map((i) => i.number).join(",")}|${contentSignature}`
+        ? `${owner}/${repo}|${targetLocale}|${reloadGeneration}|${eligible.map((i) => i.number).join(",")}|${contentSignature}`
         : null,
-    [enabled, owner, repo, targetLocale, eligible, contentSignature],
+    [enabled, owner, repo, targetLocale, reloadGeneration, eligible, contentSignature],
   );
+  const resetKey = `${enabled ? "on" : "off"}|${owner}/${repo}|${targetLocale}|${reloadGeneration}`;
 
   /*
-  FNXC:GitHubImportTranslate 2026-07-15-20:15:
-  `capped` is DERIVED, not state (PR #2147 review). Holding it in state meant setting it from the translation effect, which forced `capExceeded` into that effect's dependency list — so a 51st open issue appearing (while the eligible first 50 were unchanged) re-ran the whole effect, cleared the translations, and re-requested all 50 purely to update a badge.
-  Deriving it removes the dependency, and with it the entire class of "cap indicator restarts translation" bug: there is nothing to keep in sync.
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  Page navigation must accumulate translations, whereas a successful reload, source change, or locale
+  change must discard them. Keep this reset separate from the page request effect so an unchanged
+  translated issue is never re-billed, but edited prose (new per-item signature) is re-requested.
   */
-  const capExceeded = openCount > AUTO_TRANSLATE_MAX_ISSUES;
-  const capped = requestKey !== null && capExceeded;
+  useEffect(() => {
+    translationSignaturesRef.current.clear();
+    setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
+    setError((prev) => (prev ? null : prev));
+    setLoading((prev) => (prev ? false : prev));
+  }, [resetKey]);
 
   useEffect(() => {
-    if (!requestKey) {
-      // Identity-preserving resets: returning the previous value when there is
-      // nothing to clear avoids a state change (and therefore a re-render loop).
-      setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
-      setError((prev) => (prev ? null : prev));
-      setLoading((prev) => (prev ? false : prev));
-      return;
-    }
+    if (!requestKey) return;
 
-    const pending = eligibleRef.current;
+    const pageItems = eligibleRef.current;
+    const pending = pageItems.filter((item) => {
+      const signature = hashImportItemsForKey([item]);
+      return translationSignaturesRef.current.get(item.number) !== signature;
+    });
+    const staleNumbers = pageItems
+      .filter((item) => translationSignaturesRef.current.has(item.number) && translationSignaturesRef.current.get(item.number) !== hashImportItemsForKey([item]))
+      .map((item) => item.number);
+    if (staleNumbers.length > 0) {
+      for (const number of staleNumbers) translationSignaturesRef.current.delete(number);
+      setTranslations((prev) => {
+        const next = new Map(prev);
+        for (const number of staleNumbers) next.delete(number);
+        return next;
+      });
+    }
+    if (pending.length === 0) return;
     let cancelled = false;
     setLoading(true);
     setError((prev) => (prev ? null : prev));
-    setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
 
     /*
     FNXC:GitHubImportTranslate 2026-07-15-17:05:
@@ -224,6 +239,8 @@ export function useGitHubImportAutoTranslate({
                 const number = Number(key);
                 if (Number.isInteger(number)) {
                   next.set(number, { title: value.title, body: value.body });
+                  const item = chunk.find((candidate) => candidate.number === number);
+                  if (item) translationSignaturesRef.current.set(number, hashImportItemsForKey([item]));
                 }
               }
               return next;
@@ -247,10 +264,9 @@ export function useGitHubImportAutoTranslate({
     // Deps are STRING/scalar only. `requestKey` already encodes repo+locale+issue
     // set; adding `items`/`eligible` (array identities) would re-fire the effect on
     // every render and loop. Live data comes from `eligibleRef`.
-    // NOTE: `capExceeded` is deliberately absent — see the derived-`capped` note above.
   }, [requestKey, owner, repo, targetLocale, projectId]);
 
-  return { translations, loading, capped, error };
+  return { translations, loading, error };
 }
 
 export type ImportTranslateView = {

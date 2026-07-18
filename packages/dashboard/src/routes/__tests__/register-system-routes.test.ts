@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import express from "express";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request as performRequest } from "../../test-request.js";
 import { registerSystemRoutes, __resetSystemJobsForTests } from "../register-system-routes.js";
 
@@ -134,13 +134,30 @@ function createApp(harness: HarnessOptions = {}) {
 
 const tempRoots: string[] = [];
 
-function createFakeSourceCheckout(buildScriptBody: string): string {
+function createFakeSourceCheckout(buildScriptBody: string, fullBuildScriptBody = buildScriptBody): string {
   const root = mkdtempSync(join(tmpdir(), "fusion-system-routes-"));
   tempRoots.push(root);
   mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "scripts", "dev-prebuild-client.mjs"), buildScriptBody);
+  writeFileSync(join(root, "scripts", "build-workspace.mjs"), fullBuildScriptBody);
   return root;
 }
+
+function configureFakePnpmInstall(root: string): void {
+  const fakeInstall = join(root, "scripts", "fake-pnpm-install.mjs");
+  writeFileSync(
+    fakeInstall,
+    "console.log('FAKE_PNPM_INSTALL_OK');\nconsole.error('FAKE_PNPM_INSTALL_STDERR');\nif (process.env.FAKE_PNPM_INSTALL_FAIL === '1') process.exit(7);\n",
+  );
+  process.env.FUSION_SYSTEM_PNPM_BIN = process.execPath;
+  process.env.FUSION_SYSTEM_PNPM_ARGS = JSON.stringify([fakeInstall]);
+}
+
+afterEach(() => {
+  delete process.env.FUSION_SYSTEM_PNPM_BIN;
+  delete process.env.FUSION_SYSTEM_PNPM_ARGS;
+  delete process.env.FAKE_PNPM_INSTALL_FAIL;
+});
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -276,6 +293,79 @@ describe("POST /system/rebuild", () => {
     }, { timeout: 10_000, interval: 100 });
 
     expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("runs full install then build, streams both outputs through SSE, and schedules restart", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    const requestRestart = vi.fn(() => true);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart, sourceWorkspaceRoot: root } },
+    });
+
+    const started = await postJson(app, "/api/system/rebuild", { scope: "full", restart: true });
+    expect(started.status).toBe(202);
+
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job.status).toBe("succeeded");
+    }, { timeout: 10_000, interval: 100 });
+
+    const current = await getJson(app, "/api/system/rebuild/current");
+    const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+    expect(lineTexts).toContain("FAKE_PNPM_INSTALL_OK");
+    expect(lineTexts).toContain("FAKE_BUILD_RAN");
+    expect(lineTexts.indexOf("FAKE_PNPM_INSTALL_OK")).toBeLessThan(lineTexts.indexOf("FAKE_BUILD_RAN"));
+    expect(requestRestart).toHaveBeenCalledWith("rebuild:full");
+
+    const stream = openSseStream(app, `/api/system/jobs/${started.body.id}/stream`);
+    const replay = stream.text();
+    expect(replay).toContain('event: line');
+    expect(replay).toContain('"stream":"stdout","text":"FAKE_PNPM_INSTALL_OK"');
+    expect(replay).toContain('event: end');
+  });
+
+  it("fails full rebuild when dependency install fails without building or restarting", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    process.env.FAKE_PNPM_INSTALL_FAIL = "1";
+    const requestRestart = vi.fn(() => true);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart, sourceWorkspaceRoot: root } },
+    });
+
+    await postJson(app, "/api/system/rebuild", { scope: "full" });
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job.status).toBe("failed");
+    }, { timeout: 10_000, interval: 100 });
+
+    const current = await getJson(app, "/api/system/rebuild/current");
+    const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+    expect(lineTexts).toContain("FAKE_PNPM_INSTALL_OK");
+    expect(lineTexts).not.toContain("FAKE_BUILD_RAN");
+    expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("keeps app and plugins rebuilds as single build commands", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: root } },
+    });
+
+    for (const [scope, expectedOutput] of [["app", "APP_BUILD_RAN"], ["plugins", "FAKE_BUILD_RAN"]] as const) {
+      await postJson(app, "/api/system/rebuild", { scope, restart: false });
+      await vi.waitFor(async () => {
+        const current = await getJson(app, "/api/system/rebuild/current");
+        expect(current.body.job.status).toBe("succeeded");
+      }, { timeout: 10_000, interval: 100 });
+      const current = await getJson(app, "/api/system/rebuild/current");
+      const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+      expect(lineTexts).toContain(expectedOutput);
+      expect(lineTexts).not.toContain("Installing workspace dependencies (pnpm install)…");
+      expect(lineTexts).not.toContain("FAKE_PNPM_INSTALL_OK");
+    }
   });
 
   it("rejects a second concurrent rebuild", async () => {

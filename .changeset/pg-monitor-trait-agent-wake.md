@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": fix
+"@runfusion/fusion": patch
 ---
 
 summary: Regression storm-guard and agent wake-on-message work on the PostgreSQL backend.

@@ -46,14 +46,21 @@ async function reopenStore(harness: PgTestHarness, projectId?: string): Promise<
 }
 
 pgDescribe("import translation cache persistence (PostgreSQL)", () => {
-  it("records then reads a translation from a fresh store against the same database", async () => {
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-23:00:
+  Both GitHub and GitLab use this durable cache contract. Reopen a real
+  PostgreSQL-backed store rather than a mock so either provider cannot silently
+  re-bill translation after the daemon restarts.
+  */
+  it.each(["github", "gitlab"] as const)("records then reads a %s translation from a fresh store against the same database", async (provider) => {
     const harness = await createTaskStoreForTest({ prefix: "fusion_translation_cache" });
     let reopened: { store: TaskStore; layer: AsyncDataLayer } | null = null;
+    const providerKey = { ...key, provider };
     try {
-      await harness.store.recordImportTranslation(key, value, "2026-07-16T00:00:00.000Z");
+      await harness.store.recordImportTranslation(providerKey, value, "2026-07-16T00:00:00.000Z");
       reopened = await reopenStore(harness);
 
-      await expect(reopened.store.getImportTranslation(key)).resolves.toEqual({
+      await expect(reopened.store.getImportTranslation(providerKey)).resolves.toEqual({
         ...value,
         recordedAt: "2026-07-16T00:00:00.000Z",
       });

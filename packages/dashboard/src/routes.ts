@@ -104,6 +104,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
@@ -4151,7 +4152,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.status(204).send();
   });
 
-  // ── AI Session Routes (Background Tasks) ─────────────────────────────────
+  // ── AI Session Routes ─────────────────────────────────────────────────────
 
   /**
    * GET /api/ai-sessions

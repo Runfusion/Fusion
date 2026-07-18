@@ -20,6 +20,7 @@ import {
   getErrorMessage,
 } from "@fusion/core";
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflow-settings-resolver";
+import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
@@ -444,7 +445,12 @@ in-flight de-dup exactly (see packages/dashboard/app/components/TaskCard.tsx)
 rather than re-deriving precedence locally — `resolveEffectivePlannerOversightLevel`
 remains the single resolver both surfaces call.
 */
-const modalWorkflowOversightEffectiveCache = new Map<string, PlannerOversightLevel | undefined>();
+interface ModalWorkflowOversightSettings {
+  level: PlannerOversightLevel | undefined;
+  sessionAdvisorEnabled: boolean;
+}
+
+const modalWorkflowOversightEffectiveCache = new Map<string, ModalWorkflowOversightSettings>();
 const modalWorkflowOversightInflight = new Map<string, Promise<void>>();
 
 function getModalWorkflowOversightCacheKey(workflowId: string, projectId?: string): string {
@@ -455,20 +461,23 @@ function isPlannerOversightLevelValue(value: unknown): value is PlannerOversight
   return typeof value === "string" && (PLANNER_OVERSIGHT_LEVELS as readonly string[]).includes(value);
 }
 
-async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<PlannerOversightLevel | undefined> {
+async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<ModalWorkflowOversightSettings> {
   const key = getModalWorkflowOversightCacheKey(workflowId, projectId);
   if (modalWorkflowOversightEffectiveCache.has(key)) {
-    return modalWorkflowOversightEffectiveCache.get(key);
+    return modalWorkflowOversightEffectiveCache.get(key) ?? { level: undefined, sessionAdvisorEnabled: false };
   }
   let inflight = modalWorkflowOversightInflight.get(key);
   if (!inflight) {
     inflight = fetchWorkflowSettingValues(workflowId, projectId)
       .then((payload) => {
         const raw = payload.effective?.plannerOversightLevel;
-        modalWorkflowOversightEffectiveCache.set(key, isPlannerOversightLevelValue(raw) ? raw : undefined);
+        modalWorkflowOversightEffectiveCache.set(key, {
+          level: isPlannerOversightLevelValue(raw) ? raw : undefined,
+          sessionAdvisorEnabled: payload.effective?.plannerOverseerAdvisorEnabled === true,
+        });
       })
       .catch(() => {
-        modalWorkflowOversightEffectiveCache.set(key, undefined);
+        modalWorkflowOversightEffectiveCache.set(key, { level: undefined, sessionAdvisorEnabled: false });
       })
       .finally(() => {
         modalWorkflowOversightInflight.delete(key);
@@ -476,7 +485,7 @@ async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, proj
     modalWorkflowOversightInflight.set(key, inflight);
   }
   await inflight;
-  return modalWorkflowOversightEffectiveCache.get(key);
+  return modalWorkflowOversightEffectiveCache.get(key) ?? { level: undefined, sessionAdvisorEnabled: false };
 }
 
 const OVERSIGHT_LEVEL_LABEL: Record<PlannerOversightLevel, string> = {
@@ -957,22 +966,26 @@ export function TaskDetailContent({
   fetch above); a known per-task override renders synchronously regardless.
   */
   const workflowIdForOversight = taskWorkflowBadge?.id;
-  const [workflowOversightState, setWorkflowOversightState] = useState<{ level: PlannerOversightLevel | undefined; resolved: boolean }>({ level: undefined, resolved: false });
+  const [workflowOversightState, setWorkflowOversightState] = useState<ModalWorkflowOversightSettings & { resolved: boolean }>({
+    level: undefined,
+    sessionAdvisorEnabled: false,
+    resolved: false,
+  });
   useEffect(() => {
     if (!workflowIdForOversight) {
-      setWorkflowOversightState({ level: undefined, resolved: true });
+      setWorkflowOversightState({ level: undefined, sessionAdvisorEnabled: false, resolved: true });
       return;
     }
     const workflowId = workflowIdForOversight;
     const key = getModalWorkflowOversightCacheKey(workflowId, projectId);
     if (modalWorkflowOversightEffectiveCache.has(key)) {
-      setWorkflowOversightState({ level: modalWorkflowOversightEffectiveCache.get(key), resolved: true });
+      setWorkflowOversightState({ ...modalWorkflowOversightEffectiveCache.get(key)!, resolved: true });
       return;
     }
-    setWorkflowOversightState({ level: undefined, resolved: false });
+    setWorkflowOversightState({ level: undefined, sessionAdvisorEnabled: false, resolved: false });
     let cancelled = false;
-    void loadModalWorkflowOversightEffectiveLevel(workflowId, projectId).then((level) => {
-      if (!cancelled) setWorkflowOversightState({ level, resolved: true });
+    void loadModalWorkflowOversightEffectiveLevel(workflowId, projectId).then((settings) => {
+      if (!cancelled) setWorkflowOversightState({ ...settings, resolved: true });
     });
     return () => {
       cancelled = true;
@@ -2071,29 +2084,44 @@ export function TaskDetailContent({
 
   /*
   FNXC:PlannerOversight 2026-07-14-18:11:
-  Per-task session advisor (LLM overseer agent). Unset inherits project
-  sessionAdvisorEnabledByDefault; explicit boolean forces on/off. Toggle writes
-  an override when it differs from the project default and clears to null when
-  it matches (same inheritance model as Quick Add eye).
+  Per-task session advisor (LLM overseer agent). Unset inherits project and
+  workflow settings; explicit boolean forces on/off. Toggle writes an override
+  when it differs from the full inherited state and clears to null only when it
+  matches that same shared resolver result.
   */
   const projectSessionAdvisorDefault = settings?.sessionAdvisorEnabledByDefault === true;
   const hasSessionAdvisorOverride = typeof workingTask.sessionAdvisorEnabled === "boolean";
-  const effectiveSessionAdvisorEnabled = hasSessionAdvisorOverride
-    ? workingTask.sessionAdvisorEnabled === true
-    : projectSessionAdvisorDefault;
+  /*
+  FNXC:PlannerOversight 2026-07-18-12:00:
+  FN-8247 requires the task-detail Eye/EyeOff affordances to use the shared
+  session-advisor precedence contract. The workflow legacy setting travels in
+  the existing workflow-settings fetch, so the UI cannot silently omit it or
+  retain a divergent local resolver.
+  */
+  const effectiveSessionAdvisorEnabled = resolveTaskSessionAdvisorEnabled(
+    workingTask,
+    settings,
+    workflowOversightState.sessionAdvisorEnabled,
+  ).enabled;
+
+  const inheritedSessionAdvisorEnabled = resolveTaskSessionAdvisorEnabled(
+    { sessionAdvisorEnabled: undefined },
+    settings,
+    workflowOversightState.sessionAdvisorEnabled,
+  ).enabled;
 
   const handleSessionAdvisorToggle = useCallback(async () => {
     setIsSavingSessionAdvisor(true);
     try {
       const nextEnabled = !effectiveSessionAdvisorEnabled;
       const nextValue: boolean | null =
-        nextEnabled === projectSessionAdvisorDefault ? null : nextEnabled;
+        nextEnabled === inheritedSessionAdvisorEnabled ? null : nextEnabled;
       const updatedTask = await updateTask(task.id, { sessionAdvisorEnabled: nextValue }, projectId);
       onTaskUpdated?.(updatedTask);
       addToast(
         nextValue === null
-          ? t("taskDetail.sessionAdvisor.reset", "Session advisor follows project default ({{default}})", {
-              default: projectSessionAdvisorDefault
+          ? t("taskDetail.sessionAdvisor.reset", "Session advisor follows inherited defaults ({{default}})", {
+              default: inheritedSessionAdvisorEnabled
                 ? t("tasks.sessionAdvisorDefaultOn", "on")
                 : t("tasks.sessionAdvisorDefaultOff", "off"),
             })
@@ -2117,7 +2145,7 @@ export function TaskDetailContent({
     }
   }, [
     effectiveSessionAdvisorEnabled,
-    projectSessionAdvisorDefault,
+    inheritedSessionAdvisorEnabled,
     task.id,
     projectId,
     onTaskUpdated,
@@ -2190,11 +2218,15 @@ export function TaskDetailContent({
   FN-7517 stop-oversight control. Disables active oversight for this task
   (per-task override -> "off") — a lightweight `confirm(...)` guards it since
   it's a disabling action, matching the PROMPT's guidance for this control.
+
+  FNXC:PlannerOversight 2026-07-18-12:00:
+  FN-8247 extends Stop to disable the independently-enabled session advisor,
+  so confirmation and success copy must tell operators it stops both systems.
   */
   const handleStopOverseer = useCallback(async () => {
     const shouldStop = await confirm({
       title: t("taskDetail.oversight.stopTitle", "Stop planner oversight?"),
-      message: t("taskDetail.oversight.stopMessage", "This disables active planner oversight for this task (sets oversight level to Off)."),
+      message: t("taskDetail.oversight.stopMessage", "This disables planner oversight and the session advisor for this task."),
     });
     if (!shouldStop) return;
 
@@ -2204,7 +2236,7 @@ export function TaskDetailContent({
       if (result.task) {
         onTaskUpdated?.(result.task);
       }
-      addToast(t("taskDetail.oversight.stopped", "Planner oversight stopped for this task"), "success");
+      addToast(t("taskDetail.oversight.stopped", "Planner oversight and session advisor stopped for this task"), "success");
     } catch (err) {
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
     } finally {
@@ -3387,6 +3419,14 @@ export function TaskDetailContent({
   const isOverseerHumanReviewTerminal = task.column === "in-review" && !effectiveAutoMerge;
   const overseerHumanControlSuppressed = Boolean(isTaskPaused) || isDoneOrArchivedColumn || isOverseerHumanReviewTerminal;
   const oversightIsOff = effectiveOversightLevel === "off";
+  /*
+  FNXC:PlannerOversight 2026-07-17-13:18:
+  FN-8233: the Oversight trigger must visibly track effective overseer state.
+  `overseerTriggerOn = !oversightIsOff || effectiveSessionAdvisorEnabled` lets
+  either the level select or Session advisor toggle in its dropdown update the
+  shared trigger icon without introducing a stale local state snapshot.
+  */
+  const overseerTriggerOn = !oversightIsOff || effectiveSessionAdvisorEnabled;
   const canNudgeOverseer = overseerActive && !oversightIsOff && !overseerHumanControlSuppressed;
   const canExplainOverseer = overseerActive && !oversightIsOff;
   const showStopOverseer = !oversightIsOff;
@@ -3705,14 +3745,23 @@ export function TaskDetailContent({
     firstMenuItem?.focus();
   }, [showMoveMenu]);
 
-  // FNXC:PlannerOversight 2026-07-04-00:00: FN-7562 — auto-focus the first actionable button menuitem, never the native oversight-level <select>; focusing the <select> surfaced its OS picker as a second menu overlapping the custom oversight popover on mobile.
+  /*
+  FNXC:PlannerOversight 2026-07-17-16:35:
+  FN-8245 schedules oversight-menu autofocus after the opening commit, matching the
+  sibling activity-view menu. The first actionable button (never the native level
+  select) must receive focus at both breakpoints; synchronously focusing in the
+  effect could lose the focus race while concurrent dashboard rendering settled.
+  */
   useEffect(() => {
     if (!showOversightMenu) {
       return;
     }
 
-    const firstMenuItem = oversightMenuRef.current?.querySelector<HTMLButtonElement>("button.detail-oversight-menu-item");
-    firstMenuItem?.focus();
+    const frame = requestAnimationFrame(() => {
+      const firstMenuItem = oversightMenuRef.current?.querySelector<HTMLButtonElement>("button.detail-oversight-menu-item");
+      firstMenuItem?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [showOversightMenu]);
 
   useLayoutEffect(() => {
@@ -4273,7 +4322,7 @@ export function TaskDetailContent({
                           aria-label={t("taskDetail.oversight.menuAriaLabel", "Oversight actions")}
                           title={t("taskDetail.oversight.menuAriaLabel", "Oversight actions")}
                         >
-                          <Eye aria-hidden="true" />
+                          {overseerTriggerOn ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
                         </button>
                         {showOversightMenu && (
                           <div className="detail-oversight-menu" role="menu" onKeyDown={handleOversightMenuKeyDown}>
@@ -4330,7 +4379,7 @@ export function TaskDetailContent({
                                     )
                                   : t(
                                       "taskDetail.sessionAdvisor.inheritTitle",
-                                      "Session advisor {{state}} (follows project default)",
+                                      "Session advisor {{state}} (follows inherited defaults)",
                                       {
                                         state: effectiveSessionAdvisorEnabled
                                           ? t("tasks.sessionAdvisorDefaultOn", "on")
@@ -4349,7 +4398,7 @@ export function TaskDetailContent({
                                 })}
                                 {hasSessionAdvisorOverride
                                   ? ""
-                                  : t("taskDetail.sessionAdvisor.inheritSuffix", " (project)")}
+                                  : t("taskDetail.sessionAdvisor.inheritSuffix", " (inherited)")}
                               </span>
                             </button>
                             {!oversightIsOff && (
@@ -4490,6 +4539,19 @@ export function TaskDetailContent({
                     <Zap size={14} aria-hidden="true" />
                   </button>
                 </div>
+                {/*
+                FNXC:TaskDetailAttachments 2026-07-17-12:30:
+                FN-8232: keep the hidden file input mounted independently of activeTab.
+                The paperclip renders on every non-editing tab while task details default
+                to Activity or Summary; a Definition-only input made that control a no-op.
+                */}
+                <input
+                  className="detail-hidden-file-input"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUpload}
+                />
                 {overseerExplainOpen && (
                   <div className="detail-overseer-explain-panel" data-testid="detail-overseer-explain-panel" role="region" aria-live="polite">
                     {isLoadingOverseerExplain ? (
@@ -5892,13 +5954,6 @@ export function TaskDetailContent({
             ) : (
               <div className="detail-empty-inline">{t("taskDetail.attachments.none", "(no attachments)")}</div>
             )}
-            <input
-              className="detail-hidden-file-input"
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleUpload}
-            />
             <button
               className="btn btn-sm"
               onClick={() => fileInputRef.current?.click()}

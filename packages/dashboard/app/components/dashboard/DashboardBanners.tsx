@@ -95,7 +95,13 @@ export function DashboardBanners({
           />
         </>
       )}
-      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
+      {/*
+       * FNXC:SessionBanner 2026-07-16-21:10:
+       * FN-8229 removed the always-visible footer AI pill, so active non-planning
+       * sessions must override the appearance preference that hides idle banners.
+       * Per-session dismissal still lets operators suppress an individual entry.
+       */}
+      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && (!sessionBannersHidden || sessionsNeedingInput.length > 0) && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}

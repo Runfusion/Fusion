@@ -7,17 +7,20 @@ describe("resolveMobileNavPrimaryItems", () => {
     expect(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: [] })).toMatchObject({ primaryItems: DEFAULT_MOBILE_NAV_PRIMARY_ITEMS });
   });
 
-  it("accepts planning, preserves order, and routes omitted destinations to More", () => {
-    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["tasks", "planning", "agents"] });
-    expect(resolved.primaryItems).toEqual(["tasks", "planning", "agents"]);
-    expect(resolved.omittedItems).toEqual(["command-center", "missions", "chat", "mailbox"]);
+  it("accepts newly eligible destinations, preserves order, and routes omitted destinations to More", () => {
+    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["git", "planning", "agents"] });
+    expect(resolved.primaryItems).toEqual(["git", "planning", "agents"]);
+    expect(resolved.omittedItems).not.toContain("git");
+    expect(resolved.omittedItems).toContain("settings");
   });
 
-  it("drops overflow-only and unknown ids, deduplicates, and clamps footer tabs", () => {
+  it("keeps newly eligible settings and documents, drops overflow-only ids, deduplicates, and clamps footer tabs", () => {
     const resolved = resolveMobileNavPrimaryItems({
       mobileNavPrimaryItems: ["settings", "tasks", "more", "documents", "tasks", "agents", "missions", "chat", "mailbox", "planning", "unknown"],
     });
-    expect(resolved.primaryItems).toEqual(["tasks", "agents", "missions", "chat", "mailbox", "planning"]);
-    expect(resolved.omittedItems).toEqual(["command-center"]);
+    expect(resolved.primaryItems).toEqual(["settings", "tasks", "documents", "agents", "missions", "chat"]);
+    expect(resolved.omittedItems).not.toContain("settings");
+    expect(resolved.omittedItems).not.toContain("documents");
+    expect(resolved.omittedItems).toContain("git");
   });
 });

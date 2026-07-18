@@ -81,6 +81,171 @@ describe("TaskDetailModal oversight controls", () => {
     expect(trigger.querySelector('[data-testid="more-vertical-icon"]')).not.toBeInTheDocument();
   });
 
+  it("uses the workflow legacy advisor tier for the shared detail trigger and toggle", async () => {
+    const api = await import("../../api");
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      sessionAdvisorEnabledByDefault: false,
+    } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+      flagEnabled: true,
+      defaultWorkflowId: "WF-advisor",
+      workflows: [{ id: "WF-advisor", name: "Advisor workflow" } as any],
+      taskWorkflowIds: { "FN-8247-workflow": "WF-advisor" },
+    });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: {},
+      effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: true },
+      defaults: {},
+    });
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-8247-workflow", column: "in-progress", plannerOversightLevel: "off", sessionAdvisorEnabled: undefined })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+    });
+    await openOversightMenu();
+    const toggle = await screen.findByTestId("detail-session-advisor-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+  });
+
+  it("gives an explicit false override precedence and repaints when it is toggled on", async () => {
+    const api = await import("../../api");
+    let currentTask = makeTask({
+      id: "FN-8247-explicit-off",
+      column: "in-progress",
+      plannerOversightLevel: "off",
+      sessionAdvisorEnabled: false,
+    });
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      sessionAdvisorEnabledByDefault: false,
+    } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+      flagEnabled: true,
+      defaultWorkflowId: "WF-advisor-explicit-off",
+      workflows: [{ id: "WF-advisor-explicit-off", name: "Advisor workflow" } as any],
+      taskWorkflowIds: { [currentTask.id]: "WF-advisor-explicit-off" },
+    });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: {},
+      effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: true },
+      defaults: {},
+    });
+    vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
+      currentTask = makeTask({ ...currentTask, ...patch });
+      return currentTask as any;
+    });
+
+    let rerenderModal: (nextTask: typeof currentTask) => void;
+    const renderModal = (nextTask: typeof currentTask) => (
+      <TaskDetailModal
+        task={nextTask}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)}
+        addToast={noop}
+      />
+    );
+    const rendered = render(renderModal(currentTask));
+    rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+    });
+    await openOversightMenu();
+    const toggle = await screen.findByTestId("detail-session-advisor-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(api.updateTask).toHaveBeenCalledWith(currentTask.id, { sessionAdvisorEnabled: null }, undefined);
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+      expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
+  it("updates the trigger icon for oversight-level and session-advisor predicate changes", async () => {
+    const api = await import("../../api");
+    const mockUpdate = vi.mocked(api.updateTask);
+    let currentTask = makeTask({
+      id: "FN-8233",
+      column: "in-progress",
+      plannerOversightLevel: "observe",
+      sessionAdvisorEnabled: false,
+    });
+    mockUpdate.mockImplementation(async (_id, patch) => {
+      currentTask = makeTask({ ...currentTask, ...patch });
+      return currentTask as any;
+    });
+
+    let rerenderModal: (task: typeof currentTask) => void;
+    const renderModal = (task: typeof currentTask) => (
+      <TaskDetailModal
+        task={task}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)}
+        addToast={noop}
+      />
+    );
+    const rendered = render(renderModal(currentTask));
+    rerenderModal = (updatedTask) => rendered.rerender(renderModal(updatedTask));
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+
+    await openOversightMenu();
+    const select = await screen.findByTestId("detail-oversight-level-select");
+    fireEvent.change(select, { target: { value: "off" } });
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+    });
+
+    fireEvent.change(select, { target: { value: "observe" } });
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+    });
+
+    fireEvent.change(select, { target: { value: "off" } });
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+    });
+  });
+
   beforeEach(async () => {
     vi.clearAllMocks();
     mockConfirm.mockResolvedValue(true);

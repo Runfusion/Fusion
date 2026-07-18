@@ -1166,29 +1166,6 @@
     "retryConnection": "重新連接",
     "retrying": "重試中…"
   },
-  "backgroundTasks": {
-    "dismissButton": "關閉",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "背景任務",
-    "status": {
-      "failed": "失敗",
-      "generating": "生成中...",
-      "needsInput": "需要輸入"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "里程碑訪談",
-      "missionInterview": "任務訪談",
-      "planning": "規劃",
-      "sliceInterview": "切片訪談",
-      "subtask": "子任務分解"
-    }
-  },
   "board": {
     "archived": "已歸檔",
     "done": "完成",
@@ -5657,7 +5634,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "需要輸入或已失敗的 AI 工作階段",
     "resume": "繼續",
-    "retry": "重試"
+    "retry": "重試",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5909,7 +5890,10 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "行動版底部快捷操作",
-      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。未選取的目的地仍保留在「更多」選單中。",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。可新增符合條件的目的地；未選取的目的地仍在「更多」中。",
+      "addNavItem": "新增快捷操作",
+      "selectNavItem": "選擇目的地",
+      "removeNavItem": "移除 {{item}}",
       "moveNavItemEarlier": "將 {{item}} 前移",
       "moveNavItemLater": "將 {{item}} 後移"
     },

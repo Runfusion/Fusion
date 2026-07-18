@@ -824,6 +824,8 @@ interface SettingsModalProps {
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
   /** Mirrors pending Quick Chat launcher changes into the app shell immediately. */
   onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
+  /** Mirrors pending mobile quick-action changes into the app shell immediately. */
+  onMobileNavPrimaryItemsChange?: (items: string[]) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
   onReopenOnboarding?: () => void;
   /** Optional callback to open approvals/mailbox view. */
@@ -1087,6 +1089,7 @@ export function SettingsModal({
   onDashboardFontScaleChange,
   onShadcnCustomColorsChange,
   onQuickChatButtonModeChange,
+  onMobileNavPrimaryItemsChange,
   onReopenOnboarding,
   onOpenApprovals,
   onOpenWorkflowSettings,
@@ -3822,6 +3825,7 @@ export function SettingsModal({
             prefixError={prefixError}
             setPrefixError={setPrefixError}
             onQuickChatButtonModeChange={onQuickChatButtonModeChange}
+            onMobileNavPrimaryItemsChange={onMobileNavPrimaryItemsChange}
           />
         );
       case "source-control":
@@ -4329,12 +4333,33 @@ export function SettingsModal({
                         value={activeSection}
                         onChange={(event) => setActiveSection(event.target.value as SectionId)}
                       >
-                        {searchableSectionOptions.map((section) => {
-                          const label = t(section.labelKey, section.label);
+                        {/*
+                        FNXC:SettingsNavigation 2026-07-16-14:00:
+                        FN-8236 makes the mobile picker mirror the desktop topic headers with native
+                        optgroups. Sections retain SETTINGS_SECTIONS order within each group, which
+                        keeps scoped Global entries immediately before their Project counterparts so
+                        mobile operators can relate inherited settings without a separate sidebar.
+                        */}
+                        {searchMatchedSections.map((groupHeader, groupIndex) => {
+                          if (!groupHeader.isGroupHeader) return null;
+
+                          const sections = searchMatchedSections.slice(groupIndex + 1).filter((section) => !section.isGroupHeader);
+                          const nextGroupIndex = searchMatchedSections.slice(groupIndex + 1).findIndex((section) => section.isGroupHeader);
+                          const groupSections = nextGroupIndex === -1 ? sections : sections.slice(0, nextGroupIndex);
+
+                          if (groupSections.length === 0) return null;
+
                           return (
-                            <option key={section.id} value={section.id}>
-                              {resolveSettingsSectionOptionLabel(section, label)}
-                            </option>
+                            <optgroup key={groupHeader.id} label={t(groupHeader.labelKey, groupHeader.label)}>
+                              {groupSections.map((section) => {
+                                const label = t(section.labelKey, section.label);
+                                return (
+                                  <option key={section.id} value={section.id}>
+                                    {resolveSettingsSectionOptionLabel(section, label)}
+                                  </option>
+                                );
+                              })}
+                            </optgroup>
                           );
                         })}
                       </select>

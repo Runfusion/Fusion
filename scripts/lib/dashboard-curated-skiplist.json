@@ -4,6 +4,10 @@
     {
       "file": "packages/dashboard/app/__tests__/build-output.test.ts",
       "reason": "asserts the built bundle; runs standalone via `pnpm --filter @fusion/dashboard test:build` (needs a prior vite build), not in the unit gate"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/plugin-registry-dist.test.ts",
+      "reason": "emitted-dist assertion; runs standalone via `pnpm --filter @fusion/dashboard test:build` after a build, not in the unit gate"
     }
   ]
 }

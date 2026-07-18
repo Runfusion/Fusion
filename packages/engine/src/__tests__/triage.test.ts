@@ -135,6 +135,11 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     } as Settings),
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TriageTestMock 2026-07-16-14:15:
+    Duplicate finalization records activity for near-duplicates and explicit DUPLICATE markers, so shared TaskStore mocks must provide an awaited no-op. The reviewer-outage retry test explicitly selects the delete resolution because the runtime default is prompt and only delete reaches deleteTask.
+    */
+    recordActivity: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     addSteeringComment: vi.fn(),
@@ -1698,6 +1703,14 @@ Planner rewrote mission without the raw request.
         expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),
       ]),
     }));
+    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([id, action]) => id === "FN-PLAN-REVISE" && action === "[pre-merge] Workflow step failed: Plan Review",
+    )).toBe(false);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-PLAN-REVISE",
+      "AI spec revision requested",
+      expect.stringContaining("Missing verification."),
+    );
   });
 
   it("keeps the task in triage with retry backoff when Plan Review is unavailable", async () => {
@@ -1893,7 +1906,10 @@ Planner rewrote mission without the raw request.
         if (id === canonicalId) return canonicalTask;
         return null;
       });
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
+      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        requirePlanApproval: false,
+        triageDuplicateResolution: "delete",
+      } as Settings);
       const retryProcessor = new TriageProcessor(retryStore, tempRoot);
 
       mockCreateFnAgent.mockClear();
@@ -2247,6 +2263,9 @@ Planner rewrote mission without the raw request.
         "AI spec revision requested",
         expect.stringContaining(feedback),
       );
+      expect((retryStore.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([id, action]) => id === taskId && action === "[pre-merge] Workflow step failed: Plan Review",
+      )).toBe(false);
       expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
         workflowStepResults: expect.arrayContaining([
           expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),

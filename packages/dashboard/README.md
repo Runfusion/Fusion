@@ -260,7 +260,6 @@ In addition to the global mobile foundation, several power-user surfaces now inc
   - Tree-view indentation is reduced (`.agent-tree__indent--1..4`) to prevent horizontal overflow at deeper hierarchy levels.
 
 - **Utility components**
-  - **BackgroundTasksIndicator** popover switches to fixed viewport anchoring on mobile (`left/right: 8px`, `bottom: 40px`) so it is not clipped by parent containers.
   - **ExecutorStatusBar** mobile layout includes tighter spacing and overflow guards (`min-width: 0`, hidden overflow in segments) for narrow screens.
   - **ActiveAgentsPanel** grid stacks to one column on mobile (`.active-agents-grid { grid-template-columns: 1fr; }`).
   - **ToastContainer** shifts above footer surfaces with safe-area awareness (`bottom: calc(44px + env(safe-area-inset-bottom, 0px))`, full-width toasts).

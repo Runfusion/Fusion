@@ -1176,29 +1176,6 @@
     "retryConnection": "Retry Connection",
     "retrying": "Retrying…"
   },
-  "backgroundTasks": {
-    "dismissButton": "Dismiss",
-    "pillLabel_one": "AI {{count}}",
-    "pillLabel_other": "AI {{count}}",
-    "pillTitle_one": "{{count}} background AI task",
-    "pillTitle_other": "{{count}} background AI task",
-    "pillTitleWithInput_one": "{{count}} background AI task ({{needsInput}} needs input)",
-    "pillTitleWithInput_other": "{{count}} background AI task ({{needsInput}} needs input)",
-    "popoverHeader": "Background Tasks",
-    "status": {
-      "failed": "Failed",
-      "generating": "generating...",
-      "needsInput": "needs input"
-    },
-    "typeLabel": {
-      "cliAgent": "CLI Agent",
-      "milestoneInterview": "Milestone Interview",
-      "missionInterview": "Mission Interview",
-      "planning": "Planning",
-      "sliceInterview": "Slice Interview",
-      "subtask": "Subtask Breakdown"
-    }
-  },
   "board": {
     "archived": "Archived",
     "done": "Done",
@@ -5665,9 +5642,13 @@
     "headerErrorPlural_other": "",
     "headerErrorSingular_one": "",
     "headerErrorSingular_other": "",
-    "regionLabel": "AI sessions needing input or failed",
+    "regionLabel": "AI sessions in progress, needing input, or failed",
     "resume": "Resume",
-    "retry": "Retry"
+    "retry": "Retry",
+    "headerGeneratingSingular": "{{count}} AI session in progress",
+    "headerGeneratingPlural": "{{count}} AI sessions in progress",
+    "headerMixed": "{{generatingCount}} AI sessions in progress, {{actionableCount}} need attention",
+    "inProgress": "In progress"
   },
   "settings": {
     "actions": {
@@ -5874,7 +5855,10 @@
       "learnMore": "Learn more",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Lowering this window means Reliability metrics/charts and the Activity feed will not show history older than the selected range. Per-task task detail history is unaffected. Default: 30 days. ",
       "mobileNavPrimaryItems": "Mobile footer quick actions",
-      "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in the More menu.",
+      "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.",
+      "addNavItem": "Add quick action",
+      "selectNavItem": "Choose a destination",
+      "removeNavItem": "Remove {{item}}",
       "moveNavItemEarlier": "Move {{item}} earlier",
       "moveNavItemLater": "Move {{item}} later",
       "newTasksInheritThisCustomWorkflowsStepsOverridable": "New tasks inherit this custom workflow's steps (overridable per task). No default — unset (built-in default workflow).",
@@ -7308,7 +7292,7 @@
     "generatingSubtasks": "AI is generating subtasks...",
     "groupedOnSharedBranch": "Grouped on shared branch",
     "hideThinking": "Hide thinking",
-    "keepSessionMessage": "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume.",
+    "keepSessionMessage": "Close this modal and keep the subtask session available from the session notification banner? Edited fields that have not been saved to the session may be reset when you resume.",
     "keepSessionTitle": "Keep subtask session available?",
     "modalTitle": "Subtask Breakdown",
     "moveDown": "Move down",

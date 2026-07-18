@@ -13,8 +13,7 @@ import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { useExecutorStats } from "../hooks/useExecutorStats";
 import { isLikelyTabSuspensionError } from "../hooks/visibilitySuspension";
 import { LoadingSpinner } from "./LoadingSpinner";
-import type { ExecutorState, AiSessionSummary } from "../api";
-import { BackgroundTasksIndicator } from "./BackgroundTasksIndicator";
+import type { ExecutorState } from "../api";
 import { EngineControlMenu, type EngineControlMenuHandle } from "./EngineControlMenu";
 import { TerminalLauncher } from "./TerminalLauncher";
 import { useViewportMode } from "../hooks/useViewportMode";
@@ -66,12 +65,6 @@ interface ExecutorStatusBarProps {
   taskStuckTimeoutMs?: number;
   /** Age threshold in milliseconds before high fan-out blockers escalate in dashboard surfaces. */
   staleHighFanoutBlockerAgeThresholdMs?: number;
-  /** Background AI sessions */
-  backgroundSessions?: AiSessionSummary[];
-  backgroundGenerating?: number;
-  backgroundNeedsInput?: number;
-  onOpenBackgroundSession?: (session: AiSessionSummary) => void;
-  onDismissBackgroundSession?: (id: string) => void;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
   /** Absolute path for the currently selected project directory. */
@@ -148,7 +141,7 @@ function getStateDisplay(state: ExecutorState, t: TFunction<"app">): { label: st
  * - Executor state badge (idle/running/paused/stopped)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, staleHighFanoutBlockerAgeThresholdMs, backgroundSessions, backgroundGenerating, backgroundNeedsInput, onOpenBackgroundSession, onDismissBackgroundSession, lastFetchTimeMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onOpenQuickChat }: ExecutorStatusBarProps) {
+export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onOpenQuickChat }: ExecutorStatusBarProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
@@ -282,19 +275,12 @@ export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, staleH
       role="status"
       aria-label={t("executor.status", "Executor status")}
     >
-      {/* Background AI tasks indicator */}
-      {backgroundSessions && backgroundSessions.length > 0 && onOpenBackgroundSession && onDismissBackgroundSession && (
-        <>
-          <BackgroundTasksIndicator
-            sessions={backgroundSessions}
-            generating={backgroundGenerating ?? 0}
-            needsInput={backgroundNeedsInput ?? 0}
-            onOpenSession={onOpenBackgroundSession}
-            onDismissSession={onDismissBackgroundSession}
-          />
-          <span className="executor-status-bar__divider" aria-hidden="true" />
-        </>
-      )}
+      {/*
+       * FNXC:ExecutorStatusBar 2026-07-16-20:55:
+       * FN-8229 removes the redundant AI-session footer segment. The banner and
+       * Planning navigation now own session visibility, leaving this footer for
+       * executor statistics and launch controls only.
+       */}
 
       {/* Queued tasks */}
       <MobileStatSegment

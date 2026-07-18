@@ -58,7 +58,10 @@ export interface FloatingWindowProps {
    * Persistent task/terminal pop-outs must omit this so page clicks do not close them.
    */
   closeOnOutsidePointerDown?: boolean;
-  /** Layer band for z-index claiming. Task details stay with the board/task-detail surface; utilities use the global floating stack. */
+  /**
+   * Layer band for z-index claiming. Task-detail peers (including Quick Chat) interleave by
+   * interaction; unrelated utilities use the global floating stack.
+   */
   layer?: "utility" | "task-detail";
   // FNXC:FloatingWindow 2026-07-11-11:30: accessible name for the dialog overlay so headerless windows (e.g. artifact viewers with their own header chrome) stay queryable/announcable by label.
   ariaLabel?: string;
@@ -213,8 +216,10 @@ export function FloatingWindow({
   const claimFrontZ = useCallback(() => (layer === "task-detail" ? nextTaskDetailFloatingZ() : nextFloatingZ()), [layer]);
   const readCurrentZ = useCallback(() => (layer === "task-detail" ? currentTaskDetailFloatingZ() : currentFloatingZ()), [layer]);
   /*
-  FNXC:TaskPopupLayer 2026-07-04-18:36:
-  Task-detail popups intentionally claim the lower board/task-detail band, while utility FloatingWindow callers keep the higher global stack. This preserves raise/focus among multiple task popups without making ordinary board popups cover utility surfaces like Terminal or Quick Chat.
+  FNXC:TaskPopupLayer 2026-07-17-15:55:
+  Task-detail popups and Quick Chat intentionally claim the same board/task-detail interaction
+  band, so either may rise above the other on pointer/focus. Other utility FloatingWindow callers
+  retain the higher global stack; only Chat opts into this task-popup peer contract.
   */
   const [zIndex, setZIndex] = useState<number>(() => claimFrontZ());
   const panelRef = useRef<HTMLDivElement | null>(null);

@@ -147,15 +147,12 @@ function expectCssRuleNotToContain(section: string, selectorFragment: string, de
 
 function expectHeaderActionsControlCenterline(container: HTMLElement, expected: {
   menu?: boolean;
-  size?: boolean;
 }) {
   const actions = container.querySelector(".card-header-actions") as HTMLElement;
   expect(actions).toBeTruthy();
   expect(getComputedStyle(actions).alignItems).toBe("center");
 
   const menu = actions.querySelector(".card-menu-btn") as HTMLElement | null;
-  const sizeBadge = actions.querySelector(".card-size-badge") as HTMLElement | null;
-
   if (expected.menu) {
     expect(menu).toBeTruthy();
     const menuStyles = getComputedStyle(menu!);
@@ -167,17 +164,37 @@ function expectHeaderActionsControlCenterline(container: HTMLElement, expected: 
   } else {
     expect(menu).toBeNull();
   }
+}
 
-  if (expected.size) {
-    expect(sizeBadge).toBeTruthy();
-    const sizeStyles = getComputedStyle(sizeBadge!);
-    expect(sizeStyles.display).toBe("inline-flex");
-    expect(sizeStyles.alignItems).toBe("center");
-    expect(sizeStyles.lineHeight).toBe("1");
-    expect(actions.contains(sizeBadge)).toBe(true);
-    expect(sizeBadge!.closest(".card-header-badges")).toBeNull();
-  } else {
+function expectSizeBadgeAfterTaskId(container: HTMLElement, expected: boolean) {
+  const header = container.querySelector(".card-header") as HTMLElement;
+  const cardId = container.querySelector(".card-id") as HTMLElement;
+  const headerBadges = container.querySelector(".card-header-badges") as HTMLElement | null;
+  const actions = container.querySelector(".card-header-actions") as HTMLElement | null;
+  const sizeBadge = container.querySelector(".card-size-badge") as HTMLElement | null;
+
+  expect(header).toBeTruthy();
+  expect(cardId).toBeTruthy();
+  if (!expected) {
     expect(sizeBadge).toBeNull();
+    return;
+  }
+  expect(sizeBadge).toBeTruthy();
+
+  const sizeStyles = getComputedStyle(sizeBadge!);
+  expect(sizeStyles.display).toBe("inline-flex");
+  expect(sizeStyles.alignItems).toBe("center");
+  expect(sizeStyles.lineHeight).toBe("1");
+  expect(sizeBadge!.parentElement).toBe(header);
+  expect(cardId.nextElementSibling).toBe(sizeBadge);
+  expect(actions?.contains(sizeBadge)).toBe(false);
+  expect(sizeBadge!.closest(".card-header-badges")).toBeNull();
+  expect(container.querySelectorAll(".card-size-badge")).toHaveLength(1);
+
+  if (headerBadges) {
+    expect(sizeBadge!.compareDocumentPosition(headerBadges) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  } else {
+    expect(sizeBadge!.nextElementSibling).toBe(actions);
   }
 }
 
@@ -209,6 +226,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     container = render(
       <TaskCard
         task={makeTask({
+          status: "executing" as Task["status"],
           priority: "urgent" as Task["priority"],
           executionMode: "fast",
           noCommitsExpected: true,
@@ -253,7 +271,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(container.querySelector(".card-header-actions")).toBeNull();
   });
 
-  it("keeps a fast-mode size badge in the right-aligned header actions instead of an orphaned wrapped row", () => {
+  it("places a fast-mode size badge after the task id before wrapping header badges", () => {
     const { container: sizedContainer } = render(
       <TaskCard
         task={makeTask({
@@ -291,9 +309,8 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(actions).toBeTruthy();
     expect(sizeBadge).toBeTruthy();
     expect(fastBadge).toBeTruthy();
-    expect(actions.contains(sizeBadge)).toBe(true);
+    expectSizeBadgeAfterTaskId(sizedContainer, true);
     expect(headerBadges.contains(fastBadge)).toBe(true);
-    expect(sizeBadge.closest(".card-header-badges")).toBeNull();
     expect(actions.parentElement).toBe(header);
     expect(headerBadges.parentElement).toBe(header);
 
@@ -306,7 +323,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectSharedHeaderBaseline(sizedContainer);
   });
 
-  it("aligns an in-progress card id with three-dot and size actions while badges are present", () => {
+  it("aligns an in-progress card id, adjacent size badge, and three-dot actions while badges are present", () => {
     const { container: alignedContainer } = render(
       <TaskCard
         task={makeTask({
@@ -326,15 +343,13 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
     const headerBadges = alignedContainer.querySelector(".card-header-badges") as HTMLElement;
     const actions = alignedContainer.querySelector(".card-header-actions") as HTMLElement;
-    const sizeBadge = alignedContainer.querySelector(".card-size-badge") as HTMLElement;
 
     expect(headerBadges).toBeTruthy();
     expect(getComputedStyle(headerBadges).alignItems).toBe("center");
     expect(getComputedStyle(headerBadges).minHeight).toMatch(resolvedChipHeightPattern);
     expect(alignedContainer.querySelector(".card-send-back")).toBeNull();
     expect(actions.querySelector(".card-menu-btn")).toBeTruthy();
-    expect(actions.contains(sizeBadge)).toBe(true);
-    expect(sizeBadge.closest(".card-header-badges")).toBeNull();
+    expectSizeBadgeAfterTaskId(alignedContainer, true);
     expectSharedHeaderBaseline(alignedContainer);
   });
 
@@ -358,17 +373,15 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     const actions = triageContainer.querySelector(".card-header-actions") as HTMLElement;
-    const sizeBadge = triageContainer.querySelector(".card-size-badge") as HTMLElement;
 
     expect(triageContainer.querySelector(".card-header-badges")).toBeNull();
     expect(actions.querySelector(".card-edit-btn")).toBeTruthy();
     expect(actions.querySelector(".card-delete-btn")).toBeTruthy();
-    expect(actions.contains(sizeBadge)).toBe(true);
-    expect(sizeBadge.closest(".card-header-badges")).toBeNull();
+    expectSizeBadgeAfterTaskId(triageContainer, true);
     expectSharedHeaderBaseline(triageContainer);
   });
 
-  it("keeps three-dot menu and size controls on one header-actions centerline across card states", () => {
+  it("keeps adjacent size badges and trailing three-dot controls aligned across card states", () => {
     const { container: inProgressContainer } = render(
       <TaskCard
         task={makeTask({
@@ -384,12 +397,13 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(inProgressContainer);
-    expectHeaderActionsControlCenterline(inProgressContainer, { menu: true, size: true });
+    expectHeaderActionsControlCenterline(inProgressContainer, { menu: true });
+    expectSizeBadgeAfterTaskId(inProgressContainer, true);
 
     /*
      * FNXC:BoardCardActions 2026-07-16-02:24:
      * FN-8080 preserves the FN-8035 done-card contract: Archive/Revert live in the three-dot
-     * card-menu-btn TaskContextMenu, so header actions expose menu + size only.
+     * card-menu-btn TaskContextMenu, so the trailing header actions expose the menu only.
      */
     const { container: doneContainer } = render(
       <TaskCard
@@ -406,7 +420,8 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(doneContainer);
-    expectHeaderActionsControlCenterline(doneContainer, { menu: true, size: true });
+    expectHeaderActionsControlCenterline(doneContainer, { menu: true });
+    expectSizeBadgeAfterTaskId(doneContainer, true);
 
     const { container: triageContainer } = render(
       <TaskCard
@@ -424,7 +439,8 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(triageContainer);
-    expectHeaderActionsControlCenterline(triageContainer, { menu: true, size: true });
+    expectHeaderActionsControlCenterline(triageContainer, { menu: true });
+    expectSizeBadgeAfterTaskId(triageContainer, true);
 
     const { container: menuAbsentContainer } = render(
       <TaskCard
@@ -440,7 +456,8 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(menuAbsentContainer);
-    expectHeaderActionsControlCenterline(menuAbsentContainer, { size: true });
+    expectHeaderActionsControlCenterline(menuAbsentContainer, {});
+    expectSizeBadgeAfterTaskId(menuAbsentContainer, true);
 
     const { container: sizeAbsentContainer } = render(
       <TaskCard
@@ -458,6 +475,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
     expectSharedHeaderBaseline(sizeAbsentContainer);
     expectHeaderActionsControlCenterline(sizeAbsentContainer, { menu: true });
+    expectSizeBadgeAfterTaskId(sizeAbsentContainer, false);
 
     const { container: awaitingInputContainer } = render(
       <TaskCard
@@ -476,7 +494,8 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
     expect(awaitingInputContainer.querySelector(".card-answer-questions-btn")).toBeTruthy();
     expectSharedHeaderBaseline(awaitingInputContainer);
-    expectHeaderActionsControlCenterline(awaitingInputContainer, { menu: true, size: true });
+    expectHeaderActionsControlCenterline(awaitingInputContainer, { menu: true });
+    expectSizeBadgeAfterTaskId(awaitingInputContainer, true);
   });
 
   it("keeps the centered-id nudge and mobile header rhythm tokenized with the badge-wrap contract", () => {
@@ -496,7 +515,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(actionsRule).toContain("overflow: visible;");
     expect(actionsRule).toContain("transform: translateY(calc(var(--space-xs) / 4));");
     expect(actionsRule).not.toMatch(/translateY\(\d/);
-    expect(loadedCss).toContain(".card-id,\n  .card-header-badges,\n  .card-header-actions");
+    expect(loadedCss).toContain(".card-id,\n  .card-size-badge,\n  .card-header-badges,\n  .card-header-actions");
     expect(loadedCss).toContain("min-height: var(--card-chip-height-mobile);");
   });
 
@@ -510,7 +529,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectCssRuleToContain(mobileSection, ".card-header-actions", "overflow: visible;");
     expectCssRuleToContain(mobileSection, ".card-header-actions", "align-items: center;");
     expectCssRuleToContain(mobileSection, ".card-header-actions", "gap: calc(var(--space-xs) / 2);");
-    // Task id and right cluster share the same locked mobile chip row so ⋯/size sit on the FN-#### baseline.
+    // Task id, its adjacent size chip, and trailing actions share the locked mobile chip row.
     expectCssRuleToContain(mobileSection, ".card-id", "height: var(--card-chip-height-mobile);");
     expectCssRuleToContain(mobileSection, ".card-id", "max-height: var(--card-chip-height-mobile);");
     expect(mobileSection).not.toMatch(/\.card-send-back\s*\{/);

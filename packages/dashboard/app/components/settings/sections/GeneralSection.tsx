@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type WorkflowDefinition } from "@fusion/core";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../../core/src/mobile-nav-primary-items";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -26,6 +26,8 @@ export interface GeneralSectionProps extends SectionBaseProps {
     prefixError: string | null;
     setPrefixError: (value: string | null) => void;
     onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
+    /** Updates the live footer without persisting the draft until Settings is saved. */
+    onMobileNavPrimaryItemsChange?: (items: string[]) => void;
 }
 /*
 FNXC:SettingsStyling 2026-07-15-17:35:
@@ -39,7 +41,7 @@ Bespoke rows no longer render their help as inline `<small>` paragraphs. Their c
 FNXC:SourceControl 2026-07-15-20:30:
 GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
 */
-export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     useEffect(() => {
@@ -293,45 +295,52 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       />
       {/*
         FNXC:Navigation 2026-07-17-00:00:
-        The Settings control exposes only the fixed seven-item quick-action universe. Checkboxes choose
-        destinations and the adjacent controls preserve their selected order; core still sanitizes persisted
-        values so unselected destinations remain reachable through More and its trailing tab cannot be removed.
+        Render the selected quick actions in persisted order so move controls visibly reorder their rows.
+        The add picker exposes every eligible destination, while each mutation updates the live footer before
+        Settings is saved; More, Terminal/scripts, shell controls, and plugin views remain unavailable here.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
         label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in the More menu.")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.")}
         scope="project"
       >
         <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}>
-          {MOBILE_NAV_SELECTABLE_ITEMS.map((item) => {
-            const selectedItems = Array.isArray(form.mobileNavPrimaryItems)
-              ? form.mobileNavPrimaryItems
-              : DEFAULT_MOBILE_NAV_PRIMARY_ITEMS;
-            const selectedIndex = selectedItems.indexOf(item);
-            const selected = selectedIndex >= 0;
-            const label = t(`nav.${item === "command-center" ? "commandCenter" : item}`, item);
-            const updateItems = (nextItems: string[]) => setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));
-            return (
-              <div key={item}>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={!selected && selectedItems.length >= MAX_MOBILE_NAV_PRIMARY_ITEMS}
-                    onChange={(event) => updateItems(event.target.checked ? [...selectedItems, item] : selectedItems.filter((selectedItem) => selectedItem !== item))}
-                  />
+          {(() => {
+            const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
+              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_SELECTABLE_ITEMS[number] => MOBILE_NAV_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_SELECTABLE_ITEMS[number]))
+              : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
+            const updateItems = (nextItems: string[]) => {
+              setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));
+              onMobileNavPrimaryItemsChange?.(nextItems);
+            };
+            const availableItems = MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !selectedItems.includes(item));
+            return <>
+              {selectedItems.map((item, selectedIndex) => {
+                const label = t(MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS[item], item);
+                const move = (offset: number) => {
+                  const nextItems = [...selectedItems];
+                  [nextItems[selectedIndex], nextItems[selectedIndex + offset]] = [nextItems[selectedIndex + offset], nextItems[selectedIndex]];
+                  updateItems(nextItems);
+                };
+                return <div key={item} className="settings-field-label-row">
                   <span>{label}</span>
-                </label>
-                {selected && (
-                  <>
-                    <button type="button" className="btn btn-icon" disabled={selectedIndex === 0} aria-label={t("settings.general.moveNavItemEarlier", "Move {{item}} earlier", { item: label })} onClick={() => updateItems(selectedItems.map((selectedItem, index) => index === selectedIndex - 1 ? item : index === selectedIndex ? selectedItems[index - 1] : selectedItem))}>↑</button>
-                    <button type="button" className="btn btn-icon" disabled={selectedIndex === selectedItems.length - 1} aria-label={t("settings.general.moveNavItemLater", "Move {{item}} later", { item: label })} onClick={() => updateItems(selectedItems.map((selectedItem, index) => index === selectedIndex + 1 ? item : index === selectedIndex ? selectedItems[index + 1] : selectedItem))}>↓</button>
-                  </>
-                )}
-              </div>
-            );
-          })}
+                  <span>
+                    <button type="button" className="btn btn-icon" disabled={selectedIndex === 0} aria-label={t("settings.general.moveNavItemEarlier", "Move {{item}} earlier", { item: label })} onClick={() => move(-1)}>↑</button>
+                    <button type="button" className="btn btn-icon" disabled={selectedIndex === selectedItems.length - 1} aria-label={t("settings.general.moveNavItemLater", "Move {{item}} later", { item: label })} onClick={() => move(1)}>↓</button>
+                    <button type="button" className="btn btn-icon" aria-label={t("settings.general.removeNavItem", "Remove {{item}}", { item: label })} onClick={() => updateItems(selectedItems.filter((selectedItem) => selectedItem !== item))}>×</button>
+                  </span>
+                </div>;
+              })}
+              <label className="checkbox-label">
+                <span>{t("settings.general.addNavItem", "Add quick action")}</span>
+                <select id="mobileNavPrimaryItems" value="" disabled={selectedItems.length >= MAX_MOBILE_NAV_PRIMARY_ITEMS} onChange={(event) => { if (event.target.value) updateItems([...selectedItems, event.target.value]); }}>
+                  <option value="">{t("settings.general.selectNavItem", "Choose a destination")}</option>
+                  {availableItems.map((item) => <option key={item} value={item}>{t(MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS[item], item)}</option>)}
+                </select>
+              </label>
+            </>;
+          })()}
         </div>
       </SettingsFieldRow>
       {/*

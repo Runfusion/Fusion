@@ -41,12 +41,15 @@ vi.mock("../cli-package-version.js", async (importOriginal) => ({
 
 class MockStore extends EventEmitter {
   logEntry: Mock;
+  getTask: Mock;
   getSettings: Mock;
   getGlobalSettingsStore: Mock;
 
   constructor() {
     super();
     this.logEntry = vi.fn().mockResolvedValue(undefined);
+    // Null preserves the event snapshot unless a test supplies a newer authoritative row.
+    this.getTask = vi.fn().mockResolvedValue(null);
     this.getSettings = vi.fn().mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "ghp_test" });
     this.getGlobalSettingsStore = vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) }));
   }
@@ -501,6 +504,84 @@ describe("GitHubTrackingCommentService", () => {
     expect(body).toContain("✅ Done");
     expect(body).not.toContain("Target release");
     expect(body).not.toContain("Current version");
+  });
+
+  it("recovers a landing commit from the authoritative row when the done event is stale", async () => {
+    service.start();
+    const snapshot = createTask({ mergeDetails: { prNumber: 7 } });
+    store.getTask.mockResolvedValueOnce(createTask({
+      mergeDetails: { commitSha: "abcdef1234567890", prNumber: 7 },
+    }));
+
+    store.emit("task:moved", { task: snapshot, from: "in-progress", to: "done" });
+    await flushAsync();
+
+    expect(store.getTask).toHaveBeenCalledWith("FN-1");
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain(
+      "Commit: [abcdef1](https://github.com/owner/repo/commit/abcdef1234567890)",
+    );
+  });
+
+  it("keeps an event-snapshot commit link when the authoritative row is unavailable", async () => {
+    service.start();
+    store.getTask.mockRejectedValueOnce(new Error("store unavailable"));
+
+    store.emit("task:moved", {
+      task: createTask({ mergeDetails: { commitSha: "abcdef1234567890" } }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain(
+      "Commit: [abcdef1](https://github.com/owner/repo/commit/abcdef1234567890)",
+    );
+  });
+
+  it("keeps an event-snapshot commit link when the authoritative row is missing", async () => {
+    service.start();
+    store.getTask.mockResolvedValueOnce(null);
+
+    store.emit("task:moved", {
+      task: createTask({ mergeDetails: { commitSha: "abcdef1234567890" } }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain(
+      "Commit: [abcdef1](https://github.com/owner/repo/commit/abcdef1234567890)",
+    );
+  });
+
+  it("posts a no-op landing without a Commit line", async () => {
+    service.start();
+    store.getTask.mockResolvedValueOnce(createTask({ mergeDetails: { noOpMerge: true } }));
+
+    store.emit("task:moved", {
+      task: createTask({ mergeDetails: { noOpMerge: true } }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).not.toContain("Commit:");
+  });
+
+  it("does not refetch or duplicate a comment for in-progress and same-column transitions", async () => {
+    service.start();
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    store.emit("task:moved", { task: createTask(), from: "done", to: "done" });
+    await flushAsync();
+
+    expect(store.getTask).not.toHaveBeenCalled();
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain("🚧 In progress");
   });
 
   it("writes success logs", async () => {

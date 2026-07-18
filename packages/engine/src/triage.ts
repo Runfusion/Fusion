@@ -2339,7 +2339,12 @@ export class TriageProcessor {
           startedAt,
           completedAt,
         });
-        await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", diagnostic);
+        /*
+        FNXC:TriagePlanReview 2026-07-17-14:04:
+        A requested Plan Review revision is normal replan flow, not a terminal workflow-step
+        failure. Log only the dedicated revision action here; the pre-merge failed action is
+        reserved for terminal failures such as RetryStormError.
+        */
         await this.store.logEntry(
           task.id,
           "AI spec revision requested",
@@ -2502,7 +2507,12 @@ export class TriageProcessor {
         startedAt,
         completedAt,
       });
-      await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", review.review);
+      /*
+      FNXC:TriagePlanReview 2026-07-17-14:04:
+      Reviewer REVISE and RETHINK outcomes re-enter planning through the same normal revision
+      flow as deterministic evidence gaps. Their single human-facing log is the revision action;
+      retain the failed workflow-result projection for replan/recovery without emitting a failed log.
+      */
       await this.clearPlanReviewRecoveryBudget(task);
       const reviseFeedback = review.review || review.summary || "(no feedback captured)";
       await this.store.logEntry(

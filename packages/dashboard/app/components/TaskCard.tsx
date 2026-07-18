@@ -147,7 +147,14 @@ async function getAgentName(agentId: string, projectId?: string): Promise<string
  * possible follow-up (see FN-7516 delivery notes) but is no longer required
  * for correctness.
  */
-const workflowOversightEffectiveCache = new Map<string, PlannerOversightLevel | undefined>();
+type WorkflowOversightResolution = {
+  level: PlannerOversightLevel | undefined;
+  resolved: boolean;
+  /** FNXC:PlannerOversight 2026-07-17-15:50: Cache identity prevents an old workflow's active tier leaking during a prop switch. */
+  workflowCacheKey?: string;
+};
+
+const workflowOversightEffectiveCache = new Map<string, WorkflowOversightResolution>();
 const workflowOversightInflight = new Map<string, Promise<void>>();
 
 /** @internal Test helper to reset the workflow-effective-oversight cache between tests */
@@ -160,29 +167,35 @@ function getWorkflowOversightCacheKey(workflowId: string, projectId?: string): s
   return `${projectId ?? "default"}::${workflowId}`;
 }
 
+function normalizeWorkflowId(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
 function isPlannerOversightLevelValue(value: unknown): value is PlannerOversightLevel {
   return typeof value === "string" && (PLANNER_OVERSIGHT_LEVELS as readonly string[]).includes(value);
 }
 
 /** Fetch (with in-flight de-dup) and cache the workflow's effective
  *  `plannerOversightLevel` setting value for a given `(workflowId, projectId)`.
- *  Never throws — an error caches `undefined` so the resolver falls through to
- *  the schema default rather than retrying every render. */
-async function loadWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<PlannerOversightLevel | undefined> {
+ *  Never throws; failed or malformed responses stay explicitly unresolved so
+ *  callers cannot mistake an unknown inherited tier for the schema default. */
+async function loadWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<WorkflowOversightResolution> {
   const key = getWorkflowOversightCacheKey(workflowId, projectId);
-  if (workflowOversightEffectiveCache.has(key)) {
-    return workflowOversightEffectiveCache.get(key);
-  }
+  const cached = workflowOversightEffectiveCache.get(key);
+  if (cached) return cached;
 
   let inflight = workflowOversightInflight.get(key);
   if (!inflight) {
     inflight = fetchWorkflowSettingValues(workflowId, projectId)
       .then((payload) => {
         const raw = payload.effective?.plannerOversightLevel;
-        workflowOversightEffectiveCache.set(key, isPlannerOversightLevelValue(raw) ? raw : undefined);
+        workflowOversightEffectiveCache.set(key, isPlannerOversightLevelValue(raw)
+          ? { level: raw, resolved: true }
+          : { level: undefined, resolved: false });
       })
       .catch(() => {
-        workflowOversightEffectiveCache.set(key, undefined);
+        workflowOversightEffectiveCache.set(key, { level: undefined, resolved: false });
       })
       .finally(() => {
         workflowOversightInflight.delete(key);
@@ -190,7 +203,7 @@ async function loadWorkflowOversightEffectiveLevel(workflowId: string, projectId
     workflowOversightInflight.set(key, inflight);
   }
   await inflight;
-  return workflowOversightEffectiveCache.get(key);
+  return workflowOversightEffectiveCache.get(key) ?? { level: undefined, resolved: false };
 }
 
 function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
@@ -1022,65 +1035,56 @@ function TaskCardComponent({
   }, [agentsMap, task.assignedAgentId, projectId]);
 
   /*
-   * FNXC:PlannerOversight 2026-07-04-16:00:
-   * Fetch (and cache, see loadWorkflowOversightEffectiveLevel above) the
-   * workflow's effective plannerOversightLevel setting so the card can
-   * resolve the TRUE effective oversight tier for tasks with no per-task
-   * override, rather than always falling through to the schema default
-   * (FN-7516 code-review fix). `Task` has no `workflowId` field (workflow
-   * selection lives in the separate `task_workflow_selection` table, not on
-   * the task payload — verified against packages/core/src/types.ts), so this
-   * reads the workflow id from the already-existing `workflowBadge` prop
-   * (populated by Column/WorktreeGroup board callers). Only fires when a
-   * workflowBadge.workflowId is present; synchronous cache hits skip the
-   * state churn entirely. Surfaces that don't pass `workflowBadge` (dock,
-   * MainContent) fall back to the resolver's schema default immediately
-   * (treated as "resolved" — there is no pending fetch to gate on for those
-   * surfaces).
-   *
-   * Second code-review fix (this pass): while the workflow-tier fetch is
-   * in flight, `workflowOversightEffectiveLevel` was `undefined`, which the
-   * resolver treats identically to "no workflow setting exists" and falls
-   * back to `DEFAULT_PLANNER_OVERSIGHT_LEVEL` ("autonomous"). That rendered
-   * a wrong default badge for tasks inheriting a workflow explicitly
-   * configured to Off/Observe/Steer, for the whole window before the fetch
-   * resolved (and forever on fetch failure, since failures also cache
-   * `undefined`). Track resolution explicitly via `workflowOversightResolved`
-   * and gate the badge (`showOversightBadge` below) so nothing renders from
-   * the unresolved workflow tier — only a task-level override (known
-   * synchronously from the task payload) can show a badge before the
-   * workflow tier is known.
+   * FNXC:PlannerOversight 2026-07-17-15:50:
+   * FN-8251 requires per-workflow cards to resolve inherited oversight with
+   * their trusted selected `planningWorkflowId` when aggregate-only
+   * `workflowBadge` metadata is absent. Prefer a task-specific aggregate ID;
+   * normalize blank IDs; and fail closed for identity-less, pending, failed,
+   * or malformed inherited resolution. The Eye is allowed only when effective
+   * oversight is positively known active, while a valid task override remains
+   * authoritative without a workflow fetch.
    */
-  const workflowIdForOversight = workflowBadge?.workflowId;
-  const [workflowOversightState, setWorkflowOversightState] = useState<{ level: PlannerOversightLevel | undefined; resolved: boolean }>(() => {
-    if (!workflowIdForOversight) return { level: undefined, resolved: true };
-    const key = getWorkflowOversightCacheKey(workflowIdForOversight, projectId);
-    return workflowOversightEffectiveCache.has(key)
-      ? { level: workflowOversightEffectiveCache.get(key), resolved: true }
-      : { level: undefined, resolved: false };
+  const workflowIdForOversight = normalizeWorkflowId(workflowBadge?.workflowId)
+    ?? normalizeWorkflowId(planningWorkflowId);
+  const workflowOversightCacheKey = workflowIdForOversight
+    ? getWorkflowOversightCacheKey(workflowIdForOversight, projectId)
+    : undefined;
+  const [workflowOversightState, setWorkflowOversightState] = useState<WorkflowOversightResolution>(() => {
+    if (!workflowOversightCacheKey) return { level: undefined, resolved: false };
+    return {
+      ...(workflowOversightEffectiveCache.get(workflowOversightCacheKey) ?? { level: undefined, resolved: false }),
+      workflowCacheKey: workflowOversightCacheKey,
+    };
   });
   useEffect(() => {
-    if (!workflowIdForOversight) {
-      setWorkflowOversightState({ level: undefined, resolved: true });
+    if (!workflowIdForOversight || !workflowOversightCacheKey) {
+      setWorkflowOversightState({ level: undefined, resolved: false });
       return;
     }
 
     const workflowId = workflowIdForOversight;
-    const key = getWorkflowOversightCacheKey(workflowId, projectId);
-    if (workflowOversightEffectiveCache.has(key)) {
-      setWorkflowOversightState({ level: workflowOversightEffectiveCache.get(key), resolved: true });
+    const key = workflowOversightCacheKey;
+    const cached = workflowOversightEffectiveCache.get(key);
+    if (cached) {
+      setWorkflowOversightState({ ...cached, workflowCacheKey: key });
       return;
     }
 
-    setWorkflowOversightState({ level: undefined, resolved: false });
+    setWorkflowOversightState({ level: undefined, resolved: false, workflowCacheKey: key });
     let cancelled = false;
-    void loadWorkflowOversightEffectiveLevel(workflowId, projectId).then((level) => {
-      if (!cancelled) setWorkflowOversightState({ level, resolved: true });
+    void loadWorkflowOversightEffectiveLevel(workflowId, projectId).then((resolution) => {
+      if (!cancelled) setWorkflowOversightState({ ...resolution, workflowCacheKey: key });
     });
     return () => { cancelled = true; };
-  }, [workflowIdForOversight, projectId]);
-  const workflowOversightEffectiveLevel = workflowOversightState.level;
-  const workflowOversightResolved = workflowOversightState.resolved;
+  }, [workflowIdForOversight, workflowOversightCacheKey, projectId]);
+  // FNXC:PlannerOversight 2026-07-17-15:50: Switching a memoized card between
+  // workflows must fail closed in the render before its effect resets state;
+  // an active tier resolved for the prior workflow cannot authorize this Eye.
+  const currentWorkflowOversightState = workflowOversightState.workflowCacheKey === workflowOversightCacheKey
+    ? workflowOversightState
+    : { level: undefined, resolved: false };
+  const workflowOversightEffectiveLevel = currentWorkflowOversightState.level;
+  const workflowOversightResolved = currentWorkflowOversightState.resolved;
 
   // Auto-focus and auto-resize description textarea when entering edit mode
   useEffect(() => {
@@ -1696,6 +1700,23 @@ function TaskCardComponent({
     (hasTaskOversightOverride || workflowOversightResolved) &&
     effectiveOversightLevel !== "off" &&
     !isInheritedDefaultOversightLevel;
+
+  /*
+   * FNXC:PlannerOversight 2026-07-18-00:00:
+   * FN-8239 requires the transient Eye badge and its header-wrapper gate to
+   * share the freshly-resolved effective level used by the level badge and
+   * Task Detail trigger. An inherited task with an unresolved workflow tier
+   * must wait for that fetch; a stale non-off snapshot must not guess a level,
+   * show an icon, or leave an empty header-badge shell in that window.
+   */
+  const plannerOverseerState = task.plannerOverseerState;
+  const showPlannerOverseerStateBadge = Boolean(
+    plannerOverseerState
+    && plannerOverseerState.state !== "idle"
+    && plannerOverseerState.oversightLevel !== "off"
+    && (hasTaskOversightOverride || workflowOversightResolved)
+    && effectiveOversightLevel !== "off",
+  );
 
   /*
    * FNXC:PlannerOversight 2026-07-04-HH:MM:
@@ -2886,7 +2907,7 @@ function TaskCardComponent({
     || Boolean(hasTaskAgeStaleness && taskAgeStalenessCopy)
     || Boolean(isStuck && (isPaused || !task.status || task.status === "queued"))
     || Boolean(Array.isArray((task as TaskWithBranchProgress).branchProgress) && (task as TaskWithBranchProgress).branchProgress!.length > 0)
-    || Boolean(task.plannerOverseerState && task.plannerOverseerState.state !== "idle")
+    || showPlannerOverseerStateBadge
     || Boolean(showStalledReview && stalledReview)
     || Boolean(livePrInfo || liveIssueInfo)
     || Boolean(task.gitlabTracking?.item)
@@ -2980,10 +3001,19 @@ function TaskCardComponent({
       )}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
+        {/*
+        FNXC:TaskCardLayout 2026-07-17-13:05 (FN-8234):
+        The size chip reads immediately after the task id and before the wrapping middle badge group, superseding FN-7846's former last-item placement in the right actions cluster. Preserve FN-7837's non-wrapping outer header: extra status and priority badges wrap only in the middle group.
+        */}
+        {task.size && (
+          <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
+            {task.size}
+          </span>
+        )}
         {hasHeaderBadges && (
           /*
           FNXC:TaskCardLayout 2026-07-11-00:00:
-          FN-7837 keeps the task id and right-aligned size/actions cluster in the same non-wrapping header row. Extra header badges (fast-mode, priority, oversight, decision-only, PR/GitHub, and status chips) wrap inside this middle group instead of pushing the size chip onto a misaligned second row on desktop or mobile.
+          FN-7837 keeps the task id, size chip, and right-aligned actions cluster in the same non-wrapping header row. Extra header badges (fast-mode, priority, oversight, decision-only, PR/GitHub, and status chips) wrap inside this middle group instead of pushing header metadata onto a misaligned second row on desktop or mobile.
           */
           <div className="card-header-badges" data-testid="card-header-badges">
         {isPaused && (
@@ -3141,15 +3171,13 @@ function TaskCardComponent({
           The engine clears this runtime at the source, but a client payload must never leak
           the Eye badge for an oversight-off in-progress or in-review task.
         */}
-        {task.plannerOverseerState
-          && task.plannerOverseerState.state !== "idle"
-          && task.plannerOverseerState.oversightLevel !== "off" && (
+        {showPlannerOverseerStateBadge && plannerOverseerState && (
           <span
             className="card-status-badge card-planner-overseer-state"
-            title={plannerOverseerBadgeTooltip(task.plannerOverseerState, t)}
-            aria-label={plannerOverseerStateLabel(task.plannerOverseerState.state, t)}
+            title={plannerOverseerBadgeTooltip(plannerOverseerState, t)}
+            aria-label={plannerOverseerStateLabel(plannerOverseerState.state, t)}
             data-testid="planner-overseer-state-badge"
-            data-planner-overseer-state={task.plannerOverseerState.state}
+            data-planner-overseer-state={plannerOverseerState.state}
           >
             <Eye aria-hidden="true" />
           </span>
@@ -3362,15 +3390,6 @@ function TaskCardComponent({
             >
               <MoreHorizontal size={14} />
             </button>
-          )}
-          {/*
-          FNXC:TaskCardLayout 2026-07-11-00:00 (FN-7846):
-          The size badge must be the last item in the right-aligned header-actions cluster so its right edge uses the card's `--card-padding`, matching the top margin on desktop and mobile while preserving the FN-7837 no-orphaned-second-row grouping.
-          */}
-          {task.size && (
-            <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
-              {task.size}
-            </span>
           )}
         </div>
         )}

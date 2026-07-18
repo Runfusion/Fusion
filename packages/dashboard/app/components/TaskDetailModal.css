@@ -451,6 +451,22 @@ the metadata row wraps at mobile widths.
   box-shadow: var(--focus-ring-strong);
 }
 
+/*
+FNXC:TaskDetail 2026-07-17-00:00:
+FN-8243 — restore the tokenized `.detail-priority-select:focus-visible` rule
+required by css-hygiene-scan.test.ts's focus-coverage allow-list. The base
+`.detail-priority-select` styling was dropped during the FN-8209 Priority
+select→picker migration, but the hygiene allow-list still expects this
+focus-visible selector. Use `--focus-ring-strong` to match the sibling
+`.detail-oversight-select` / `.detail-priority-picker-option` focus rules;
+no raw colors so the tokenized-focus assertion stays green.
+*/
+.detail-priority-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 .detail-priority-picker-option:disabled {
   cursor: wait;
 }

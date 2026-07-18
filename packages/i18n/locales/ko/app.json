@@ -1166,29 +1166,6 @@
     "retryConnection": "연결 재시도",
     "retrying": "재시도 중…"
   },
-  "backgroundTasks": {
-    "dismissButton": "닫기",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "백그라운드 작업",
-    "status": {
-      "failed": "실패",
-      "generating": "생성 중...",
-      "needsInput": "입력 필요"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "마일스톤 인터뷰",
-      "missionInterview": "미션 인터뷰",
-      "planning": "계획",
-      "sliceInterview": "슬라이스 인터뷰",
-      "subtask": "하위 작업 분류"
-    }
-  },
   "board": {
     "archived": "보관됨",
     "done": "완료",
@@ -5657,7 +5634,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "입력 대기 중이거나 실패한 AI 세션",
     "resume": "재개",
-    "retry": "재시도"
+    "retry": "재시도",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5909,7 +5890,10 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "모바일 하단 빠른 작업",
-      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 선택하지 않은 목적지는 더보기 메뉴에 유지됩니다.",
+      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 가능한 대상을 추가하세요. 선택하지 않은 항목은 더보기에 유지됩니다.",
+      "addNavItem": "빠른 작업 추가",
+      "selectNavItem": "대상 선택",
+      "removeNavItem": "{{item}} 제거",
       "moveNavItemEarlier": "{{item}} 앞으로 이동",
       "moveNavItemLater": "{{item}} 뒤로 이동"
     },

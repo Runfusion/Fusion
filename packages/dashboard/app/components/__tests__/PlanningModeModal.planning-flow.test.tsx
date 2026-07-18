@@ -66,6 +66,17 @@ import {
 const mockAddToast = vi.fn();
 const mockCopyTextToClipboard = vi.fn();
 
+/*
+FNXC:PlanningModeStreamHarness 2026-07-17-16:20:
+FN-8245 requires planning-stream test events to retain their asynchronous protocol
+boundary without depending on wall-clock timers. Queue one deterministic microtask
+so every question, summary, and error settles before the awaiting assertion runs,
+even when dashboard tests share loaded jsdom workers.
+*/
+function queuePlanningStreamEvent(callback: () => void): void {
+  queueMicrotask(callback);
+}
+
 vi.mock("../../hooks/useToast", () => ({
   useOptionalToast: () => null,
   useToast: () => ({
@@ -105,6 +116,29 @@ vi.mock("../../api", () => ({
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),
   refineTask: (...args: any[]) => mockRefineTask(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  /*
+  FNXC:PlanningModeSettings 2026-07-17-15:45:
+  FN-8245 keeps the clarification-settings dependency deterministic for every
+  planning interaction. The modal intentionally blocks Start Planning while
+  settings load, so this test double settles synchronously rather than making
+  each user-flow assertion depend on an arbitrary event-loop delay.
+  */
+  fetchGlobalSettings: vi.fn(() => {
+    const settled = {
+      then(onFulfilled: (settings: Record<string, never>) => unknown) {
+        onFulfilled({});
+        return settled;
+      },
+      catch() {
+        return settled;
+      },
+      finally(onFinally: () => unknown) {
+        onFinally();
+        return settled;
+      },
+    };
+    return settled;
+  }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
@@ -188,12 +222,15 @@ describe("PlanningModeModal", () => {
     mockUpdatePlanningSessionDraft.mockResolvedValue({ ok: true });
     mockStopPlanningGeneration.mockResolvedValue({ success: true });
 
-    // Default: simulate receiving a question after a brief delay
-    mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-      setTimeout(() => {
-        handlers.onQuestion?.(mockQuestion);
-      }, 10);
-      
+    // Default stream behavior belongs only to fresh sessions. Resumed sessions restore their
+    // persisted question and must not receive a synthetic fresh-session question.
+    mockConnectPlanningStream.mockImplementation((sessionId: string, _projectId: string | undefined, handlers: any) => {
+      if (sessionId === "session-123") {
+        queuePlanningStreamEvent(() => {
+          handlers.onQuestion?.(mockQuestion);
+        });
+      }
+
       return {
         close: vi.fn(),
         isConnected: vi.fn().mockReturnValue(true),
@@ -230,7 +267,7 @@ describe("PlanningModeModal", () => {
     it.each(["desktop", "mobile"] as const)("renders the mandatory deepening checkpoint before summary actions on %s", async (viewportMode) => {
       mockViewport(viewportMode);
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: PLANNING_DEEPEN_CHECKPOINT_ID,
             type: "multi_select",
@@ -247,7 +284,7 @@ describe("PlanningModeModal", () => {
               keyDeliverables: ["Preview deliverable one", "Preview deliverable two"],
             },
           });
-        }, 0);
+        });
         return { close: vi.fn() };
       });
 
@@ -284,7 +321,7 @@ describe("PlanningModeModal", () => {
       let streamHandlers: any;
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamHandlers = handlers;
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: PLANNING_DEEPEN_CHECKPOINT_ID,
             type: "multi_select",
@@ -294,7 +331,7 @@ describe("PlanningModeModal", () => {
               { id: "theme-ux", label: "UX and interaction details" },
             ],
           });
-        }, 0);
+        });
         return { close: vi.fn() };
       });
       mockRespondToPlanning.mockResolvedValue({ type: "question", data: null });
@@ -379,13 +416,13 @@ describe("PlanningModeModal", () => {
       mockViewport(viewportMode);
       mockStartPlanningStreaming.mockResolvedValueOnce({ sessionId: `session-fn-6977-live-${viewportMode}` });
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onSummary?.({
             title: "Live malformed summary",
             description: "Live Planning Mode summary omitted deliverable arrays",
             suggestedSize: "M",
           });
-        }, 10);
+        });
 
         return {
           close: vi.fn(),
@@ -412,7 +449,7 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
 
-      expect(screen.getByDisplayValue("Live Planning Mode summary omitted deliverable arrays")).toBeDefined();
+      expect(screen.getByText("Live Planning Mode summary omitted deliverable arrays")).toBeDefined();
       expect(screen.queryByText(/Something went wrong/i)).toBeNull();
       expect(screen.getByRole("button", { name: "Create Single Task" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeEnabled();
@@ -439,6 +476,7 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
+          clarificationEnabled: false,
         }, undefined);
       });
 
@@ -625,7 +663,7 @@ describe("PlanningModeModal", () => {
     it("allows Other-only answers for multi-select planning questions", async () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: "q-priorities",
             type: "multi_select",
@@ -635,7 +673,7 @@ describe("PlanningModeModal", () => {
               { id: "quality", label: "Quality" },
             ],
           });
-        }, 10);
+        });
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
@@ -665,7 +703,13 @@ describe("PlanningModeModal", () => {
       fireEvent.click(within(screen.getByTestId("planning-option-other")).getByRole("checkbox"));
       expect(continueButton).toBeDisabled();
 
-      const otherInput = screen.getByTestId("planning-other-input");
+      /*
+      FNXC:PlanningModeOptions 2026-07-17-15:55:
+      FN-8245 waits for the Other input after its toggle commits React state.
+      This preserves the user-visible invariant that Other opens an editable
+      input without assuming a same-tick DOM update under loaded jsdom workers.
+      */
+      const otherInput = await screen.findByTestId("planning-other-input");
       fireEvent.change(otherInput, { target: { value: "  Challenge the premise  " } });
       expect(continueButton).toBeEnabled();
       fireEvent.click(continueButton);
@@ -683,7 +727,7 @@ describe("PlanningModeModal", () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
       mockViewport("mobile");
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: "q-priorities",
             type: "multi_select",
@@ -693,7 +737,7 @@ describe("PlanningModeModal", () => {
               { id: "quality", label: "Quality" },
             ],
           });
-        }, 10);
+        });
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
@@ -740,14 +784,14 @@ describe("PlanningModeModal", () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
       mockViewport(viewportMode);
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: "q-confirm-scope",
             type: "confirm",
             question: "Proceed with this scope?",
             description: "Choose Yes, No, or write a different answer.",
           });
-        }, 10);
+        });
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
@@ -804,13 +848,13 @@ describe("PlanningModeModal", () => {
     it("clears confirm Other text when switching back to Yes or No", async () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.({
             id: "q-confirm-scope",
             type: "confirm",
             question: "Proceed with this scope?",
           });
-        }, 10);
+        });
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
@@ -1266,7 +1310,7 @@ describe("PlanningModeModal", () => {
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamAttempt += 1;
         if (streamAttempt === 1) {
-          setTimeout(() => handlers.onError?.("Connection lost"), 10);
+          queuePlanningStreamEvent(() => handlers.onError?.("Connection lost"));
         }
 
         return {
@@ -1320,7 +1364,7 @@ describe("PlanningModeModal", () => {
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamAttempt += 1;
         if (streamAttempt === 1) {
-          setTimeout(() => handlers.onError?.("Connection lost"), 10);
+          queuePlanningStreamEvent(() => handlers.onError?.("Connection lost"));
         }
 
         return {
@@ -1761,7 +1805,7 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
 
-      expect(screen.getByDisplayValue("Recovered summary missing deliverable and dependency arrays")).toBeDefined();
+      expect(screen.getByText("Recovered summary missing deliverable and dependency arrays")).toBeDefined();
       expect(screen.queryByText(/Something went wrong/i)).toBeNull();
       expect(screen.getByRole("button", { name: "Create Single Task" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeEnabled();
@@ -2080,7 +2124,7 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
 
-      expect(screen.getByDisplayValue("Recovered summary description from persisted session")).toBeDefined();
+      expect(screen.getByText("Recovered summary description from persisted session")).toBeDefined();
       expect((screen.getByRole("combobox", { name: "Suggested Size" }) as HTMLSelectElement).value).toBe("L");
       expect(screen.getByText("Deliverable A")).toBeDefined();
       expect(screen.getByText("Deliverable B")).toBeDefined();
@@ -2175,8 +2219,8 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
           "Plan that needs a specific model",
           undefined,
-          { planningModelProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
-          { planningDepth: "medium", customQuestionCount: undefined },
+          { planningModelProvider: "anthropic", planningModelId: "claude-sonnet-4-5", thinkingLevel: undefined },
+          { planningDepth: "medium", customQuestionCount: undefined, clarificationEnabled: false },
           "session-draft-with-model",
         );
       });
@@ -2270,7 +2314,7 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
       expect(screen.queryByPlaceholderText(/e.g., Build a user authentication/)).toBeNull();
-      expect(screen.getByDisplayValue("Recovered summary from history")).toBeDefined();
+      expect(screen.getByText("Recovered summary from history")).toBeDefined();
 
       fireEvent.click(screen.getByRole("button", { name: /Draft plan from history/i }));
 
@@ -3288,9 +3332,9 @@ describe("PlanningModeModal", () => {
         };
       });
       mockRespondToPlanning.mockImplementationOnce(async () => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           streamHandlers?.onQuestion?.(refinedQuestion);
-        }, 10);
+        });
         return { type: "question", data: refinedQuestion };
       });
 
@@ -3369,11 +3413,11 @@ describe("PlanningModeModal", () => {
         };
       });
       mockRespondToPlanning.mockImplementation(async () => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           if (!streamClosed) {
             streamHandlers?.onQuestion?.(refinedQuestion);
           }
-        }, 10);
+        });
         return { type: "question", data: refinedQuestion };
       });
 
@@ -3451,11 +3495,11 @@ describe("PlanningModeModal", () => {
         };
       });
       mockRespondToPlanning.mockImplementationOnce(async () => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           if (!streamClosed) {
             streamHandlers?.onQuestion?.(refinedQuestion);
           }
-        }, 10);
+        });
         throw new Error("Generation already in progress for this response");
       });
 
@@ -3723,9 +3767,9 @@ describe("PlanningModeModal", () => {
       let streamHandlers: any;
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamHandlers = handlers;
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.(mockQuestion);
-        }, 10);
+        });
 
         return {
           close: vi.fn(),
@@ -3734,9 +3778,9 @@ describe("PlanningModeModal", () => {
       });
 
       mockRespondToPlanning.mockImplementation(async () => {
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           streamHandlers?.onQuestion?.(secondQuestion);
-        }, 10);
+        });
         return { sessionId: "session-123", currentQuestion: null, summary: null };
       });
 
@@ -3802,9 +3846,9 @@ describe("PlanningModeModal", () => {
       let streamHandlers: any;
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamHandlers = handlers;
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           handlers.onQuestion?.(mockQuestion);
-        }, 10);
+        });
 
         return {
           close: vi.fn(),
@@ -3816,9 +3860,9 @@ describe("PlanningModeModal", () => {
       mockRespondToPlanning.mockImplementation(async () => {
         respondCallCount += 1;
         const nextQuestion = respondCallCount === 1 ? secondQuestion : thirdQuestion;
-        setTimeout(() => {
+        queuePlanningStreamEvent(() => {
           streamHandlers?.onQuestion?.(nextQuestion);
-        }, 10);
+        });
         return { sessionId: "session-123", currentQuestion: null, summary: null };
       });
 
@@ -3893,7 +3937,7 @@ describe("PlanningModeModal", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByRole("heading", { name: "What are the key requirements?" })).toBeDefined();
+        expect(screen.getByText("What are the key requirements?")).toBeDefined();
       });
 
       // Symptom assertion (FN-7615): after the async rewind settles, the generation view must

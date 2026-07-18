@@ -8420,7 +8420,7 @@ export function reorderTodoItems(listId: string, itemIds: string[], projectId?: 
   });
 }
 
-// ── AI Sessions (Background Tasks) ─────────────────────────────────────────
+// ── AI Sessions ────────────────────────────────────────────────────────────
 
 /**
  * Needs-attention variants for a CLI agent session (CLI Agent Executor, U11).
