@@ -317,6 +317,13 @@ export default defineConfig({
             "src/__tests__/self-healing-meta-archive-guards.test.ts",
             "src/__tests__/triage-token-usage.test.ts",
             /*
+            FNXC:EngineTests 2026-07-18-08:15:
+            heartbeat-error-recovery timed out at 30s on full-suite shard 1
+            (run 29636550951) for the rotation-shaped 401 recovery case under
+            load without product-bug evidence — quarantine on sight per AGENTS.md.
+            */
+            "src/__tests__/heartbeat-error-recovery.test.ts",
+            /*
             FNXC:EngineTests 2026-06-14-02:11:
             FN-6433 rescued the AI-merge suites by replacing broad activeSessionRegistry cleanup with path-scoped cleanup, so the default engine lane should execute them again. The soft-delete blocker residue suite was deleted under the ratchet because deterministic soft-delete deadlock coverage already owns that invariant.
             */

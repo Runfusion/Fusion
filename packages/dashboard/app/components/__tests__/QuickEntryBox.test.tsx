@@ -2711,8 +2711,11 @@ describe("QuickEntryBox", () => {
     it("resets Fast toggle to standard after successful task creation", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-fast-toggle")).toBeTruthy();
+      });
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
       fireEvent.change(textarea, { target: { value: "First fast task" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2726,9 +2729,15 @@ describe("QuickEntryBox", () => {
           }),
         );
       });
+      /*
+      FNXC:DashboardTests 2026-07-18-08:15:
+      Wait for create to leave the "Creating..." disabled state before re-expanding;
+      full-suite observed onCreate while isSubmitting still true and the fast toggle unmounted.
+      */
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      const fastToggle = await screen.findByTestId("quick-entry-fast-toggle");
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
 
       fireEvent.change(textarea, { target: { value: "Second standard task" } });

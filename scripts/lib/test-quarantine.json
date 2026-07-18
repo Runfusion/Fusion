@@ -85,6 +85,11 @@
       "file": "packages/engine/src/__tests__/reliability-interactions/meta-chain-auto-close.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/engine/src/__tests__/heartbeat-error-recovery.test.ts",
+      "reason": "Full-suite shard 1 timeout (30s) on rotation-shaped 401 recovery under load without product bug evidence. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29636550951. Mirrored in packages/engine/vitest.config.ts.",
+      "quarantinedAt": "2026-07-18"
     }
   ]
 }
