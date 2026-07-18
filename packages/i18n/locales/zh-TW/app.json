@@ -1807,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "審查產物"
     },
     "team": {
       "agent": "",
@@ -1885,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "審查產物",
+      "empty": "尚無審查產物。"
     }
   },
   "comments": {
@@ -5941,7 +5946,9 @@
       "ephemeralAgentTaskCreationPolicyUponValidation": "需驗證",
       "ephemeralAgentTaskCreationPolicyDeny": "拒絕",
       "reportModeHelp": "應用內缺陷/回饋/想法/說明報告的提交方式。預設：draft-review（提交前由操作者審閱草稿）。",
-      "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。"
+      "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。",
+      "reviewArtifacts": "審查產物",
+      "reviewArtifactsHint": "控制符合條件的未來任務是否產生審查交付物。面向使用者的報告與活動擷取保持獨立。預設：關閉。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

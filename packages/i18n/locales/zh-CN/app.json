@@ -1807,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "评审产物"
     },
     "team": {
       "agent": "",
@@ -1885,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "评审产物",
+      "empty": "尚无评审产物。"
     }
   },
   "comments": {
@@ -5941,7 +5946,9 @@
       "ephemeralAgentTaskCreationPolicyUponValidation": "需验证",
       "ephemeralAgentTaskCreationPolicyDeny": "拒绝",
       "reportModeHelp": "应用内缺陷/反馈/想法/帮助报告的提交方式。默认：draft-review（提交前由操作者审阅草稿）。",
-      "reportModeByActionHelp": "可选的按操作覆盖项目报告模式（缺陷、反馈、想法或帮助）。无默认值 — 未设置的操作继承 reportMode。"
+      "reportModeByActionHelp": "可选的按操作覆盖项目报告模式（缺陷、反馈、想法或帮助）。无默认值 — 未设置的操作继承 reportMode。",
+      "reviewArtifacts": "评审产物",
+      "reviewArtifactsHint": "控制符合条件的未来任务是否生成评审交付物。面向用户的报告与活动捕获保持独立。默认：关闭。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

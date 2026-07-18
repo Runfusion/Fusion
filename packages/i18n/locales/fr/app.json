@@ -1807,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "Artefacts de revue"
     },
     "team": {
       "agent": "",
@@ -1885,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "Artefacts de revue",
+      "empty": "Aucun artefact de revue n'est encore disponible."
     }
   },
   "comments": {
@@ -5941,7 +5946,9 @@
       "ephemeralAgentTaskCreationPolicyUponValidation": "Sur validation",
       "ephemeralAgentTaskCreationPolicyDeny": "Refuser",
       "reportModeHelp": "Comment les rapports in-app (bug, feedback, idée, aide) sont déposés. Par défaut : draft-review (l'opérateur revoit un brouillon avant dépôt).",
-      "reportModeByActionHelp": "Surcharge optionnelle par action du mode de rapport du projet (bug, feedback, idée ou aide). Aucune valeur par défaut — les actions non définies héritent de reportMode."
+      "reportModeByActionHelp": "Surcharge optionnelle par action du mode de rapport du projet (bug, feedback, idée ou aide). Aucune valeur par défaut — les actions non définies héritent de reportMode.",
+      "reviewArtifacts": "Artefacts de revue",
+      "reviewArtifactsHint": "Contrôle si les futures tâches éligibles génèrent des livrables de revue. Les rapports utilisateur et la capture d'activité restent séparés. Par défaut : désactivé."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

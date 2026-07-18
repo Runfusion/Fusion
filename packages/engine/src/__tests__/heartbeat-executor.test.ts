@@ -3275,10 +3275,13 @@ describe("executeHeartbeat", () => {
 
       FNXC:MissionToolParity 2026-07-18-12:40:
       FN-8294 adds the full Mission hierarchy surface (15 tools) to task-scoped heartbeat sessions via createMissionTools, after agent provisioning and before goal retrieval. Count rose 43→58; keep exact so new tools fail loudly.
+
+      FNXC:Ideation 2026-07-18-14:05:
+      FN-8295 mounts createIdeationTools (5 tools) immediately after missions on task-scoped and no-task heartbeats. Count rose 58→63.
       */
-      // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, goals/evaluations/identity,
+      // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, ideation, goals/evaluations/identity,
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(58);
+      expect(callArgs.customTools).toHaveLength(63);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3310,6 +3313,11 @@ describe("executeHeartbeat", () => {
         "fn_feature_update",
         "fn_feature_delete",
         "fn_feature_link_task",
+        "fn_ideation_list",
+        "fn_ideation_show",
+        "fn_ideation_start",
+        "fn_ideation_diverge",
+        "fn_ideation_converge",
         "fn_goal_list",
         "fn_goal_show",
         "fn_read_evaluations",

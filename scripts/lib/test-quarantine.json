@@ -15,6 +15,11 @@
       "file": "plugins/fusion-plugin-quality/src/__tests__/async-quality-store.pg.test.ts",
       "reason": "Full-suite shard 3 (run 29657633544): 5s timeout + leftover psql child under package-lane load without product-bug evidence; embedded-PG lifecycle remains load-sensitive. Quarantine on sight per AGENTS.md. Mirrored in plugins/fusion-plugin-quality/vitest.config.ts.",
       "quarantinedAt": "2026-07-18"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
+      "reason": "Full-suite shard 2 (run 29660321240): Terminal-guard tab settle race under dashboard-app-quality-backfill load without product-bug evidence; passes focused/local thrice. Quarantine on sight per AGENTS.md. Mirrored in packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-18"
     }
   ]
 }

@@ -346,6 +346,13 @@ const quarantinedDashboardTests: string[] = [
   async-store or applicable mock/non-store contracts. Remove their ledger/exclude
   pairs so dashboard-api-quality-backfill collects the restored coverage.
   */
+  /*
+  FNXC:DashboardTestQuarantine 2026-07-18-14:05:
+  Full-suite shard 2 (run 29660321240): Terminal-guard tab settle race under
+  dashboard-app-quality-backfill load; passes focused thrice with no product bug.
+  Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
+  */
+  "app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
 ];
 
 const qualityApiTests = [

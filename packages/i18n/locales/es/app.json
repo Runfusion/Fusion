@@ -1807,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "Artefactos de revisión"
     },
     "team": {
       "agent": "",
@@ -1885,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "Artefactos de revisión",
+      "empty": "Aún no hay artefactos de revisión disponibles."
     }
   },
   "comments": {
@@ -5941,7 +5946,9 @@
       "ephemeralAgentTaskCreationPolicyUponValidation": "Tras validación",
       "ephemeralAgentTaskCreationPolicyDeny": "Denegar",
       "reportModeHelp": "Cómo se archivan los informes in-app (error, feedback, idea, ayuda). Predeterminado: draft-review (el operador revisa un borrador antes de archivar).",
-      "reportModeByActionHelp": "Anulación opcional por acción del modo de informe del proyecto (error, feedback, idea o ayuda). Sin valor predeterminado: las acciones no definidas heredan reportMode."
+      "reportModeByActionHelp": "Anulación opcional por acción del modo de informe del proyecto (error, feedback, idea o ayuda). Sin valor predeterminado: las acciones no definidas heredan reportMode.",
+      "reviewArtifacts": "Artefactos de revisión",
+      "reviewArtifactsHint": "Controla si las tareas futuras elegibles generan entregables de revisión. Los informes de usuario y la captura de actividad se mantienen independientes. Predeterminado: desactivado."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

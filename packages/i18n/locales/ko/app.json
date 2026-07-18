@@ -1807,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "리뷰 산출물"
     },
     "team": {
       "agent": "",
@@ -1885,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "리뷰 산출물",
+      "empty": "아직 사용 가능한 리뷰 산출물이 없습니다."
     }
   },
   "comments": {
@@ -5941,7 +5946,9 @@
       "ephemeralAgentTaskCreationPolicyUponValidation": "검증 후",
       "ephemeralAgentTaskCreationPolicyDeny": "거부",
       "reportModeHelp": "인앱 버그/피드백/아이디어/도움말 리포트 제출 방식. 기본값: draft-review(제출 전 운영자가 초안 검토).",
-      "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다."
+      "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다.",
+      "reviewArtifacts": "리뷰 산출물",
+      "reviewArtifactsHint": "적격한 향후 작업이 리뷰 산출물을 생성할지 제어합니다. 사용자 보고와 활동 캡처는 별도로 유지됩니다. 기본값: 꺼짐."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
