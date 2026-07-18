@@ -538,6 +538,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
 
     /*
+    FNXC:TaskMovement 2026-07-18-14:32:
     A user in-progress -> todo move is a hard cancel. Run the engine-owned,
     store-scoped disposer after every transition guard passes but before the
     task object or durable row changes column. The dashboard cannot observe a

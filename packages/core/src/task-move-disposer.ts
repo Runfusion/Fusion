@@ -46,6 +46,7 @@ export function getTaskMoveDisposer(store: TaskStore): TaskMoveDisposer | undefi
 }
 
 /**
+ * FNXC:WorkflowLifecycle 2026-07-18-14:32:
  * A user move from active execution back to Todo is a hard cancel. Await every
  * registered execution surface before publishing the new column so persisted
  * board state can never claim the task is idle while its agent still runs.

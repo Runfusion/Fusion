@@ -5,6 +5,11 @@ import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 describe("TaskExecutor user cancel handling", () => {
+  /*
+  FNXC:WorkflowLifecycle 2026-07-18-14:32:
+  A user move from active execution to Todo must await every executor
+  cancellation surface so the card cannot keep processing in the background.
+  */
   it("registers an awaited user-move disposer that aborts all active work before Todo", async () => {
     resetExecutorMocks();
     const store = createMockStore();

@@ -18511,7 +18511,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   }
 
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
-  disposeArchiveWorktreeDisposer(): void {
+  disposeStoreLifecycleDisposers(): void {
     this.unregisterTaskMoveDisposer?.();
     this.unregisterTaskMoveDisposer = undefined;
     this.unregisterArchiveWorktreeDisposer?.();

@@ -10,6 +10,7 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 
 /*
+FNXC:TaskMovement 2026-07-18-14:32:
 Surface enumeration for the hard-cancel invariant:
  - A user move from in-progress to Todo waits for executor cancellation before persistence.
  - The durable task stays in-progress throughout a delayed cancellation.
