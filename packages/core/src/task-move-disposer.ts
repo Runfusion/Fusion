@@ -14,19 +14,35 @@ export interface TaskMoveDisposalInput {
 /*
  * Core owns task-transition ordering but cannot import the engine. Keep the
  * cancellation seam store-scoped so one project's executor cannot stop work
- * owned by another store, and identity-guard unregisters across restarts.
+ * owned by another store. A set preserves every live owner during overlap.
  */
-const disposers = new WeakMap<TaskStore, TaskMoveDisposer>();
+const disposers = new WeakMap<TaskStore, Set<TaskMoveDisposer>>();
+const TASK_MOVE_DISPOSAL_TIMEOUT_MS = 30_000;
+let taskMoveDisposalTimeoutMs = TASK_MOVE_DISPOSAL_TIMEOUT_MS;
+
+export function __setTaskMoveDisposalTimeoutForTesting(
+  timeoutMs = TASK_MOVE_DISPOSAL_TIMEOUT_MS,
+): void {
+  taskMoveDisposalTimeoutMs = timeoutMs;
+}
 
 export function registerTaskMoveDisposer(store: TaskStore, disposer: TaskMoveDisposer): () => void {
-  disposers.set(store, disposer);
+  const registered = disposers.get(store) ?? new Set<TaskMoveDisposer>();
+  registered.add(disposer);
+  disposers.set(store, registered);
   return () => {
-    if (disposers.get(store) === disposer) disposers.delete(store);
+    const current = disposers.get(store);
+    current?.delete(disposer);
+    if (current?.size === 0) disposers.delete(store);
   };
 }
 
 export function getTaskMoveDisposer(store: TaskStore): TaskMoveDisposer | undefined {
-  return disposers.get(store);
+  const registered = disposers.get(store);
+  if (!registered?.size) return undefined;
+  return async (task) => {
+    await Promise.all([...registered].map((disposer) => disposer(task)));
+  };
 }
 
 /**
@@ -36,5 +52,21 @@ export function getTaskMoveDisposer(store: TaskStore): TaskMoveDisposer | undefi
  */
 export async function disposeTaskBeforeMove(store: TaskStore, input: TaskMoveDisposalInput): Promise<void> {
   if (input.source !== "user" || input.from !== "in-progress" || input.to !== "todo") return;
-  await disposers.get(store)?.(input.task);
+  const disposer = getTaskMoveDisposer(store);
+  if (!disposer) return;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      disposer(input.task),
+      new Promise<void>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`Timed out stopping active work for ${input.task.id} before moving to Todo`));
+        }, taskMoveDisposalTimeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
