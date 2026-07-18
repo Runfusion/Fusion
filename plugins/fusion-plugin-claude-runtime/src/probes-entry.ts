@@ -5,5 +5,6 @@ Importing the full plugin index pulls ACP/runtime-adapter (and @agentclientproto
 which is not required for binary probe / model discovery and fails full-suite CLI
 resolution when dist/ is absent or ACP deps are not on the CLI resolver path.
 */
-export { probeClaudeBinary, type ClaudeBinaryStatus } from "./probe.js";
+export { probeClaudeBinary } from "./probe.js";
+export type { ClaudeBinaryStatus } from "./types.js";
 export { discoverClaudeProviderModels } from "./provider.js";
