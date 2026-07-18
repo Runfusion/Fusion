@@ -235,7 +235,7 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
       if (store.isWatching) store.taskCache.set(id, { ...task });
 
       store.emit("task:updated", task);
-      void appendProactiveStepStatus(
+      await appendProactiveStepStatus(
         store,
         id,
         proactiveStepStatusMessage(stepIndex, task.steps[stepIndex].name, currentStatus, status),
