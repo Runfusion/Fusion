@@ -113,11 +113,17 @@ describe("triage finalize duplicate lineage", () => {
     */
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({ requirePlanApproval: false, triageDuplicateResolution: "delete" } as Settings),
-      getTask: vi.fn().mockImplementation(async (id: string) => (
-        id === "FN-4894"
-          ? createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null })
-          : undefined
-      )),
+      /*
+      FNXC:EngineTests 2026-07-17-18:10:
+      PR #2275 review: preserve a default current-task mock for non-canonical IDs.
+      Returning undefined for FN-001 risks NPEs if recovery re-fetches the subject task.
+      */
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "FN-4894") {
+          return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
+        }
+        return createTask({ id: "FN-001" });
+      }),
     });
     await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
 
@@ -132,11 +138,12 @@ describe("triage finalize duplicate lineage", () => {
 
   it("flags and parks DUPLICATE markers under default prompt resolution", async () => {
     const store = createMockStore({
-      getTask: vi.fn().mockImplementation(async (id: string) => (
-        id === "FN-4894"
-          ? createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null })
-          : undefined
-      )),
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "FN-4894") {
+          return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
+        }
+        return createTask({ id: "FN-001" });
+      }),
     });
     await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
 
