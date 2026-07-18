@@ -3898,6 +3898,52 @@ describe("specified triage recovery", () => {
     );
   });
 
+  /*
+  FNXC:TriageStuckKill 2026-07-18-22:50:
+  Plan-in-place workflows plan inside todo with status:"planning". Stuck-abort must requeue
+  those cards, not treat every todo row as a completed handoff (CodeRabbit on PR #2326).
+  */
+  it("requeues plan-in-place todo cards still in planning status after stuck-abort", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Task: FN-001\n\n**Size:** M\n\n## Mission\n\nDraft still being planned in todo\n",
+    );
+
+    const planningTodo = {
+      id: "FN-001",
+      description: "plan-in-place mid plan",
+      column: "todo" as const,
+      status: "planning" as const,
+      stuckKillCount: 0,
+      dependencies: [] as string[],
+      steps: [] as Array<{ name: string; status: string }>,
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    };
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        maxStuckKills: 6,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue(planningTodo),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    await (processor as any).handleStuckAbortRequeue(planningTodo, "catch");
+
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "needs-replan", stuckKillCount: 1 }),
+    );
+  });
+
   it("stamps source metadata from sanitized effective write scope during recovery", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),

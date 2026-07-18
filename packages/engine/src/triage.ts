@@ -885,13 +885,23 @@ export class TriageProcessor {
     outer stuckAborted catch runs — e.g. dispose of an already-killed main session throws
     after handoff. Recovery then fails (column is no longer triage) and the draft path
     would write needs-replan, re-stranding an approved plan (Greptile P1 on PR #2326).
-    If the card already left the planner lane, only record the kill count.
+
+    FNXC:TriageStuckKill 2026-07-18-22:50:
+    Do NOT treat every `todo` card as released. Plan-in-place workflows plan inside `todo`
+    with status:"planning"/"needs-replan"; those must still requeue (CodeRabbit on PR #2326).
+    hasAdvancedPastPlanning covers execution columns and released todo (steps/worktree).
+    Released handoffs with status cleared but no steps yet are also preserved: todo without
+    a planning-stage status means the scheduler can claim the card.
     */
-    if (hasAdvancedPastPlanning(freshTask) || freshTask.column === "todo" || freshTask.column === "in-progress"
-      || freshTask.column === "in-review" || freshTask.column === "done" || freshTask.column === "archived") {
+    const planningStageStatus =
+      freshTask.status === "planning"
+      || freshTask.status === "needs-replan"
+      || freshTask.status === "plan-review-unavailable";
+    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
-        `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}) — preserving released state (${context})`,
+        `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}, status=${freshTask.status ?? "null"}) — preserving released state (${context})`,
       );
       await this.store.updateTask(task.id, { stuckKillCount: nextStuckKillCount }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
