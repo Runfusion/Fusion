@@ -464,34 +464,40 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
     piLog.log("promptWithFallback: prompt completed");
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    // FNXC:MaxTokensOverflowRecovery 2026-07-17-16:30:
+    // Some providers (OpenRouter / OpenAI-compatible) return a 400 with exact
+    // token counts when input + requested output exceeds the model's context
+    // window. pi-ai's own clampMaxTokensToContext cannot always prevent this
+    // because it uses a heuristic token estimate (4 chars/token) that can
+    // significantly undercount for code/JSON-heavy conversations.
+    //
+    // FNXC:MaxTokensOverflowRecovery 2026-07-20-08:30:
+    // session.prompt() ignores maxTokens in options — it only extracts images.
+    // The max_tokens parameter never reaches the provider. Reduced-max_tokens
+    // retry was removed. We go directly to session compaction instead.
+    //
+    // Must run BEFORE isContextLimitError because the OpenRouter error message
+    // matches the /maximum context length is \d+ tokens/i pattern and would
+    // skip this handler entirely. We log the overflow details, then fall through
+    // to the compaction path below.
+    const overflowMatch = MAX_TOKENS_OVERFLOW_EXACT_PATTERN.exec(errorMessage);
+    if (overflowMatch) {
+      const maxContext = Number(overflowMatch[1]);
+      const requestedOutput = Number(overflowMatch[2]);
+      const actualInput = Number(overflowMatch[3]);
+      piLog.warn(
+        `promptWithFallback: provider overflow (ctx=${maxContext}, ` +
+        `input=${actualInput}, requested=${requestedOutput}) — ` +
+        `proceeding to session compaction`,
+      );
+    }
+
     if (!isContextLimitError(errorMessage)) {
       piLog.error(`promptWithFallback: non-context error — propagating: ${errorMessage}`);
       throw err;
     }
 
-    // Context limit error — attempt auto-compaction and retry once
-    const promptMemoryRetry = await retryWithCompactedPromptMemory(session, prompt, options);
-    if (promptMemoryRetry.recovered) {
-      return;
-    }
-    if (promptMemoryRetry.error) {
-      const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
-      if (!isContextLimitError(retryMessage)) {
-        throw promptMemoryRetry.error;
-      }
-    }
-
-    const promptSectionRetry = await retryWithCompactedPromptSections(session, prompt, options);
-    if (promptSectionRetry.recovered) {
-      return;
-    }
-    if (promptSectionRetry.error) {
-      const retryMessage = promptSectionRetry.error instanceof Error ? promptSectionRetry.error.message : String(promptSectionRetry.error);
-      if (!isContextLimitError(retryMessage)) {
-        throw promptSectionRetry.error;
-      }
-    }
-
+    // Context limit error — go directly to session compaction, then retry
     piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
     await flushMemoryBeforeSessionCompaction(session);
     const compactResult = await compactSessionContext(session);
@@ -574,6 +580,19 @@ export const COMPACTION_FALLBACK_INSTRUCTIONS = [
   "Keep references to key files, decisions, and error states.",
   "Discard verbose tool output, repeated attempts, and exploration history.",
 ].join(" ");
+
+/*
+ * FNXC:MaxTokensOverflowRecovery 2026-07-17-16:30:
+ * Pattern for provider overflow errors that include exact token counts.
+ * Example: "This model's maximum context length is 65536 tokens. However, you
+ * requested 16384 output tokens and your prompt contains at least 49153 input
+ * tokens, for a total of at least 65537 tokens." (OpenRouter / OpenAI-compat).
+ * Groups: [1] maxContext, [2] requestedOutput, [3] actualInput tokens.
+ */
+const MAX_TOKENS_OVERFLOW_EXACT_PATTERN = /maximum context length is (\d+).*?you requested (\d+).*?contains at least (\d+)/is;
+
+/** Safety margin (tokens) when retrying with reduced max_tokens. */
+const MAX_TOKENS_OVERFLOW_SAFETY_MARGIN = 4096;
 
 const MAX_COMPACTED_PROMPT_MEMORY_CHARS = 8_000;
 const MAX_COMPACTED_SUBTASK_GUIDANCE_CHARS = 1_200;
@@ -2793,30 +2812,30 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       return;
     } catch (err: any) {
       const errorMessage = err?.message || "";
+      // FNXC:MaxTokensOverflowRecovery 2026-07-18-04:30:
+      // Must run BEFORE isContextLimitError because the MAX_TOKENS overflow
+      // error message also matches isContextLimitError. This is a duplicate
+      // of the logic in the top-level promptWithFallback export (pi.ts:469),
+      // which is unreachable from createFnAgent sessions (they have their own
+      // promptWithFallback attached at pi.ts:2743).
+      // The top-level export's copy is kept for non-createFnAgent callers.
+      //
+      // FNXC:MaxTokensOverflowRecovery 2026-07-20-08:30:
+      // Reduced-max_tokens retry removed — session.prompt() ignores maxTokens
+      // in options. Go directly to session compaction instead.
+      const overflowMatch = MAX_TOKENS_OVERFLOW_EXACT_PATTERN.exec(errorMessage);
+      if (overflowMatch) {
+        const maxContext = Number(overflowMatch[1]);
+        const requestedOutput = Number(overflowMatch[2]);
+        const actualInput = Number(overflowMatch[3]);
+        piLog.warn(
+          `promptWithFallback: provider overflow (ctx=${maxContext}, ` +
+          `input=${actualInput}, requested=${requestedOutput}) — ` +
+          `proceeding to session compaction`,
+        );
+      }
       if (isContextLimitError(errorMessage)) {
-        // Context limit error — attempt auto-compaction and retry once
-        const promptMemoryRetry = await retryWithCompactedPromptMemory(activeSession, prompt, effectivePromptOptions);
-        if (promptMemoryRetry.recovered) {
-          return;
-        }
-        if (promptMemoryRetry.error) {
-          const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
-          if (!isContextLimitError(retryMessage)) {
-            throw promptMemoryRetry.error;
-          }
-        }
-
-        const promptSectionRetry = await retryWithCompactedPromptSections(activeSession, prompt, effectivePromptOptions);
-        if (promptSectionRetry.recovered) {
-          return;
-        }
-        if (promptSectionRetry.error) {
-          const retryMessage = promptSectionRetry.error instanceof Error ? promptSectionRetry.error.message : String(promptSectionRetry.error);
-          if (!isContextLimitError(retryMessage)) {
-            throw promptSectionRetry.error;
-          }
-        }
-
+        // Context limit error — go directly to session compaction, then retry
         piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
         await flushMemoryBeforeSessionCompaction(activeSession);
         const compactResult = await compactSessionContext(activeSession);

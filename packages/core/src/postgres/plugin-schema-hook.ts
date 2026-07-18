@@ -84,49 +84,73 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-roadmap",
   async init(db) {
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.roadmaps (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        title text NOT NULL,
-        description text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id)
-      );
-
-      CREATE TABLE IF NOT EXISTS project.roadmap_milestones (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        roadmap_id text NOT NULL,
-        title text NOT NULL,
-        description text,
-        order_index integer NOT NULL,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT roadmap_milestones_roadmap_id_fkey
-          FOREIGN KEY (project_id, roadmap_id) REFERENCES project.roadmaps(project_id, id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS project.roadmap_features (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        milestone_id text NOT NULL,
-        title text NOT NULL,
-        description text,
-        order_index integer NOT NULL,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT roadmap_features_milestone_id_fkey
-          FOREIGN KEY (project_id, milestone_id) REFERENCES project.roadmap_milestones(project_id, id) ON DELETE CASCADE
-      );
-      /*
-       * FNXC:PluginPostgresIsolation 2026-07-13-22:37:
-       * Bundled plugin rows share one embedded PostgreSQL schema, so every roadmap hierarchy row must carry the bound project ID. The upgrade below derives or rejects legacy ownership before enforcing non-null, while runtime stores reject unbound layers and always filter these columns.
-       */
-      ALTER TABLE project.roadmaps ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.roadmap_milestones ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.roadmap_features ADD COLUMN IF NOT EXISTS project_id text;
+      DO $roadmap_firstboot$
+      BEGIN
+        IF to_regclass('project.roadmaps') IS NULL THEN
+          CREATE TABLE project.roadmaps (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            title text NOT NULL,
+            description text,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id)
+          );
+        END IF;
+        IF to_regclass('project.roadmap_milestones') IS NULL THEN
+          CREATE TABLE project.roadmap_milestones (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            roadmap_id text NOT NULL,
+            title text NOT NULL,
+            description text,
+            order_index integer NOT NULL,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT roadmap_milestones_roadmap_id_fkey
+              FOREIGN KEY (project_id, roadmap_id) REFERENCES project.roadmaps(project_id, id) ON DELETE CASCADE
+          );
+        END IF;
+        IF to_regclass('project.roadmap_features') IS NULL THEN
+          CREATE TABLE project.roadmap_features (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            milestone_id text NOT NULL,
+            title text NOT NULL,
+            description text,
+            order_index integer NOT NULL,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT roadmap_features_milestone_id_fkey
+              FOREIGN KEY (project_id, milestone_id) REFERENCES project.roadmap_milestones(project_id, id) ON DELETE CASCADE
+          );
+        END IF;
+        /*
+         * FNXC:PluginPostgresIsolation 2026-07-13-22:37:
+         * Bundled plugin rows share one embedded PostgreSQL schema, so every roadmap hierarchy row must carry the bound project ID. The upgrade below derives or rejects legacy ownership before enforcing non-null, while runtime stores reject unbound layers and always filter these columns.
+         */
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'roadmaps' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.roadmaps ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'roadmap_milestones' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.roadmap_milestones ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'roadmap_features' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.roadmap_features ADD COLUMN project_id text;
+        END IF;
+      END
+      $roadmap_firstboot$;
     `));
 
     await ensureProjectIndexes(db, [
@@ -293,82 +317,112 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
 export const cePluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-compound-engineering",
   async init(db) {
+    /*
+    FNXC:CompoundEngineeringSchemaIdempotent 2026-07-18-03:55:
+    Use to_regclass() guards inside a DO block so that when tables already exist
+    (created by a prior applySchemaBaseline call), NO DDL runs at all. This avoids
+    AccessExclusiveLock contention between concurrent project-engine startup paths
+    that would otherwise deadlock on CREATE TABLE IF NOT EXISTS + concurrent reads.
+
+    ADD COLUMN IF NOT EXISTS also acquires AccessExclusiveLock, so protect those
+    with information_schema.columns existence checks too.
+    */
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.ce_sessions (
-        id text PRIMARY KEY,
-        stage text NOT NULL,
-        status text NOT NULL CHECK (status IN (
-          'launching','active','awaiting_input','completed','error','interrupted'
-        )),
-        current_question text,
-        conversation_history text NOT NULL DEFAULT '[]',
-        project_id text,
-        artifact_path text,
-        error text,
-        turn_interval_ms integer NOT NULL DEFAULT 120000,
-        last_activity_at bigint NOT NULL,
-        created_at text NOT NULL,
-        updated_at text NOT NULL
-      );
-      -- FNXC:PostgresSchema 2026-07-13-19:35:
-      -- last_activity_at holds epoch milliseconds (Date.now()), which overflows
-      -- PG integer. Datadirs created before this fix materialized the column as
-      -- integer via the CREATE TABLE IF NOT EXISTS above, so widen it in place.
-      -- Idempotent: ALTER ... TYPE bigint on an already-bigint column is a no-op.
-      ALTER TABLE project.ce_sessions ALTER COLUMN last_activity_at TYPE bigint;
-      CREATE TABLE IF NOT EXISTS project.ce_plan_handoff_claims (
-        project_id text NOT NULL,
-        artifact_path text NOT NULL,
-        session_id text NOT NULL,
-        created_at text NOT NULL,
-        PRIMARY KEY (project_id, artifact_path),
-        CONSTRAINT ce_plan_handoff_claims_session_id_fkey
-          FOREIGN KEY (session_id) REFERENCES project.ce_sessions(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS project.ce_pipeline_links (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        task_id text NOT NULL,
-        ce_pipeline_id text NOT NULL,
-        ce_stage_id text NOT NULL,
-        ce_artifact_path text,
-        created_at text NOT NULL,
-        PRIMARY KEY (project_id, id)
-      );
-      CREATE TABLE IF NOT EXISTS project.ce_pipeline_state (
-        project_id text NOT NULL,
-        ce_pipeline_id text NOT NULL,
-        current_stage text NOT NULL,
-        status text NOT NULL CHECK (status IN (
-          'running','advancing','awaiting_board','completed'
-        )),
-        last_artifact_path text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, ce_pipeline_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS project.ce_pipeline_sync_queue (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        ce_pipeline_id text NOT NULL,
-        task_id text NOT NULL,
-        reason text NOT NULL,
-        from_column text,
-        to_column text,
-        enqueued_at text NOT NULL,
-        processed_at text,
-        PRIMARY KEY (project_id, id)
-      );
-
-      /*
-       * FNXC:CePipelineProjectIsolation 2026-07-14-21:41:
-       * Idempotently upgrade pre-partition plugin tables before runtime stores begin applying project predicates. Legacy rows may be assigned only when central.projects proves a single owner; a sentinel would make preserved pipeline state invisible to every project-scoped reader.
-       */
-      ALTER TABLE project.ce_pipeline_links ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.ce_pipeline_state ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.ce_pipeline_sync_queue ADD COLUMN IF NOT EXISTS project_id text;
+      DO $ce_schema$
+      BEGIN
+        IF to_regclass('project.ce_sessions') IS NULL THEN
+          CREATE TABLE project.ce_sessions (
+            id text PRIMARY KEY,
+            stage text NOT NULL,
+            status text NOT NULL CHECK (status IN (
+              'launching','active','awaiting_input','completed','error','interrupted'
+            )),
+            current_question text,
+            conversation_history text NOT NULL DEFAULT '[]',
+            project_id text,
+            artifact_path text,
+            error text,
+            turn_interval_ms integer NOT NULL DEFAULT 120000,
+            last_activity_at bigint NOT NULL,
+            created_at text NOT NULL,
+            updated_at text NOT NULL
+          );
+        END IF;
+        IF to_regclass('project.ce_plan_handoff_claims') IS NULL THEN
+          CREATE TABLE project.ce_plan_handoff_claims (
+            project_id text NOT NULL,
+            artifact_path text NOT NULL,
+            session_id text NOT NULL,
+            created_at text NOT NULL,
+            PRIMARY KEY (project_id, artifact_path),
+            CONSTRAINT ce_plan_handoff_claims_session_id_fkey
+              FOREIGN KEY (session_id) REFERENCES project.ce_sessions(id) ON DELETE CASCADE
+          );
+        END IF;
+        IF to_regclass('project.ce_pipeline_links') IS NULL THEN
+          CREATE TABLE project.ce_pipeline_links (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            task_id text NOT NULL,
+            ce_pipeline_id text NOT NULL,
+            ce_stage_id text NOT NULL,
+            ce_artifact_path text,
+            created_at text NOT NULL,
+            PRIMARY KEY (project_id, id)
+          );
+        END IF;
+        IF to_regclass('project.ce_pipeline_state') IS NULL THEN
+          CREATE TABLE project.ce_pipeline_state (
+            project_id text NOT NULL,
+            ce_pipeline_id text NOT NULL,
+            current_stage text NOT NULL,
+            status text NOT NULL CHECK (status IN (
+              'running','advancing','awaiting_board','completed'
+            )),
+            last_artifact_path text,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, ce_pipeline_id)
+          );
+        END IF;
+        IF to_regclass('project.ce_pipeline_sync_queue') IS NULL THEN
+          CREATE TABLE project.ce_pipeline_sync_queue (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            ce_pipeline_id text NOT NULL,
+            task_id text NOT NULL,
+            reason text NOT NULL,
+            from_column text,
+            to_column text,
+            enqueued_at text NOT NULL,
+            processed_at text,
+            PRIMARY KEY (project_id, id)
+          );
+        END IF;
+        /*
+         * FNXC:CePipelineProjectIsolation 2026-07-14-21:41:
+         * Idempotently upgrade pre-partition plugin tables before runtime stores begin applying project predicates. Legacy rows may be assigned only when central.projects proves a single owner; a sentinel would make preserved pipeline state invisible to every project-scoped reader.
+         */
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'ce_pipeline_links' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.ce_pipeline_links ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'ce_pipeline_state' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.ce_pipeline_state ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'ce_pipeline_sync_queue' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.ce_pipeline_sync_queue ADD COLUMN project_id text;
+        END IF;
+      END
+      $ce_schema$;
     `));
 
     await ensureProjectIndexes(db, [
@@ -459,37 +513,49 @@ export const whatsappPluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-whatsapp-chat",
   async init(db) {
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.whatsapp_chat_sessions (
-        project_id text NOT NULL,
-        sender text NOT NULL,
-        history text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, sender)
-      );
-      CREATE TABLE IF NOT EXISTS project.whatsapp_chat_dedupe (
-        project_id text NOT NULL,
-        message_id text NOT NULL,
-        sender text NOT NULL,
-        received_at text NOT NULL,
-        PRIMARY KEY (project_id, message_id)
-      );
-      CREATE INDEX IF NOT EXISTS "idxWhatsAppDedupeRetention"
-        ON project.whatsapp_chat_dedupe(project_id, received_at);
-      CREATE TABLE IF NOT EXISTS project.whatsapp_auth_creds (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        value text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id)
-      );
-      CREATE TABLE IF NOT EXISTS project.whatsapp_auth_keys (
-        project_id text NOT NULL,
-        category text NOT NULL,
-        key_id text NOT NULL,
-        value text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, category, key_id)
-      );
+      DO $whatsapp_firstboot$
+      BEGIN
+        IF to_regclass('project.whatsapp_chat_sessions') IS NULL THEN
+          CREATE TABLE project.whatsapp_chat_sessions (
+            project_id text NOT NULL,
+            sender text NOT NULL,
+            history text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, sender)
+          );
+        END IF;
+        IF to_regclass('project.whatsapp_chat_dedupe') IS NULL THEN
+          CREATE TABLE project.whatsapp_chat_dedupe (
+            project_id text NOT NULL,
+            message_id text NOT NULL,
+            sender text NOT NULL,
+            received_at text NOT NULL,
+            PRIMARY KEY (project_id, message_id)
+          );
+          CREATE INDEX IF NOT EXISTS "idxWhatsAppDedupeRetention"
+            ON project.whatsapp_chat_dedupe(project_id, received_at);
+        END IF;
+        IF to_regclass('project.whatsapp_auth_creds') IS NULL THEN
+          CREATE TABLE project.whatsapp_auth_creds (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            value text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id)
+          );
+        END IF;
+        IF to_regclass('project.whatsapp_auth_keys') IS NULL THEN
+          CREATE TABLE project.whatsapp_auth_keys (
+            project_id text NOT NULL,
+            category text NOT NULL,
+            key_id text NOT NULL,
+            value text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, category, key_id)
+          );
+        END IF;
+      END
+      $whatsapp_firstboot$;
     `));
   },
 };
@@ -502,34 +568,40 @@ export const evenRealitiesPluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-even-realities-glasses",
   async init(db) {
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.even_realities_seen_tasks (
-        project_id text NOT NULL DEFAULT COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'),
-        task_id text NOT NULL,
-        last_column text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, task_id)
-      );
-      CREATE INDEX IF NOT EXISTS "idxEvenRealitiesSeenTasksProjectUpdated"
-        ON project.even_realities_seen_tasks(project_id, updated_at, task_id);
-      ALTER TABLE project.even_realities_seen_tasks ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE project.even_realities_seen_tasks FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS fusion_project_isolation ON project.even_realities_seen_tasks;
-      CREATE POLICY fusion_project_isolation ON project.even_realities_seen_tasks
-        USING (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true))
-        WITH CHECK (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true));
-      DO $even_realities_runtime$
+      DO $even_realities_firstboot$
       BEGIN
-        IF to_regprocedure('project.fusion_assign_project_id()') IS NOT NULL THEN
-          DROP TRIGGER IF EXISTS fusion_assign_project_id ON project.even_realities_seen_tasks;
-          CREATE TRIGGER fusion_assign_project_id
-            BEFORE INSERT OR UPDATE OF project_id ON project.even_realities_seen_tasks
-            FOR EACH ROW EXECUTE FUNCTION project.fusion_assign_project_id();
-        END IF;
-        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
-          GRANT SELECT, INSERT, UPDATE, DELETE ON project.even_realities_seen_tasks TO fusion_runtime;
+        IF to_regclass('project.even_realities_seen_tasks') IS NULL THEN
+          CREATE TABLE project.even_realities_seen_tasks (
+            project_id text NOT NULL DEFAULT COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'),
+            task_id text NOT NULL,
+            last_column text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, task_id)
+          );
+          CREATE INDEX IF NOT EXISTS "idxEvenRealitiesSeenTasksProjectUpdated"
+            ON project.even_realities_seen_tasks(project_id, updated_at, task_id);
+          ALTER TABLE project.even_realities_seen_tasks ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE project.even_realities_seen_tasks FORCE ROW LEVEL SECURITY;
+          DROP POLICY IF EXISTS fusion_project_isolation ON project.even_realities_seen_tasks;
+          CREATE POLICY fusion_project_isolation ON project.even_realities_seen_tasks
+            USING (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true))
+            WITH CHECK (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true));
+          DO $even_realities_runtime$
+          BEGIN
+            IF to_regprocedure('project.fusion_assign_project_id()') IS NOT NULL THEN
+              DROP TRIGGER IF EXISTS fusion_assign_project_id ON project.even_realities_seen_tasks;
+              CREATE TRIGGER fusion_assign_project_id
+                BEFORE INSERT OR UPDATE OF project_id ON project.even_realities_seen_tasks
+                FOR EACH ROW EXECUTE FUNCTION project.fusion_assign_project_id();
+            END IF;
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+              GRANT SELECT, INSERT, UPDATE, DELETE ON project.even_realities_seen_tasks TO fusion_runtime;
+            END IF;
+          END
+          $even_realities_runtime$;
         END IF;
       END
-      $even_realities_runtime$;
+      $even_realities_firstboot$;
     `));
   },
 };
@@ -546,41 +618,51 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-reports",
   async init(db) {
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.reports (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        cadence text NOT NULL CHECK (cadence IN ('daily','weekly','monthly','quarterly','manual')),
-        period_start text NOT NULL,
-        period_end text NOT NULL,
-        title text NOT NULL,
-        status text NOT NULL CHECK (status IN ('generating','review_pending','review_in_progress','review_complete','approved','published','archived','failed')),
-        generation_started_at text NOT NULL,
-        generation_completed_at text,
-        review_started_at text,
-        review_completed_at text,
-        approved_at text,
-        approved_by text,
-        published_at text,
-        archived_at text,
-        failure_reason text,
-        approval_state text NOT NULL DEFAULT 'not_required',
-        approval_history text NOT NULL DEFAULT '[]',
-        draft_markdown text,
-        rendered_html_path text,
-        rendered_html text,
-        rendered_html_generated_at text,
-        metadata_json text NOT NULL DEFAULT '{}',
-        combined_review_json text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id)
-      );
-
-      /*
-       * FNXC:ReportsProjectIsolation 2026-07-14-21:41:
-       * Upgrade existing report rows without hiding preserved reports behind an unqueryable sentinel. Only a single central.projects registration establishes unambiguous ownership; otherwise schema startup fails before the composite identity is enforced.
-       */
-      ALTER TABLE project.reports ADD COLUMN IF NOT EXISTS project_id text;
+      DO $reports_firstboot$
+      BEGIN
+        IF to_regclass('project.reports') IS NULL THEN
+          CREATE TABLE project.reports (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            cadence text NOT NULL CHECK (cadence IN ('daily','weekly','monthly','quarterly','manual')),
+            period_start text NOT NULL,
+            period_end text NOT NULL,
+            title text NOT NULL,
+            status text NOT NULL CHECK (status IN ('generating','review_pending','review_in_progress','review_complete','approved','published','archived','failed')),
+            generation_started_at text NOT NULL,
+            generation_completed_at text,
+            review_started_at text,
+            review_completed_at text,
+            approved_at text,
+            approved_by text,
+            published_at text,
+            archived_at text,
+            failure_reason text,
+            approval_state text NOT NULL DEFAULT 'not_required',
+            approval_history text NOT NULL DEFAULT '[]',
+            draft_markdown text,
+            rendered_html_path text,
+            rendered_html text,
+            rendered_html_generated_at text,
+            metadata_json text NOT NULL DEFAULT '{}',
+            combined_review_json text,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id)
+          );
+        END IF;
+        /*
+         * FNXC:ReportsProjectIsolation 2026-07-14-21:41:
+         * Upgrade existing report rows without hiding preserved reports behind an unqueryable sentinel. Only a single central.projects registration establishes unambiguous ownership; otherwise schema startup fails before the composite identity is enforced.
+         */
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'reports' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.reports ADD COLUMN project_id text;
+        END IF;
+      END
+      $reports_firstboot$;
     `));
 
     await ensureProjectIndexes(db, [
@@ -650,92 +732,130 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
   pluginId: "fusion-plugin-cli-printing-press",
   async init(db) {
     await db.execute(sql.raw(`
-      CREATE TABLE IF NOT EXISTS project.cli_press_services (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        slug text NOT NULL,
-        display_name text NOT NULL,
-        description text,
-        base_url text NOT NULL,
-        source_kind text NOT NULL,
-        source_ref text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT uq_cli_press_services_project_slug UNIQUE (project_id, slug)
-      );
-
-      CREATE TABLE IF NOT EXISTS project.cli_press_cli_specs (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        service_id text NOT NULL,
-        name text NOT NULL,
-        version text NOT NULL,
-        generator_version text NOT NULL,
-        spec_json text NOT NULL,
-        generated_at text,
-        status text NOT NULL,
-        last_generation_error text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT cli_press_cli_specs_service_id_fkey
-          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_specs_service_name UNIQUE (project_id, service_id, name)
-      );
-      CREATE TABLE IF NOT EXISTS project.cli_press_artifacts (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        cli_spec_id text NOT NULL,
-        kind text NOT NULL,
-        path text NOT NULL,
-        executable boolean NOT NULL,
-        checksum text,
-        size_bytes integer,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT cli_press_artifacts_cli_spec_id_fkey
-          FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS project.cli_press_credentials (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        service_id text NOT NULL,
-        name text NOT NULL,
-        kind text NOT NULL,
-        value text NOT NULL,
-        placement text NOT NULL,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT cli_press_credentials_service_id_fkey
-          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (project_id, service_id, name)
-      );
-      CREATE TABLE IF NOT EXISTS project.cli_press_service_settings (
-        project_id text NOT NULL,
-        id text NOT NULL,
-        service_id text NOT NULL,
-        key text NOT NULL,
-        value text NOT NULL,
-        scope text NOT NULL,
-        created_at text NOT NULL,
-        updated_at text NOT NULL,
-        PRIMARY KEY (project_id, id),
-        CONSTRAINT cli_press_service_settings_service_id_fkey
-          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (project_id, service_id, key, scope)
-      );
-      /*
-       * FNXC:CliPressProjectIsolation 2026-07-14-21:41:
-       * Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. Pre-project definitions may be claimed only by the sole registered project; ambiguous ownership fails closed instead of assigning rows to an invisible sentinel.
-       */
-      ALTER TABLE project.cli_press_services ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.cli_press_cli_specs ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.cli_press_artifacts ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.cli_press_credentials ADD COLUMN IF NOT EXISTS project_id text;
-      ALTER TABLE project.cli_press_service_settings ADD COLUMN IF NOT EXISTS project_id text;
+      DO $cli_press_firstboot$
+      BEGIN
+        IF to_regclass('project.cli_press_services') IS NULL THEN
+          CREATE TABLE project.cli_press_services (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            slug text NOT NULL,
+            display_name text NOT NULL,
+            description text,
+            base_url text NOT NULL,
+            source_kind text NOT NULL,
+            source_ref text,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT uq_cli_press_services_project_slug UNIQUE (project_id, slug)
+          );
+        END IF;
+        IF to_regclass('project.cli_press_cli_specs') IS NULL THEN
+          CREATE TABLE project.cli_press_cli_specs (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            service_id text NOT NULL,
+            name text NOT NULL,
+            version text NOT NULL,
+            generator_version text NOT NULL,
+            spec_json text NOT NULL,
+            generated_at text,
+            status text NOT NULL,
+            last_generation_error text,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT cli_press_cli_specs_service_id_fkey
+              FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+            CONSTRAINT uq_cli_press_specs_service_name UNIQUE (project_id, service_id, name)
+          );
+        END IF;
+        IF to_regclass('project.cli_press_artifacts') IS NULL THEN
+          CREATE TABLE project.cli_press_artifacts (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            cli_spec_id text NOT NULL,
+            kind text NOT NULL,
+            path text NOT NULL,
+            executable boolean NOT NULL,
+            checksum text,
+            size_bytes integer,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT cli_press_artifacts_cli_spec_id_fkey
+              FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE
+          );
+        END IF;
+        IF to_regclass('project.cli_press_credentials') IS NULL THEN
+          CREATE TABLE project.cli_press_credentials (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            service_id text NOT NULL,
+            name text NOT NULL,
+            kind text NOT NULL,
+            value text NOT NULL,
+            placement text NOT NULL,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT cli_press_credentials_service_id_fkey
+              FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+            CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (project_id, service_id, name)
+          );
+        END IF;
+        IF to_regclass('project.cli_press_service_settings') IS NULL THEN
+          CREATE TABLE project.cli_press_service_settings (
+            project_id text NOT NULL,
+            id text NOT NULL,
+            service_id text NOT NULL,
+            key text NOT NULL,
+            value text NOT NULL,
+            scope text NOT NULL,
+            created_at text NOT NULL,
+            updated_at text NOT NULL,
+            PRIMARY KEY (project_id, id),
+            CONSTRAINT cli_press_service_settings_service_id_fkey
+              FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+            CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (project_id, service_id, key, scope)
+          );
+        END IF;
+        /*
+         * FNXC:CliPressProjectIsolation 2026-07-14-21:41:
+         * Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. Pre-project definitions may be claimed only by the sole registered project; ambiguous ownership fails closed instead of assigning rows to an invisible sentinel.
+         */
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'cli_press_services' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.cli_press_services ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'cli_press_cli_specs' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.cli_press_cli_specs ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'cli_press_artifacts' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.cli_press_artifacts ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'cli_press_credentials' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.cli_press_credentials ADD COLUMN project_id text;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'cli_press_service_settings' AND column_name = 'project_id'
+        ) THEN
+          ALTER TABLE project.cli_press_service_settings ADD COLUMN project_id text;
+        END IF;
+      END
+      $cli_press_firstboot$;
     `));
 
     await ensureProjectIndexes(db, [

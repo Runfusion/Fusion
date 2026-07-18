@@ -406,7 +406,7 @@ export function formatMigrationProgress(event: MigrationProgressEvent): string {
       return `Dry run complete — ${event.tableCount} tables and ${event.sourceRows.toLocaleString()} source rows planned; no data written.`;
     case "failed":
       return "error" in event
-        ? `FAILED — migration transaction rolled back: ${event.error}`
+        ? `FAILED — migration copy failed: ${event.error}`
         : `FAILED — ${event.failedTables}/${event.tableCount} tables failed verification; migration will not be marked complete.`;
   }
 }
@@ -596,6 +596,13 @@ export async function migrateSqliteToPostgres(
     /*
     FNXC:PostgresMigrationSession 2026-07-14-00:05:
     Pin the complete cutover to one transaction-backed PostgreSQL session. Advisory locking, trigger deferral, copy, verification, and reset must not hop across connections when callers provide a multi-connection pool.
+
+    FNXC:PostgresMigration 2026-07-18-10:30:
+    A SAVEPOINT inside migrateSqliteToPostgresOnSession isolates the data copy
+    phase. When a batch INSERT fails, ROLLBACK TO SAVEPOINT clears PostgreSQL's
+    transaction abort state ("current transaction is aborted"), so the error
+    handling (SET session_replication_role = origin, UPDATE status = 'failed')
+    succeeds instead of also failing silently.
     */
     return await migrationDb.transaction(async (tx) => {
       const report = await migrateSqliteToPostgresOnSession(
@@ -727,6 +734,27 @@ async function migrateSqliteToPostgresOnSession(
     }
   }
 
+  /*
+  FNXC:PostgresMigration 2026-07-18-10:30:
+  When a batch INSERT fails inside the wrapping transaction, PostgreSQL marks
+  the transaction as aborted and rejects EVERY subsequent command (SET,
+  UPDATE, etc.). The finally block's SET session_replication_role = origin and
+  the status UPDATE both fail with "current transaction is aborted", silently
+  leaving the session with replica role and making the error appear as an
+  unexplained exit code 1.
+
+  Per-table SAVEPOINT isolates each table's copy work so we can execute
+  ROLLBACK TO SAVEPOINT on table-level error — this clears the transaction
+  abort state (Postgres docs: "rolling back to a savepoint, the transaction can
+  continue after being broken by a command failure"), ensuring the next table,
+  the finally block, and the status update always succeed.
+
+  The savepoint does NOT roll back already-migrated tables: successfully copied
+  rows persist across retries via ON CONFLICT DO NOTHING, and earlier tables
+  survive because their savepoints were already released before advancing to
+  the next table. The outer transaction COMMIT preserves every table finished
+  before the failure.
+  */
   let copyError: unknown;
   try {
     const plannedSources: Array<{ source: SqliteMigrationSource; plan: readonly TablePlan[] }> = [];
@@ -747,6 +775,7 @@ async function migrateSqliteToPostgresOnSession(
     for (const { source, plan } of plannedSources) {
       for (const tablePlan of plan) {
         tableIndex += 1;
+        const tableSpName = `migration_copy_${tableIndex}`;
         const progressBase = {
           sourceSchema: source.pgSchema,
           table: tablePlan.pgTable,
@@ -754,26 +783,73 @@ async function migrateSqliteToPostgresOnSession(
           tableCount,
         } as const;
         emitMigrationProgress(options, { phase: "table-started", ...progressBase });
-        const result = await migrateTable(
-          migrationDb,
-          source,
-          tablePlan,
-          dryRun,
-          {
-            onCopyProgress: (processedRows, sourceRows) => emitMigrationProgress(options, {
-              phase: "table-progress",
-              ...progressBase,
-              processedRows,
-              sourceRows,
-            }),
-            onVerifying: (verificationStage, sourceRows) => emitMigrationProgress(options, {
-              phase: "table-verifying",
-              ...progressBase,
-              sourceRows,
-              verificationStage,
-            }),
-          },
-        );
+
+        // FNXC:PostgresMigration 2026-07-18-10:30:
+        // Each table gets its own SAVEPOINT so a batch INSERT failure rolls
+        // back only this table's work, clears the transaction abort state,
+        // and lets the next table proceed. Without per-table savepoints, the
+        // outer transaction rolls back ALL previously migrated tables when
+        // any table fails, creating an infinite crash loop on restart.
+        let result: TableMigrationResult;
+        if (!dryRun) {
+          await migrationDb.execute(sql`SAVEPOINT ${sql.raw(tableSpName)}`);
+        }
+        try {
+          const innerResult = await migrateTable(
+            migrationDb,
+            source,
+            tablePlan,
+            dryRun,
+            {
+              onCopyProgress: (processedRows, sourceRows) => emitMigrationProgress(options, {
+                phase: "table-progress",
+                ...progressBase,
+                processedRows,
+                sourceRows,
+              }),
+              onVerifying: (verificationStage, sourceRows) => emitMigrationProgress(options, {
+                phase: "table-verifying",
+                ...progressBase,
+                sourceRows,
+                verificationStage,
+              }),
+            },
+          );
+          result = innerResult;
+          if (!dryRun) {
+            await migrationDb.execute(sql`RELEASE SAVEPOINT ${sql.raw(tableSpName)}`);
+          }
+        } catch (error) {
+          const errorMessage = getErrorMessage(error);
+          if (!dryRun) {
+            // FNXC:PostgresMigration 2026-07-18-10:30:
+            // ROLLBACK TO SAVEPOINT clears the PostgreSQL transaction abort
+            // state so the next table can proceed normally. The rolled-back
+            // table's data is lost (all batches were undone), but it will be
+            // retried from scratch on the next migration attempt. Previous
+            // tables survive because their savepoints were already released.
+            try {
+              await migrationDb.execute(sql`ROLLBACK TO SAVEPOINT ${sql.raw(tableSpName)}`);
+            } catch (spRollbackError) {
+              log.warn(
+                `Failed to rollback savepoint ${tableSpName}: ${getErrorMessage(spRollbackError)}`,
+              );
+            }
+          }
+          log.warn(
+            `Table migration failed for ${tablePlan.pgSchema}.${tablePlan.pgTable}: ${errorMessage}`,
+          );
+          result = {
+            schema: tablePlan.pgSchema,
+            table: tablePlan.pgTable,
+            sourceRows: 0,
+            insertedRows: 0,
+            targetRows: 0,
+            verified: false,
+            skipped: false,
+            skipReason: `migration failed: ${errorMessage}`,
+          };
+        }
         tableResults.push(result);
         emitMigrationProgress(options, {
           phase: "table-complete",
@@ -787,7 +863,7 @@ async function migrateSqliteToPostgresOnSession(
         });
 
         // Bump identity sequences after a real (non-dry-run) copy.
-        if (!dryRun && !result.skipped && result.sourceRows > 0) {
+        if (!dryRun && !result.skipped && result.sourceRows > 0 && result.verified) {
           const identityCols = tablePlan.columns.filter((c) => c.type === "identity");
           for (const col of identityCols) {
             const bump = await bumpIdentitySequence(migrationDb, tablePlan.pgSchema, tablePlan.pgTable, col.pgName);
@@ -822,6 +898,9 @@ async function migrateSqliteToPostgresOnSession(
     }
   } catch (error) {
     copyError = error;
+    log.warn(
+      `Post-copy phase (plugin migration) failed: ${getErrorMessage(error)}`,
+    );
   } finally {
     // Re-enable FK enforcement (triggers) after the copy, regardless of outcome.
     if (!dryRun) {
@@ -835,6 +914,12 @@ async function migrateSqliteToPostgresOnSession(
 
   if (copyError !== undefined) {
     if (!dryRun) {
+      /*
+      FNXC:PostgresMigration 2026-07-18-10:30:
+      The transaction abort state was cleared by ROLLBACK TO SAVEPOINT above,
+      so this UPDATE always succeeds. The original error (not "current transaction
+      is aborted") is recorded, preserving diagnostic information.
+      */
       await migrationDb.execute(sql`
         UPDATE public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
         SET status = 'failed', last_error = ${copyError instanceof Error ? copyError.message : String(copyError)}, updated_at = now()

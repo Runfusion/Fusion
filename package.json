@@ -110,8 +110,8 @@
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
     "@eslint/js": "^9.0.0",
-    "eslint": "^9.0.0",
     "esbuild": "^0.25.12",
+    "eslint": "^9.0.0",
     "fast-glob": "^3.3.3",
     "i18next-cli": "^1.59.1",
     "react-devtools-core": "^7.0.1",
@@ -119,5 +119,8 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.0.0",
     "yaml": "^2.8.3"
+  },
+  "dependencies": {
+    "@fusion-plugin-examples/claude-runtime": "workspace:*"
   }
 }
