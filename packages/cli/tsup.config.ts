@@ -368,7 +368,23 @@ function assertAllStagedBundledPluginsLoadable() {
 const pluginSdkEntry = join(__dirname, "..", "plugin-sdk", "src", "index.ts");
 
 const cliBuildConfig = {
-  entry: ["src/bin.ts", "src/extension.ts"],
+  /*
+   * FNXC:CliPackaging 2026-07-17-21:05:
+   * Projects with isolationMode "child-process" fork a runtime worker that the engine's
+   * getWorkerPath() resolves as child-process-worker.js NEXT TO the running compiled module —
+   * i.e. dist/child-process-worker.js beside the bundled dist/bin.js in a published install.
+   * The published package never shipped that file, so child-process isolation always failed
+   * with ERR_MODULE_NOT_FOUND. Emit the engine worker as a sibling named entry here so it
+   * inherits the exact bin.js bundling shape (ESM, @fusion/* bundled via noExternal, native and
+   * platform-specific deps external and resolved from the installed package's node_modules,
+   * createRequire banner). The worker is spawned with node fork() + IPC, so it must be a plain
+   * Node-runnable ESM file; every external below is a published dependency of @runfusion/fusion.
+   */
+  entry: {
+    bin: "src/bin.ts",
+    extension: "src/extension.ts",
+    "child-process-worker": "../engine/src/runtimes/child-process-worker.ts",
+  },
   format: ["esm"],
   platform: "node",
   target: "node22",
