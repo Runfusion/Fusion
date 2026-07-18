@@ -1,9 +1,47 @@
 import { describe, it, expect, vi } from "vitest";
 import "./executor-test-helpers.js";
+import { getTaskMoveDisposer } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 describe("TaskExecutor user cancel handling", () => {
+  it("registers an awaited user-move disposer that aborts all active work before Todo", async () => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const terminateChildren = vi.spyOn(executor as any, "terminateAllChildren").mockResolvedValue(undefined);
+    let resolveAbort: (() => void) | undefined;
+    const abortPending = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    const session = {
+      prompt: vi.fn(),
+      abort: vi.fn(() => abortPending),
+      dispose: vi.fn(),
+    } as any;
+    (executor as any).activeSessions.set("FN-AWAITED", {
+      session,
+      seenSteeringIds: new Set<string>(),
+    });
+
+    const disposer = getTaskMoveDisposer(store as any);
+    expect(disposer).toBeTypeOf("function");
+    let disposed = false;
+    const disposal = disposer!({ id: "FN-AWAITED" } as any).then(() => {
+      disposed = true;
+    });
+
+    await Promise.resolve();
+    expect(terminateChildren).toHaveBeenCalledWith("FN-AWAITED");
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(disposed).toBe(false);
+
+    resolveAbort?.();
+    await disposal;
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect((executor as any).userCanceledTaskIds.has("FN-AWAITED")).toBe(true);
+  });
+
   it("aborts before dispose when user moves in-progress task back to todo", async () => {
     resetExecutorMocks();
     const store = createMockStore();

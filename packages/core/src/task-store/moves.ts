@@ -30,6 +30,7 @@ import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {disposeTaskBeforeMove} from "../task-move-disposer.js";
 
 /*
 FNXC:PostgresCutover 2026-07-05-19:50:
@@ -535,6 +536,20 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         }
       }
     }
+
+    /*
+    A user in-progress -> todo move is a hard cancel. Run the engine-owned,
+    store-scoped disposer after every transition guard passes but before the
+    task object or durable row changes column. The dashboard cannot observe a
+    Todo row until the agent, workflow, configured command, and CLI execution
+    surfaces have stopped.
+    */
+    await disposeTaskBeforeMove(store, {
+      task,
+      from: fromColumn,
+      to: toColumn,
+      source: moveSource,
+    });
 
     const movedAt = internal.now ?? new Date().toISOString();
     task.column = toColumn;
