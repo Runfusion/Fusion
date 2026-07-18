@@ -1,6 +1,12 @@
 import { definePlugin } from "@fusion/plugin-sdk";
 import type { FusionPlugin } from "@fusion/plugin-sdk";
-import { killAllProcesses } from "./acp/index.js";
+/*
+FNXC:ProcessLifecycle 2026-07-16-07:00 / 2026-07-18-08:10:
+Exit-hook ownership lives in ./acp/process-manager (Symbol.for guard + shared
+registry). Import that module from the plugin entry so plugin load still arms
+the process.exit reaper; re-evaluation stays bounded by the Symbol.for guard.
+*/
+import "./acp/process-manager.js";
 import { probeOmpBinary } from "./probe.js";
 import { discoverOmpProviderModels } from "./provider.js";
 import { OmpRuntimeAdapter } from "./runtime-adapter.js";
@@ -16,21 +22,6 @@ This shells out to an operator-installed `omp` binary on PATH — Fusion does no
 download or bundle it. Upstream: https://omp.sh/docs/acp
 https://github.com/can1357/oh-my-pi
 */
-
-/*
-FNXC:ProcessLifecycle 2026-07-16-07:00:
-The dashboard backfill worker repeatedly evaluates this plugin through
-`vi.resetModules()` while retaining the process singleton. Install one exit
-listener per OMP lifecycle owner and use the process-shared registry in the
-ACP manager so it reaps children from every evaluation. Do not appease this
-with `setMaxListeners`; the listener must stay bounded.
-*/
-const PROCESS_EXIT_HOOK_KEY = Symbol.for("fusion.plugin.omp-runtime.exitCleanup");
-const processWithExitHook = process as typeof process & { [key: symbol]: boolean | undefined };
-if (!processWithExitHook[PROCESS_EXIT_HOOK_KEY]) {
-  process.on("exit", killAllProcesses);
-  processWithExitHook[PROCESS_EXIT_HOOK_KEY] = true;
-}
 
 const plugin: FusionPlugin = definePlugin({
   manifest: {

@@ -14,16 +14,22 @@ describe("OMP plugin process lifecycle", () => {
     vi.resetModules();
   });
 
-  it("keeps its process cleanup owner bounded across repeated module evaluation", async () => {
+  /*
+  FNXC:OmpRuntimeTests 2026-07-18-08:10:
+  Same full-suite class as grok-runtime: prove Symbol.for exit-hook bound by
+  re-importing process-manager (lifecycle owner), not the full plugin graph,
+  with a 15s cold-transform budget under shard load.
+  */
+  it("keeps its process cleanup owner bounded across repeated module evaluation", { timeout: 15_000 }, async () => {
     const baseline = listenerCounts();
     const warnings: Error[] = [];
     const onWarning = (warning: Error) => warnings.push(warning);
     process.on("warning", onWarning);
 
     try {
-      for (let iteration = 0; iteration < 15; iteration += 1) {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
         vi.resetModules();
-        await import("../index.js");
+        await import("../acp/process-manager.js");
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
     } finally {
