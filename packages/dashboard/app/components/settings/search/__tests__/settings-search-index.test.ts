@@ -18,9 +18,21 @@ const SECTIONS_DIR = resolve(__dirname, "../../sections");
  * Extracts the descriptor keys a section renders. Matches the established
  * `descriptor={{ key: "..." }}` idiom every typed row uses (see GeneralSection
  * and AppearanceSection); `key` is always the first property by convention.
+ *
+ * FNXC:SettingsSearch 2026-07-18-07:15:
+ * Also inventory bespoke SettingsFieldRow controls that anchor search via
+ * `htmlFor` → `data-settings-key` (e.g. general.mobileNavPrimaryItems). Those
+ * rows are indexed and jumpable but never use the descriptor={{ key }} shape.
  */
 function extractDescriptorKeys(source: string): string[] {
-  return [...source.matchAll(/descriptor=\{\{\s*key:\s*"([^"]+)"/g)].map((m) => m[1]);
+  const keys = new Set<string>();
+  for (const m of source.matchAll(/descriptor=\{\{\s*key:\s*"([^"]+)"/g)) {
+    keys.add(m[1]);
+  }
+  for (const m of source.matchAll(/<SettingsFieldRow\b[\s\S]*?\bhtmlFor="([^"]+)"/g)) {
+    keys.add(m[1]);
+  }
+  return [...keys];
 }
 
 /** Section .tsx files, excluding co-located tests and non-section helpers. */

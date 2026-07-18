@@ -26,7 +26,9 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
 vi.mock("../../hooks/useNodes", () => ({ useNodes: vi.fn(() => ({ nodes: [] })) }));
 vi.mock("../../hooks/useViewportMode", () => {
   const useViewportMode = vi.fn(() => "desktop");
-  return {
+  return {  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
+
     MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
     getViewportMode: () => useViewportMode(),
     isMobileViewport: () => useViewportMode() === "mobile",

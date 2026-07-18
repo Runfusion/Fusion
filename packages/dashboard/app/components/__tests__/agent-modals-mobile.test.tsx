@@ -9,6 +9,11 @@ import { AgentImportModal } from "../AgentImportModal";
 import { AgentListModal } from "../AgentListModal";
 import * as api from "../../api";
 
+/*
+FNXC:DashboardTests 2026-07-18-07:15:
+AgentDetailView/AgentListModal now call fetchSettings for runtime-config surfaces.
+Include it on the ../../api mock so vitest does not fail the suite on missing export.
+*/
 vi.mock("../../api", () => ({
   fetchAgent: vi.fn(),
   updateAgent: vi.fn(),
@@ -43,6 +48,7 @@ vi.mock("../../api", () => ({
   resetAgentBudget: vi.fn(),
   upgradeAgentHeartbeatProcedure: vi.fn(),
   fetchCompanies: vi.fn(),
+  fetchSettings: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../AgentLogViewer", () => ({

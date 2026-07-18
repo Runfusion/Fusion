@@ -9,7 +9,9 @@ const viewportModeMock = vi.hoisted(() => ({ value: "desktop" as "desktop" | "ta
 const mockFetchScripts = vi.hoisted(() => vi.fn());
 
 vi.mock("../../hooks/useViewportMode", () => ({
-  useViewportMode: () => viewportModeMock.value,
+    isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
+useViewportMode: () => viewportModeMock.value,
 }));
 
 vi.mock("../../api", () => ({

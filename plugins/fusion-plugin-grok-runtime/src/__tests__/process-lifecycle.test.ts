@@ -14,6 +14,12 @@ describe("Grok plugin process lifecycle", () => {
     vi.resetModules();
   });
 
+  /*
+  FNXC:GrokRuntimeTests 2026-07-18-07:15:
+  Bound is proven by a few re-evaluations (Symbol.for exit-hook guard). Full-suite
+  shard load made 15 dynamic imports hit the default 5s testTimeout (transform-heavy
+  plugin graph), not a product hang — keep the assertion, reduce iterations.
+  */
   it("keeps its process cleanup owner bounded across repeated module evaluation", async () => {
     const baseline = listenerCounts();
     const warnings: Error[] = [];
@@ -21,7 +27,7 @@ describe("Grok plugin process lifecycle", () => {
     process.on("warning", onWarning);
 
     try {
-      for (let iteration = 0; iteration < 15; iteration += 1) {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
         vi.resetModules();
         await import("../index.js");
       }

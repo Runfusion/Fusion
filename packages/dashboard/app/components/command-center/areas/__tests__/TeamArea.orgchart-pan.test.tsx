@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../../api/legacy", () => ({
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
   fetchOrgTree: mocks.fetchOrgTree,
   fetchExecutorStats: mocks.fetchExecutorStats,
   fetchSettings: mocks.fetchSettings,

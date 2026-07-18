@@ -252,9 +252,17 @@ export function FloatingWindow({
   A hidden Quick Chat must reclaim a fresh z-index when reopened because another task-detail
   popup may have been focused while chat was invisible. Hidden windows do not otherwise affect
   the shared interaction stack.
+
+  FNXC:FloatingWindow 2026-07-18-07:15:
+  Only reclaim on the hidden→visible transition. Initial mount already claims via useState;
+  re-claiming after sibling mount (RightDockExpandModal, etc.) inverted last-mounted-on-top
+  and broke the shared-stack cross-type contract in FloatingWindowStack.cross-type.test.
   */
+  const wasHiddenRef = useRef(hidden);
   useEffect(() => {
-    if (!hidden) bringToFront();
+    const wasHidden = wasHiddenRef.current;
+    wasHiddenRef.current = hidden;
+    if (wasHidden && !hidden) bringToFront();
   }, [bringToFront, hidden]);
 
   const handleDragPointerDown = useCallback(
