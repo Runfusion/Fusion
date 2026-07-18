@@ -48,6 +48,7 @@ import {
   TASK_PROPOSAL_CLAIM_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
   IDEATION_SCHEMA_VERSION,
+  RESEARCH_FEATURE_PROVENANCE_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -1083,7 +1084,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       missing relation project.missions.
       */
       CREATE TABLE project.missions (id text PRIMARY KEY);
-      CREATE TABLE project.mission_features (id text PRIMARY KEY);
+      /* slice_id required before 0023 research provenance unique index can attach. */
+      CREATE TABLE project.mission_features (id text PRIMARY KEY, slice_id text);
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1166,6 +1168,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1214,6 +1217,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
     ]);
   });
 
@@ -1351,6 +1355,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
     ]);
   });
 
@@ -1413,6 +1418,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
     ]);
   });
 
@@ -1475,6 +1481,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
     ]);
   });
 });

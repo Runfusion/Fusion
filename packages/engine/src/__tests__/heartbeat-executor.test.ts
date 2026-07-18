@@ -3284,10 +3284,13 @@ describe("executeHeartbeat", () => {
 
       FNXC:Ideation 2026-07-18-14:05:
       FN-8295 mounts createIdeationTools (5 tools) immediately after missions on task-scoped and no-task heartbeats. Count rose 58→63.
+
+      FNXC:ResearchMissionBridge 2026-07-18-16:35:
+      FN-8297 adds fn_research_promote_finding on the Mission tool surface (after feature_link_task). Count rose 63→64.
       */
       // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, ideation, goals/evaluations/identity,
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(63);
+      expect(callArgs.customTools).toHaveLength(64);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3319,6 +3322,7 @@ describe("executeHeartbeat", () => {
         "fn_feature_update",
         "fn_feature_delete",
         "fn_feature_link_task",
+        "fn_research_promote_finding",
         "fn_ideation_list",
         "fn_ideation_show",
         "fn_ideation_start",
