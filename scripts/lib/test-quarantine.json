@@ -20,6 +20,11 @@
       "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
       "reason": "Full-suite shard 2 (run 29660321240): Terminal-guard tab settle race under dashboard-app-quality-backfill load without product-bug evidence; passes focused/local thrice. Quarantine on sight per AGENTS.md. Mirrored in packages/dashboard/vitest.config.ts.",
       "quarantinedAt": "2026-07-18"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/dev-server-process.test.ts",
+      "reason": "Full-suite shard 4 (run 29661202279): clears fallback probe timer when URL is detected from logs — detectedEvents length 0 under dashboard-api-quality-backfill load; known timer/stdout race (prior FN-6722 quarantine, FN-6860 rescue). Re-flaked without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-18"
     }
   ]
 }

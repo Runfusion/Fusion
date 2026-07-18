@@ -353,6 +353,14 @@ const quarantinedDashboardTests: string[] = [
   Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
   */
   "app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
+  /*
+  FNXC:DashboardTestQuarantine 2026-07-18-14:40:
+  Full-suite shard 4 (run 29661202279): re-flaked stdout/fallback-probe race in
+  clears fallback probe timer when URL is detected from logs under the loaded
+  API backfill lane (prior FN-6722 quarantine / FN-6860 rescue). Quarantine on
+  sight — mirrored in scripts/lib/test-quarantine.json.
+  */
+  "src/__tests__/dev-server-process.test.ts",
 ];
 
 const qualityApiTests = [

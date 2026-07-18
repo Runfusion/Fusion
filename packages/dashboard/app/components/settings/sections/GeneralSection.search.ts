@@ -203,4 +203,18 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
       "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language.",
     keywords: ["locale", "localization"],
   },
+  /*
+  FNXC:ReportPipeline 2026-07-18-14:45:
+  FN-8326 surfaces reportRoadmapDedup as a SettingsToggleRow in GeneralSection; index it so operators can find roadmap-dedup before filing.
+  */
+  {
+    sectionId: "general",
+    key: "reportRoadmapDedup",
+    labelKey: "settings.general.reportRoadmapDedup",
+    labelFallback: "Check roadmap before filing reports",
+    helpKey: "settings.general.reportRoadmapDedupHelp",
+    helpFallback:
+      "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
+    keywords: ["roadmap", "dedup", "report", "duplicate"],
+  },
 ];

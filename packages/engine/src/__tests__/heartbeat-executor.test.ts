@@ -123,6 +123,12 @@ describe("executeHeartbeat", () => {
         dependencies: [],
         column: "triage",
       }),
+      /*
+      FNXC:TaskCreateDedup 2026-07-18-14:45:
+      FN-8277 parent-scoped uniqueness pre-check calls findRecentTasksBySourceParentTaskId before createTask.
+      Default empty candidates so heartbeat fn_task_create tool tests reach the store write.
+      */
+      findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
       logEntry: vi.fn().mockResolvedValue({}),
       addComment: vi.fn().mockResolvedValue({}),
       appendAgentLog: vi.fn().mockResolvedValue(undefined),
@@ -3896,6 +3902,7 @@ describe("executeHeartbeat", () => {
       await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
       // FN-7536+: createTask input no longer carries `column` (defaulted server-side to triage) and now forwards `githubTracking`; objectContaining tolerates the extra key.
+      // FNXC:TaskCreateDedup 2026-07-18-14:45: second arg also carries onProposalClaimConflict after FN-8277; match loosely.
       expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
         description: "Follow-up task",
         dependencies: undefined,
@@ -3910,7 +3917,7 @@ describe("executeHeartbeat", () => {
             contentFingerprint: expect.any(String),
           }),
         }),
-      }), { settings: {} });
+      }), expect.objectContaining({ settings: {} }));
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {

@@ -69,6 +69,11 @@ function createStore(overrides: Partial<TaskStore> = {}): TaskStore {
     // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records task:auto-archived-duplicate activity.
     recordActivity: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-14:45:
+    FN-8277 parent-scoped uniqueness pre-check requires this on TaskStore; empty siblings let split create children.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     on: vi.fn(),

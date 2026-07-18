@@ -136,6 +136,12 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
     /*
+    FNXC:TaskCreateDedup 2026-07-18-14:45:
+    FN-8277 aborts parent-scoped createTask when findRecentTasksBySourceParentTaskId throws.
+    Shared triage mocks return no recent siblings so proactive subtask tool tests can create children.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+    /*
     FNXC:TriageTestMock 2026-07-16-14:15:
     Duplicate finalization records activity for near-duplicates and explicit DUPLICATE markers, so shared TaskStore mocks must provide an awaited no-op. The reviewer-outage retry test explicitly selects the delete resolution because the runtime default is prompt and only delete reaches deleteTask.
     */
