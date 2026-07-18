@@ -1223,7 +1223,7 @@ describe("MissionAutopilot", () => {
       expect(ap.isWatching(mission.id)).toBe(false);
     });
 
-    it("does not clear watched state when normalization is accidentally called for an active mission", () => {
+    it("does not clear watched state when normalization is accidentally called for an active mission", async () => {
       const mission = createMockMission({
         id: "M-ACTIVE",
         status: "active",
@@ -1237,7 +1237,7 @@ describe("MissionAutopilot", () => {
       ap.watchMission("M-ACTIVE");
       store.updateMission.mockClear();
       store.logMissionEvent.mockClear();
-      (ap as any).normalizeCompleteMissionAutopilotState("M-ACTIVE", "test");
+      await (ap as any).normalizeCompleteMissionAutopilotState("M-ACTIVE", "test");
 
       expect(ap.isWatching("M-ACTIVE")).toBe(true);
       expect(store.updateMission).not.toHaveBeenCalled();
