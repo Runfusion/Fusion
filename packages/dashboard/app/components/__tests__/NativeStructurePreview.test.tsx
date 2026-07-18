@@ -56,6 +56,18 @@ describe("NativeStructurePreview", () => {
     expect(screen.getByText("This structure is unavailable.")).toBeInTheDocument();
   });
 
+  it("does not render a previous ref's fetched payload after a ref change", async () => {
+    fetchPreview.mockResolvedValueOnce(payload(refs[0]));
+    const { rerender } = render(<NativeStructurePreview ref={refs[0]} onOpen={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("mission title")).toBeInTheDocument());
+
+    fetchPreview.mockImplementationOnce(() => new Promise(() => {}));
+    rerender(<NativeStructurePreview ref={refs[1]} onOpen={vi.fn()} />);
+
+    expect(screen.getByTestId("native-structure-preview-loading")).toBeInTheDocument();
+    expect(screen.queryByText("mission title")).toBeNull();
+  });
+
   it("renders a deliberate error card when fetching fails", async () => {
     fetchPreview.mockRejectedValueOnce(new Error("offline"));
     render(<NativeStructurePreview ref={refs[0]} onOpen={vi.fn()} />);

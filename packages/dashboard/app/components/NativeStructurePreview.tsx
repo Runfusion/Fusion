@@ -29,9 +29,11 @@ function unavailableLabel(kind: NativeStructureRef["kind"]): string {
  * than URL routes; rendering an anchor here would create dead destinations.
  */
 export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, onOpen }: NativeStructurePreviewProps) {
-  const [fetchedPayload, setFetchedPayload] = useState<NativeStructurePreviewResult | undefined>();
+  const refKey = `${ref.kind}\u0000${ref.id}\u0000${ref.projectId ?? ""}`;
+  const [fetchedPayload, setFetchedPayload] = useState<{ refKey: string; result: NativeStructurePreviewResult } | undefined>();
   const [error, setError] = useState(false);
-  const result = payload ?? fetchedPayload;
+  // FNXC:NativeStructureEmbed 2026-07-16-12:00: A ref update must not briefly render a prior fetch result; consumers can replace cards while messages or drafts rehydrate.
+  const result = payload ?? (fetchedPayload?.refKey === refKey ? fetchedPayload.result : undefined);
   const Icon = icons[ref.kind];
 
   useEffect(() => {
@@ -41,13 +43,13 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     setError(false);
     void fetchNativeStructurePreview(ref)
       .then((nextPayload) => {
-        if (active) setFetchedPayload(nextPayload);
+        if (active) setFetchedPayload({ refKey, result: nextPayload });
       })
       .catch(() => {
         if (active) setError(true);
       });
     return () => { active = false; };
-  }, [payload, ref.kind, ref.id, ref.projectId]);
+  }, [payload, ref.kind, ref.id, ref.projectId, refKey]);
 
   if (error) {
     return (
