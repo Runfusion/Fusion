@@ -9,6 +9,7 @@ import {
   isGlobalSettingsKey,
   isProjectSettingsKey,
 } from "../types.js";
+import { NON_DEFAULT_PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 
 function assertExactKeyCoverage(scopeName: string, actual: readonly string[], expected: readonly string[]): void {
@@ -40,11 +41,17 @@ describe("settings key parity", () => {
     );
   });
 
+  /*
+  FNXC:SettingsParity 2026-07-18-11:15:
+  PROJECT_SETTINGS_KEYS = defaults keys + NON_DEFAULT_PROJECT_SETTINGS_KEYS
+  (e.g. ephemeralAgentTaskCreationPolicy has no default; resolver owns fallback).
+  Full-suite failed when the parity test still expected defaults-only coverage.
+  */
   it("PROJECT_SETTINGS_KEYS is derived from the project settings defaults", () => {
     assertExactKeyCoverage(
       "PROJECT_SETTINGS_KEYS",
       PROJECT_SETTINGS_KEYS as readonly string[],
-      Object.keys(DEFAULT_PROJECT_SETTINGS),
+      [...Object.keys(DEFAULT_PROJECT_SETTINGS), ...NON_DEFAULT_PROJECT_SETTINGS_KEYS],
     );
   });
 
