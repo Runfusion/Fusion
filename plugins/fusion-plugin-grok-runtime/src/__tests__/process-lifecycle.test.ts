@@ -15,22 +15,22 @@ describe("Grok plugin process lifecycle", () => {
   });
 
   /*
-  FNXC:GrokRuntimeTests 2026-07-18-07:25:
-  Symbol.for exit-hook guard is proven by two re-evaluations after the baseline
-  import. Full-suite shard transform load made 5–15 dynamic imports of the full
-  plugin graph hit the default 5s testTimeout; keep the bound assertion, not the
-  iteration marathon.
+  FNXC:GrokRuntimeTests 2026-07-18-07:40:
+  Prove the process-manager Symbol.for exit-hook guard by re-importing the
+  registry module (lifecycle owner), not the full plugin graph. Full-suite
+  shard transform of @fusion/core via process-manager can still exceed the
+  default 5s budget on cold workers — give the bound stress test 15s.
   */
-  it("keeps its process cleanup owner bounded across repeated module evaluation", async () => {
+  it("keeps its process cleanup owner bounded across repeated module evaluation", { timeout: 15_000 }, async () => {
     const baseline = listenerCounts();
     const warnings: Error[] = [];
     const onWarning = (warning: Error) => warnings.push(warning);
     process.on("warning", onWarning);
 
     try {
-      for (let iteration = 0; iteration < 2; iteration += 1) {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
         vi.resetModules();
-        await import("../index.js");
+        await import("../acp/process-manager.js");
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
     } finally {
