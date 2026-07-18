@@ -1398,10 +1398,15 @@ export const missionFeatures = projectSchema.table("mission_features", {
   lastValidatorStatus: text("last_validator_status"),
   generatedFromFeatureId: text("generated_from_feature_id"),
   generatedFromRunId: text("generated_from_run_id"),
+  // FNXC:ResearchMissionBridge 2026-07-18-12:00: Store run/finding/source lineage as columns so duplicate promotion is project+slice scoped and citations remain queryable.
+  researchRunId: text("research_run_id"),
+  researchFindingId: text("research_finding_id"),
+  researchSourceUrls: jsonb("research_source_urls"),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),
   foreignKey({ columns: [t.projectId, t.sliceId], foreignColumns: [slices.projectId, slices.id] }).onDelete("cascade"),
   foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("set null"),
+  uniqueIndex("mission_features_research_promotion_unique").on(t.projectId, t.sliceId, t.researchRunId, t.researchFindingId),
 ]);
 
 /*

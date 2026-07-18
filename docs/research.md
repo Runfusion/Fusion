@@ -457,3 +457,7 @@ When all retries are exhausted, the run transitions to `retry_exhausted`.
 | All retries exhausted | Persistent provider error | Check provider status; create a fresh run |
 | Research view not visible in dashboard | Feature flag disabled | Set `experimentalFeatures.researchView` to `true` |
 | Settings modal missing Research sections | Feature flag disabled | Enable `researchView` feature flag first |
+
+## Promoting findings to mission features
+
+Completed findings can be promoted into a destination slice through **Promote to roadmap** or the action-gated `fn_research_promote_finding` tool. Promotion stores the research run ID, a position-independent finding ID, and that finding's cited source URLs on the canonical feature. Repeating the same run/finding promotion in the same slice reuses the existing feature. Pending, failed, cancelled, timed-out, retry-exhausted, disabled, and unconfigured research cannot mutate a mission.

@@ -1953,6 +1953,7 @@ export {
   RESEARCH_ORCHESTRATION_PHASES,
   RESEARCH_ORCHESTRATION_STEP_STATUSES,
   RESEARCH_RUN_FAILURE_CLASSES,
+  resolveResearchFindingId,
 } from "./research-types.js";
 export type {
   ResearchRunStatus,
@@ -2507,3 +2508,5 @@ export {
   localeDisplayName,
 } from "./detect-content-language.js";
 export type { LanguageFamily, DetectedContentLanguage } from "./detect-content-language.js";
+export { promoteResearchFinding } from "./research-feature-promotion.js";
+export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";

@@ -12,7 +12,7 @@ describe("createMissionTools", () => {
     expect(createMissionTools(store).map((tool) => tool.name)).toEqual([
       "fn_mission_list", "fn_mission_show", "fn_mission_create", "fn_mission_update", "fn_mission_delete",
       "fn_milestone_add", "fn_milestone_update", "fn_milestone_delete", "fn_slice_add", "fn_slice_activate",
-      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_delete", "fn_feature_link_task",
+      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_delete", "fn_feature_link_task", "fn_research_promote_finding",
     ]);
   });
 
@@ -23,6 +23,18 @@ describe("createMissionTools", () => {
     const result = await tool.execute("call", { featureId: "F-1", taskId: "FN-1" });
     expect(linkFeatureToTask).toHaveBeenCalledWith("F-1", "FN-1");
     expect(result.details).toMatchObject({ feature: { taskId: "FN-1", status: "triaged" } });
+  });
+
+  it("promotes completed findings through the idempotent mission-store facade", async () => {
+    const addResearchFeature = vi.fn().mockResolvedValue({ reused: false, feature: { id: "F-1", status: "defined" } });
+    const store = {
+      getResearchStore: () => ({ getRun: vi.fn().mockResolvedValue({ id: "R-1", status: "completed", results: { findings: [{ heading: "Finding", content: "Evidence", sources: ["https://source.example"] }] } }) }),
+      getMissionStore: () => ({ addResearchFeature }),
+    } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_research_promote_finding")!;
+    const result = await tool.execute("call", { runId: "R-1", findingId: "finding-b481c893", sliceId: "SL-1" });
+    expect(addResearchFeature).toHaveBeenCalledWith("SL-1", expect.objectContaining({ researchProvenance: expect.objectContaining({ researchRunId: "R-1" }) }));
+    expect(result.details).toMatchObject({ feature: { id: "F-1" }, reused: false });
   });
 
   it("returns a structured error for missing hierarchy records", async () => {

@@ -3511,6 +3511,16 @@ export const featureAddParams = Type.Object({ sliceId: Type.String(), title: Typ
 export const featureUpdateParams = Type.Object({ id: Type.String(), title: Type.Optional(Type.String()), description: Type.Optional(Type.String()), acceptanceCriteria: Type.Optional(Type.String()) });
 export const featureDeleteParams = Type.Object({ featureId: Type.String(), force: Type.Optional(Type.Boolean()) });
 export const featureLinkTaskParams = Type.Object({ featureId: Type.String(), taskId: Type.String() });
+export const researchFindingPromoteParams = Type.Object({
+  runId: Type.String(),
+  findingId: Type.String(),
+  sliceId: Type.String(),
+  title: Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+  acceptanceCriteria: Type.Optional(Type.String()),
+  triage: Type.Optional(Type.Boolean()),
+  taskId: Type.Optional(Type.String()),
+});
 
 const missionToolResult = (text: string, details: Record<string, unknown>, isError = false) => ({
   content: [{ type: "text" as const, text }], details, ...(isError ? { isError: true } : {}),
@@ -3545,6 +3555,22 @@ export function createMissionTools(store: TaskStore): ToolDefinition[] {
     tool("fn_feature_update", "Update Feature", "Partially update a feature.", featureUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description", "acceptanceCriteria"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const feature = await store.getMissionStore().updateFeature(p.id, updates); return missionToolResult(`Updated ${feature.id}`, { feature }); }),
     tool("fn_feature_delete", "Delete Feature", "Delete a feature, respecting linked-task guards.", featureDeleteParams, async (p) => { await store.getMissionStore().deleteFeature(p.featureId, p.force ===true); return missionToolResult(`Deleted ${p.featureId}`, { featureId: p.featureId }); }),
     tool("fn_feature_link_task", "Link Feature to Task", "Link a feature to a live project-scoped task.", featureLinkTaskParams, async (p) => { const feature = await store.getMissionStore().linkFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Linked ${feature.id} to ${p.taskId}`, { feature }); }),
+    tool("fn_research_promote_finding", "Promote Research Finding", "Promote a completed research finding into a canonical mission feature.", researchFindingPromoteParams, async (p) => {
+      const missionStore = store.getMissionStore();
+      if (!("addResearchFeature" in missionStore)) return missionToolResult("Research promotion requires the PostgreSQL mission store", { code: "POSTGRES_REQUIRED" }, true);
+      let promoted: Awaited<ReturnType<typeof fusionCore.promoteResearchFinding>>;
+      try {
+        promoted = await fusionCore.promoteResearchFinding(store.getResearchStore() as never, missionStore, p);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return missionToolResult(message, { code: message.includes("not completed") ? "RUN_NOT_COMPLETED" : message.includes("not found") ? "FINDING_OR_RUN_NOT_FOUND" : "PROMOTION_FAILED", runId: p.runId, findingId: p.findingId }, true);
+      }
+      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: All agent promotion flows use the shared completed-run gate and AsyncMissionStore facade; never create a substitute task. */
+      let feature = promoted.feature;
+      if (p.taskId) feature = await store.getMissionStore().linkFeatureToTask(feature.id, p.taskId);
+      if (p.triage) feature = await store.getMissionStore().triageFeature(feature.id);
+      return missionToolResult(`${promoted.reused ? "Reused" : "Promoted"} ${promoted.findingId} as ${feature.id}`, { runId: promoted.runId, findingId: promoted.findingId, feature, sliceId: p.sliceId, citations: promoted.citations, reused: promoted.reused, taskId: feature.taskId ?? null, status: feature.status });
+    }),
   ];
 }
 

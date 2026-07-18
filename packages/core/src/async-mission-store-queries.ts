@@ -182,6 +182,9 @@ interface FeatureRow {
   lastValidatorStatus: string | null;
   generatedFromFeatureId: string | null;
   generatedFromRunId: string | null;
+  researchRunId: string | null;
+  researchFindingId: string | null;
+  researchSourceUrls: string[] | null;
 }
 
 interface MissionEventRow {
@@ -334,6 +337,9 @@ const featureColumns = {
   lastValidatorStatus: schema.project.missionFeatures.lastValidatorStatus,
   generatedFromFeatureId: schema.project.missionFeatures.generatedFromFeatureId,
   generatedFromRunId: schema.project.missionFeatures.generatedFromRunId,
+  researchRunId: schema.project.missionFeatures.researchRunId,
+  researchFindingId: schema.project.missionFeatures.researchFindingId,
+  researchSourceUrls: schema.project.missionFeatures.researchSourceUrls,
 };
 
 const eventColumns = {
@@ -490,6 +496,7 @@ function rowToFeature(row: FeatureRow): MissionFeature {
     lastValidatorStatus: (row.lastValidatorStatus as ValidatorRunStatus) ?? undefined,
     generatedFromFeatureId: row.generatedFromFeatureId ?? undefined,
     generatedFromRunId: row.generatedFromRunId ?? undefined,
+    researchProvenance: row.researchRunId && row.researchFindingId ? { researchRunId: row.researchRunId, findingId: row.researchFindingId, sourceUrls: row.researchSourceUrls ?? [] } : undefined,
   };
 }
 
@@ -932,11 +939,24 @@ export async function createFeature(handle: QueryHandle, feature: MissionFeature
     lastValidatorStatus: feature.lastValidatorStatus ?? null,
     generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
     generatedFromRunId: feature.generatedFromRunId ?? null,
+    researchRunId: feature.researchProvenance?.researchRunId ?? null,
+    researchFindingId: feature.researchProvenance?.findingId ?? null,
+    researchSourceUrls: feature.researchProvenance?.sourceUrls ?? null,
   });
   return (await getFeature(handle, feature.id))!;
 }
 
 /** Get a single feature by id. */
+export async function getFeatureByResearchProvenance(handle: QueryHandle, sliceId: string, researchRunId: string, findingId: string): Promise<MissionFeature | undefined> {
+  const rows = await handle.select(featureColumns).from(schema.project.missionFeatures).where(and(
+    missionProjectScope(schema.project.missionFeatures.projectId),
+    eq(schema.project.missionFeatures.sliceId, sliceId),
+    eq(schema.project.missionFeatures.researchRunId, researchRunId),
+    eq(schema.project.missionFeatures.researchFindingId, findingId),
+  ));
+  return rows[0] ? rowToFeature(rows[0] as FeatureRow) : undefined;
+}
+
 export async function getFeature(handle: QueryHandle, id: string): Promise<MissionFeature | undefined> {
   const rows = await handle
     .select(featureColumns)
@@ -1014,6 +1034,9 @@ export async function updateFeature(handle: QueryHandle, feature: MissionFeature
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
       generatedFromRunId: feature.generatedFromRunId ?? null,
+      researchRunId: feature.researchProvenance?.researchRunId ?? null,
+      researchFindingId: feature.researchProvenance?.findingId ?? null,
+      researchSourceUrls: feature.researchProvenance?.sourceUrls ?? null,
     })
     .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, feature.id)));
 }
@@ -1869,6 +1892,9 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
       generatedFromRunId: feature.generatedFromRunId ?? null,
+      researchRunId: feature.researchProvenance?.researchRunId ?? null,
+      researchFindingId: feature.researchProvenance?.findingId ?? null,
+      researchSourceUrls: feature.researchProvenance?.sourceUrls ?? null,
     })
     .onConflictDoUpdate({
       target: [schema.project.missionFeatures.projectId, schema.project.missionFeatures.id],

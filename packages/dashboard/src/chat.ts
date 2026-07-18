@@ -463,8 +463,8 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskShowTool(taskStore),
       createTaskSearchTool(taskStore),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
-      /* FNXC:MissionToolParity 2026-07-29-15:30: Dashboard chat uses the engine factory, but only bound permanent-agent sessions with both policy contexts receive hierarchy mutations. */
-      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)),
+      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Promotion is a mission mutation because it creates canonical roadmap work; dashboard chat exposes it only through the same permanent-agent action gate as all hierarchy writes. */
+      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)), 
       /* FNXC:Ideation 2026-07-30-15:30: Unbound or ephemeral chat exposes only positive ideation reads; mutations require the same durable gate context as Mission writes. */
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),

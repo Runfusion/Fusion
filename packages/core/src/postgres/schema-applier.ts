@@ -32,7 +32,7 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 FNXC:GitHubImportTranslate 2026-07-17-23:48:
 Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0022";
+export const SCHEMA_BASELINE_VERSION = "0023";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -109,6 +109,8 @@ export const TASK_PROPOSAL_CLAIM_VERSION = "0020";
 export const CONFIGURATION_REVISIONS_VERSION = "0021";
 /** FNXC:Ideation 2026-07-30-15:30: Persisted ideation needs its own forward migration because configuration revisions already own 0021. */
 export const IDEATION_SCHEMA_VERSION = "0022";
+/** FNXC:ResearchMissionBridge 2026-07-18-12:00: forward migration stores stable research finding provenance on canonical features. */
+export const RESEARCH_FEATURE_PROVENANCE_VERSION = "0023";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -218,6 +220,7 @@ const BULK_COMPLETION_REFUSAL_AT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0018_bul
 const TASK_PROPOSAL_CLAIM_MIGRATION_PATH = join(MIGRATIONS_DIR, "0020_task_proposal_claim.sql");
 const CONFIGURATION_REVISIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0021_configuration_revisions.sql");
 const IDEATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0022_ideation.sql");
+const RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0023_research_feature_provenance.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -309,6 +312,7 @@ export async function applySchemaBaseline(
     const taskProposalClaimAlreadyApplied = applied.includes(TASK_PROPOSAL_CLAIM_VERSION);
     const configurationRevisionsAlreadyApplied = applied.includes(CONFIGURATION_REVISIONS_VERSION);
     const ideationAlreadyApplied = applied.includes(IDEATION_SCHEMA_VERSION);
+    const researchFeatureProvenanceAlreadyApplied = applied.includes(RESEARCH_FEATURE_PROVENANCE_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -660,6 +664,13 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(IDEATION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDEATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!researchFeatureProvenanceAlreadyApplied) {
+      const migrationSql = await readFile(RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RESEARCH_FEATURE_PROVENANCE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

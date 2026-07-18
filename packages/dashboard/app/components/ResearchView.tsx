@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { resolveResearchSettings, type Settings } from "@fusion/core";
+import { resolveResearchFindingId, resolveResearchSettings, type Settings } from "@fusion/core";
 import { Loader2, Search } from "lucide-react";
 import { fetchAuthStatus, fetchSettings } from "../api";
 import { useResearch } from "../hooks/useResearch";
@@ -81,6 +81,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
     exportRun,
     createTaskFromRun,
     attachRunToTask,
+    promoteFinding,
     statusCounts,
     refresh,
     uiError,
@@ -93,6 +94,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
   const [selectedProviders, setSelectedProviders] = useState<ResearchProviderOption[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [modalState, setModalState] = useState<null | { mode: "create" | "enrich"; findingId: string }>(null);
+  const [promotionSliceId, setPromotionSliceId] = useState("");
 
   const providerOptions = availability.supportedProviders ?? DEFAULT_PROVIDERS;
   const selectedSearchProvider = effectiveSettings.searchProvider;
@@ -418,9 +420,8 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                 )}
                 {Array.isArray(selectedRun.results?.findings) && selectedRun.results.findings.length > 0 && (
                   <div className="research-view__findings">
-                    {selectedRun.results.findings.map((finding, index) => {
-                      const findingRecord = finding as { id?: string };
-                      const findingId = findingRecord.id?.trim() || `finding-${index + 1}`;
+                    {selectedRun.results.findings.map((finding) => {
+                      const findingId = resolveResearchFindingId(finding);
                       return (
                         <article key={findingId} className="research-view__finding card">
                           <h4>{finding.heading}</h4>
@@ -439,6 +440,10 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                               onClick={() => setModalState({ mode: "enrich", findingId })}
                             >
                               {t("research.enrichTask", "Enrich Task")}
+                            </button>
+                            <input className="input" aria-label={t("research.destinationSlice", "Destination slice ID")} value={promotionSliceId} onChange={(event) => setPromotionSliceId(event.target.value)} placeholder={t("research.destinationSlice", "Destination slice ID")} />
+                            <button className="btn btn-sm" type="button" disabled={selectedRun.status !== "completed" || !promotionSliceId.trim() || actionLoading === `promote-${findingId}`} onClick={() => void runAction(`promote-${findingId}`, () => promoteFinding(selectedRun.id, { findingId, sliceId: promotionSliceId.trim() }), t("research.findingPromoted", "Finding promoted to roadmap"))}>
+                              {t("research.promoteFinding", "Promote to roadmap")}
                             </button>
                           </div>
                         </article>
@@ -478,10 +483,8 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
       </>
       )}
       {selectedRun && modalState && (() => {
-        const findingIndex = selectedRun.results?.findings?.findIndex((entry, idx) => {
-          const findingRecord = entry as { id?: string };
-          const id = findingRecord.id?.trim() || `finding-${idx + 1}`;
-          return id === modalState.findingId;
+        const findingIndex = selectedRun.results?.findings?.findIndex((entry) => {
+          return resolveResearchFindingId(entry) === modalState.findingId;
         }) ?? -1;
         const finding = findingIndex >= 0 ? selectedRun.results!.findings[findingIndex] : null;
         if (!finding) return null;

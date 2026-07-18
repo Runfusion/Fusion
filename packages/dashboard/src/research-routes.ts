@@ -9,6 +9,8 @@ import {
   RESEARCH_EVENT_TYPES,
   ResearchLifecycleError,
   buildResearchDocumentKey,
+  resolveResearchFindingId,
+  promoteResearchFinding,
   type ResearchRunListOptions,
   type ResearchRunStatus,
 } from "@fusion/core";
@@ -57,16 +59,14 @@ function toRunDetail(run: ResearchRun) {
   };
 }
 
-function getFindingId(finding: NonNullable<ResearchRun["results"]>["findings"][number], index: number): string {
-  const maybeFinding = finding as { id?: unknown };
-  const explicitId = typeof maybeFinding.id === "string" ? maybeFinding.id.trim() : "";
-  return explicitId || `finding-${index + 1}`;
+function getFindingId(finding: NonNullable<ResearchRun["results"]>["findings"][number]): string {
+  return resolveResearchFindingId(finding);
 }
 
 function getFindingById(run: ResearchRun, findingId: string) {
   const findings = run.results?.findings ?? [];
-  for (const [index, finding] of findings.entries()) {
-    if (getFindingId(finding, index) === findingId) {
+  for (const finding of findings) {
+    if (getFindingId(finding) === findingId) {
       return { finding, findingId };
     }
   }
@@ -379,6 +379,31 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
       }
       const message = error instanceof Error ? error.message : "Failed to create task from research finding";
       res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/runs/:runId/findings/:findingId/promote", async (req, res) => {
+    try {
+      const scopedStore = requestContext.getStore();
+      if (!scopedStore) throw new ApiError(500, "Task store context not available");
+      const sliceId = typeof req.body?.sliceId === "string" ? req.body.sliceId.trim() : "";
+      if (!sliceId) throw badRequest("sliceId is required");
+      const missionStore = scopedStore.getMissionStore();
+      if (!("addResearchFeature" in missionStore)) throw new ApiError(409, "Research promotion requires the PostgreSQL mission store");
+      const promoted = await promoteResearchFinding(getStore() as never, missionStore, {
+        runId: req.params.runId,
+        findingId: req.params.findingId,
+        sliceId,
+        title: typeof req.body?.title === "string" ? req.body.title : undefined,
+        description: typeof req.body?.description === "string" ? req.body.description : undefined,
+        acceptanceCriteria: typeof req.body?.acceptanceCriteria === "string" ? req.body.acceptanceCriteria : undefined,
+      });
+      let feature = promoted.feature;
+      if (typeof req.body?.taskId === "string" && req.body.taskId.trim()) feature = await missionStore.linkFeatureToTask(feature.id, req.body.taskId.trim());
+      if (req.body?.triage === true) feature = await missionStore.triageFeature(feature.id);
+      res.status(promoted.reused ? 200 : 201).json({ runId: promoted.runId, findingId: promoted.findingId, feature, sliceId, citations: promoted.citations, reused: promoted.reused, taskId: feature.taskId ?? null, status: feature.status });
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to promote research finding");
     }
   });
 

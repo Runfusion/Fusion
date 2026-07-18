@@ -678,3 +678,7 @@ For example, activate a ready work unit with `fn_slice_activate({ id: "SL-…" }
 ## Ideation handoff
 
 [Persisted ideation](./ideation/persisted-diverge-converge.md) converges a selected candidate into this canonical hierarchy. It atomically creates or attaches a Mission and persists that linkage, rather than maintaining a parallel roadmap document.
+
+## Research-derived features
+
+A completed cited research finding may become a normal Mission Feature. Its feature retains research run, stable finding, and source-URL provenance; optional triage uses the normal feature task flow. Linked task changes reconcile through the existing feature → slice → milestone → mission rollups, and task completion remains subject to assertion validation.

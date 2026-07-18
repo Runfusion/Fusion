@@ -10271,3 +10271,24 @@ export function fetchSystemLogs(limit?: number): Promise<{ entries: SystemLogEnt
   const suffix = limit ? `?limit=${limit}` : "";
   return api<{ entries: SystemLogEntryDto[] }>(`/system/logs${suffix}`);
 }
+
+export type ResearchFindingPromotionInput = {
+  findingId: string;
+  sliceId: string;
+  title?: string;
+  description?: string;
+  acceptanceCriteria?: string;
+  triage?: boolean;
+  taskId?: string;
+};
+
+export function promoteResearchFinding(
+  runId: string,
+  input: ResearchFindingPromotionInput,
+  projectId?: string,
+): Promise<{ runId: string; findingId: string; feature: { id: string; status: string; taskId?: string }; citations: string[]; reused: boolean }> {
+  return api(withProjectId(`/research/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(input.findingId)}/promote`, projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

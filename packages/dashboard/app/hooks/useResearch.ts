@@ -6,6 +6,7 @@ import {
   cancelResearchRun,
   createResearchRun,
   createTaskFromResearchRun,
+  promoteResearchFinding,
   exportResearchRun,
   getResearchRun,
   listResearchRuns,
@@ -307,6 +308,8 @@ export function useResearch(options?: { projectId?: string }) {
     ) => createTaskFromResearchRun(runId, { title, findingId, description, priority, attachExport }, projectId),
     attachRunToTask: (runId: string, taskId: string, findingId?: string, attachExport?: boolean) =>
       attachResearchRunToTask(runId, { taskId, findingId, attachExport }, projectId),
+    promoteFinding: (runId: string, input: { findingId: string; sliceId: string; title?: string; description?: string; acceptanceCriteria?: string; triage?: boolean; taskId?: string }) =>
+      promoteResearchFinding(runId, input, projectId),
     uiError,
     runActionState: getRunActionState(selectedRun),
     statusCounts: runs.reduce<Record<ResearchRunStatus, number>>(

@@ -7082,6 +7082,7 @@ export {
 } from "./model-resolution.js";
 export type { ResolvedModelSelection } from "./model-resolution.js";
 export { resolveResearchSettings } from "./research-settings.js";
+export { resolveResearchFindingId } from "./research-types.js";
 export type { ResolvedResearchSettings } from "./research-settings.js";
 
 /*

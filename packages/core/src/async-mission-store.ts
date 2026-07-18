@@ -22,6 +22,7 @@ import type {
   MilestoneCreateInput,
   SliceCreateInput,
   FeatureCreateInput,
+  ResearchFeatureCreateInput,
   MissionWithHierarchy,
   MissionHealth,
   MissionEvent,
@@ -89,6 +90,7 @@ import {
   reorderSlices,
   createFeature,
   getFeature,
+  getFeatureByResearchProvenance,
   listFeaturesByIds,
   listFeatures,
   listFeaturesForMilestone,
@@ -813,6 +815,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       title: input.title,
       description: input.description,
       acceptanceCriteria: input.acceptanceCriteria,
+      researchProvenance: (input as Partial<ResearchFeatureCreateInput>).researchProvenance,
       status: "defined",
       createdAt: now,
       updatedAt: now,
@@ -826,6 +829,19 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     await this.applyDerivedMilestoneAcceptanceCriteria(slice.milestoneId);
     await this.ensureFeatureAssertion(feature);
     return (await getFeature(this.db, feature.id)) ?? feature;
+  }
+
+  /**
+   * FNXC:ResearchMissionBridge 2026-07-18-12:00:
+   * Research promotion creates canonical features through this facade and
+   * reuses a project/slice/run/finding match before writing. The composite
+   * database index is the concurrent retry backstop for this invariant.
+   */
+  async addResearchFeature(sliceId: string, input: ResearchFeatureCreateInput): Promise<{ feature: MissionFeature; reused: boolean }> {
+    const existing = await getFeatureByResearchProvenance(this.db, sliceId, input.researchProvenance.researchRunId, input.researchProvenance.findingId);
+    if (existing) return { feature: existing, reused: true };
+    const feature = await this.addFeature(sliceId, input);
+    return { feature, reused: false };
   }
 
   async getFeature(id: string): Promise<MissionFeature | undefined> {

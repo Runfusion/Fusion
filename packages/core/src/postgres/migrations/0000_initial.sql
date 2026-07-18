@@ -978,6 +978,9 @@ CREATE TABLE IF NOT EXISTS project.mission_features (
   last_validator_status text,
   generated_from_feature_id text,
   generated_from_run_id text,
+  research_run_id text,
+  research_finding_id text,
+  research_source_urls jsonb,
   CONSTRAINT mission_features_slice_id_fkey
     FOREIGN KEY (slice_id) REFERENCES project.slices(id) ON DELETE CASCADE,
   CONSTRAINT mission_features_task_id_fkey
@@ -1969,3 +1972,4 @@ CREATE INDEX IF NOT EXISTS "idxArchivedTasksCreatedAt"
 -- GIN index on the archive search_vector (VAL-SEARCH-005).
 CREATE INDEX IF NOT EXISTS "idxArchivedTasksSearchVector"
   ON archive.archived_tasks USING gin(search_vector);
+

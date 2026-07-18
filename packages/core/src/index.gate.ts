@@ -1877,6 +1877,7 @@ export {
   RESEARCH_ORCHESTRATION_PHASES,
   RESEARCH_ORCHESTRATION_STEP_STATUSES,
   RESEARCH_RUN_FAILURE_CLASSES,
+  resolveResearchFindingId,
 } from "./research-types.js";
 export type {
   ResearchRunStatus,
@@ -2223,3 +2224,5 @@ export {
   upsertWorkflowStepResult,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
 } from "./workflow-step-results.js";
+export { promoteResearchFinding } from "./research-feature-promotion.js";
+export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";
