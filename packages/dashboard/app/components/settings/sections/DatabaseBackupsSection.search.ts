@@ -48,4 +48,19 @@ export const databaseBackupsSearchEntries: SettingsSearchEntry[] = [
       "Directory for backup files, relative to project root. Default: .fusion/backups.",
     keywords: ["location", "folder", "destination"],
   },
+  /*
+  FNXC:EmbeddedPostgres 2026-07-18-13:05:
+  feat(postgres) adds embeddedPostgresMaxConnections under Advanced database settings.
+  Index it so Settings search can find the connection cap beside the other backup controls.
+  */
+  {
+    sectionId: "backups-global",
+    key: "embeddedPostgresMaxConnections",
+    labelKey: "settings.database.embeddedConnectionCap",
+    labelFallback: "Embedded PostgreSQL connection cap",
+    helpKey: "settings.database.embeddedConnectionCapHelp",
+    helpFallback:
+      "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.",
+    keywords: ["postgres", "postgresql", "connections", "embedded", "cap", "database"],
+  },
 ];
