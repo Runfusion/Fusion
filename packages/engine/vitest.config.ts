@@ -295,17 +295,8 @@ export default defineConfig({
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
             "node_modules/**",
             "dist/**",
-            // FNXC:PgMigrationQuarantine 2026-07-18-02:10: FN-8258 rescued the ten remaining VAL-REMOVAL-005 holdouts through PostgreSQL harnesses and production-shaped async contracts; retain only unresolved paired quarantines.
-            // FNXC:PgMigrationQuarantine 2026-07-14-08:00:
+            // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.
             // FNXC:WorkflowStepInstancePersistence 2026-07-16-20:35: FN-8157 restores this PG-backed foreach suite through async store persistence, so it must execute in engine-default.
-            // VAL-REMOVAL-005 deleted the SQLite Database class. These engine-default files fail
-            // because they construct SQLite-backed stores or use sync APIs (getRunAuditEvents,
-            // getDatabase, walCheckpoint) that throw/return-empty in backend mode, or have mock
-            // drift from the async-satellite cutover. Quarantined on sight per AGENTS.md.
-            "src/__tests__/backlog-pressure-reporter.test.ts",
-            "src/__tests__/dependency-blocked-todo-reporter.test.ts",
-            "src/__tests__/goal-injection-diagnostics-wiring.test.ts",
-            "src/__tests__/merger-cwd-fallback-removed.test.ts",
             /*
             FNXC:EngineTests 2026-07-18-08:15:
             heartbeat-error-recovery timed out at 30s on full-suite shard 1
@@ -363,11 +354,7 @@ export default defineConfig({
             Database class being deleted. Quarantined on sight per AGENTS.md; mirrored in
             scripts/lib/test-quarantine.json.
             */
-// FNXC:PgMigrationQuarantine 2026-07-14-08:00:
-            // VAL-REMOVAL-005 deleted the SQLite Database class. These files use makeReliabilityFixture
-            // (now PG-backed) but fail on sync SQLite APIs (getRunAuditEvents, getDatabase) that
-            // return [] / throw in backend mode, or on mock drift from the async-satellite cutover.
-            // Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
+            // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 restored the final VAL-REMOVAL-005 reliability suites with awaited PostgreSQL audit reads. Keep the project partition below while allowing these tests to execute under engine-reliability.
             // FNXC:PgMigrationQuarantine 2026-07-16-04:59:
             // FN-8044 migrated dependency-reconcile suites to the PG corrupt-row seeding seam, so
             // they are deliberately absent from this quarantine list and ledger.
@@ -381,9 +368,6 @@ export default defineConfig({
             // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
             // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
             // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
-            "src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
-            "src/__tests__/reliability-interactions/merge-runner-spawn-enoent-prevention.test.ts",
-            "src/__tests__/reliability-interactions/meta-chain-auto-close.test.ts",
           ],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
