@@ -11,46 +11,17 @@ import type {
   ActivityEventType,
   WorkflowStep,
   WorkflowStepResult,
-  PluginInstallation,
-  PluginSetupCheckResult,
-  PluginState,
-  PluginUiSlotDefinition,
-  PluginUiContributionDefinition,
-  PluginDashboardViewDefinition,
-
-  Message,
-  MessageMetadata,
-  MessageType,
-  ParticipantType,
   NodeConfig,
   NodeStatus,
   MeshClusterSnapshot,
   SystemMetrics,
   DiscoveryConfig,
-  MissionEvent,
-  MissionHealth,
-  MissionEventType,
-  AgentRating,
-  AgentRatingSummary,
-  AgentRatingInput,
   ChatAttachment,
   ChatMessage,
   ChatRoom,
   ChatRoomMember,
   ChatRoomMessage,
   EnrichedChatSession,
-  TodoList,
-  TodoItem,
-  TodoListWithItems,
-  TodoListCreateInput,
-  TodoListUpdateInput,
-  TodoItemCreateInput,
-  TodoItemUpdateInput,
-  Insight,
-  InsightCategory,
-  InsightStatus,
-  InsightRun,
-  InsightRunTrigger,
   EvalRun,
   EvalTaskResult,
   ResearchRunStatus,
@@ -65,14 +36,13 @@ import type {
   DockerExtraCli,
   DockerNodeStatus,
   ProjectNodePathMapping,
-  ApprovalRequestStatus,
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
 // Consumers import backfill report types from the legacy API barrel.
 export type { CommitAssociationDiffBackfillReport };
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
-import type { MilestoneValidationTelemetry, MissionInterviewDraftSummary } from "../components/mission-types";
+import type { MissionInterviewDraftSummary } from "../components/mission-types";
 import type {
   ResearchAvailability,
   ResearchRunDetail,
@@ -6814,660 +6784,93 @@ export function fetchTaskFileDiffs(taskId: string, projectId?: string): Promise<
   return api<TaskFileDiff[]>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/file-diffs`, projectId));
 }
 
-// ── Mission API ───────────────────────────────────────────────────────────
-
-/** Mission status values */
-export type MissionStatus = "planning" | "active" | "blocked" | "complete" | "archived";
-
-/** Milestone status values */
-export type MilestoneStatus = "planning" | "active" | "blocked" | "complete";
-
-/** Slice status values */
-export type SliceStatus = "pending" | "active" | "complete";
-
-/** Feature status values */
-export type FeatureStatus = "defined" | "triaged" | "in-progress" | "done" | "blocked";
-
-/** Autopilot state values for mission autonomous progression */
-export type AutopilotState = "inactive" | "watching" | "activating" | "completing";
-
-/** Autopilot status for a mission */
-export interface AutopilotStatus {
-  enabled: boolean;
-  state: AutopilotState;
-  watched: boolean;
-  lastActivityAt?: string;
-  nextScheduledCheck?: string;
-}
-
-/** Mission entity */
-export interface Mission {
-  id: string;
-  title: string;
-  description?: string;
-  baseBranch?: string;
-  branchStrategy?: {
-    mode: "project-default" | "existing" | "custom-new" | "auto-per-task";
-    branchName?: string;
-  };
-  status: MissionStatus;
-  interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
-  autoAdvance?: boolean;
-  /** When true, enable autopilot monitoring system for this mission */
-  autopilotEnabled?: boolean;
-  /** Current autopilot runtime state */
-  autopilotState?: AutopilotState;
-  /** ISO-8601 timestamp of last autopilot activity */
-  lastAutopilotActivityAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Status summary for a mission card, computed from hierarchy */
-export interface MissionSummary {
-  totalMilestones: number;
-  completedMilestones: number;
-  totalFeatures: number;
-  completedFeatures: number;
-  linkedGoalCount: number;
-  eventCount: number;
-  progressPercent: number;
-}
-
-/** Mission with optional status summary (returned by list endpoint) */
-export type MissionWithSummary = Mission & { summary?: MissionSummary };
-
-/** Milestone entity */
-export interface Milestone {
-  id: string;
-  missionId: string;
-  title: string;
-  description?: string;
-  status: MilestoneStatus;
-  orderIndex: number;
-  interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
-  dependencies: string[];
-  acceptanceCriteria?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Slice entity */
-export interface Slice {
-  id: string;
-  milestoneId: string;
-  title: string;
-  description?: string;
-  status: SliceStatus;
-  orderIndex: number;
-  activatedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Feature entity */
-export interface MissionFeature {
-  id: string;
-  sliceId: string;
-  taskId?: string;
-  title: string;
-  description?: string;
-  acceptanceCriteria?: string;
-  status: FeatureStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Milestone with slices (each slice has features) */
-export interface MilestoneWithSlices extends Milestone {
-  slices: SliceWithFeatures[];
-}
-
-/** Slice with features */
-export interface SliceWithFeatures extends Slice {
-  features: MissionFeature[];
-}
-
-/** Full mission hierarchy */
-export interface MissionWithHierarchy extends Mission {
-  /** Unfiltered total of all mission lifecycle events, matching MissionSummary.eventCount and getMissionEvents total with no eventType filter */
-  eventCount?: number;
-  milestones: MilestoneWithSlices[];
-}
-
-/** Fetch all missions with status summary */
-export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]> {
-  return api<MissionWithSummary[]>(withProjectId("/missions", projectId));
-}
-
-/** Create a new mission */
-export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; autoMerge?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }, projectId?: string): Promise<Mission> {
-  return api<Mission>(withProjectId("/missions", projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Get mission with full hierarchy */
-export function fetchMission(missionId: string, projectId?: string): Promise<MissionWithHierarchy> {
-  return api<MissionWithHierarchy>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId));
-}
-
-/** Update mission */
-export function updateMission(missionId: string, updates: Partial<Mission> & { autoMerge?: boolean | null }, projectId?: string): Promise<Mission> {
-  return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete mission */
-export function deleteMission(missionId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Get mission computed status */
-export function fetchMissionStatus(missionId: string, projectId?: string): Promise<{ status: string }> {
-  return api<{ status: string }>(withProjectId(`/missions/${encodeURIComponent(missionId)}/status`, projectId));
-}
-
-export interface MissionAssertionBackfillRepairRow {
-  featureId: string;
-  milestoneId: string;
-  assertionId: string;
-  textSource: "acceptanceCriteria" | "description" | "title" | "fallback";
-}
-
-export interface MissionAssertionBackfillErrorRow {
-  featureId: string;
-  message: string;
-}
-
-export interface MissionAssertionBackfillReport {
-  scanned: number;
-  alreadyLinked: number;
-  repaired: MissionAssertionBackfillRepairRow[];
-  skippedErrors: MissionAssertionBackfillErrorRow[];
-}
-
-/** Backfill store-managed mission assertions for unlinked features. Defaults to dry-run. */
-export function backfillMissionAssertions(
-  missionId: string,
-  options?: { dryRun?: boolean },
-  projectId?: string,
-): Promise<MissionAssertionBackfillReport> {
-  return api<MissionAssertionBackfillReport>(
-    withProjectId(`/missions/${encodeURIComponent(missionId)}/backfill-assertions`, projectId),
-    {
-      method: "POST",
-      body: JSON.stringify({ dryRun: options?.dryRun ?? true }),
-    },
-  );
-}
-
-/** Backfill historical Command Center LOC stats for commit associations. Defaults to dry-run. */
-export function backfillCommitAssociationDiffStats(
-  options?: { dryRun?: boolean },
-  projectId?: string,
-): Promise<CommitAssociationDiffBackfillReport> {
-  return api<CommitAssociationDiffBackfillReport>(
-    withProjectId("/command-center/productivity/backfill-loc", projectId),
-    {
-      method: "POST",
-      body: JSON.stringify({ dryRun: options?.dryRun ?? true }),
-    },
-  );
-}
-
-/** Query options for paginated mission event logs. */
-export interface MissionEventQueryOptions {
-  limit?: number;
-  offset?: number;
-  eventType?: MissionEventType;
-}
-
-/** Paginated mission event log response. */
-export interface MissionEventsResponse {
-  events: MissionEvent[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-/** Fetch paginated mission observability events. */
-export function fetchMissionEvents(
-  missionId: string,
-  options?: MissionEventQueryOptions,
-  projectId?: string,
-): Promise<MissionEventsResponse> {
-  const query = new URLSearchParams();
-  if (options?.limit !== undefined) query.set("limit", String(options.limit));
-  if (options?.offset !== undefined) query.set("offset", String(options.offset));
-  if (options?.eventType !== undefined) query.set("eventType", options.eventType);
-
-  const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  return api<MissionEventsResponse>(
-    withProjectId(`/missions/${encodeURIComponent(missionId)}/events${suffix}`, projectId),
-  );
-}
-
-/** Fetch computed mission health metrics. */
-export function fetchMissionHealth(missionId: string, projectId?: string): Promise<MissionHealth> {
-  return api<MissionHealth>(withProjectId(`/missions/${encodeURIComponent(missionId)}/health`, projectId));
-}
-
-/** Fetch health metrics for all missions in a single batched request. */
-export function fetchMissionsHealth(projectId?: string): Promise<Record<string, MissionHealth>> {
-  return api<Record<string, MissionHealth>>(withProjectId("/missions/health", projectId));
-}
-
-/** Add milestone to mission */
-export function createMilestone(
-  missionId: string,
-  input: { title: string; description?: string; acceptanceCriteria?: string; dependencies?: string[] },
-  projectId?: string
-): Promise<Milestone> {
-  return api<Milestone>(withProjectId(`/missions/${encodeURIComponent(missionId)}/milestones`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Update milestone */
-export function updateMilestone(milestoneId: string, updates: Partial<Milestone>, projectId?: string): Promise<Milestone> {
-  return api<Milestone>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete milestone */
-export function deleteMilestone(milestoneId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Reorder milestones */
-export function reorderMilestones(missionId: string, orderedIds: string[], projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/${encodeURIComponent(missionId)}/milestones/reorder`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ orderedIds }),
-  });
-}
-
-/** Add slice to milestone */
-export function createSlice(
-  milestoneId: string,
-  input: { title: string; description?: string },
-  projectId?: string
-): Promise<Slice> {
-  return api<Slice>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/slices`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Update slice */
-export function updateSlice(sliceId: string, updates: Partial<Slice>, projectId?: string): Promise<Slice> {
-  return api<Slice>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete slice */
-export function deleteSlice(sliceId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Activate slice */
-export function activateSlice(sliceId: string, projectId?: string): Promise<Slice> {
-  return api<Slice>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}/activate`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Reorder slices */
-export function reorderSlices(milestoneId: string, orderedIds: string[], projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/slices/reorder`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ orderedIds }),
-  });
-}
-
-/** Add feature to slice */
-export function createFeature(
-  sliceId: string,
-  input: { title: string; description?: string; acceptanceCriteria?: string },
-  projectId?: string
-): Promise<MissionFeature> {
-  return api<MissionFeature>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}/features`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Update feature */
-export function updateFeature(featureId: string, updates: Partial<MissionFeature>, projectId?: string): Promise<MissionFeature> {
-  return api<MissionFeature>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete feature */
-export function deleteFeature(featureId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Link feature to task */
-export function linkFeatureToTask(featureId: string, taskId: string, projectId?: string): Promise<MissionFeature> {
-  return api<MissionFeature>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/link-task`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ taskId }),
-  });
-}
-
-/** Unlink feature from task */
-export function unlinkFeatureFromTask(featureId: string, projectId?: string): Promise<MissionFeature> {
-  return api<MissionFeature>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/unlink-task`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Triage a feature — create a task from the feature and link it */
-export function triageFeature(
-  featureId: string,
-  taskTitle?: string,
-  taskDescription?: string,
-  projectId?: string,
-  options?: {
-    branchSelection?: {
-      mode: "project-default" | "auto-new" | "existing" | "custom-new";
-      branchName?: string;
-      baseBranch?: string;
-    };
-    branchAssignment?: { mode: "shared" | "per-task-derived" };
-    workflowId?: string | null;
-  },
-): Promise<MissionFeature> {
-  return api<MissionFeature>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/triage`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ taskTitle, taskDescription, ...options }),
-  });
-}
-
-/** Triage all "defined" features in a slice */
-export function triageAllSliceFeatures(
-  sliceId: string,
-  projectId?: string,
-  options?: {
-    branchSelection?: {
-      mode: "project-default" | "auto-new" | "existing" | "custom-new";
-      branchName?: string;
-      baseBranch?: string;
-    };
-    branchAssignment?: { mode: "shared" | "per-task-derived" };
-    workflowId?: string | null;
-  },
-): Promise<{ triaged: MissionFeature[]; count: number }> {
-  return api<{ triaged: MissionFeature[]; count: number }>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}/triage-all`, projectId), {
-    method: "POST",
-    body: JSON.stringify(options ?? {}),
-  });
-}
-
-// ── Contract Assertion API ─────────────────────────────────────────────────────
-
-/** Contract assertion status */
-export type MissionAssertionStatus = "pending" | "passed" | "failed" | "blocked";
-
-/** A contract assertion represents an explicit behavioral test or requirement associated with a milestone */
-export interface MissionContractAssertion {
-  id: string;
-  milestoneId: string;
-  title: string;
-  assertion: string;
-  status: MissionAssertionStatus;
-  orderIndex: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Input for creating a contract assertion */
-export interface ContractAssertionCreateInput {
-  title: string;
-  assertion: string;
-  status?: MissionAssertionStatus;
-}
-
-/** Input for updating a contract assertion */
-export interface ContractAssertionUpdateInput {
-  title?: string;
-  assertion?: string;
-  status?: MissionAssertionStatus;
-}
-
-/** List assertions for a milestone, ordered by orderIndex */
-export function fetchAssertions(milestoneId: string, projectId?: string): Promise<MissionContractAssertion[]> {
-  return api<MissionContractAssertion[]>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/assertions`, projectId));
-}
-
-/** Create a new assertion for a milestone */
-export function createAssertion(milestoneId: string, input: ContractAssertionCreateInput, projectId?: string): Promise<MissionContractAssertion> {
-  return api<MissionContractAssertion>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/assertions`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Reorder assertions within a milestone */
-export function reorderAssertions(milestoneId: string, orderedIds: string[], projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/assertions/reorder`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ orderedIds }),
-  });
-}
-
-/** Get a single assertion by ID */
-export function fetchAssertion(assertionId: string, projectId?: string): Promise<MissionContractAssertion> {
-  return api<MissionContractAssertion>(withProjectId(`/missions/assertions/${encodeURIComponent(assertionId)}`, projectId));
-}
-
-/** Update an assertion */
-export function updateAssertion(assertionId: string, updates: ContractAssertionUpdateInput, projectId?: string): Promise<MissionContractAssertion> {
-  return api<MissionContractAssertion>(withProjectId(`/missions/assertions/${encodeURIComponent(assertionId)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete an assertion */
-export function deleteAssertion(assertionId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/missions/assertions/${encodeURIComponent(assertionId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Link a feature to an assertion */
-export function linkFeatureToAssertion(featureId: string, assertionId: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/assertions/${encodeURIComponent(assertionId)}/link`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Unlink a feature from an assertion */
-export function unlinkFeatureFromAssertion(featureId: string, assertionId: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/assertions/${encodeURIComponent(assertionId)}/unlink`, projectId), {
-    method: "POST",
-  });
-}
-
-/** List assertions linked to a feature */
-export function fetchAssertionsForFeature(featureId: string, projectId?: string): Promise<MissionContractAssertion[]> {
-  return api<MissionContractAssertion[]>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/assertions`, projectId));
-}
-
-/** List features linked to an assertion */
-export function fetchFeaturesForAssertion(assertionId: string, projectId?: string): Promise<MissionFeature[]> {
-  return api<MissionFeature[]>(withProjectId(`/missions/assertions/${encodeURIComponent(assertionId)}/features`, projectId));
-}
-
-/** Validation rollup for a milestone */
-export interface MilestoneValidationRollup {
-  milestoneId: string;
-  totalAssertions: number;
-  passedAssertions: number;
-  failedAssertions: number;
-  blockedAssertions: number;
-  pendingAssertions: number;
-  unlinkedAssertions: number;
-  hasProseButNoAssertions: boolean;
-  state: "not_started" | "needs_coverage" | "ready" | "passed" | "failed" | "blocked";
-}
-
-/** Get milestone validation rollup */
-export function fetchMilestoneValidation(milestoneId: string, projectId?: string): Promise<MilestoneValidationRollup> {
-  return api<MilestoneValidationRollup>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/validation`, projectId));
-}
-
-/** Fetch grouped validation telemetry for a milestone */
-export function fetchMilestoneValidationTelemetry(milestoneId: string, projectId?: string): Promise<MilestoneValidationTelemetry> {
-  return api<MilestoneValidationTelemetry>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/validation-telemetry`, projectId));
-}
-
-// ── Validation Loop API ───────────────────────────────────────────────────────
-
-/** Loop state snapshot for a feature */
-export interface MissionFeatureLoopSnapshot {
-  featureId: string;
-  feature: MissionFeature;
-  loopState: "idle" | "implementing" | "validating" | "needs_fix" | "passed" | "blocked";
-  implementationAttemptCount: number;
-  validatorAttemptCount: number;
-  lastValidatorRunId?: string;
-  lastValidatorStatus?: "running" | "passed" | "failed" | "blocked" | "error";
-  generatedFromFeatureId?: string;
-  generatedFromRunId?: string;
-  retryBudgetRemaining: number;
-}
-
-/** Validator run */
-export interface MissionValidatorRun {
-  id: string;
-  featureId: string;
-  milestoneId: string;
-  sliceId: string;
-  status: "running" | "passed" | "failed" | "blocked" | "error";
-  triggerType: string;
-  implementationAttempt: number;
-  validatorAttempt: number;
-  summary?: string;
-  blockedReason?: string;
-  startedAt: string;
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Trigger validation for a feature */
-export function triggerValidation(featureId: string, projectId?: string): Promise<{ runId: string; featureId: string; status: string; triggerType: string; implementationAttempt: number; validatorAttempt: number; startedAt: string }> {
-  return api(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validate`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Get validation loop state for a feature */
-export function fetchValidationLoopState(featureId: string, projectId?: string): Promise<MissionFeatureLoopSnapshot> {
-  return api<MissionFeatureLoopSnapshot>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validation-loop`, projectId));
-}
-
-/** Paginated response wrapper for validation runs */
-export interface ValidationRunsResponse {
-  runs: MissionValidatorRun[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-/** List validation runs for a feature */
-export function fetchValidationRuns(featureId: string, options?: { limit?: number; offset?: number }, projectId?: string): Promise<MissionValidatorRun[]> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return api<ValidationRunsResponse>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validation-runs${suffix}`, projectId))
-    .then((response) => response.runs);
-}
-
-/** Get a single validator run */
-export function fetchValidationRun(runId: string, projectId?: string): Promise<MissionValidatorRun & { failures?: Array<{ id: string; assertionId: string; message?: string; expected?: string; actual?: string }> }> {
-  return api(withProjectId(`/missions/validation-runs/${encodeURIComponent(runId)}`, projectId));
-}
-
-/** Pause a mission (sets status to "blocked", in-flight tasks continue) */
-export function pauseMission(missionId: string, projectId?: string): Promise<Mission> {
-  return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}/pause`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Resume a paused mission (sets status back to "active") */
-export function resumeMission(missionId: string, projectId?: string): Promise<Mission> {
-  return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}/resume`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Stop a mission (sets status to "blocked" and pauses all linked tasks) */
-export function stopMission(missionId: string, projectId?: string): Promise<Mission & { pausedTaskIds: string[] }> {
-  return api<Mission & { pausedTaskIds: string[] }>(withProjectId(`/missions/${encodeURIComponent(missionId)}/stop`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Start a planning mission: sets status to "active" and activates the first pending slice */
-export function startMission(missionId: string, projectId?: string): Promise<MissionWithHierarchy> {
-  return api<MissionWithHierarchy>(withProjectId(`/missions/${encodeURIComponent(missionId)}/start`, projectId), {
-    method: "POST",
-  });
-}
-
-// ── Mission Autopilot API ────────────────────────────────────────────────
-
-/** Fetch autopilot status for a mission */
-export function fetchMissionAutopilotStatus(missionId: string, projectId?: string): Promise<AutopilotStatus> {
-  return api<AutopilotStatus>(withProjectId(`/missions/${encodeURIComponent(missionId)}/autopilot`, projectId));
-}
-
-/** Update autopilot settings for a mission (enable/disable) */
-export function updateMissionAutopilot(missionId: string, updates: { enabled?: boolean }, projectId?: string): Promise<AutopilotStatus> {
-  return api<AutopilotStatus>(withProjectId(`/missions/${encodeURIComponent(missionId)}/autopilot`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Manually start autopilot watching for a mission */
-export function startMissionAutopilot(missionId: string, projectId?: string): Promise<AutopilotStatus> {
-  return api<AutopilotStatus>(withProjectId(`/missions/${encodeURIComponent(missionId)}/autopilot/start`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Manually stop autopilot watching for a mission */
-export function stopMissionAutopilot(missionId: string, projectId?: string): Promise<AutopilotStatus> {
-  return api<AutopilotStatus>(withProjectId(`/missions/${encodeURIComponent(missionId)}/autopilot/stop`, projectId), {
-    method: "POST",
-  });
-}
+/*
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `missions` imports while implementations live in missions.ts.
+ */
+export {
+  activateSlice,
+  backfillCommitAssociationDiffStats,
+  backfillMissionAssertions,
+  createAssertion,
+  createFeature,
+  createMilestone,
+  createMission,
+  createSlice,
+  deleteAssertion,
+  deleteFeature,
+  deleteMilestone,
+  deleteMission,
+  deleteSlice,
+  fetchAssertion,
+  fetchAssertions,
+  fetchAssertionsForFeature,
+  fetchFeaturesForAssertion,
+  fetchMilestoneValidation,
+  fetchMilestoneValidationTelemetry,
+  fetchMission,
+  fetchMissionAutopilotStatus,
+  fetchMissionEvents,
+  fetchMissionHealth,
+  fetchMissionStatus,
+  fetchMissions,
+  fetchMissionsHealth,
+  fetchValidationLoopState,
+  fetchValidationRun,
+  fetchValidationRuns,
+  linkFeatureToAssertion,
+  linkFeatureToTask,
+  pauseMission,
+  reorderAssertions,
+  reorderMilestones,
+  reorderSlices,
+  resumeMission,
+  startMission,
+  startMissionAutopilot,
+  stopMission,
+  stopMissionAutopilot,
+  triageAllSliceFeatures,
+  triageFeature,
+  triggerValidation,
+  unlinkFeatureFromAssertion,
+  unlinkFeatureFromTask,
+  updateAssertion,
+  updateFeature,
+  updateMilestone,
+  updateMission,
+  updateMissionAutopilot,
+  updateSlice,
+} from "./missions.js";
+export type {
+  AutopilotState,
+  AutopilotStatus,
+  ContractAssertionCreateInput,
+  ContractAssertionUpdateInput,
+  FeatureStatus,
+  Milestone,
+  MilestoneStatus,
+  MilestoneValidationRollup,
+  MilestoneWithSlices,
+  Mission,
+  MissionAssertionBackfillErrorRow,
+  MissionAssertionBackfillRepairRow,
+  MissionAssertionBackfillReport,
+  MissionAssertionStatus,
+  MissionContractAssertion,
+  MissionEventQueryOptions,
+  MissionEventsResponse,
+  MissionFeature,
+  MissionFeatureLoopSnapshot,
+  MissionStatus,
+  MissionSummary,
+  MissionValidatorRun,
+  MissionWithHierarchy,
+  MissionWithSummary,
+  Slice,
+  SliceStatus,
+  SliceWithFeatures,
+  ValidationRunsResponse,
+} from "./missions.js";
 
 // ── Mission Interview API ─────────────────────────────────────────────────
 
@@ -8045,74 +7448,20 @@ export async function previewEnrichedDescription(
   }
 }
 
-// ── Todo API ─────────────────────────────────────────────────────────────────
-
-/** Fetch all todo lists with their items */
-export function fetchTodoLists(projectId?: string): Promise<TodoListWithItems[]> {
-  return api<TodoListWithItems[]>(withProjectId("/todos", projectId));
-}
-
-/** Create a new todo list */
-export function createTodoList(title: string, projectId?: string): Promise<TodoList> {
-  const input: TodoListCreateInput = { title };
-  return api<TodoList>(withProjectId("/todos", projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Update a todo list title */
-export function updateTodoList(id: string, title: string, projectId?: string): Promise<TodoList> {
-  const updates: TodoListUpdateInput = { title };
-  return api<TodoList>(withProjectId(`/todos/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete a todo list and all its items */
-export function deleteTodoList(id: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/todos/${encodeURIComponent(id)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Create a new item in a todo list */
-export function createTodoItem(listId: string, text: string, projectId?: string): Promise<TodoItem> {
-  const input: TodoItemCreateInput = { text };
-  return api<TodoItem>(withProjectId(`/todos/${encodeURIComponent(listId)}/items`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Update a todo item (text and/or completed) */
-export function updateTodoItem(
-  id: string,
-  data: { text?: string; completed?: boolean },
-  projectId?: string
-): Promise<TodoItem> {
-  const updates: TodoItemUpdateInput = data;
-  return api<TodoItem>(withProjectId(`/todos/items/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Delete a todo item */
-export function deleteTodoItem(id: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/todos/items/${encodeURIComponent(id)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Reorder items within a todo list */
-export function reorderTodoItems(listId: string, itemIds: string[], projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/todos/${encodeURIComponent(listId)}/items/reorder`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ itemIds }),
-  });
-}
+/*
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `todo` imports while implementations live in todo.ts.
+ */
+export {
+  createTodoItem,
+  createTodoList,
+  deleteTodoItem,
+  deleteTodoList,
+  fetchTodoLists,
+  reorderTodoItems,
+  updateTodoItem,
+  updateTodoList,
+} from "./todo.js";
 
 // ── AI Sessions ────────────────────────────────────────────────────────────
 
@@ -8305,566 +7654,88 @@ export function summarizePlanningDraftTitle(
   );
 }
 
-// ── Messages API ──────────────────────────────────────────────────────────
-
-/** Response shape for GET /messages/inbox */
-export interface InboxResponse {
-  messages: Message[];
-  total: number;
-  unreadCount: number;
-}
-
-/** Response shape for GET /messages/outbox */
-export interface OutboxResponse {
-  messages: Message[];
-  total: number;
-}
-
-/** Response shape for GET /messages/unread-count */
-export interface UnreadCountResponse {
-  unreadCount: number;
-  pendingApprovalCount?: number;
-}
-
-/** Response shape for POST /messages/read-all */
-export interface MarkAllReadResponse {
-  markedAsRead: number;
-}
-
-/** Response shape for GET /agents/:id/mailbox */
-export interface AgentMailboxResponse {
-  ownerId: string;
-  ownerType: ParticipantType;
-  unreadCount: number;
-  lastMessage?: Message;
-  messages: Message[];      // Backward compat alias for inbox
-  inbox: Message[];
-  outbox: Message[];
-}
-
-/** Response shape for GET /agents/mailbox/all */
-export interface AllAgentsMailboxResponse {
-  messages: Message[];
-  total: number;
-  unreadCount: number;
-}
-
-/** Input for sending a message via the dashboard */
-export interface SendMessageInput {
-  toId: string;
-  toType: ParticipantType;
-  content: string;
-  type: MessageType;
-  metadata?: MessageMetadata;
-  wakeImmediately?: boolean;
-}
-
-export interface ApprovalRequestSummary {
-  id: string;
-  status: ApprovalRequestStatus;
-  actionCategory: string;
-  actionSummary: string;
-  agentId: string;
-  taskId?: string;
-  createdAt: string;
-  updatedAt: string;
-  decidedAt?: string;
-  decidedBy?: string;
-}
-
-export interface ApprovalRequestDetail extends ApprovalRequestSummary {
-  requester: {
-    actorId: string;
-    actorType: "agent" | "user" | "system";
-    actorName: string;
-  };
-  runId?: string;
-  requestedAt: string;
-  completedAt?: string;
-  targetAction: {
-    category: string;
-    action: string;
-    summary: string;
-    resourceType: string;
-    resourceId: string;
-    context?: Record<string, unknown>;
-  };
-  history: Array<{
-    id: string;
-    eventType: string;
-    actor: {
-      actorId: string;
-      actorType: "agent" | "user" | "system";
-      actorName: string;
-    };
-    note?: string;
-    createdAt: string;
-  }>;
-}
-
-export interface ApprovalListResponse {
-  requests: ApprovalRequestSummary[];
-  total: number;
-  pendingCount: number;
-}
-
-/** Fetch inbox messages for the current user. */
-export function fetchInbox(
-  options?: { limit?: number; offset?: number; unreadOnly?: boolean; type?: MessageType },
-  projectId?: string,
-): Promise<InboxResponse> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  if (options?.unreadOnly) params.set("unreadOnly", "true");
-  if (options?.type) params.set("type", options.type);
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<InboxResponse>(`/messages/inbox${query}`);
-}
-
-/** Fetch sent messages for the current user. */
-export function fetchOutbox(
-  options?: { limit?: number; offset?: number; type?: MessageType },
-  projectId?: string,
-): Promise<OutboxResponse> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  if (options?.type) params.set("type", options.type);
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<OutboxResponse>(`/messages/outbox${query}`);
-}
-
-/** Fetch unread message count (lightweight, for header badge). */
-export function fetchUnreadCount(projectId?: string): Promise<UnreadCountResponse> {
-  return api<UnreadCountResponse>(withProjectId("/messages/unread-count", projectId));
-}
-
-/** Fetch a single message by ID. */
-export function fetchMessage(id: string, projectId?: string): Promise<Message> {
-  return api<Message>(withProjectId(`/messages/${encodeURIComponent(id)}`, projectId));
-}
-
-/** Send a new message. */
-export function sendMessage(input: SendMessageInput, projectId?: string): Promise<Message> {
-  return api<Message>(withProjectId("/messages", projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Materialize an operator-approved task proposal exactly once. */
-export function createProposedTask(id: string, projectId?: string): Promise<{ task: import("@fusion/core").Task; proposal: Message }> {
-  return api(withProjectId(`/messages/${encodeURIComponent(id)}/create-proposed-task`, projectId), { method: "POST" });
-}
-
-/** Mark a specific message as read. */
-export function markMessageRead(id: string, projectId?: string): Promise<Message> {
-  return api<Message>(withProjectId(`/messages/${encodeURIComponent(id)}/read`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Mark all inbox messages as read. */
-export function markAllMessagesRead(projectId?: string): Promise<MarkAllReadResponse> {
-  return api<MarkAllReadResponse>(withProjectId("/messages/read-all", projectId), {
-    method: "POST",
-  });
-}
-
-/** Delete a message. */
-export function deleteMessage(id: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/messages/${encodeURIComponent(id)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Fetch conversation between current user and a specific participant. */
-export function fetchConversation(
-  participantId: string,
-  participantType: ParticipantType,
-  projectId?: string,
-): Promise<Message[]> {
-  const path = `/messages/conversation/${encodeURIComponent(participantType)}/${encodeURIComponent(participantId)}`;
-  return api<Message[]>(withProjectId(path, projectId));
-}
-
-/** Fetch an agent's mailbox (admin read-only view). */
-export function fetchAgentMailbox(agentId: string, projectId?: string): Promise<AgentMailboxResponse> {
-  return api<AgentMailboxResponse>(withProjectId(`/agents/${encodeURIComponent(agentId)}/mailbox`, projectId));
-}
-
-/** Fetch aggregate mailbox across all agent-to-agent messages (admin read-only view). */
-export function fetchAllAgentMailbox(projectId?: string): Promise<AllAgentsMailboxResponse> {
-  return api<AllAgentsMailboxResponse>(withProjectId("/agents/mailbox/all", projectId));
-}
-
-export function fetchApprovals(
-  options?: { status?: ApprovalRequestStatus; limit?: number; offset?: number },
-  projectId?: string,
-): Promise<ApprovalListResponse> {
-  const params = new URLSearchParams();
-  if (options?.status) params.set("status", options.status);
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<ApprovalListResponse>(`/approvals${query}`);
-}
-
-export function fetchApprovalDetail(id: string, projectId?: string): Promise<ApprovalRequestDetail> {
-  return api<ApprovalRequestDetail>(withProjectId(`/approvals/${encodeURIComponent(id)}`, projectId));
-}
-
-export function decideApproval(
-  id: string,
-  input: { decision: "approve" | "deny"; comment?: string },
-  projectId?: string,
-): Promise<ApprovalRequestDetail> {
-  return api<ApprovalRequestDetail>(withProjectId(`/approvals/${encodeURIComponent(id)}/decision`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Fetch reflection history for an agent. */
-export function fetchAgentReflections(agentId: string, limit?: number, projectId?: string): Promise<AgentReflection[]> {
-  const params = new URLSearchParams();
-  if (limit !== undefined) params.set("limit", String(limit));
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<AgentReflection[]>(`/agents/${encodeURIComponent(agentId)}/reflections${query}`);
-}
-
-/** Fetch the most recent reflection for an agent. */
-export function fetchAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection> {
-  return api<AgentReflection>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections/latest`, projectId));
-}
-
-/** Trigger a manual reflection for an agent. */
-export function triggerAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection | null> {
-  return api<AgentReflection | null>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Fetch aggregated performance summary for an agent. */
-export function fetchAgentPerformance(agentId: string, windowMs?: number, projectId?: string): Promise<AgentPerformanceSummary> {
-  const params = new URLSearchParams();
-  if (windowMs !== undefined) params.set("windowMs", String(windowMs));
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<AgentPerformanceSummary>(`/agents/${encodeURIComponent(agentId)}/performance${query}`);
-}
-
-/** Fetch ratings for an agent */
-export function fetchAgentRatings(
-  agentId: string,
-  options?: { limit?: number; category?: string },
-  projectId?: string,
-): Promise<AgentRating[]> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.category) params.set("category", options.category);
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<AgentRating[]>(`/agents/${encodeURIComponent(agentId)}/ratings${query}`);
-}
-
-/** Add a rating for an agent */
-export function addAgentRating(
-  agentId: string,
-  input: AgentRatingInput,
-  projectId?: string,
-): Promise<AgentRating> {
-  return api<AgentRating>(withProjectId(`/agents/${encodeURIComponent(agentId)}/ratings`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-/** Fetch rating summary for an agent */
-export function fetchAgentRatingSummary(agentId: string, projectId?: string): Promise<AgentRatingSummary> {
-  return api<AgentRatingSummary>(withProjectId(`/agents/${encodeURIComponent(agentId)}/ratings/summary`, projectId));
-}
-
-/** Delete a specific rating */
-export function deleteAgentRating(agentId: string, ratingId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/agents/${encodeURIComponent(agentId)}/ratings/${encodeURIComponent(ratingId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-// ── Agent Budget API ──────────────────────────────────────────────────────
-
-/** Fetch budget status for an agent */
-export function fetchAgentBudgetStatus(agentId: string, projectId?: string): Promise<AgentBudgetStatus> {
-  return api<AgentBudgetStatus>(withProjectId(`/agents/${encodeURIComponent(agentId)}/budget`, projectId));
-}
-
-/** Reset budget usage for an agent */
-export function resetAgentBudget(agentId: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/agents/${encodeURIComponent(agentId)}/budget/reset`, projectId), {
-    method: "POST",
-  });
-}
-
-// ── Plugin Management ────────────────────────────────────────────────────────
-
-export interface RegistryPluginEntry {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  author: string;
-  category: "runtime" | "integration";
-  npmPackage?: string;
-  path?: string;
-  homepage?: string;
-  tags?: string[];
-  installed: boolean;
-  state?: PluginState;
-  installedVersion?: string;
-  canInstall: boolean;
-}
-
-/** Fetch all installed plugins */
-export async function fetchPlugins(projectId?: string): Promise<PluginInstallation[]> {
-  return api<PluginInstallation[]>(withProjectId("/plugins", projectId));
-}
-
-/** Fetch curated registry plugins with installed-state metadata */
-export async function fetchPluginRegistry(
-  query?: string,
-  category?: string,
-  projectId?: string,
-): Promise<RegistryPluginEntry[]> {
-  const params = new URLSearchParams();
-  if (query?.trim()) {
-    params.set("q", query.trim());
-  }
-  if (category?.trim()) {
-    params.set("category", category.trim());
-  }
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  const response = await api<{ plugins: RegistryPluginEntry[] }>(withProjectId(`/plugins/registry${suffix}`, projectId));
-  return response.plugins;
-}
-
-/** Fetch a single plugin by ID */
-export async function fetchPluginDetail(id: string, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}`, projectId));
-}
-
-/** Install a plugin from local path or npm package */
-export async function installPlugin(
-  source: { path: string; aiScanOnLoad?: boolean } | { package: string; aiScanOnLoad?: boolean },
-  projectId?: string,
-): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId("/plugins", projectId), {
-    method: "POST",
-    body: JSON.stringify({ mode: "install", ...source }),
-  });
-}
-
-/** Enable a plugin */
-export async function enablePlugin(id: string, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/enable`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Disable a plugin */
-export async function disablePlugin(id: string, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/disable`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Uninstall a plugin */
-export async function uninstallPlugin(id: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/plugins/${encodeURIComponent(id)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** Fetch plugin settings */
-export async function fetchPluginSettings(id: string, projectId?: string): Promise<Record<string, unknown>> {
-  return api<Record<string, unknown>>(withProjectId(`/plugins/${encodeURIComponent(id)}/settings`, projectId));
-}
-
-/** Update plugin settings */
-export async function updatePluginSettings(
-  id: string,
-  settings: Record<string, unknown>,
-  projectId?: string,
-): Promise<Record<string, unknown>> {
-  return api<Record<string, unknown>>(withProjectId(`/plugins/${encodeURIComponent(id)}/settings`, projectId), {
-    method: "PUT",
-    body: JSON.stringify({ settings }),
-  });
-}
-
-export type PluginSetupStatusResponse =
-  | { hasSetup: false }
-  | ({ hasSetup: true } & PluginSetupCheckResult)
-  | {
-    hasSetup: true;
-    setupCheckDeferred: true;
-    deferredReason: "plugin-not-started";
-    pluginState: PluginInstallation["state"];
-  };
-
-/** Fetch plugin setup status */
-export async function fetchPluginSetupStatus(id: string, projectId?: string): Promise<PluginSetupStatusResponse> {
-  return api<PluginSetupStatusResponse>(withProjectId(`/plugins/${encodeURIComponent(id)}/setup-status`, projectId));
-}
-
-/** Trigger plugin setup install hook */
-export async function installPluginSetup(id: string, projectId?: string): Promise<{ success: boolean; error?: string }> {
-  return api<{ success: boolean; error?: string }>(withProjectId(`/plugins/${encodeURIComponent(id)}/setup/install`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Reload a running plugin with updated code */
-export async function reloadPlugin(id: string, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/reload`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Update plugin security-scan configuration */
-export async function updatePlugin(id: string, updates: { aiScanOnLoad: boolean }, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/** Trigger plugin rescan + reload flow */
-export async function rescanPlugin(id: string, projectId?: string): Promise<PluginInstallation> {
-  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/rescan`, projectId), {
-    method: "POST",
-  });
-}
-
-/** A UI slot entry returned by GET /api/plugins/ui-slots */
-export interface PluginUiSlotEntry {
-  pluginId: string;
-  slot: PluginUiSlotDefinition;
-}
-
-/** A structured UI contribution entry returned by GET /api/plugins/ui-contributions */
-export interface PluginUiContributionEntry {
-  pluginId: string;
-  contribution: PluginUiContributionDefinition;
-}
-
-/** A dashboard view entry returned by GET /api/plugins/dashboard-views */
-export interface PluginDashboardViewEntry {
-  pluginId: string;
-  view: PluginDashboardViewDefinition;
-}
-
-/** Plugin runtime metadata returned by GET /api/plugins/runtimes */
-export interface PluginRuntimeInfo {
-  pluginId: string;
-  runtimeId: string;
-  name: string;
-  description?: string;
-  version?: string;
-}
-
-/** Fetch all UI slot definitions from active plugins */
-export async function fetchPluginUiSlots(projectId?: string): Promise<PluginUiSlotEntry[]> {
-  const path = withProjectId("/plugins/ui-slots", projectId);
-  return dedupe(path, () => api<PluginUiSlotEntry[]>(path));
-}
-
-
-/** Fetch all structured UI contributions from active plugins */
-export async function fetchPluginUiContributions(projectId?: string): Promise<PluginUiContributionEntry[]> {
-  return api<PluginUiContributionEntry[]>(withProjectId("/plugins/ui-contributions", projectId));
-}
-
-/** Fetch all top-level dashboard view definitions from active plugins */
-export async function fetchPluginDashboardViews(projectId?: string): Promise<PluginDashboardViewEntry[]> {
-  return api<PluginDashboardViewEntry[]>(withProjectId("/plugins/dashboard-views", projectId));
-}
-
-/** Fetch all plugin runtime metadata from active plugins */
-export async function fetchPluginRuntimes(projectId?: string): Promise<PluginRuntimeInfo[]> {
-  return api<PluginRuntimeInfo[]>(withProjectId("/plugins/runtimes", projectId));
-}
-
-// ── Skills Management ─────────────────────────────────────────────────────────
-
-/** Fetch all discovered skills with their enabled state */
-export async function fetchDiscoveredSkills(projectId?: string): Promise<DiscoveredSkill[]> {
-  const response = await api<{ skills: DiscoveredSkill[] }>(withProjectId("/skills/discovered", projectId));
-  return response.skills;
-}
-
-/** Toggle a skill's enabled/disabled state */
-export async function toggleExecutionSkill(
-  skillId: string,
-  enabled: boolean,
-  projectId?: string,
-): Promise<ToggleSkillResult> {
-  return api<ToggleSkillResult>(withProjectId("/skills/execution", projectId), {
-    method: "PATCH",
-    body: JSON.stringify({ skillId, enabled }),
-  });
-}
-
-/** Install a catalog skill from skills.sh */
-export async function installSkill(
-  source: string,
-  skill: string | undefined,
-  projectId?: string,
-): Promise<{ success: true }> {
-  return api<{ success: true }>(withProjectId("/skills/install", projectId), {
-    method: "POST",
-    body: JSON.stringify({ source, skill }),
-  });
-}
-
-/** Fetch the skills.sh catalog */
-export async function fetchSkillsCatalog(
-  query?: string,
-  limit?: number,
-  projectId?: string,
-): Promise<CatalogFetchResult> {
-  const params = new URLSearchParams();
-  if (query) params.set("q", query);
-  if (limit !== undefined) params.set("limit", String(limit));
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return api<CatalogFetchResult>(withProjectId(`/skills/catalog${suffix}`, projectId));
-}
-
-/** Fetch the contents of a skill's SKILL.md file */
-export async function fetchSkillContent(skillId: string, projectId?: string): Promise<SkillContent> {
-  const response = await api<{ content: SkillContent }>(
-    withProjectId(`/skills/${encodeURIComponent(skillId)}/content`, projectId)
-  );
-  return response.content;
-}
+/*
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `messaging` imports while implementations live in messaging.ts.
+ */
+export {
+  addAgentRating,
+  createProposedTask,
+  decideApproval,
+  deleteAgentRating,
+  deleteMessage,
+  fetchAgentBudgetStatus,
+  fetchAgentMailbox,
+  fetchAgentPerformance,
+  fetchAgentRatingSummary,
+  fetchAgentRatings,
+  fetchAgentReflection,
+  fetchAgentReflections,
+  fetchAllAgentMailbox,
+  fetchApprovalDetail,
+  fetchApprovals,
+  fetchConversation,
+  fetchInbox,
+  fetchMessage,
+  fetchOutbox,
+  fetchUnreadCount,
+  markAllMessagesRead,
+  markMessageRead,
+  resetAgentBudget,
+  sendMessage,
+  triggerAgentReflection,
+} from "./messaging.js";
+export type {
+  AgentMailboxResponse,
+  AllAgentsMailboxResponse,
+  ApprovalListResponse,
+  ApprovalRequestDetail,
+  ApprovalRequestSummary,
+  InboxResponse,
+  MarkAllReadResponse,
+  OutboxResponse,
+  SendMessageInput,
+  UnreadCountResponse,
+} from "./messaging.js";
 
 /*
-FNXC:Skills 2026-06-23-04:15:
-Fetch one supplementary file's content for the SkillsView detail-pane file viewer. The skill-dir-relative path is passed as an encoded `path` query param; the server resolves + traversal-guards it. Returns isText:false for binary/oversized files so the UI shows a non-previewable notice.
-*/
-export async function fetchSkillFileContent(skillId: string, relativePath: string, projectId?: string): Promise<SkillFileContent> {
-  const base = withProjectId(`/skills/${encodeURIComponent(skillId)}/file`, projectId);
-  const sep = base.includes("?") ? "&" : "?";
-  const response = await api<{ file: SkillFileContent }>(
-    `${base}${sep}path=${encodeURIComponent(relativePath)}`
-  );
-  return response.file;
-}
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `plugins-and-skills` imports while implementations live in plugins-and-skills.ts.
+ */
+export {
+  disablePlugin,
+  enablePlugin,
+  fetchDiscoveredSkills,
+  fetchPluginDashboardViews,
+  fetchPluginDetail,
+  fetchPluginRegistry,
+  fetchPluginRuntimes,
+  fetchPluginSettings,
+  fetchPluginSetupStatus,
+  fetchPluginUiContributions,
+  fetchPluginUiSlots,
+  fetchPlugins,
+  fetchSkillContent,
+  fetchSkillFileContent,
+  fetchSkillsCatalog,
+  installPlugin,
+  installPluginSetup,
+  installSkill,
+  reloadPlugin,
+  rescanPlugin,
+  toggleExecutionSkill,
+  uninstallPlugin,
+  updatePlugin,
+  updatePluginSettings,
+} from "./plugins-and-skills.js";
+export type {
+  PluginDashboardViewEntry,
+  PluginRuntimeInfo,
+  PluginSetupStatusResponse,
+  PluginUiContributionEntry,
+  PluginUiSlotEntry,
+  RegistryPluginEntry,
+} from "./plugins-and-skills.js";
 
 // ── Chat API ─────────────────────────────────────────────────────────────────
 
@@ -9812,153 +8683,27 @@ export function attachChatStream(
 }
 
 
-// ── Insights API ─────────────────────────────────────────────────────────────
-
-export interface InsightsListResponse {
-  insights: Insight[];
-  count: number;
-}
-
-export interface RunsListResponse {
-  runs: InsightRun[];
-}
-
-/**
- * List insights for a project with optional filtering.
+/*
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `insights` imports while implementations live in insights.ts.
  */
-export function fetchInsights(
-  options: {
-    category?: InsightCategory;
-    status?: InsightStatus;
-    runId?: string;
-    limit?: number;
-    offset?: number;
-  } = {},
-  projectId?: string,
-): Promise<InsightsListResponse> {
-  const params = new URLSearchParams();
-  if (options.category) params.set("category", options.category);
-  if (options.status) params.set("status", options.status);
-  if (options.runId) params.set("runId", options.runId);
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  if (options.offset !== undefined) params.set("offset", String(options.offset));
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return api<InsightsListResponse>(withProjectId(`/insights${suffix}`, projectId));
-}
-
-/**
- * Get a single insight by ID.
- */
-export function fetchInsight(id: string, projectId?: string): Promise<Insight> {
-  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}`, projectId));
-}
-
-/**
- * Update an insight.
- */
-export function updateInsight(
-  id: string,
-  updates: {
-    title?: string;
-    content?: string | null;
-    category?: InsightCategory;
-    status?: InsightStatus;
-  },
-  projectId?: string,
-): Promise<Insight> {
-  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/**
- * Delete an insight.
- */
-export function deleteInsight(id: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/insights/${encodeURIComponent(id)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/**
- * Dismiss an insight (set status to dismissed).
- */
-export function dismissInsight(id: string, projectId?: string): Promise<Insight> {
-  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}/dismiss`, projectId), {
-    method: "POST",
-  });
-}
-
-/**
- * Archive an insight (set status to archived).
- */
-export function archiveInsight(id: string, projectId?: string): Promise<Insight> {
-  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}/archive`, projectId), {
-    method: "POST",
-  });
-}
-
-/**
- * Unarchive an insight (set status back to confirmed).
- */
-export function unarchiveInsight(id: string, projectId?: string): Promise<Insight> {
-  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}/unarchive`, projectId), {
-    method: "POST",
-  });
-}
-
-/**
- * Trigger a manual insight generation run.
- */
-export function triggerInsightRun(
-  trigger: InsightRunTrigger = "manual",
-  inputMetadata?: InsightRun["inputMetadata"],
-  projectId?: string,
-  modelProvider?: string,
-  modelId?: string,
-  thinkingLevel?: string,
-): Promise<InsightRun> {
-  const body: Record<string, unknown> = { trigger, inputMetadata };
-  if (modelProvider) body.modelProvider = modelProvider;
-  if (modelId) body.modelId = modelId;
-  if (thinkingLevel) body.thinkingLevel = thinkingLevel;
-  return api<InsightRun>(withProjectId("/insights/run", projectId), {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-/**
- * List insight generation runs.
- */
-export function fetchInsightRuns(projectId?: string): Promise<RunsListResponse> {
-  return api<RunsListResponse>(withProjectId("/insights/runs", projectId));
-}
-
-/**
- * Get a single insight run by ID.
- */
-export function fetchInsightRun(id: string, projectId?: string): Promise<InsightRun> {
-  return api<InsightRun>(withProjectId(`/insights/runs/${encodeURIComponent(id)}`, projectId));
-}
-
-/**
- * Get data needed to create a task from an insight.
- */
-export function getInsightCreateTaskData(
-  id: string,
-  projectId?: string,
-): Promise<{
-  success: boolean;
-  insight: Insight;
-  suggestedTitle: string;
-  suggestedDescription: string;
-}> {
-  return api(withProjectId(`/insights/${encodeURIComponent(id)}/create-task`, projectId), {
-    method: "POST",
-  });
-}
+export {
+  archiveInsight,
+  deleteInsight,
+  dismissInsight,
+  fetchInsight,
+  fetchInsightRun,
+  fetchInsightRuns,
+  fetchInsights,
+  getInsightCreateTaskData,
+  triggerInsightRun,
+  unarchiveInsight,
+  updateInsight,
+} from "./insights.js";
+export type {
+  InsightsListResponse,
+  RunsListResponse,
+} from "./insights.js";
 
 // ── Research API ────────────────────────────────────────────────────────────
 
@@ -10141,154 +8886,28 @@ export function getResearchStats(projectId?: string): Promise<ResearchStatsRespo
   return api<ResearchStatsResponse>(withProjectId("/research/stats", projectId));
 }
 
-// ── System Panel (Command Center → System) ──────────────────────────────────
-
 /*
-FNXC:SystemPanel 2026-07-12-11:35:
-Typed client for the /api/system operator controls: capability discovery,
-in-place restart, rebuild jobs with streamed output, engine/agent restarts,
-plugin reload, and the host-process log viewer.
-*/
+ * FNXC:CodeOrganization 2026-07-18-14:00:
+ * Preserve legacy `system-panel` imports while implementations live in system-panel.ts.
+ */
+export {
+  fetchCurrentSystemRebuild,
+  fetchSystemInfo,
+  fetchSystemLogs,
+  promoteResearchFinding,
+  reloadAllSystemPlugins,
+  requestSystemRestart,
+  restartAllSystemAgents,
+  restartSystemEngines,
+  startFnBinaryLinkLocal,
+  startFnBinaryUseGlobal,
+  startSystemRebuild,
+} from "./system-panel.js";
+export type {
+  ResearchFindingPromotionInput,
+  SystemInfoResponse,
+  SystemLogEntryDto,
+  SystemRebuildJobLine,
+  SystemRebuildJobSnapshot,
+} from "./system-panel.js";
 
-/*
-FNXC:SystemPanelFnBinary 2026-07-15-09:54:
-Job snapshots cover rebuild scopes and the fn-binary link-local / use-global
-actions that stream into the same System panel log viewer.
-*/
-export interface SystemRebuildJobSnapshot {
-  id: string;
-  kind: "rebuild" | "fn-binary";
-  scope: "app" | "full" | "plugins" | "link-local" | "use-global";
-  restartAfter: boolean;
-  status: "running" | "succeeded" | "failed";
-  startedAt: number;
-  finishedAt?: number;
-  exitCode?: number | null;
-  error?: string;
-  restartScheduled?: boolean;
-  pluginsReloaded?: string[];
-  droppedLines: number;
-  lineCount: number;
-  lines?: SystemRebuildJobLine[];
-}
-
-export interface SystemRebuildJobLine {
-  i: number;
-  ts: number;
-  stream: "stdout" | "stderr" | "system";
-  text: string;
-}
-
-export interface SystemInfoResponse {
-  supervised: boolean;
-  restartSupported: boolean;
-  rebuildSupported: boolean;
-  /** True when the host is a Fusion source checkout (dev) — can build & link local fn. */
-  fnBinaryLinkLocalSupported?: boolean;
-  /** Always true when the route is wired; UI may still disable while a job runs. */
-  fnBinaryUseGlobalSupported?: boolean;
-  sourceWorkspaceRoot?: string;
-  logsSupported: boolean;
-  engineAvailable: boolean;
-  pluginReloadSupported: boolean;
-  pid: number;
-  uptimeSeconds: number;
-  nodeVersion: string;
-  platform: string;
-  arch: string;
-  memoryRssBytes: number;
-  activeRebuild: SystemRebuildJobSnapshot | null;
-  lastRebuild: SystemRebuildJobSnapshot | null;
-}
-
-export interface SystemLogEntryDto {
-  timestamp: string;
-  level: "info" | "warn" | "error";
-  message: string;
-  prefix?: string;
-}
-
-export function fetchSystemInfo(): Promise<SystemInfoResponse> {
-  return api<SystemInfoResponse>("/system/info");
-}
-
-export function requestSystemRestart(reason?: string): Promise<{ scheduled: boolean }> {
-  return api<{ scheduled: boolean }>("/system/restart", {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function startSystemRebuild(
-  scope: "app" | "full" | "plugins",
-  restart?: boolean,
-): Promise<SystemRebuildJobSnapshot> {
-  return api<SystemRebuildJobSnapshot>("/system/rebuild", {
-    method: "POST",
-    body: JSON.stringify({ scope, restart }),
-  });
-}
-
-/*
-FNXC:SystemPanelFnBinary 2026-07-15-09:54:
-Client wrappers for System panel fn-binary actions. Both return a job snapshot
-that the panel streams via /system/jobs/:id/stream (same path as rebuild).
-*/
-export function startFnBinaryLinkLocal(): Promise<SystemRebuildJobSnapshot> {
-  return api<SystemRebuildJobSnapshot>("/system/fn-binary/link-local", { method: "POST" });
-}
-
-export function startFnBinaryUseGlobal(): Promise<SystemRebuildJobSnapshot> {
-  return api<SystemRebuildJobSnapshot>("/system/fn-binary/use-global", { method: "POST" });
-}
-
-export function fetchCurrentSystemRebuild(): Promise<{ job: SystemRebuildJobSnapshot | null }> {
-  return api<{ job: SystemRebuildJobSnapshot | null }>("/system/rebuild/current");
-}
-
-export function restartSystemEngines(): Promise<{
-  restarted: string[];
-  failed: Array<{ projectId: string; error: string }>;
-}> {
-  return api("/system/engine/restart", { method: "POST" });
-}
-
-export function restartAllSystemAgents(projectId?: string): Promise<{
-  restarted: string[];
-  failed: Array<{ agentId: string; error: string }>;
-}> {
-  return api(withProjectId("/system/agents/restart-all", projectId), { method: "POST" });
-}
-
-export function reloadAllSystemPlugins(): Promise<{
-  reloaded: string[];
-  failed: Array<{ id: string; error: string }>;
-}> {
-  return api("/system/plugins/reload-all", { method: "POST" });
-}
-
-export function fetchSystemLogs(limit?: number): Promise<{ entries: SystemLogEntryDto[] }> {
-  const suffix = limit ? `?limit=${limit}` : "";
-  return api<{ entries: SystemLogEntryDto[] }>(`/system/logs${suffix}`);
-}
-
-export type ResearchFindingPromotionInput = {
-  findingId: string;
-  sliceId: string;
-  title?: string;
-  description?: string;
-  acceptanceCriteria?: string;
-  triage?: boolean;
-  taskId?: string;
-};
-
-export function promoteResearchFinding(
-  runId: string,
-  input: ResearchFindingPromotionInput,
-  projectId?: string,
-): Promise<{ runId: string; findingId: string; feature: { id: string; status: string; taskId?: string }; citations: string[]; reused: boolean }> {
-  return api(withProjectId(`/research/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(input.findingId)}/promote`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
