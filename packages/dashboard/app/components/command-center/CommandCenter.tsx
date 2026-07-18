@@ -10,6 +10,7 @@ import { TokensArea } from "./areas/TokensArea";
 import { ToolsArea } from "./areas/ToolsArea";
 import { ActivityArea } from "./areas/ActivityArea";
 import { ProductivityArea } from "./areas/ProductivityArea";
+import { ReviewArtifactsArea } from "./areas/ReviewArtifactsArea";
 import { TeamArea } from "./areas/TeamArea";
 import { WorkflowArea } from "./areas/WorkflowArea";
 import { EcosystemArea } from "./areas/EcosystemArea";
@@ -40,6 +41,7 @@ type SubViewId =
   | "tools"
   | "activity"
   | "productivity"
+  | "review-artifacts"
   | "team"
   | "workflows"
   | "ecosystem"
@@ -84,6 +86,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     { id: "tools", label: t("commandCenter.tabs.tools", "Tools") },
     { id: "activity", label: t("commandCenter.tabs.activity", "Activity") },
     { id: "productivity", label: t("commandCenter.tabs.productivity", "Productivity") },
+    { id: "review-artifacts", label: t("commandCenter.tabs.reviewArtifacts", "Review artifacts") },
     { id: "team", label: t("commandCenter.tabs.team", "Team") },
     { id: "workflows", label: t("commandCenter.tabs.workflows", "Workflows") },
     { id: "ecosystem", label: t("commandCenter.tabs.ecosystem", "Ecosystem") },
@@ -619,6 +622,8 @@ export function CommandCenter({
         return <ActivityArea range={range} projectId={projectId} />;
       case "productivity":
         return <ProductivityArea range={range} projectId={projectId} />;
+      case "review-artifacts":
+        return <ReviewArtifactsArea projectId={projectId} addToast={addToast} />;
       case "team":
         return <TeamArea range={range} projectId={projectId} addToast={addToast} />;
       case "workflows":

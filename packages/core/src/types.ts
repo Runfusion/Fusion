@@ -127,6 +127,7 @@ import {
   PLANNER_OVERSIGHT_LEVELS,
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
   COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
   THEME_MODES,
   COLOR_THEMES,
   SUPPORTED_LOCALES,
@@ -137,6 +138,7 @@ import type {
   ExecutionMode,
   PlannerOversightLevel,
   CompletionDocumentationMode,
+  ReviewArtifactsMode,
   ThemeMode,
   ColorTheme,
   Locale,
@@ -149,6 +151,7 @@ export {
   PLANNER_OVERSIGHT_LEVELS,
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
   COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
   THEME_MODES,
   COLOR_THEMES,
   SUPPORTED_LOCALES,
@@ -159,6 +162,7 @@ export type {
   ExecutionMode,
   PlannerOversightLevel,
   CompletionDocumentationMode,
+  ReviewArtifactsMode,
   ThemeMode,
   ColorTheme,
   Locale,
@@ -791,6 +795,75 @@ export interface ArtifactWithTask extends Artifact {
   taskDescription?: string;
   /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
   taskColumn?: string;
+}
+
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Remote-desktop producers can register a document descriptor through the existing
+artifact registry by assigning this MIME type. The descriptor remains a document
+in the gallery, avoiding a raw external-session link while still making the
+review deliverable visible on both review surfaces.
+*/
+export const LIVE_DEMO_ARTIFACT_MIME_TYPE = "application/vnd.runfusion.live-demo+json";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Review surfaces admit feature videos and explicitly marked live-demo descriptors.
+Ordinary documents remain excluded; the marker uses the existing persisted
+mimeType field because agent artifact registration already forwards it without
+requiring a parallel schema or metadata-registration path.
+*/
+export function isReviewArtifact(artifact: Pick<Artifact, "type" | "mimeType">): boolean {
+  return artifact.type === "video"
+    || (artifact.type === "document" && artifact.mimeType?.toLowerCase().split(";", 1)[0] === LIVE_DEMO_ARTIFACT_MIME_TYPE);
+}
+
+/** Reads the persisted PROMPT.md override without adding task-store persistence. */
+export function parseReviewArtifactsModeOverride(prompt: string | undefined): ReviewArtifactsMode | undefined {
+  if (!prompt) return undefined;
+  const match = prompt.match(/^\*\*Review Artifacts:\*\*\s*(off|user-facing|on)\s*$/im);
+  return match?.[1]?.toLowerCase() as ReviewArtifactsMode | undefined;
+}
+
+/** Resolves review-artifact generation policy: PROMPT header → project setting → conservative default. */
+export function resolveReviewArtifactsMode(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+): ReviewArtifactsMode {
+  return parseReviewArtifactsModeOverride(prompt) ?? settings.reviewArtifacts ?? "off";
+}
+
+export type ReviewArtifactTaskClassification = "user-facing" | "backend" | "trivial";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-13:00:
+The `user-facing` policy must be a real generation gate, not a label that
+producers reinterpret. Triage may declare a task classification in PROMPT.md;
+otherwise a task with the standard frontend UX contract is user-facing and all
+other work conservatively remains backend. This keeps trivial/backend work from
+silently producing review media while allowing `on` or the existing mode header
+to explicitly opt in.
+*/
+export function classifyReviewArtifactTask(prompt: string | undefined): ReviewArtifactTaskClassification {
+  const explicit = prompt?.match(/^\*\*Review Artifact Task Type:\*\*\s*(user-facing|backend|trivial)\s*$/im)?.[1]?.toLowerCase();
+  if (explicit === "user-facing" || explicit === "backend" || explicit === "trivial") return explicit;
+  if (/^##\s+Frontend UX Criteria\s*$/im.test(prompt ?? "")) return "user-facing";
+  return "backend";
+}
+
+/**
+ * Determines whether an automatic review-artifact producer may generate media
+ * for a task. A mode marker still wins policy resolution; task classification
+ * controls the `user-facing` mode only.
+ */
+export function isReviewArtifactGenerationEligible(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+  classification = classifyReviewArtifactTask(prompt),
+): boolean {
+  const mode = resolveReviewArtifactsMode(settings, prompt);
+  return mode === "on" || (mode === "user-facing" && classification === "user-facing");
 }
 
 /**
@@ -3569,6 +3642,8 @@ export interface ProjectSettings {
    *  - "changelog": require updating an existing changelog file (do not invent a new one)
    *  Default: "off" */
   completionDocumentationMode?: CompletionDocumentationMode;
+  /** Controls whether task review deliverables are generated: off, user-facing, or on. PROMPT.md may override it. */
+  reviewArtifacts?: ReviewArtifactsMode;
   /** Mapping of task sizes to preset IDs used for auto-selection during task creation. */
   defaultPresetBySize?: { S?: string; M?: string; L?: string };
   /** When true, auto-merge will automatically resolve common conflict patterns

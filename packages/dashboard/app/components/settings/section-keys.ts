@@ -64,6 +64,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "chatRoomRecentVerbatimMessages",
     "chatRoomSummaryMaxChars",
     "completionDocumentationMode",
+    "reviewArtifacts",
     "enabledBuiltinWorkflowIds",
     "ephemeralAgentTaskCreationPolicy",
     "ephemeralAgentsEnabled",

@@ -44,6 +44,14 @@ export const DEFAULT_PLANNER_OVERSIGHT_LEVEL: PlannerOversightLevel = "autonomou
 export const COMPLETION_DOCUMENTATION_MODES = ["off", "changeset", "changelog"] as const;
 export type CompletionDocumentationMode = (typeof COMPLETION_DOCUMENTATION_MODES)[number];
 
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Review-artifact production is opt-in by default: backend and trivial work stay off,
+while user-facing tasks can opt in without making every task generate media.
+*/
+export const REVIEW_ARTIFACTS_MODES = ["off", "user-facing", "on"] as const;
+export type ReviewArtifactsMode = (typeof REVIEW_ARTIFACTS_MODES)[number];
+
 /** Theme mode for light/dark/system preference */
 export const THEME_MODES = ["dark", "light", "system"] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];

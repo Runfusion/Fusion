@@ -1288,6 +1288,14 @@ describe("SettingsModal", () => {
       },
       {
         section: "General · Project",
+        label: "Review Artifacts",
+        kind: "select",
+        value: "user-facing",
+        scope: "project",
+        expectedKey: "reviewArtifacts",
+      },
+      {
+        section: "General · Project",
         label: "Auto-cleanup old chats",
         kind: "select",
         value: 14,

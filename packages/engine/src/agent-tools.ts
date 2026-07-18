@@ -1816,6 +1816,11 @@ async function registerArtifactForAgent(
     }
     const filePayload = await readArtifactFileFromPath(params, options?.baseDir);
     const data = filePayload ? filePayload.data : decodeArtifactDataBase64(params);
+    await assertReviewArtifactGenerationEligible(store, {
+      type: params.type,
+      mimeType: filePayload?.mimeType ?? params.mimeType,
+      taskId: params.taskId ?? options?.defaultTaskId,
+    });
     const input: ArtifactCreateInput = {
       type: params.type,
       title: params.title,
@@ -1849,6 +1854,27 @@ async function registerArtifactForAgent(
     };
   }
 }
+
+/**
+ * FNXC:ReviewArtifacts 2026-07-17-13:00:
+ * Automatic artifact producers share the core eligibility resolver at the
+ * registration seam so `user-facing` excludes backend/trivial tasks instead of
+ * relying on each future video/live-demo producer to recreate policy. Untargeted
+ * artifacts remain registry-wide and are not a task review deliverable.
+ */
+async function assertReviewArtifactGenerationEligible(
+  store: TaskStore,
+  artifact: Pick<ArtifactCreateInput, "type" | "mimeType" | "taskId">,
+): Promise<void> {
+  if (!artifact.taskId || !fusionCore.isReviewArtifact(artifact)) return;
+  if (typeof store.getTask !== "function" || typeof store.getSettings !== "function") return;
+
+  const [task, settings] = await Promise.all([store.getTask(artifact.taskId), store.getSettings()]);
+  if (!fusionCore.isReviewArtifactGenerationEligible(settings, task.prompt)) {
+    throw new Error(`Review artifact generation is disabled for task ${artifact.taskId} by its reviewArtifacts policy.`);
+  }
+}
+
 /**
  * FNXC:ArtifactRegistry 2026-06-29-00:00:
  * Agents need a portable way to create task-scoped image artifacts without reading arbitrary local files. `dataBase64` decodes inside the tool and then uses TaskStore's existing binary persistence path so registry rows continue to store only managed artifact URIs.

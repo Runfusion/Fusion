@@ -61,6 +61,7 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("maxConcurrent")).toBe(true);
     expect(isProjectSettingsKey("heartbeatMultiplier")).toBe(true);
     expect(isProjectSettingsKey("completionDocumentationMode")).toBe(true);
+    expect(isProjectSettingsKey("reviewArtifacts")).toBe(true);
     expect(isProjectSettingsKey("remoteAccess")).toBe(false);
     expect(isProjectSettingsKey("researchSettings")).toBe(true);
     expect(isGlobalSettingsKey("researchGlobalDefaults")).toBe(true);
@@ -280,6 +281,10 @@ describe("settings key parity", () => {
 
   it("defaults completionDocumentationMode to off", () => {
     expect(DEFAULT_PROJECT_SETTINGS.completionDocumentationMode).toBe("off");
+  });
+
+  it("defaults reviewArtifacts to off", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.reviewArtifacts).toBe("off");
   });
 
   it("defaults directMergeCommitStrategy to always-squash and keeps it project-scoped", () => {

@@ -1719,6 +1719,10 @@ export default interface Resources {
         "volumeHint": "volume, not outcome",
         "volumeTitle": "Volume (proxy)"
       },
+      "reviewArtifacts": {
+        "empty": "No review artifacts are available yet.",
+        "title": "Review artifacts"
+      },
       "range": {
         "custom": "Custom range",
         "dialogLabel": "Select date range",
@@ -1765,6 +1769,7 @@ export default interface Resources {
         "nodes": "Nodes",
         "overview": "Overview",
         "productivity": "Productivity",
+        "reviewArtifacts": "Review artifacts",
         "reliability": "Reliability",
         "signals": "Signals",
         "system": "System",
@@ -5840,6 +5845,8 @@ export default interface Resources {
         "chatHistory": "Chat history",
         "chatRooms": "Chat Rooms",
         "completionDocumentationAutomation": "Completion Documentation Automation",
+        "reviewArtifacts": "Review Artifacts",
+        "reviewArtifactsHint": "Controls whether eligible future tasks generate review deliverables. User-facing limits generation to user-facing work; on enables it for all eligible tasks. Individual PROMPT.md headers can override this. Default: off.",
         "controlsHowFutureTaskSpecsHandleReleaseNote": " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ",
         "controlsWhetherNewlyCreatedTasksHaveGitHubIssue": " Controls whether newly created tasks have GitHub issue tracking enabled by default. Individual tasks can still override this from the task detail modal. ",
         "defaultRepoUsedWhenCreatingGitHubIssuesFor": "Default repo used when creating GitHub issues for tracked tasks. Falls back to the global default if blank.",

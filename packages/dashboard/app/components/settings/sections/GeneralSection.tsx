@@ -275,6 +275,26 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       </div>
       <div className="form-group">
         {/*
+        FNXC:ReviewArtifacts 2026-07-17-12:00:
+        Operators choose whether future tasks may generate review deliverables.
+        Per-task PROMPT.md markers remain the final override, so conservative
+        project policy does not require new task-store persistence.
+        */}
+        <div className="settings-field-label-row">
+          <label htmlFor="reviewArtifacts">{t("settings.general.reviewArtifacts", "Review Artifacts")}</label>
+          <SettingsHelpTip settingKey="reviewArtifacts">{t("settings.general.reviewArtifactsHint", " Controls whether eligible future tasks generate review deliverables. User-facing limits generation to user-facing work; on enables it for all eligible tasks. Individual PROMPT.md headers can override this. Default: off.")}</SettingsHelpTip>
+        </div>
+        <select id="reviewArtifacts" value={form.reviewArtifacts || "off"} onChange={(e) => setForm((f) => ({
+          ...f,
+          reviewArtifacts: e.target.value as "off" | "user-facing" | "on",
+        }))}>
+          <option value="off">{t("settings.general.off", "Off")}</option>
+          <option value="user-facing">{t("settings.general.userFacing", "User-facing work")}</option>
+          <option value="on">{t("settings.general.on", "On")}</option>
+        </select>
+      </div>
+      <div className="form-group">
+        {/*
         FNXC:ReportPipeline 2026-07-16-19:15:
         A privacy-safe draft review remains the project default, while each of
         the four guided report actions can explicitly opt into direct filing.

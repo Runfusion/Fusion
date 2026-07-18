@@ -254,6 +254,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   chatRoomRecentVerbatimMessages: "general.numberOfMostRecentChatRoomMessagesKept",
   chatRoomSummaryMaxChars: "general.hardCapOnTheSynthesizedEarlierRoomContext",
   completionDocumentationMode: "general.workflowsOrChangelogModeWhenContributorsShouldUpdate",
+  reviewArtifacts: "general.reviewArtifactsHint",
   ephemeralAgentTaskCreationPolicy: "general.ephemeralAgentTaskCreationPolicyHint",
   ephemeralAgentsEnabled: "general.whenEnabledDefaultFusionSpawnsShortLived",
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",

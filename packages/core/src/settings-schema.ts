@@ -494,6 +494,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   modelPresets: [],
   autoSelectModelPreset: false,
   completionDocumentationMode: "off",
+  reviewArtifacts: "off",
   defaultPresetBySize: {},
   autoResolveConflicts: true,
   smartConflictResolution: true,

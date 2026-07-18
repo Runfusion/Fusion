@@ -1,5 +1,5 @@
 import "./TaskReviewTab.css";
-import { getErrorMessage, type PrCheckStatus, type Task, type TaskDetail, type TaskReviewSummary } from "@fusion/core";
+import { getErrorMessage, isReviewArtifact, type PrCheckStatus, type Task, type TaskDetail, type TaskReviewSummary } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { Bot, ExternalLink, GitPullRequest, User } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -10,8 +10,10 @@ import type { ToastType } from "../hooks/useToast";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { resolveReviewCommentAuthor } from "../utils/githubCommentAuthor";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
+import { ArtifactsGallery } from "./ArtifactsGallery";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { MailboxMessageContent } from "./MailboxMessageContent";
+import { useArtifacts } from "../hooks/useArtifacts";
 
 interface Props {
   task: Task | TaskDetail;
@@ -164,6 +166,18 @@ export function TaskReviewTab({
   );
   const [isSavingAutoMergePreference, setIsSavingAutoMergePreference] = useState(false);
   const [addressingPrFeedback, setAddressingPrFeedback] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(max-width: 768px)").matches === true);
+  const { artifacts } = useArtifacts({ projectId, taskId: task.id });
+  const reviewArtifacts = useMemo(() => artifacts.filter(isReviewArtifact), [artifacts]);
+
+  useEffect(() => {
+    const query = typeof window === "undefined" ? undefined : window.matchMedia?.("(max-width: 768px)");
+    if (!query) return;
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   const isPrMode = review?.source === "pull-request";
   const prSummary = isPrMode ? review?.summary as TaskReviewSummary | undefined : undefined;
@@ -461,6 +475,18 @@ export function TaskReviewTab({
         FNXC:TaskReviewTab 2026-06-27-23:38:
         PR-linked tasks need Review-tab context that is already present in the GitHub review payload: decision, reviewers, checks, blockers, and per-item author/state/GitHub links. Keep this branch gated to pull-request mode so reviewer-agent reviews retain their established direct-mode layout.
       */}
+      {reviewArtifacts.length > 0 ? (
+        <section className="task-review-tab__review-artifacts" aria-label={t("taskReview.reviewArtifacts", "Review artifacts")} data-testid="task-review-artifacts">
+          <h2 className="task-review-tab__pr-summary-label">{t("taskReview.reviewArtifacts", "Review artifacts")}</h2>
+          <ArtifactsGallery
+            artifacts={reviewArtifacts}
+            projectId={projectId}
+            isMobile={isMobile}
+            addToast={addToast}
+            onOpenTask={() => {}}
+          />
+        </section>
+      ) : null}
       {isPrMode ? (
         <section className="task-review-tab__pr-summary" aria-label={t("taskReview.prSummaryAria", "Pull request review summary")}>
           <div className="task-review-tab__pr-summary-section">
