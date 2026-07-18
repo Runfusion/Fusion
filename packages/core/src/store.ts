@@ -147,6 +147,12 @@ export interface TaskStoreEvents {
   "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
   "settings:updated": [data: { settings: Settings; previous: Settings }];
+  "workflow:setting-values-updated": [data: {
+    workflowId: string;
+    projectId: string;
+    settingIds: string[];
+    mutationId: string;
+  }];
   "artifact:registered": [artifact: Artifact];
   "artifact:updated": [artifact: Artifact];
   "agent:log": [entry: AgentLogEntry];

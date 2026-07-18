@@ -298,6 +298,7 @@ import type { MemoryFileInfo } from "./memory.js";
 import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
+import { notifyWorkflowSettingValuesUpdated } from "../utils/workflowSettingValuesEvents.js";
 
 // Import + re-export skills types so legacy monofile bodies can reference them
 // while hooks/components keep stable import paths via this barrel.
@@ -4737,18 +4738,22 @@ export function fetchWorkflowSettingValues(
  *  `values` map is validated against the named workflow's declarations; a `null`
  *  value deletes that key. A typed rejection surfaces as an ApiRequestError with
  *  `status: 400` and `details.rejections: WorkflowSettingRejection[]`. */
-export function updateWorkflowSettingValues(
+export async function updateWorkflowSettingValues(
   id: string,
   values: Record<string, unknown>,
   projectId?: string,
 ): Promise<WorkflowSettingValuesPayload> {
-  return api<WorkflowSettingValuesPayload>(
+  const payload = await api<WorkflowSettingValuesPayload>(
     withProjectId(`/workflows/${encodeURIComponent(id)}/setting-values`, projectId),
     {
       method: "PATCH",
       body: JSON.stringify({ values }),
     },
   );
+  if (Object.prototype.hasOwnProperty.call(values, "plannerOversightLevel")) {
+    notifyWorkflowSettingValuesUpdated(id, projectId);
+  }
+  return payload;
 }
 
 /** Read per-node prompt overrides for a workflow in the current project context. */

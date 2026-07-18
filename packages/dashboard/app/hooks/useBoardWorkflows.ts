@@ -16,6 +16,7 @@ import {
   removeBoardWorkflowSelection,
   writeBoardWorkflowSelection,
 } from "../utils/boardWorkflowSelection";
+import { notifyWorkflowSettingValuesUpdatedFromSse } from "../utils/workflowSettingValuesEvents";
 
 /*
 FNXC:Workflows 2026-06-22-17:00:
@@ -144,6 +145,13 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
         "workflow:created": forceRefreshBoardWorkflows,
         "workflow:updated": forceRefreshBoardWorkflows,
         "workflow:deleted": forceRefreshBoardWorkflows,
+        "workflow:setting-values-updated": (event: MessageEvent) => {
+          try {
+            notifyWorkflowSettingValuesUpdatedFromSse(JSON.parse(event.data) as Record<string, unknown>);
+          } catch {
+            // Malformed SSE payloads are non-authoritative and cannot invalidate a card.
+          }
+        },
       },
     });
     return () => {

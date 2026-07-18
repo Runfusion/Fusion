@@ -641,7 +641,7 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
      */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async (tx) => {
+      const committed = await layer.transactionImmediate(async (tx) => {
         const rows = await tx
           .select({ values: schema.project.workflowSettings.values })
           .from(schema.project.workflowSettings)
@@ -690,8 +690,17 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
           changedBy,
         });
         if (revision) await appendConfigurationRevision(tx, revision);
-        return next;
+        return { next, revision };
       });
+      if (committed.revision) {
+        store.emit("workflow:setting-values-updated", {
+          workflowId,
+          projectId,
+          settingIds: committed.revision.diffs.map((diff) => diff.field),
+          mutationId: committed.revision.id,
+        });
+      }
+      return committed.next;
     }
     return store.db.transactionImmediate(() => {
       const current = store.getWorkflowSettingValues(workflowId, projectId);
@@ -770,6 +779,12 @@ export async function rollbackConfigurationImpl(store: TaskStore, revisionId: st
     // Workflow VALUE changes do not alter the merged project settings object,
     // but settings consumers still need the standard invalidation signal.
     store.emit("settings:updated", { settings: await store.getSettings(), previous });
+    store.emit("workflow:setting-values-updated", {
+      workflowId: String(projectRevision.configTarget.workflowId),
+      projectId: String(projectRevision.configTarget.projectId),
+      settingIds: rollback.diffs.map((diff) => diff.field),
+      mutationId: rollback.id,
+    });
   }
   return rollback;
 }

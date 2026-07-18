@@ -591,6 +591,14 @@ export function createSSE(
       };
       send(`event: agent:log\ndata: ${JSON.stringify(payload)}\n\n`);
     };
+    const onWorkflowSettingValuesUpdated = (data: {
+      workflowId: string;
+      projectId: string;
+      settingIds: string[];
+      mutationId: string;
+    }) => {
+      send(`event: workflow:setting-values-updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
 
     const onArtifactRegistered = (artifact: unknown) => {
       /* FNXC:ArtifactRegistry 2026-06-27-00:00: Forward TaskStore's authoritative artifact registration event so live artifact surfaces refresh even when the best-effort inbox notification is absent or delayed. */
@@ -907,6 +915,7 @@ export function createSSE(
       store.off("agent:log", onAgentLog);
       store.off("artifact:registered", onArtifactRegistered);
       store.off("artifact:updated", onArtifactUpdated);
+      store.off("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
       if (missionStore) {
         missionStore.off("mission:created", onMissionCreated);
         missionStore.off("mission:updated", onMissionUpdated);
@@ -1024,6 +1033,7 @@ export function createSSE(
     store.on("agent:log", onAgentLog);
     store.on("artifact:registered", onArtifactRegistered);
     store.on("artifact:updated", onArtifactUpdated);
+    store.on("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
 
     if (missionStore) {
       missionStore.on("mission:created", onMissionCreated);

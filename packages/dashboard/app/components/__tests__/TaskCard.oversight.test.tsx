@@ -18,10 +18,14 @@
  * to render on.
  */
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { TaskCard, __test_areTaskCardPropsEqual, __test_clearWorkflowOversightEffectiveCache } from "../TaskCard";
 import type { Task } from "@fusion/core";
 import { fetchWorkflowSettingValues } from "../../api";
+import {
+  __test_clearWorkflowSettingValuesRevisions,
+  notifyWorkflowSettingValuesUpdated,
+} from "../../utils/workflowSettingValuesEvents";
 
 
 
@@ -112,6 +116,7 @@ function renderCard(
 afterEach(() => {
   vi.clearAllMocks();
   __test_clearWorkflowOversightEffectiveCache();
+  __test_clearWorkflowSettingValuesRevisions();
 });
 
 describe("TaskCard effective oversight-level badge (FN-7516)", () => {
@@ -547,6 +552,81 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
 
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("second-workflow", undefined));
     expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+  });
+
+  it.each([
+    ["selected desktop", 1280, { planningWorkflowId: "workflow-setting-changed-selected-desktop" }],
+    ["selected mobile", 375, { planningWorkflowId: "workflow-setting-changed-selected-mobile" }],
+    ["aggregate desktop", 1280, { workflowBadge: { workflowId: "workflow-setting-changed-aggregate-desktop", workflowName: "Aggregate" } }],
+    ["aggregate mobile", 375, { workflowBadge: { workflowId: "workflow-setting-changed-aggregate-mobile", workflowName: "Aggregate" } }],
+  ] as const)("re-resolves the same workflow after oversight changes to off on %s cards", async (_surface, width, props) => {
+    Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] })
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] });
+    const task = makeTask(staleSnapshot("in-progress"));
+    const firstRender = render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} {...props} />);
+
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    firstRender.unmount();
+
+    const { container } = render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} {...props} />);
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
+    });
+  });
+
+  it.each([
+    ["selected desktop", 1280, "mounted-selected-desktop", { planningWorkflowId: "mounted-selected-desktop" }],
+    ["selected mobile", 375, "mounted-selected-mobile", { planningWorkflowId: "mounted-selected-mobile" }],
+    ["aggregate desktop", 1280, "mounted-aggregate-desktop", { workflowBadge: { workflowId: "mounted-aggregate-desktop", workflowName: "Aggregate" } }],
+    ["aggregate mobile", 375, "mounted-aggregate-mobile", { workflowBadge: { workflowId: "mounted-aggregate-mobile", workflowName: "Aggregate" } }],
+  ] as const)("hides a mounted %s card immediately when oversight is turned off", async (_surface, width, workflowId, props) => {
+    Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] })
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] });
+    const { container } = renderCard(staleSnapshot("in-progress"), { ...props, projectId: "project-cache-fix" });
+
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    act(() => notifyWorkflowSettingValuesUpdated(workflowId, "project-cache-fix"));
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    });
+  });
+
+  it("ignores an older active fetch that resolves after the newer off revision", async () => {
+    let resolveActive: ((payload: Awaited<ReturnType<typeof fetchWorkflowSettingValues>>) => void) | undefined;
+    let resolveOff: ((payload: Awaited<ReturnType<typeof fetchWorkflowSettingValues>>) => void) | undefined;
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveActive = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOff = resolve; }));
+    renderCard(staleSnapshot("in-progress"), { planningWorkflowId: "out-of-order-workflow", projectId: "project-cache-fix" });
+
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(1));
+    act(() => notifyWorkflowSettingValuesUpdated("out-of-order-workflow", "project-cache-fix"));
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveOff?.({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] });
+    });
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+
+    await act(async () => {
+      resolveActive?.({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] });
+    });
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    expect(screen.queryByTestId("card-header-badges")).toBeNull();
   });
 
   it("hides the eye synchronously when an active selected workflow changes to an unresolved off workflow", async () => {

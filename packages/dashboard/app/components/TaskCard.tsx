@@ -58,6 +58,12 @@ import { WorkflowIcon } from "./WorkflowIcon";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
 import { formatCost, hasTaskCost, taskTotalCost } from "../utils/taskTokenCost";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
+import {
+  WORKFLOW_SETTING_VALUES_UPDATED_EVENT,
+  getWorkflowSettingValuesKey,
+  getWorkflowSettingValuesRevision,
+  type WorkflowSettingValuesUpdatedDetail,
+} from "../utils/workflowSettingValuesEvents";
 
 /** Per-branch progress snapshot (U13). Surfaced as an optional additive field
  *  on the task payload for the parallel-window badge (U9). */
@@ -122,7 +128,7 @@ async function getAgentName(agentId: string, projectId?: string): Promise<string
 // ── Workflow-effective planner-oversight-level caching ─────────────────────
 
 /*
- * FNXC:PlannerOversight 2026-07-04-12:30:
+ * FNXC:PlannerOversight 2026-07-18-13:18:
  * Code review (FN-7516) flagged that always resolving with an `undefined`
  * workflow tier makes every task without a per-task override display
  * "Autonomous recovery", even when the task's workflow was explicitly
@@ -130,15 +136,16 @@ async function getAgentName(agentId: string, projectId?: string): Promise<string
  * `plannerOversightLevel` setting value is NOT present on the Task payload
  * (verified: no such field exists in packages/core/src/types.ts or in any
  * task-list/detail serialization path), so the card cannot read it via
- * `task.*` alone. Rather than plumb a new prop through the five card call
- * sites (out of this task's scope; see PROMPT.md File Scope note) or thread a
- * new field through the task-store/API contract (a bigger, separate change),
- * this mirrors the established card-local caching pattern already used for
- * mission titles/agent names above: a module-level cache keyed by
- * `(projectId, workflowId)`, populated by a self-contained fetch to the
+ * `task.*` alone. The card therefore resolves the authoritative value through
+ * a request keyed by `(projectId, workflowId)`, populated
+ * by a self-contained fetch to the
  * existing `GET /api/workflows/:id/setting-values` route (already used by the
- * workflow editor's Values tab), with in-flight de-duplication so many cards
- * sharing one workflow trigger a single network call. Round-2 code review:
+ * workflow editor's Values tab), with in-flight de-duplication so cards sharing
+ * one workflow trigger a single network call. Completed values are deliberately
+ * not cached across mounts. Successful local writes and authoritative
+ * workflow-setting SSE mutations invalidate mounted cards, so turning oversight
+ * off cannot retain an old active tier across browser/server write surfaces.
+ * Round-2 code review:
  * the very first render before the fetch resolves must NOT show a guessed
  * schema-default badge — see `workflowOversightResolved` near the effect
  * below, which gates both oversight badges until the workflow tier is known
@@ -152,19 +159,18 @@ type WorkflowOversightResolution = {
   resolved: boolean;
   /** FNXC:PlannerOversight 2026-07-17-15:50: Cache identity prevents an old workflow's active tier leaking during a prop switch. */
   workflowCacheKey?: string;
+  settingsRevision?: number;
 };
 
-const workflowOversightEffectiveCache = new Map<string, WorkflowOversightResolution>();
-const workflowOversightInflight = new Map<string, Promise<void>>();
+const workflowOversightInflight = new Map<string, Promise<WorkflowOversightResolution>>();
 
-/** @internal Test helper to reset the workflow-effective-oversight cache between tests */
+/** @internal Test helper to reset in-flight workflow oversight requests between tests */
 export function __test_clearWorkflowOversightEffectiveCache(): void {
-  workflowOversightEffectiveCache.clear();
   workflowOversightInflight.clear();
 }
 
 function getWorkflowOversightCacheKey(workflowId: string, projectId?: string): string {
-  return `${projectId ?? "default"}::${workflowId}`;
+  return getWorkflowSettingValuesKey(workflowId, projectId);
 }
 
 function normalizeWorkflowId(value: string | null | undefined): string | undefined {
@@ -176,34 +182,31 @@ function isPlannerOversightLevelValue(value: unknown): value is PlannerOversight
   return typeof value === "string" && (PLANNER_OVERSIGHT_LEVELS as readonly string[]).includes(value);
 }
 
-/** Fetch (with in-flight de-dup) and cache the workflow's effective
+/** Fetch (with in-flight de-dup) the workflow's current effective
  *  `plannerOversightLevel` setting value for a given `(workflowId, projectId)`.
  *  Never throws; failed or malformed responses stay explicitly unresolved so
  *  callers cannot mistake an unknown inherited tier for the schema default. */
 async function loadWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<WorkflowOversightResolution> {
   const key = getWorkflowOversightCacheKey(workflowId, projectId);
-  const cached = workflowOversightEffectiveCache.get(key);
-  if (cached) return cached;
+  const revision = getWorkflowSettingValuesRevision(workflowId, projectId);
+  const inflightKey = `${key}::${revision}`;
 
-  let inflight = workflowOversightInflight.get(key);
+  let inflight = workflowOversightInflight.get(inflightKey);
   if (!inflight) {
     inflight = fetchWorkflowSettingValues(workflowId, projectId)
       .then((payload) => {
         const raw = payload.effective?.plannerOversightLevel;
-        workflowOversightEffectiveCache.set(key, isPlannerOversightLevelValue(raw)
-          ? { level: raw, resolved: true }
-          : { level: undefined, resolved: false });
+        return isPlannerOversightLevelValue(raw)
+          ? { level: raw, resolved: true, settingsRevision: revision }
+          : { level: undefined, resolved: false, settingsRevision: revision };
       })
-      .catch(() => {
-        workflowOversightEffectiveCache.set(key, { level: undefined, resolved: false });
-      })
+      .catch(() => ({ level: undefined, resolved: false, settingsRevision: revision }))
       .finally(() => {
-        workflowOversightInflight.delete(key);
+        workflowOversightInflight.delete(inflightKey);
       });
-    workflowOversightInflight.set(key, inflight);
+    workflowOversightInflight.set(inflightKey, inflight);
   }
-  await inflight;
-  return workflowOversightEffectiveCache.get(key) ?? { level: undefined, resolved: false };
+  return inflight;
 }
 
 function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
@@ -1050,13 +1053,7 @@ function TaskCardComponent({
   const workflowOversightCacheKey = workflowIdForOversight
     ? getWorkflowOversightCacheKey(workflowIdForOversight, projectId)
     : undefined;
-  const [workflowOversightState, setWorkflowOversightState] = useState<WorkflowOversightResolution>(() => {
-    if (!workflowOversightCacheKey) return { level: undefined, resolved: false };
-    return {
-      ...(workflowOversightEffectiveCache.get(workflowOversightCacheKey) ?? { level: undefined, resolved: false }),
-      workflowCacheKey: workflowOversightCacheKey,
-    };
-  });
+  const [workflowOversightState, setWorkflowOversightState] = useState<WorkflowOversightResolution>({ level: undefined, resolved: false });
   useEffect(() => {
     if (!workflowIdForOversight || !workflowOversightCacheKey) {
       setWorkflowOversightState({ level: undefined, resolved: false });
@@ -1065,23 +1062,39 @@ function TaskCardComponent({
 
     const workflowId = workflowIdForOversight;
     const key = workflowOversightCacheKey;
-    const cached = workflowOversightEffectiveCache.get(key);
-    if (cached) {
-      setWorkflowOversightState({ ...cached, workflowCacheKey: key });
-      return;
-    }
-
-    setWorkflowOversightState({ level: undefined, resolved: false, workflowCacheKey: key });
     let cancelled = false;
-    void loadWorkflowOversightEffectiveLevel(workflowId, projectId).then((resolution) => {
-      if (!cancelled) setWorkflowOversightState({ ...resolution, workflowCacheKey: key });
-    });
-    return () => { cancelled = true; };
+    const resolveCurrentLevel = () => {
+      setWorkflowOversightState({
+        level: undefined,
+        resolved: false,
+        workflowCacheKey: key,
+        settingsRevision: getWorkflowSettingValuesRevision(workflowId, projectId),
+      });
+      void loadWorkflowOversightEffectiveLevel(workflowId, projectId).then((resolution) => {
+        if (!cancelled && resolution.settingsRevision === getWorkflowSettingValuesRevision(workflowId, projectId)) {
+          setWorkflowOversightState({ ...resolution, workflowCacheKey: key });
+        }
+      });
+    };
+    const handleWorkflowSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<WorkflowSettingValuesUpdatedDetail>).detail;
+      if (detail?.workflowId === workflowId && detail.projectId === projectId) resolveCurrentLevel();
+    };
+
+    resolveCurrentLevel();
+    window.addEventListener(WORKFLOW_SETTING_VALUES_UPDATED_EVENT, handleWorkflowSettingsUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(WORKFLOW_SETTING_VALUES_UPDATED_EVENT, handleWorkflowSettingsUpdated);
+    };
   }, [workflowIdForOversight, workflowOversightCacheKey, projectId]);
   // FNXC:PlannerOversight 2026-07-17-15:50: Switching a memoized card between
   // workflows must fail closed in the render before its effect resets state;
   // an active tier resolved for the prior workflow cannot authorize this Eye.
   const currentWorkflowOversightState = workflowOversightState.workflowCacheKey === workflowOversightCacheKey
+    && workflowOversightState.settingsRevision === (workflowIdForOversight
+      ? getWorkflowSettingValuesRevision(workflowIdForOversight, projectId)
+      : undefined)
     ? workflowOversightState
     : { level: undefined, resolved: false };
   const workflowOversightEffectiveLevel = currentWorkflowOversightState.level;

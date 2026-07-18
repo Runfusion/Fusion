@@ -70,8 +70,21 @@ pgDescribe("PostgreSQL workflow authoritative reads", () => {
   it("lists and exports project-scoped PostgreSQL workflow setting values", async () => {
     const store = h.store();
     const projectId = store.getWorkflowSettingsProjectId();
+    const settingUpdate = new Promise<{
+      workflowId: string;
+      projectId: string;
+      settingIds: string[];
+      mutationId: string;
+    }>((resolve) => store.once("workflow:setting-values-updated", resolve));
     await store.updateWorkflowSettingValues("builtin:coding", projectId, {
       workflowStepTimeoutMs: 420_000,
+    });
+
+    await expect(settingUpdate).resolves.toMatchObject({
+      workflowId: "builtin:coding",
+      projectId,
+      settingIds: ["workflowStepTimeoutMs"],
+      mutationId: expect.any(String),
     });
 
     const expected = {
