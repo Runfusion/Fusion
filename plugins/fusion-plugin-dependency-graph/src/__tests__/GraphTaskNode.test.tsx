@@ -7,8 +7,14 @@ import { GraphTaskNode } from "../GraphTaskNode";
 FNXC:DependencyGraphTests 2026-07-08-13:10:
 GraphTaskNode renders the REAL TaskCard (to verify prop pass-through), and TaskCard now renders RuntimeFallbackBadge which calls the dashboard's useToast() hook. This file has no ToastProvider, so mock useToast the same way the dashboard's own TaskCard.test.tsx does to avoid "useToast must be used within ToastProvider".
 */
+/*
+FNXC:DependencyGraphTests 2026-07-18-04:35:
+RuntimeFallbackBadge uses useOptionalToast (soft-fail path). Mock both exports so
+GraphTaskNode suites stay provider-free.
+*/
 vi.mock("@fusion/dashboard/app/hooks/useToast", () => ({
   useToast: () => ({ addToast: vi.fn(), removeToast: vi.fn(), toasts: [] }),
+  useOptionalToast: () => ({ addToast: vi.fn(), removeToast: vi.fn(), toasts: [] }),
 }));
 
 function createTask(overrides: Partial<Task> = {}): Task {

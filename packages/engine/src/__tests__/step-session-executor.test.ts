@@ -978,6 +978,13 @@ vi.mock("../agent-session-helpers.js", async () => {
     // defined", failing every step-execution test. Neutral undefined return —
     // no test asserts on thinking level here.
     resolveExecutorThinkingLevel: vi.fn(() => undefined),
+    /*
+    FNXC:EngineTestDrift 2026-07-18-04:35:
+    FN-7794 / fallback-swap path imports resolveExecutorFallbackThinkingLevel
+    unconditionally. Without it, executeAll fails before customTools are captured
+    and tool-availability tests see an empty tool list.
+    */
+    resolveExecutorFallbackThinkingLevel: vi.fn(() => undefined),
   };
 });
 
