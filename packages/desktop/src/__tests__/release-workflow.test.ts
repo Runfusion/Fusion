@@ -124,7 +124,13 @@ describe("desktop release workflow wiring", () => {
     expect(release).toContain(
       "needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux, build-android]",
     );
-    expect(release).toContain('find artifacts -type f \\(');
+    /*
+    FNXC:DesktopTests 2026-07-18-04:35:
+    Collect now prunes nested runtime/migrations trees before matching desktop
+    artifact globs, and copies into release-files/ for softprops/action-gh-release.
+    */
+    expect(release).toContain('find artifacts \\( -path "*/runtime/*" -o -path "*/migrations/*" \\) -prune -o -type f \\(');
+    expect(release).toContain('mkdir release-files');
     expect(release).toContain('-name "*.exe"');
     expect(release).toContain('-name "*.exe.sha256"');
     expect(release).toContain('-name "*.blockmap"');
@@ -134,6 +140,7 @@ describe("desktop release workflow wiring", () => {
     expect(release).toContain('-name "*.deb"');
     expect(release).toContain('-name "*.tar.gz"');
     expect(release).toContain('-name "latest*.yml"');
+    expect(release).toContain("files: release-files/*");
   });
 
   it("wires test-release collect job to wait for all desktop build jobs", async () => {

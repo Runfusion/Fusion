@@ -27,11 +27,16 @@ let setupPromise: Promise<void> | null = null;
 // FNXC:PgTestAuthFix 2026-07-14-07:40:
 // The inline admin used process.env.USER for the psql -U flag, which is 'runner' on
 // GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead.
-function admin(statement: string): void { execSync(`psql "${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" }); }
+// FNXC:PgTestAuthFix 2026-07-18-04:45: default credentials match full-suite.yml service container.
+const PG_TEST_URL_BASE =
+  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://postgres:postgres@localhost:5432";
+function admin(statement: string): void {
+  execSync(`psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" });
+}
 async function setupPostgres(): Promise<void> {
   if (connections) return;
   admin(`DROP DATABASE IF EXISTS ${dbName}`); admin(`CREATE DATABASE ${dbName}`);
-  const url = `${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/${dbName}`;
+  const url = `${PG_TEST_URL_BASE}/${dbName}`;
   const backend: ResolvedBackend = { mode: "external", runtimeUrl: url, migrationUrl: url, migrationUrlOverridden: false };
   const schema = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
   await applySchemaBaseline(schema.migration); await schema.close();

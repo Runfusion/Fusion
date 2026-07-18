@@ -37,15 +37,20 @@ import {
   pgDescribe,
 } from "@fusion/test-utils/pg-test-harness";
 
+/*
+FNXC:PgTestAuthFix 2026-07-18-04:45:
+Do not use process.env.USER for psql -U: on GitHub Actions USER is "runner" and
+the service container only has POSTGRES_USER=postgres. Always admin via
+FUSION_PG_TEST_URL_BASE (CI sets postgresql://postgres:postgres@localhost:5432).
+*/
 const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_USER = process.env.USER ?? "postgres";
+  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://postgres:postgres@localhost:5432";
 
 function adminExec(statement: string): void {
   // Single short psql DDL call (CREATE/DROP DATABASE can't run in a tx). This
   // is the same acceptable execSync use as core's data-layer.test.ts.
   execSync(
-    `psql -h localhost -p 5432 -U ${PG_USER} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }

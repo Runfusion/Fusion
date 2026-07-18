@@ -359,8 +359,16 @@ describe("ProjectEngine merge error recovery", () => {
     const privateEngine = engine as unknown as {
       internalEnqueueMerge: (taskId: string) => void;
       mergeRunning: boolean;
+      started: boolean;
     };
 
+    /*
+    FNXC:EngineTests 2026-07-18-04:40:
+    internalEnqueueMerge no-ops when started=false (post-start gate). Mark the
+    engine started so the null-store drain path runs and the unexpected-failure
+    catch can log.
+    */
+    privateEngine.started = true;
     privateEngine.internalEnqueueMerge(TASK_ID);
     await Promise.resolve();
     await Promise.resolve();
