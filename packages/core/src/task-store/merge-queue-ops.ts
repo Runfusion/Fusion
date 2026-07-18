@@ -18,6 +18,40 @@ import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/she
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
 import type {MergeQueueRow} from "../task-store/row-types.js";
 
+/**
+ * Step state is written from more places than an agent's explicit
+ * `fn_task_update` call: workflow projection, review auto-approval, restart
+ * reconciliation, and self-healing all use the same store mutation. Keep the
+ * baseline task-chat narration here so those legitimate transitions cannot be
+ * invisible just because they took a different execution path.
+ */
+function proactiveStepStatusMessage(
+  stepIndex: number,
+  stepName: string,
+  previousStatus: import("../types.js").StepStatus,
+  status: import("../types.js").StepStatus,
+): string | null {
+  if (previousStatus === status) return null;
+  const label = stepName.trim() || `Step ${stepIndex}`;
+  switch (status) {
+    case "in-progress":
+      return `Starting Step ${stepIndex}: ${label}`;
+    case "done":
+      return `Step ${stepIndex} finished — ${label}.`;
+    case "skipped":
+      return `Step ${stepIndex} was skipped — ${label}.`;
+    case "pending":
+      return `Step ${stepIndex} was returned to pending — ${label}.`;
+  }
+}
+
+function appendProactiveStepStatus(store: TaskStore, taskId: string, message: string | null): void {
+  if (!message) return;
+  // The task mutation is authoritative. Chat narration is an observational,
+  // best-effort companion and must never make a lifecycle transition fail.
+  void store.appendAgentLog(taskId, message, "status", undefined, "executor").catch(() => undefined);
+}
+
 export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
     // Step-inversion projection discipline (U6/KTD-7). A `source: "graph"` write
     // is the workflow-graph executor projecting a foreach instance's lifecycle
@@ -200,6 +234,11 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
       if (store.isWatching) store.taskCache.set(id, { ...task });
 
       store.emit("task:updated", task);
+      appendProactiveStepStatus(
+        store,
+        id,
+        proactiveStepStatusMessage(stepIndex, task.steps[stepIndex].name, currentStatus, status),
+      );
       return task;
     });
   }
@@ -482,4 +521,3 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       return result;
     });
   }
-

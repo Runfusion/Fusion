@@ -69,9 +69,6 @@ import {
   buildReviewRollbackFailureMessage,
   buildReviewVerdictMessage,
   buildStepFailureMessage,
-  buildStepSkippedMessage,
-  buildStepStartMessage,
-  buildStepSuccessMessage,
   emitProactiveStatus,
   sanitizeFailureReason,
 } from "./proactive-status.js";
@@ -11057,7 +11054,6 @@ export class TaskExecutor {
               this.store.updateStep(task.id, stepIndex, "in-progress", stepProjectionOptions).catch((err) => {
                 executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
               });
-              void emitProactiveStatus(this.store, task.id, buildStepStartMessage(stepIndex, detail.steps[stepIndex]?.name), "executor");
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
             }
@@ -11068,12 +11064,16 @@ export class TaskExecutor {
               this.store.updateStep(task.id, stepIndex, result.success ? "done" : "skipped", stepProjectionOptions).catch((err) => {
                 executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
               });
-              const stepName = detail.steps[stepIndex]?.name;
               const safeReason = result.success ? undefined : sanitizeFailureReason(result.error);
-              const message = result.success
-                ? buildStepSuccessMessage(stepIndex, stepName)
-                : buildStepFailureMessage(stepIndex, stepName, safeReason!);
-              void emitProactiveStatus(this.store, task.id, message, "executor", safeReason);
+              if (!result.success) {
+                void emitProactiveStatus(
+                  this.store,
+                  task.id,
+                  buildStepFailureMessage(stepIndex, detail.steps[stepIndex]?.name, safeReason!),
+                  "executor",
+                  safeReason,
+                );
+              }
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
             }
@@ -13818,18 +13818,6 @@ export class TaskExecutor {
             details: {},
           };
         }
-
-        // FNXC:ProactiveChatStatus 2026-07-16-12:45:
-        // Only store-accepted transitions narrate progress. A skipped step is terminal work too,
-        // so it needs its own status row rather than silently looking like an ignored no-op.
-        const narration = status === "in-progress"
-          ? buildStepStartMessage(stepIndex, stepInfo.name)
-          : status === "done"
-            ? buildStepSuccessMessage(stepIndex, stepInfo.name)
-            : status === "skipped"
-              ? buildStepSkippedMessage(stepIndex, stepInfo.name)
-              : null;
-        void emitProactiveStatus(this.store, taskId, narration, "executor");
 
         return {
           content: [{
