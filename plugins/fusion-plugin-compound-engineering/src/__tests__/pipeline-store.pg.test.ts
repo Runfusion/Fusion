@@ -34,17 +34,17 @@ import {
 import { CeSessionStore, PlanHandoffClaimError } from "../session/session-store.js";
 import {
   PG_AVAILABLE,
+  PG_TEST_URL_BASE,
   pgDescribe,
 } from "@fusion/test-utils/pg-test-harness";
 
 /*
-FNXC:PgTestAuthFix 2026-07-18-04:45:
-Do not use process.env.USER for psql -U: on GitHub Actions USER is "runner" and
-the service container only has POSTGRES_USER=postgres. Always admin via
-FUSION_PG_TEST_URL_BASE (CI sets postgresql://postgres:postgres@localhost:5432).
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
 */
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://postgres:postgres@localhost:5432";
 
 function adminExec(statement: string): void {
   // Single short psql DDL call (CREATE/DROP DATABASE can't run in a tx). This

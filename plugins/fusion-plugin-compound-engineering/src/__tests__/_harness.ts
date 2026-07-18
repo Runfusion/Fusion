@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { afterAll, vi } from "vitest";
 import { applySchemaBaseline, createAsyncDataLayer, createConnectionSetFromUrl, type AsyncDataLayer, type ResolvedBackend } from "@fusion/core";
-import { PG_AVAILABLE, pgDescribe } from "@fusion/test-utils/pg-test-harness";
+import { PG_AVAILABLE, PG_TEST_URL_BASE, pgDescribe } from "@fusion/test-utils/pg-test-harness";
 export { PG_AVAILABLE, pgDescribe };
 import type {
   CreateInteractiveAiSessionFactory,
@@ -24,12 +24,13 @@ export interface TestHarness {
 const dbName = `ce_harness_${process.pid}_${process.env.VITEST_POOL_ID ?? "0"}_${Math.random().toString(36).slice(2, 8)}`.replace(/[^a-zA-Z0-9_]/g, "_");
 let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
 let setupPromise: Promise<void> | null = null;
-// FNXC:PgTestAuthFix 2026-07-14-07:40:
-// The inline admin used process.env.USER for the psql -U flag, which is 'runner' on
-// GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead.
-// FNXC:PgTestAuthFix 2026-07-18-04:45: default credentials match full-suite.yml service container.
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://postgres:postgres@localhost:5432";
+/*
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
+*/
 function admin(statement: string): void {
   execSync(`psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" });
 }
