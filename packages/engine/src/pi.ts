@@ -599,66 +599,7 @@ const MAX_COMPACTED_EXISTING_SPEC_CHARS = 4_000;
 const MAX_COMPACTED_TASK_PROMPT_CHARS = MAX_COMPACTED_EXISTING_SPEC_CHARS;
 const MAX_COMPACTED_USER_COMMENTS_CHARS = 2_000;
 
-function compactMarkdownMemorySection(sectionBody: string): string {
-  const lines = sectionBody.split("\n");
-  const kept: string[] = [];
-  let used = 0;
 
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
-    const normalized = trimmed.trimStart();
-    const isUseful =
-      normalized.startsWith("##")
-      || normalized.startsWith("- ")
-      || normalized.startsWith("* ")
-      || /^\d+\.\s/.test(normalized)
-      || normalized.length === 0;
-
-    if (!isUseful) {
-      continue;
-    }
-
-    const nextLength = used + trimmed.length + 1;
-    if (nextLength > MAX_COMPACTED_PROMPT_MEMORY_CHARS) {
-      break;
-    }
-
-    kept.push(trimmed);
-    used = nextLength;
-  }
-
-  const compacted = kept.join("\n").trim();
-  if (compacted.length >= sectionBody.trim().length) {
-    return sectionBody.trim();
-  }
-
-  return [
-    compacted,
-    "",
-    `<!-- Memory compacted from ${sectionBody.length} characters to avoid context overflow. Use memory tools or the selected memory file later only if essential. -->`,
-  ].join("\n").trim();
-}
-
-function compactPromptMemory(prompt: string): string | null {
-  const sectionPattern = /(^|\n)(## (?:Project Memory|Agent Memory|Memory)\n\n)([\s\S]*?)(?=\n## [^#]|\n# [^#]|$)/g;
-  let changed = false;
-  const compactedPrompt = prompt.replace(sectionPattern, (match, prefix: string, heading: string, body: string) => {
-    const trimmedBody = body.trim();
-    if (trimmedBody.length <= MAX_COMPACTED_PROMPT_MEMORY_CHARS) {
-      return match;
-    }
-
-    const compacted = compactMarkdownMemorySection(trimmedBody);
-    if (compacted.length >= trimmedBody.length) {
-      return match;
-    }
-
-    changed = true;
-    return `${prefix}${heading}${compacted}`;
-  });
-
-  return changed && compactedPrompt.length < prompt.length ? compactedPrompt : null;
-}
 
 function trimSubtaskSectionBody(body: string): string {
   const paragraphs = body
@@ -892,30 +833,6 @@ export const __testOnlyPromptCompaction = {
   compactLargePromptSections,
 };
 
-async function retryWithCompactedPromptMemory(
-  session: AgentSession,
-  prompt: string,
-  options?: unknown,
-): Promise<{ recovered: boolean; error?: unknown }> {
-  const compactedPrompt = compactPromptMemory(prompt);
-  if (!compactedPrompt) {
-    return { recovered: false };
-  }
-
-  piLog.log(
-    `promptWithFallback: retrying with compacted prompt memory (${prompt.length} → ${compactedPrompt.length} chars)`,
-  );
-
-  try {
-    await promptSessionAndCheck(session, compactedPrompt, options);
-    piLog.log("promptWithFallback: prompt completed after prompt-memory compaction");
-    return { recovered: true };
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    piLog.error(`promptWithFallback: retry after prompt-memory compaction failed: ${errorMessage}`);
-    return { recovered: false, error: err };
-  }
-}
 
 async function retryWithCompactedPromptSections(
   session: AgentSession,
