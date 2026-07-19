@@ -253,6 +253,22 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/@media \(max-width: 640px\)\s*\{[^}]*\.detail-meta-inline-controls\s*\{[^}]*flex-direction:\s*column;/);
     });
 
+    it("scopes tokenized SVG sizing to every inline-row descendant without changing breakpoint scaffolding", () => {
+      const css = readDashboardStylesSource();
+      const tabletBlock = getCssAtRuleBlockContaining(css, "@media (min-width: 769px) and (max-width: 1024px)", ".modal.task-detail-modal");
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-meta-inline-controls");
+      const rowSvgBlock = getExactCssRuleBlock(css, ".detail-meta-inline-controls svg");
+
+      // FNXC:TaskDetailModalResponsive 2026-07-19-12:00: Source guards preserve
+      // the scoped token contract; Blink smoke separately proves computed sizes.
+      expect(rowSvgBlock).toContain("width: var(--icon-size-sm);");
+      expect(rowSvgBlock).toContain("height: var(--icon-size-sm);");
+      expect(rowSvgBlock).toContain("flex-shrink: 0;");
+      expect(css).not.toMatch(/\.detail-meta-inline-controls svg\s*\{[^}]*width:\s*1em/);
+      expect(tabletBlock).not.toBe("");
+      expect(mobileBlock).toMatch(/\.detail-meta-inline-controls\s*\{[^}]*flex-wrap:\s*wrap;/);
+    });
+
     it("gives every task-detail inline action the shared square tokenized box across themes (FN-8287)", () => {
       const css = readDashboardStylesSource();
       const sharedSizingSelector = [

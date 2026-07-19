@@ -415,6 +415,20 @@ space or icon tokens from making this cluster visually uneven.
 }
 
 /*
+FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
+FN-8396 requires every inline action icon to resolve to `--icon-size-sm` at
+all desktop, tablet, and mobile widths. The global `.btn-icon > svg` rule
+cannot reach ProviderIcon's wrapped SVG, so keep this descendant rule scoped
+to Task Detail instead of changing global button behavior or adding an
+explicit size prop to the Oversight Eye/EyeOff icons.
+*/
+.detail-meta-inline-controls svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex-shrink: 0;
+}
+
+/*
 FNXC:QuickAddActionRow 2026-07-17-12:00:
 FN-8209: Task Detail uses the same compact icon-only priority affordance as
 Quick Add. Keep the picker anchored to its trigger so it remains usable when

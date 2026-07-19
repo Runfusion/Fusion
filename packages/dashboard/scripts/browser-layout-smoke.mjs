@@ -159,6 +159,29 @@ export function createSmokeHtml() {
     </section>
   `)).join("");
 
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
+  FN-8396 mirrors Task Detail's direct and wrapped SVG structures so Blink can
+  prove the scoped row rule normalizes ProviderIcon alongside the CSS-only
+  Oversight Eye/EyeOff contract at every responsive breakpoint.
+  */
+  const taskDetailInlineRowFixtures = [
+    ["full", true, true],
+    ["without-github", false, true],
+    ["without-oversight", true, false],
+    ["without-optionals", false, false],
+  ].map(([variant, includeGithub, includeOversight]) => `
+    <section data-smoke="task-detail-inline-row-${variant}" aria-label="Task Detail inline action ${variant} fixture">
+      <div class="detail-meta-inline-controls" data-testid="detail-meta-inline-controls">
+        <button class="btn btn-icon btn-sm" data-testid="detail-inline-attach" type="button" aria-label="Attach file"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg></button>
+        ${includeGithub ? '<button class="btn btn-icon btn-sm" data-testid="detail-inline-github-toggle" type="button" aria-label="Toggle GitHub tracking"><span class="provider-icon"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12"/></svg></span></button>' : ""}
+        ${includeOversight ? '<button class="btn btn-icon btn-sm detail-oversight-menu-trigger" data-testid="detail-oversight-menu-trigger" type="button" aria-label="Oversight actions"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z"/></svg></button>' : ""}
+        <div class="detail-priority-picker"><button class="btn btn-icon btn-sm" data-testid="detail-priority-trigger" type="button" aria-label="Priority: Normal"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7h10"/></svg></button></div>
+        <button class="btn btn-icon btn-sm detail-execution-mode-toggle" data-testid="detail-execution-mode-toggle" type="button" aria-label="Execution mode: fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 2v10"/></svg></button>
+      </div>
+    </section>
+  `).join("");
+
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -236,6 +259,10 @@ export function createSmokeHtml() {
 
       <section data-smoke="quick-add-save-fixtures" aria-label="Quick Add localized Save layout fixtures">
         ${quickAddComposerFixtures}
+      </section>
+
+      <section data-smoke="task-detail-inline-row-fixtures" aria-label="Task Detail inline action layout fixtures">
+        ${taskDetailInlineRowFixtures}
       </section>
 
       <footer class="executor-status-bar">
@@ -1132,6 +1159,46 @@ async function runSmokeChecks(page, pageUrl) {
       };
     });
   })()`);
+
+  const collectTaskDetailInlineIconSizes = () => evaluate(page, `(() => {
+    return [...document.querySelectorAll('section[data-smoke^="task-detail-inline-row-"]:not([data-smoke="task-detail-inline-row-fixtures"])')].map((fixture) => {
+      const row = fixture.querySelector('.detail-meta-inline-controls');
+      const icons = [...row.querySelectorAll('svg')].map((svg) => {
+        const style = getComputedStyle(svg);
+        return { width: style.width, height: style.height };
+      });
+      return {
+        fixture: fixture.dataset.smoke,
+        rowOverflow: row.scrollWidth - row.clientWidth,
+        icons,
+      };
+    });
+  })()`);
+
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
+  Visible SVG dimensions are a browser-only invariant: every optional-control
+  variant must measure the compact token at mobile, tablet, and desktop, rather
+  than relying on CSS-source parsing or a tablet-only regression check.
+  */
+  for (const [name, width, height, deviceScaleFactor, mobile] of [
+    ["mobile", 390, 844, 2, true],
+    ["tablet", 900, 900, 1, false],
+    ["desktop", 1440, 900, 1, false],
+  ]) {
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor, mobile });
+    await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+    const taskDetailIconSizes = await collectTaskDetailInlineIconSizes();
+    assertSmokeResult(
+      `Task Detail inline action icons are uniformly 14px at ${name}`,
+      taskDetailIconSizes.length === 4
+        && taskDetailIconSizes.every((fixture) => fixture.rowOverflow <= 1
+          && fixture.icons.length >= 3
+          && fixture.icons.every((icon) => icon.width === "14px" && icon.height === "14px")
+          && new Set(fixture.icons.map((icon) => `${icon.width}×${icon.height}`)).size === 1),
+      JSON.stringify(taskDetailIconSizes),
+    );
+  }
 
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: 412,
