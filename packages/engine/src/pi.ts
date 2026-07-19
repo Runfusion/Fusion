@@ -834,30 +834,6 @@ export const __testOnlyPromptCompaction = {
 };
 
 
-async function retryWithCompactedPromptSections(
-  session: AgentSession,
-  prompt: string,
-  options?: unknown,
-): Promise<{ recovered: boolean; error?: unknown }> {
-  const compactedPrompt = compactLargePromptSections(prompt);
-  if (!compactedPrompt) {
-    return { recovered: false };
-  }
-
-  piLog.log(
-    `promptWithFallback: retrying with compacted prompt sections (${prompt.length} → ${compactedPrompt.length} chars)`,
-  );
-
-  try {
-    await promptSessionAndCheck(session, compactedPrompt, options);
-    piLog.log("promptWithFallback: prompt completed after section compaction");
-    return { recovered: true };
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    piLog.error(`promptWithFallback: retry after section compaction failed: ${errorMessage}`);
-    return { recovered: false, error: err };
-  }
-}
 
 async function flushMemoryBeforeSessionCompaction(session: AgentSession): Promise<void> {
   if ((session as any).__fusionMemoryAppendAvailable !== true) {
