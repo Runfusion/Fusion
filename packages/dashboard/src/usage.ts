@@ -873,7 +873,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
  * Includes retry logic with exponential backoff for transient 429 responses.
  * Falls back to parsing `claude /usage` CLI output when rate limited.
  */
-async function fetchClaudeUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
+export async function fetchClaudeUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
     icon: "🟠",
@@ -1226,7 +1226,7 @@ async function loadCodexCredential(): Promise<CodexCredential | null> {
   return null;
 }
 
-async function fetchCodexUsage(): Promise<ProviderUsage> {
+export async function fetchCodexUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Codex",
     icon: "🟢",

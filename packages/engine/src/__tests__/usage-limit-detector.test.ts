@@ -234,4 +234,34 @@ describe("UsageLimitPauser", () => {
       expect.stringContaining("merger/anthropic-api"),
     );
   });
+
+  it("resumes only exact provider-rate-limit parks after positive provider health", async () => {
+    const store = createMockStore([
+      { id: "FN-101", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+      { id: "FN-102", paused: true, pausedReason: "provider-rate-limit:openai-codex" },
+      { id: "FN-103", paused: true, pausedReason: "manual" },
+      { id: "FN-104", paused: true, userPaused: true, pausedReason: "provider-rate-limit:anthropic" },
+      { id: "FN-105", paused: false, pausedReason: "provider-rate-limit:anthropic" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await expect(pauser.onProviderAvailable("Anthropic")).resolves.toBe(1);
+
+    expect(store.pauseTask).toHaveBeenCalledTimes(1);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-101", false);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-101",
+      "Provider anthropic is available again; resuming task",
+    );
+  });
+
+  it("does nothing when provider health has no matching persisted parks", async () => {
+    const store = createMockStore([
+      { id: "FN-201", paused: true, pausedReason: "provider-rate-limit:openai-codex" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await expect(pauser.onProviderAvailable("anthropic")).resolves.toBe(0);
+    expect(store.pauseTask).not.toHaveBeenCalled();
+  });
 });

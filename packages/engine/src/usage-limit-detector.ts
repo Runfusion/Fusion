@@ -79,6 +79,37 @@ export function checkSessionError(session: { state: { errorMessage?: string; err
 export class UsageLimitPauser {
   constructor(private store: TaskStore) {}
 
+  /**
+   * Clear only parks created for a provider whose independent health probe has
+   * transitioned back to usable. Manual/user pauses and every other provider
+   * reason remain untouched.
+   */
+  async onProviderAvailable(provider: string): Promise<number> {
+    const providerId = provider.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!providerId) return 0;
+
+    const pausedReason = `provider-rate-limit:${providerId}`;
+    const tasks = await this.store.listTasks();
+    const recoverableTasks = tasks.filter((task) =>
+      task.paused === true
+      && task.userPaused !== true
+      && task.pausedReason === pausedReason);
+
+    /*
+    FNXC:ProviderRateLimitRecovery 2026-07-19-20:15:
+    Provider recovery is a health-state transition, never a task call used as a probe. The daemon's independent authenticated usage/capacity monitor invokes this seam only after positive health, and this exact-reason filter ensures recovery cannot clear manual parks, unrelated failure reasons, or another provider's outage.
+    */
+    await Promise.all(recoverableTasks.map(async (task) => {
+      await this.store.logEntry(task.id, `Provider ${providerId} is available again; resuming task`);
+      await this.store.pauseTask(task.id, false);
+    }));
+
+    if (recoverableTasks.length > 0) {
+      log.log(`Provider ${providerId} recovered; resumed ${recoverableTasks.length} task(s)`);
+    }
+    return recoverableTasks.length;
+  }
+
   private taskUsesProvider(
     task: Task,
     provider: string,

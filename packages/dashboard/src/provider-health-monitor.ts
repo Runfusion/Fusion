@@ -1,0 +1,162 @@
+import type { TaskStore } from "@fusion/core";
+import { UsageLimitPauser } from "@fusion/engine";
+import type { RuntimeLogger } from "./runtime-logger.js";
+import {
+  fetchClaudeUsage,
+  fetchCodexUsage,
+  type AuthStorageLike,
+  type ProviderUsage,
+} from "./usage.js";
+
+const PROVIDER_RATE_LIMIT_PREFIX = "provider-rate-limit:";
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+
+export type ProviderHealthProbe = (
+  providerId: string,
+  authStorage?: AuthStorageLike,
+) => Promise<ProviderUsage | null>;
+
+export interface ProviderHealthMonitorOptions {
+  getStores: () => Iterable<TaskStore>;
+  authStorage?: AuthStorageLike;
+  logger: RuntimeLogger;
+  pollIntervalMs?: number;
+  probe?: ProviderHealthProbe;
+}
+
+function normalizeProviderId(providerId: string): string {
+  return providerId.trim().toLowerCase();
+}
+
+export function providerIdFromRateLimitReason(reason: string | undefined): string | null {
+  if (!reason?.startsWith(PROVIDER_RATE_LIMIT_PREFIX)) return null;
+  const providerId = normalizeProviderId(reason.slice(PROVIDER_RATE_LIMIT_PREFIX.length));
+  return providerId || null;
+}
+
+/**
+ * A successful auth check is not enough: a provider can serve its usage API
+ * while an enforced session, weekly, or model-specific window is exhausted.
+ */
+export function hasUsableProviderCapacity(usage: ProviderUsage | null): boolean {
+  return usage?.status === "ok"
+    && usage.windows.length > 0
+    && usage.windows.every((window) => window.percentUsed < 100 && window.percentLeft > 0);
+}
+
+export async function probeMeteredProviderHealth(
+  providerId: string,
+  authStorage?: AuthStorageLike,
+): Promise<ProviderUsage | null> {
+  switch (normalizeProviderId(providerId)) {
+    case "anthropic":
+    case "anthropic-subscription":
+      return fetchClaudeUsage(authStorage);
+    case "openai-codex":
+      return fetchCodexUsage();
+    default:
+      return null;
+  }
+}
+
+/**
+ * Daemon-owned provider recovery monitor.
+ *
+ * It probes only providers that currently own persisted rate-limit parks. A
+ * single provider check is shared across every project store, and task model
+ * execution is never used as the health probe.
+ */
+export class ProviderHealthMonitor {
+  private readonly pollIntervalMs: number;
+  private readonly probe: ProviderHealthProbe;
+  private readonly states = new Map<string, "unavailable" | "available">();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  constructor(private readonly options: ProviderHealthMonitorOptions) {
+    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.probe = options.probe ?? probeMeteredProviderHealth;
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    void this.runAndSchedule();
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  async checkNow(): Promise<void> {
+    const stores = Array.from(new Set(this.options.getStores()));
+    const providers = new Set<string>();
+
+    await Promise.all(stores.map(async (store) => {
+      const tasks = await store.listTasks();
+      for (const task of tasks) {
+        if (task.paused !== true || task.userPaused === true) continue;
+        const providerId = providerIdFromRateLimitReason(task.pausedReason);
+        if (providerId) providers.add(providerId);
+      }
+    }));
+
+    for (const knownProvider of Array.from(this.states.keys())) {
+      if (!providers.has(knownProvider)) this.states.delete(knownProvider);
+    }
+
+    await Promise.all(Array.from(providers, async (providerId) => {
+      const usage = await this.probe(providerId, this.options.authStorage).catch((error: unknown) => {
+        this.options.logger.warn("Provider health probe failed", {
+          providerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+
+      if (!hasUsableProviderCapacity(usage)) {
+        if (this.states.get(providerId) !== "unavailable") {
+          this.options.logger.warn("Provider unavailable; rate-limited tasks remain paused", {
+            providerId,
+            status: usage?.status ?? "unsupported",
+            error: usage?.error,
+          });
+        }
+        this.states.set(providerId, "unavailable");
+        return;
+      }
+
+      /*
+      FNXC:ProviderRateLimitRecovery 2026-07-19-20:15:
+      Recovery is driven by an authenticated daemon-side usage/capacity transition, not by waking a parked task and spending a model call as a probe. The persisted pause reason seeds this monitor after restart; one provider probe fans out only to exact matching parks across project engines.
+      */
+      const recoveredCounts = await Promise.all(stores.map((store) =>
+        new UsageLimitPauser(store).onProviderAvailable(providerId)));
+      const recoveredTasks = recoveredCounts.reduce((total, count) => total + count, 0);
+      this.states.set(providerId, "available");
+      if (recoveredTasks > 0) {
+        this.options.logger.info("Provider available again; resumed provider-paused tasks", {
+          providerId,
+          recoveredTasks,
+        });
+      }
+    }));
+  }
+
+  private async runAndSchedule(): Promise<void> {
+    try {
+      await this.checkNow();
+    } catch (error: unknown) {
+      this.options.logger.warn("Provider health reconciliation failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (this.running) {
+        this.timer = setTimeout(() => void this.runAndSchedule(), this.pollIntervalMs);
+        this.timer.unref?.();
+      }
+    }
+  }
+}

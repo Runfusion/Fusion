@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Keep healthy AI providers running when another provider reaches a usage limit.
+summary: Keep healthy AI providers running and resume provider-paused tasks when capacity returns.
 category: fix
-dev: Usage-limit handling now parks only the affected task with provider-scoped provenance and is wired into every project runtime.
+dev: Provider-scoped parks recover from daemon-side authenticated usage and capacity health transitions without task-call probes.
