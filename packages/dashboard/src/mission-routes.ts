@@ -184,6 +184,23 @@ function validateMissionBranchStrategy(value: unknown): MissionBranchStrategy | 
   };
 }
 
+/*
+FNXC:MissionTaskPrefix 2026-07-14-12:00:
+PATCH/POST accept taskPrefix as a string, empty string, or null. null/empty normalizes to undefined so MissionStore writes NULL and the mission inherits the project-wide prefix. The key must still be present on PATCH (null, not omitted) so clearing is distinct from "leave unchanged" (greptile P1 on PR #1930).
+*/
+function validateTaskPrefix(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw badRequest("taskPrefix must be a string or null");
+  }
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  if (!/^[A-Z][A-Z0-9]*$/.test(trimmed)) {
+    throw badRequest("taskPrefix must start with a letter and contain only letters and digits");
+  }
+  return trimmed;
+}
+
 function validateOrderedIds(body: unknown): string[] {
   if (!body || typeof body !== "object") {
     throw new Error("Request body must contain orderedIds array");
@@ -442,7 +459,7 @@ export function createMissionRouter(
   router.post(
     "/",
     catchTypedHandler(async (req, res) => {
-      const { title, description, autoAdvance, autoMerge, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, autoAdvance, autoMerge, baseBranch, branchStrategy, taskPrefix, goalIds } = req.body;
 
       const validatedTitle = validateTitle(title);
       const validatedDescription = validateDescription(description);
@@ -453,6 +470,7 @@ export function createMissionRouter(
         description: validatedDescription,
         baseBranch: validateDescription(baseBranch),
         branchStrategy: validateMissionBranchStrategy(branchStrategy),
+        taskPrefix: validateTaskPrefix(taskPrefix),
         ...(autoMerge !== undefined
           ? {
               // FNXC:MissionAutoMerge 2026-07-18-12:00: Create accepts only a real boolean; null is reserved for PATCH clear-to-inherited.
@@ -1087,7 +1105,7 @@ export function createMissionRouter(
     "/:missionId",
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
-      const { title, description, status, autoAdvance, autoMerge, autopilotEnabled, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, status, autoAdvance, autoMerge, autopilotEnabled, baseBranch, branchStrategy, taskPrefix, goalIds } = req.body;
 
       if (!validateMissionId(missionId)) {
         throw badRequest("Invalid mission ID format");
@@ -1127,6 +1145,9 @@ export function createMissionRouter(
       }
       if (branchStrategy !== undefined) {
         updates.branchStrategy = validateMissionBranchStrategy(branchStrategy);
+      }
+      if (taskPrefix !== undefined) {
+        updates.taskPrefix = validateTaskPrefix(taskPrefix);
       }
 
       if (Object.keys(updates).length === 0 && validatedGoalIds === undefined) {

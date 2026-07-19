@@ -863,6 +863,8 @@ CREATE TABLE IF NOT EXISTS project.missions (
   branch_strategy text,
   auto_advance integer DEFAULT 0,
   auto_merge integer,
+  -- FNXC:MissionTaskPrefix 2026-07-19-12:55: optional per-mission ticket prefix; NULL inherits project settings.taskPrefix
+  task_prefix text,
   autopilot_enabled integer NOT NULL DEFAULT 0,
   autopilot_state text NOT NULL DEFAULT 'inactive',
   last_autopilot_activity_at text,

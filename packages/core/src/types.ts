@@ -2230,6 +2230,9 @@ export interface TaskCreateInput {
   branch?: string;
   /** Optional planning/mission branch-group metadata carried across related tasks. */
   branchContext?: TaskBranchContext;
+  /** Transient minting hint: overrides the project taskPrefix for this task's id
+   *  reservation (used by mission triage to honor a per-mission prefix). Not persisted. */
+  taskPrefix?: string;
   /** Optional per-task auto-merge override. Undefined means no task-level override. */
   autoMerge?: boolean;
   /** Durable source provenance for the originating external issue. */

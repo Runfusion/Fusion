@@ -139,6 +139,8 @@ export interface Mission {
   baseBranch?: string;
   /** Mission triage branch strategy: auto-per-task => assignmentMode "per-task-derived"; existing/custom-new => shared branchName; project-default/absent => shared default behavior. */
   branchStrategy?: MissionBranchStrategy;
+  /** Per-mission ticket id prefix for triaged tasks (e.g. "ERR"). Absent => inherit the project-wide taskPrefix setting. */
+  taskPrefix?: string;
   /** State of the AI specification interview process */
   interviewState: InterviewState;
   /**
@@ -401,6 +403,8 @@ export interface MissionCreateInput {
   baseBranch?: string;
   /** Optional branch strategy applied as the default for mission triage operations. */
   branchStrategy?: MissionBranchStrategy;
+  /** Optional per-mission ticket id prefix for triaged tasks (e.g. "ERR"); inherits the project setting when absent. */
+  taskPrefix?: string;
   /** Optional mission-level auto-merge override for linked task branches. */
   autoMerge?: boolean;
 }

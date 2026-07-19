@@ -214,6 +214,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       description: input.description,
       baseBranch: input.baseBranch,
       branchStrategy: input.branchStrategy,
+      taskPrefix: input.taskPrefix,
       autoMerge: input.autoMerge,
       status: "planning",
       interviewState: "not_started",
@@ -1660,6 +1661,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           description,
           branch: branchAssignment.workingBranch,
           baseBranch: resolvedBaseBranch,
+          // FNXC:MissionTaskPrefix 2026-07-14-19:00: thread the mission's optional taskPrefix into TaskCreateInput so the distributed allocator mints ERR-N (etc.) instead of the project prefix (PR #1930).
+          taskPrefix: mission?.taskPrefix,
           ...(missionId
             ? {
                 branchContext: {

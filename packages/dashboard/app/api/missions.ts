@@ -59,6 +59,12 @@ export interface Mission {
   autopilotState?: AutopilotState;
   /** ISO-8601 timestamp of last autopilot activity */
   lastAutopilotActivityAt?: string;
+  /**
+   * FNXC:MissionTaskPrefix 2026-07-19-12:55:
+   * Optional per-mission ticket id prefix for triaged tasks. Absent/null inherits project settings.taskPrefix.
+   * PATCH with null/empty clears the override.
+   */
+  taskPrefix?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -141,7 +147,7 @@ export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]>
 }
 
 /** Create a new mission */
-export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; autoMerge?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }, projectId?: string): Promise<Mission> {
+export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; autoMerge?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"]; taskPrefix?: string | null }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId("/missions", projectId), {
     method: "POST",
     body: JSON.stringify(input),
@@ -154,7 +160,7 @@ export function fetchMission(missionId: string, projectId?: string): Promise<Mis
 }
 
 /** Update mission */
-export function updateMission(missionId: string, updates: Partial<Mission>, projectId?: string): Promise<Mission> {
+export function updateMission(missionId: string, updates: Partial<Omit<Mission, "taskPrefix" | "autoMerge">> & { taskPrefix?: string | null; autoMerge?: boolean | null }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
     method: "PATCH",
     body: JSON.stringify(updates),

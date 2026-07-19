@@ -470,4 +470,40 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getMissionWithHierarchy("M-DOES-NOT-EXIST")).toBeUndefined();
     expect(await m.getMissionHealth("M-DOES-NOT-EXIST")).toBeUndefined();
   });
+
+  /*
+  FNXC:MissionTaskPrefix 2026-07-14-19:00:
+  Per-mission taskPrefix round-trips on create/update and clears to NULL so triage re-inherits the project prefix (PR #1930, greptile P1). Ported from the deleted SQLite mission-store.test.ts onto the PG AsyncMissionStore harness.
+  */
+  it("round-trips mission taskPrefix on create/update and clears to undefined", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Prefixed", taskPrefix: "ERR" });
+    expect((await m.getMission(mission.id))?.taskPrefix).toBe("ERR");
+
+    const updated = await m.updateMission(mission.id, { taskPrefix: "BUG" });
+    expect(updated.taskPrefix).toBe("BUG");
+    expect((await m.getMission(mission.id))?.taskPrefix).toBe("BUG");
+
+    const cleared = await m.updateMission(mission.id, { taskPrefix: undefined });
+    expect(cleared.taskPrefix).toBeUndefined();
+    expect((await m.getMission(mission.id))?.taskPrefix).toBeUndefined();
+
+    const raw = (await h.layer().db.execute(
+      sql`SELECT task_prefix FROM project.missions WHERE id = ${mission.id}`,
+    )) as unknown as Array<{ task_prefix: string | null }>;
+    expect(raw[0]?.task_prefix).toBeNull();
+  });
+
+  it("mints triaged task ids with the mission's taskPrefix", async () => {
+    const m = missions();
+    await h.store().updateSettings({ taskPrefix: "FN" });
+    const mission = await m.createMission({ title: "Mission", taskPrefix: "ERR" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Ship prefix", acceptanceCriteria: "id uses ERR" });
+
+    const triaged = await m.triageFeature(feature.id);
+    expect(triaged.taskId).toBeTruthy();
+    expect(triaged.taskId).toMatch(/^ERR-\d+$/);
+  });
 });

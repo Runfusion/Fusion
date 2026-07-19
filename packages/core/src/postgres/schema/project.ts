@@ -1243,6 +1243,11 @@ export const missions = projectSchema.table("missions", {
   interviewState: text("interview_state").notNull(),
   baseBranch: text("base_branch"),
   branchStrategy: text("branch_strategy"),
+  /*
+  FNXC:MissionTaskPrefix 2026-07-14-19:00:
+  Optional per-mission ticket id prefix (e.g. ERR). Absent/null inherits the project-wide taskPrefix setting so one mission can mint distinct ids without flipping the board-wide prefix (PR #1930, ported onto PG after SQLite cutover).
+  */
+  taskPrefix: text("task_prefix"),
   autoAdvance: integer("auto_advance").default(0),
   autoMerge: integer("auto_merge"),
   // FNXC:MissionStore 2026-06-24-08:00:

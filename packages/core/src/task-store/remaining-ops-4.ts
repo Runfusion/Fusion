@@ -37,6 +37,7 @@ import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-s
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async-comments-attachments.js";
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async-events.js";
 import type {TaskDocumentRow, GoalCitationRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
+import { resolveTaskPrefix } from "../task-store/task-prefix.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {
     if (store.backendMode) {
@@ -175,7 +176,8 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
 
 export async function createTaskWithDistributedReservationImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; createTaskWithId?: (taskId: string) => Promise<Task>; },): Promise<Task> {
     const settings = await store.getSettingsFast();
-    const prefix = (settings.taskPrefix || "FN").trim().toUpperCase();
+    // FNXC:MissionTaskPrefix 2026-07-14-19:00: prefer TaskCreateInput.taskPrefix (mission triage minting hint) over the project-wide settings.taskPrefix so a single mission can use e.g. ERR- while the board stays FN- (PR #1930).
+    const prefix = resolveTaskPrefix(input.taskPrefix, settings.taskPrefix, "FN");
     const allocator = store.getDistributedTaskIdAllocator();
     const nodeId = await store.resolveLocalNodeIdForTaskAllocation();
     const reservation = await allocator.reserveDistributedTaskId({

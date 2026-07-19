@@ -124,6 +124,8 @@ interface MissionRow {
   interviewState: string;
   baseBranch: string | null;
   branchStrategy: string | null;
+  /** Per-mission ticket id prefix; null/absent inherits project settings.taskPrefix. */
+  taskPrefix: string | null;
   autoMerge: number | null;
   autoAdvance: number | null;
   autopilotEnabled: number | null;
@@ -279,6 +281,7 @@ const missionColumns = {
   interviewState: schema.project.missions.interviewState,
   baseBranch: schema.project.missions.baseBranch,
   branchStrategy: schema.project.missions.branchStrategy,
+  taskPrefix: schema.project.missions.taskPrefix,
   autoMerge: schema.project.missions.autoMerge,
   autoAdvance: schema.project.missions.autoAdvance,
   autopilotEnabled: schema.project.missions.autopilotEnabled,
@@ -428,6 +431,8 @@ function rowToMission(row: MissionRow): Mission {
     interviewState: row.interviewState as InterviewState,
     baseBranch: row.baseBranch ?? undefined,
     branchStrategy,
+    // FNXC:MissionTaskPrefix 2026-07-19-13:05: match other nullable text fields (?? not ||) so empty-string rows stay distinguishable if validation ever relaxes (greptile P2 on #2347).
+    taskPrefix: row.taskPrefix ?? undefined,
     autoMerge: row.autoMerge === null ? undefined : Boolean(row.autoMerge),
     autoAdvance: Boolean(row.autoAdvance ?? 0),
     autopilotEnabled: Boolean(row.autopilotEnabled ?? 0),
@@ -627,6 +632,8 @@ export async function createMission(
     interviewState: input.interviewState,
     baseBranch: input.baseBranch ?? null,
     branchStrategy: serializeBranchStrategy(input.branchStrategy),
+    // FNXC:MissionTaskPrefix 2026-07-14-19:00: persist optional per-mission minting prefix; undefined/null stores NULL so triage inherits the project prefix (PR #1930).
+    taskPrefix: input.taskPrefix ?? null,
     autoMerge: input.autoMerge === undefined ? null : input.autoMerge ? 1 : 0,
     autoAdvance: input.autoAdvance ? 1 : 0,
     autopilotEnabled: input.autopilotEnabled ? 1 : 0,
@@ -674,6 +681,8 @@ export async function updateMission(
       interviewState: mission.interviewState,
       baseBranch: mission.baseBranch ?? null,
       branchStrategy: serializeBranchStrategy(mission.branchStrategy),
+      // FNXC:MissionTaskPrefix 2026-07-14-19:00: write NULL when cleared so the mission re-inherits the project prefix (greptile P1 / PR #1930).
+      taskPrefix: mission.taskPrefix ?? null,
       autoMerge: mission.autoMerge === undefined ? null : mission.autoMerge ? 1 : 0,
       autoAdvance: mission.autoAdvance ? 1 : 0,
       autopilotEnabled: mission.autopilotEnabled ? 1 : 0,
@@ -1769,6 +1778,7 @@ export async function upsertMission(handle: QueryHandle, mission: Mission): Prom
       interviewState: mission.interviewState,
       baseBranch: mission.baseBranch ?? null,
       branchStrategy: serializeBranchStrategy(mission.branchStrategy),
+      taskPrefix: mission.taskPrefix ?? null,
       autoMerge: mission.autoMerge === undefined ? null : mission.autoMerge ? 1 : 0,
       autoAdvance: mission.autoAdvance ? 1 : 0,
       autopilotEnabled: mission.autopilotEnabled ? 1 : 0,
@@ -1786,6 +1796,7 @@ export async function upsertMission(handle: QueryHandle, mission: Mission): Prom
         interviewState: sql`excluded.interview_state`,
         baseBranch: sql`excluded.base_branch`,
         branchStrategy: sql`excluded.branch_strategy`,
+        taskPrefix: sql`excluded.task_prefix`,
         autoMerge: sql`excluded.auto_merge`,
         autoAdvance: sql`excluded.auto_advance`,
         autopilotEnabled: sql`excluded.autopilot_enabled`,

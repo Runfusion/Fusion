@@ -70,6 +70,8 @@ import {
   SQLITE_SCHEMA_PARITY_VERSION,
   SYMBOL_LOCKS_SCHEMA_VERSION,
   BIGINT_COUNTERS_VERSION,
+  MISSION_TASK_PREFIX_VERSION,
+
   TASK_VERIFICATION_REQUEST_VERSION,
 } from "../../postgres/schema-applier.js";
 import { rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -200,6 +202,22 @@ describe("schema-applier: immutable migration identities", () => {
     expect(applierSource).toContain("0026_bigint_counters.sql");
     expect(applierSource).toContain("BIGINT_COUNTERS_VERSION");
     expect(applierSource).toMatch(/applied\.includes\(\s*BIGINT_COUNTERS_VERSION\s*\)/);
+  });
+
+  /*
+  FNXC:MissionTaskPrefix 2026-07-19-12:55:
+  0028 is the mission task-prefix migration after main claimed 0026/0027.
+  */
+  it("registers mission task prefix at migration version 0028", () => {
+    expect(MISSION_TASK_PREFIX_VERSION).toBe("0028");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(MISSION_TASK_PREFIX_VERSION));
+    const applierSource = readFileSync(
+      fileURLToPath(new URL("../../postgres/schema-applier.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(applierSource).toContain("0028_mission_task_prefix.sql");
+    expect(applierSource).toContain("MISSION_TASK_PREFIX_VERSION");
+    expect(applierSource).toMatch(/applied\.includes\(\s*MISSION_TASK_PREFIX_VERSION\s*\)/);
   });
 
 });
@@ -889,6 +907,30 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   /*
+  FNXC:MissionTaskPrefix 2026-07-19-12:53:
+  A target that already recorded 0000–0027 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930 / #2334).
+
+  FNXC:MissionTaskPrefix 2026-07-19-13:05:
+  Delete bookkeeping version 0028 (not 0026) so missionTaskPrefixAlreadyApplied is false and applySchemaBaseline re-runs 0028_mission_task_prefix.sql. 0026 is bigint counters; leaving 0028 recorded would skip the migration and leave the dropped column missing (greptile P1 on #2347).
+  */
+  it("upgrades a pre-0028 database with missions.task_prefix", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0028';
+      ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'missions' AND column_name = 'task_prefix'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns).toEqual([{ column_name: "task_prefix" }]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(MISSION_TASK_PREFIX_VERSION);
+  });
+
+  /*
   FNXC:ProjectDataIsolation 2026-07-14-12:10:
   Exercise the user-visible invariant through a non-superuser role: agents created in one project are invisible and immutable from another project even when application SQL omits project predicates.
   */
@@ -1367,6 +1409,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1420,6 +1463,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -1606,6 +1650,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -1673,6 +1718,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -1740,6 +1786,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 });
