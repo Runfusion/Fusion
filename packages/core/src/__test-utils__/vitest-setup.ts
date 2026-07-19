@@ -74,6 +74,13 @@ function installWarningFilter(): void {
 
 installWarningFilter();
 
+// Never let a DATABASE_URL exported for the operator's normal Fusion runtime
+// leak into a Vitest worker. Tests that exercise external PostgreSQL construct
+// an isolated database through FUSION_PG_TEST_* and set DATABASE_URL explicitly
+// inside the test after this setup file has run.
+delete process.env.DATABASE_URL;
+delete process.env.DATABASE_MIGRATION_URL;
+
 const TEST_HOME_PREFIX = "fn-test-home-";
 const WORKER_ROOT_OWNER_FILE = ".fusion-test-worker-root-owner";
 const FUSION_TEST_RUN_TOKEN_ENV = "FUSION_TEST_RUN_TOKEN";
