@@ -7051,6 +7051,7 @@ import type {
   MessageReplyReference,
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
+  NativeStructureEmbed,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -7062,6 +7063,7 @@ export type {
   MessageReplyReference,
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
+  NativeStructureEmbed,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -7086,6 +7088,36 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
 
   if (metadata.wakeRecipient !== undefined && typeof metadata.wakeRecipient !== "boolean") {
     throw new Error("metadata.wakeRecipient must be a boolean");
+  }
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-20-12:00:
+  Mail accepts only the shared five-kind NativeStructureRef union. Reject unsupported future
+  kinds at the persistence boundary so every stored attachment remains renderable by the shared
+  preview component; labels are optional attach-time fallbacks, not serialized preview snapshots.
+  */
+  if (metadata.nativeStructures !== undefined) {
+    if (!Array.isArray(metadata.nativeStructures)) {
+      throw new Error("metadata.nativeStructures must be an array");
+    }
+    const supportedKinds: NativeStructureRef["kind"][] = ["mission", "milestone", "research-finding", "eval-result", "goal"];
+    for (const embed of metadata.nativeStructures) {
+      if (typeof embed !== "object" || embed === null || Array.isArray(embed)) {
+        throw new Error("metadata.nativeStructures entries must be objects");
+      }
+      if (!supportedKinds.includes(embed.kind)) {
+        throw new Error("metadata.nativeStructures.kind is invalid");
+      }
+      if (typeof embed.id !== "string" || embed.id.trim().length === 0) {
+        throw new Error("metadata.nativeStructures.id must be a non-empty string");
+      }
+      if (embed.projectId !== undefined && (typeof embed.projectId !== "string" || embed.projectId.trim().length === 0)) {
+        throw new Error("metadata.nativeStructures.projectId must be a non-empty string");
+      }
+      if (embed.label !== undefined && typeof embed.label !== "string") {
+        throw new Error("metadata.nativeStructures.label must be a string");
+      }
+    }
   }
 
   const proposalFieldsPresent = metadata.proposalStatus !== undefined || metadata.createdTaskId !== undefined || metadata.proposalIdempotencyKey !== undefined || metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined;

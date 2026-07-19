@@ -14,7 +14,7 @@ import {
   MessageSquare,
   User,
 } from "lucide-react";
-import type { Message, MessageType, ParticipantType } from "@fusion/core";
+import type { Message, MessageType, NativeStructurePreviewResult, NativeStructureRef, ParticipantType } from "@fusion/core";
 import {
   fetchInbox,
   fetchOutbox,
@@ -39,8 +39,9 @@ import {
 } from "../api";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
+import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
 import { ViewHeader } from "./ViewHeader";
 import { WorktrunkInstallApprovalDetails } from "./WorktrunkInstallApprovalDetails";
 import { GatedActionApprovalDetails } from "./GatedActionApprovalDetails";
@@ -59,6 +60,9 @@ interface MailboxViewProps {
   projectId?: string;
   addToast?: (msg: string, type?: "success" | "error") => void;
   onOpenTask?: (taskId: string) => void;
+  /** Opens a persisted structure from the shared preview card. */
+  onOpenNativeStructure: (ref: NativeStructureRef, payload: NativeStructurePreviewResult) => void;
+  nativeStructureCandidates: NativeStructureCandidate[];
   /** Callback when unread count changes (for header badge updates) */
   onUnreadCountChange?: (count: number) => void;
 }
@@ -217,6 +221,8 @@ export function MailboxView({
   projectId,
   addToast,
   onOpenTask,
+  onOpenNativeStructure,
+  nativeStructureCandidates,
   onUnreadCountChange,
 }: MailboxViewProps) {
   const { t } = useTranslation("app");
@@ -952,6 +958,7 @@ export function MailboxView({
                     taskId={msg.metadata?.taskId}
                     onOpenTask={onOpenTask}
                   />
+                  <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                 </div>
               );
@@ -979,6 +986,7 @@ export function MailboxView({
               taskId={selectedMessage.metadata?.taskId}
               onOpenTask={onOpenTask}
             />
+            <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
             <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
           </>
         )}
@@ -1267,6 +1275,7 @@ export function MailboxView({
           replyContext={composeReplyContext}
           agents={agents}
           projectId={projectId}
+          nativeStructureCandidates={nativeStructureCandidates}
           onSend={handleMessageSent}
           onCancel={handleComposeCancel}
           addToast={addToast}
@@ -1492,6 +1501,7 @@ export function MailboxView({
                 replyContext={composeReplyContext}
                 agents={agents}
                 projectId={projectId}
+                nativeStructureCandidates={nativeStructureCandidates}
                 onSend={handleMessageSent}
                 onCancel={handleComposeCancel}
                 addToast={addToast}

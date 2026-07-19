@@ -2,8 +2,8 @@
 FNXC:MainContent 2026-06-24-00:00:
 MainContent is the presentational switch for the dashboard's main content area, extracted verbatim from AppInner's renderMainContent(). It is a pure switch on taskView/viewMode returning the existing <PageErrorBoundary>/<Suspense> subtrees unchanged. The lazy view chunks (and their leading-underscore inventory convention) stay declared in App.tsx per the docs guard and are threaded in as props; the eager ChatView.css import remains in App.tsx so the styles bundle into the main CSS file.
 */
-import { Suspense, useState } from "react";
-import type { Task, TaskDetail } from "@fusion/core";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import type { NativeStructurePreviewResult, NativeStructureRef, Task, TaskDetail } from "@fusion/core";
 import { Board } from "../Board";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
@@ -12,6 +12,7 @@ import { ProjectOverview } from "../ProjectOverview";
 import { MissionManager } from "../MissionManager";
 import { MailboxView } from "../MailboxView";
 import { IdeationPanel } from "../command-center/IdeationPanel";
+import type { NativeStructureCandidate } from "../MessageComposer";
 import { PageErrorBoundary } from "../ErrorBoundary";
 import { BackendConnectionErrorPage } from "../BackendConnectionErrorPage";
 import { CapacityRiskBanner } from "../CapacityRiskBanner";
@@ -22,7 +23,7 @@ import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
 import { isPluginViewId } from "../../plugins/pluginViewRegistry";
 import { isNearDuplicateCanonicalInactive } from "../../../../core/src/near-duplicate-canonical";
-import { fetchTaskDetail } from "../../api";
+import { fetchMission, fetchMissions, fetchInsights, fetchTaskDetail, listEvals } from "../../api";
 import type { DetailTaskTab } from "../../hooks/useModalManager";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
@@ -189,6 +190,75 @@ export function MainContent({
 }: MainContentProps) {
   const [missionWorkflowId, setMissionWorkflowId] = useState<string | null>(null);
   const [planningHeaderWorkflowId, setPlanningHeaderWorkflowId] = useState<string | null>(null);
+  const [nativeStructureCandidates, setNativeStructureCandidates] = useState<NativeStructureCandidate[]>([]);
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-20-14:30:
+  The mailbox owns no structure data, so MainContent assembles its picker candidates from the
+  existing project-scoped mission, insight, evaluation, and goal sources. Clear the prior project
+  before loading to prevent attaching cross-project refs. Persist only refs and labels;
+  NativeStructurePreview resolves current details lazily after the message is sent.
+  */
+  useEffect(() => {
+    let active = true;
+    const projectId = currentProject?.id;
+    setNativeStructureCandidates([]);
+    const ref = (kind: NativeStructureRef["kind"], id: string): NativeStructureRef => ({ kind, id, ...(projectId ? { projectId } : {}) });
+
+    void Promise.all([
+      fetchMissions(projectId).catch(() => []),
+      fetchInsights({ limit: 100 }, projectId).catch(() => ({ insights: [], count: 0 })),
+      listEvals({ limit: 100 }, projectId).catch(() => ({ results: [], count: 0 })),
+      fetch(projectId ? `/api/goals?projectId=${encodeURIComponent(projectId)}` : "/api/goals")
+        .then(async (response) => response.ok ? response.json() as Promise<{ goals?: Array<{ id: string; title: string }> }> : { goals: [] })
+        .catch(() => ({ goals: [] })),
+    ]).then(async ([missions, insights, evals, goalsResponse]) => {
+      const missionHierarchies = await Promise.all(missions.map(async (mission) => {
+        try {
+          return await fetchMission(mission.id, projectId);
+        } catch {
+          return undefined;
+        }
+      }));
+      if (!active) return;
+
+      const candidates: NativeStructureCandidate[] = [
+        ...missions.map((mission) => ({ ref: ref("mission", mission.id), label: mission.title })),
+        ...missionHierarchies.flatMap((mission) => mission?.milestones.map((milestone) => ({ ref: ref("milestone", milestone.id), label: milestone.title })) ?? []),
+        ...insights.insights.map((insight) => ({ ref: ref("research-finding", insight.id), label: insight.title })),
+        ...evals.results.map((result) => ({ ref: ref("eval-result", result.id), label: result.taskSnapshot.title || result.taskId })),
+        ...(Array.isArray(goalsResponse.goals) ? goalsResponse.goals : []).map((goal) => ({ ref: ref("goal", goal.id), label: goal.title })),
+      ];
+      setNativeStructureCandidates(candidates);
+    });
+
+    return () => { active = false; };
+  }, [currentProject?.id]);
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-20-12:00:
+  Mail previews navigate through the dashboard's existing stateful destinations instead of URLs.
+  Milestones retain their parent mission anchor when the lazy preview resolver supplies it.
+  */
+  const onOpenNativeStructure = useCallback((ref: NativeStructureRef, payload: NativeStructurePreviewResult) => {
+    switch (ref.kind) {
+      case "mission":
+      case "milestone":
+        setMissionTargetId(payload.available ? payload.openTarget.missionId ?? payload.openTarget.id : ref.id);
+        handleChangeTaskView("missions");
+        break;
+      case "goal":
+        setGoalAnchorId(ref.id);
+        handleChangeTaskView("goalsView");
+        break;
+      case "research-finding":
+        handleChangeTaskView("research");
+        break;
+      case "eval-result":
+        handleChangeTaskView("evals");
+        break;
+    }
+  }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
 
   if (showBackendConnectionErrorPage) {
     return (
@@ -379,6 +449,8 @@ export function MainContent({
               .catch(() => addToast?.("Failed to open task", "error"));
           }}
           onUnreadCountChange={setMailboxUnreadCount}
+          onOpenNativeStructure={onOpenNativeStructure}
+          nativeStructureCandidates={nativeStructureCandidates}
         />
       </PageErrorBoundary>
     );

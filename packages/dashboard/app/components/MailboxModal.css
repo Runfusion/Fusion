@@ -1340,6 +1340,35 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
   color: var(--color-error);
 }
 
+.message-composer-field--structures {
+  align-items: start;
+}
+
+.message-composer-structure-controls {
+  display: grid;
+  flex: 1;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.message-composer-structure-list {
+  display: grid;
+  gap: var(--space-xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.message-composer-structure-list li {
+  align-items: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+}
+
 .message-composer-field--wake {
   margin-top: var(--space-xs);
 }

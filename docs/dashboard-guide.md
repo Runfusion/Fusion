@@ -718,6 +718,7 @@ Mailbox view shows inbox/outbox communication threads and unread state. When an 
 - when a real pending mailbox approval request is created, the app shows a persistent approval banner above project content with an **Open Mailbox** CTA; task plan-approval states (`awaiting-approval`) remain visible on the triage board and do not create a mailbox banner
 - when a task first transitions into `done`, the dashboard shows a one-time **Enjoying Fusion?** GitHub star prompt in the project view after first-run setup is closed; clicking **Star on GitHub** or dismissing the card marks it shown in browser `localStorage`, so it does not reappear on reload or later task completions. The setup wizard does not add a second star prompt.
 - Visible message history/threading is driven by explicit `message.metadata.replyTo.messageId` links
+- Compose can attach native missions, milestones, goals, research findings, and eval results as structural cards. Recipients can open the live structure from the message detail or conversation thread; a captured label keeps unavailable or soft-deleted attachments identifiable.
 - Separate top-level messages from the same sender remain independent in the inbox and detail pane
 
 ![Mailbox view](./screenshots/mailbox-view.png)

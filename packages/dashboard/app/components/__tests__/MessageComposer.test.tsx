@@ -97,6 +97,31 @@ describe("MessageComposer", () => {
     expect(select.textContent).toContain("Loading agents…");
   });
 
+  it("adds structural attachments to sent metadata and removes them from the draft", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} nativeStructureCandidates={[
+      { ref: { kind: "mission", id: "M-1" }, label: "Launch" },
+      { ref: { kind: "goal", id: "G-1" }, label: "Ship" },
+    ]} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), { target: { value: "agent-001" } });
+    fireEvent.change(screen.getByTestId("message-composer-content"), { target: { value: "Review" } });
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "0" } });
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent("Launch");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Launch" }));
+    expect(screen.queryByTestId("message-composer-attached-structures")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "1" } });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: { nativeStructures: [{ kind: "goal", id: "G-1", label: "Ship" }] },
+    }), undefined));
+  });
+
+  it("disables structural attachment selection when no candidates are available", () => {
+    render(<MessageComposer {...defaultProps} />);
+    expect(screen.getByTestId("message-composer-attach-structure")).toBeDisabled();
+    expect(screen.getByText("No structures available")).toBeInTheDocument();
+  });
+
   it("disables send button when content is empty", () => {
     render(<MessageComposer {...defaultProps} agents={mockAgents} />);
     const sendBtn = screen.getByTestId("message-composer-send");

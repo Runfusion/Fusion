@@ -2,12 +2,17 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { X, Send, Loader2, Bot, AlertCircle } from "lucide-react";
-import type { ParticipantType, MessageType } from "@fusion/core";
+import type { NativeStructureEmbed, NativeStructureRef, ParticipantType, MessageType } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import { sendMessage } from "../api";
 import type { Agent } from "../api";
 
 // ── Types ─────────────────────────────────────────────────────────────────
+
+export interface NativeStructureCandidate {
+  ref: NativeStructureRef;
+  label: string;
+}
 
 interface MessageComposerProps {
   /** Pre-fill recipient (e.g. when replying) */
@@ -26,6 +31,8 @@ interface MessageComposerProps {
   addToast?: (msg: string, type?: "success" | "error") => void;
   /** Loading state for agents (shows placeholder) */
   isLoadingAgents?: boolean;
+  /** Project-scoped structures the mail parent makes available for attachment. */
+  nativeStructureCandidates?: NativeStructureCandidate[];
 }
 
 const MAX_CONTENT_LENGTH = 2000;
@@ -41,12 +48,14 @@ export function MessageComposer({
   onCancel,
   addToast,
   isLoadingAgents = false,
+  nativeStructureCandidates = [],
 }: MessageComposerProps) {
   const { t } = useTranslation("app");
   const [toId, setToId] = useState(recipient?.id ?? "");
   const [toType, setToType] = useState<ParticipantType>(recipient?.type ?? "agent");
   const [content, setContent] = useState("");
   const [wakeRecipient, setWakeRecipient] = useState(false);
+  const [nativeStructures, setNativeStructures] = useState<NativeStructureEmbed[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -82,10 +91,11 @@ export function MessageComposer({
 
     try {
       const messageType: MessageType = toType === "agent" ? "user-to-agent" : "system";
-      const metadata =
-        replyContext
-          ? { replyTo: { messageId: replyContext.messageId } }
-          : undefined;
+      const metadata = {
+        ...(replyContext ? { replyTo: { messageId: replyContext.messageId } } : {}),
+        ...(nativeStructures.length > 0 ? { nativeStructures } : {}),
+      };
+      const hasMetadata = Object.keys(metadata).length > 0;
       const sendWakeImmediately = wakeImmediately;
       await sendMessage(
         {
@@ -93,7 +103,7 @@ export function MessageComposer({
           toType,
           content: content.trim(),
           type: messageType,
-          ...(metadata ? { metadata } : {}),
+          ...(hasMetadata ? { metadata } : {}),
           ...(sendWakeImmediately ? { wakeImmediately: true } : {}),
         },
         projectId,
@@ -106,12 +116,18 @@ export function MessageComposer({
     } finally {
       setIsSending(false);
     }
-  }, [isValid, isSending, toId, toType, content, wakeImmediately, replyContext, projectId, onSend, addToast]);
+  }, [isValid, isSending, toId, toType, content, wakeImmediately, replyContext, nativeStructures, projectId, onSend, addToast]);
 
   const handleAgentSelect = useCallback((agentId: string) => {
     setToId(agentId);
     setToType("agent");
   }, []);
+
+  const attachNativeStructure = useCallback((candidateIndex: string) => {
+    const candidate = nativeStructureCandidates[Number(candidateIndex)];
+    if (!candidate) return;
+    setNativeStructures((current) => [...current, { ...candidate.ref, label: candidate.label }]);
+  }, [nativeStructureCandidates]);
 
   const scrollTextareaIntoView = useCallback(() => {
     if (typeof textareaRef.current?.scrollIntoView !== "function") {
@@ -220,6 +236,41 @@ export function MessageComposer({
             <span className={content.length > MAX_CONTENT_LENGTH ? "over-limit" : ""}>
               {content.length}/{MAX_CONTENT_LENGTH}
             </span>
+          </div>
+        </div>
+
+        {/*
+        FNXC:NativeStructureEmbed 2026-07-20-12:00:
+        The composer receives project-scoped candidates from its mailbox parent and persists only
+        each reference plus label. Selection appends to the draft so reports can carry multiple
+        independently reviewable structures without serializing preview payloads.
+        */}
+        <div className="message-composer-field message-composer-field--structures">
+          <label className="message-composer-label" htmlFor="message-native-structure">Attach structure</label>
+          <div className="message-composer-structure-controls">
+            <select
+              id="message-native-structure"
+              className="message-composer-select"
+              value=""
+              disabled={nativeStructureCandidates.length === 0}
+              onChange={(event) => attachNativeStructure(event.target.value)}
+              data-testid="message-composer-attach-structure"
+            >
+              <option value="">{nativeStructureCandidates.length === 0 ? "No structures available" : "Select structure…"}</option>
+              {nativeStructureCandidates.map((candidate, index) => (
+                <option key={`${candidate.ref.kind}:${candidate.ref.id}`} value={index}>{candidate.ref.kind}: {candidate.label}</option>
+              ))}
+            </select>
+            {nativeStructures.length > 0 && (
+              <ul className="message-composer-structure-list" data-testid="message-composer-attached-structures">
+                {nativeStructures.map((embed, index) => (
+                  <li key={`${embed.kind}:${embed.id}:${index}`}>
+                    <span>{embed.kind}: {embed.label ?? embed.id}</span>
+                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => setNativeStructures((current) => current.filter((_, currentIndex) => currentIndex !== index))} aria-label={`Remove ${embed.label ?? embed.id}`}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 

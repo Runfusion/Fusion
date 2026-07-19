@@ -7,6 +7,8 @@ import "./NativeStructurePreview.css";
 export interface NativeStructurePreviewProps {
   ref: NativeStructureRef;
   payload?: NativeStructurePreviewResult;
+  /** Attach-time label used only when a persisted target is no longer available. */
+  capturedLabel?: string;
   onOpen: (ref: NativeStructureRef, payload: NativeStructurePreviewResult) => void;
 }
 
@@ -32,7 +34,7 @@ function unavailableLabel(kind: string): string {
  * owned by each consumer through `onOpen` because dashboard views use callback/view state rather
  * than URL routes; rendering an anchor here would create dead destinations.
  */
-export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, onOpen }: NativeStructurePreviewProps) {
+export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, capturedLabel, onOpen }: NativeStructurePreviewProps) {
   const supportedKind = isSupportedKind(ref.kind);
   const refKey = `${ref.kind}\u0000${ref.id}\u0000${ref.projectId ?? ""}`;
   const [fetchedPayload, setFetchedPayload] = useState<{ refKey: string; result: NativeStructurePreviewResult } | undefined>();
@@ -94,7 +96,7 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return (
       <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-unavailable" data-reason={result.reason}>
         <Icon aria-hidden="true" />
-        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{unavailableLabel(result.kind)}</span><p>This structure is unavailable.</p></div>
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{unavailableLabel(result.kind)}</span><strong className="native-structure-preview__title">{capturedLabel?.trim() || "Preview unavailable"}</strong><p>This structure is unavailable.</p></div>
       </section>
     );
   }
