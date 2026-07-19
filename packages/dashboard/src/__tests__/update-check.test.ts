@@ -191,7 +191,7 @@ describe("update-check", () => {
     const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
 
     expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@latest", {
-      timeout: 120_000,
+      timeout: 300_000,
       maxBuffer: 10 * 1024 * 1024,
     });
     expect(result).toEqual({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true });
@@ -225,6 +225,55 @@ describe("update-check", () => {
       error: "registry down",
     });
     expect(execFake).toHaveBeenCalledTimes(1);
+  });
+
+  it("performUpdateInstall reports a timeout instead of npm deprecation warnings", async () => {
+    const execFake = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Command failed"), {
+        killed: true,
+        signal: "SIGTERM",
+        stderr: "npm warn deprecated prebuild-install@7.1.3: No longer maintained.",
+      }),
+    );
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(result).toEqual({
+      currentVersion: "1.0.0",
+      latestVersion: "2.0.0",
+      updated: false,
+      error: expect.stringMatching(/timed out after 5 minutes.*terminal/i),
+    });
+    expect(result.error).not.toContain("deprecated");
+  });
+
+  it("performUpdateInstall reports a timeout when the forced collision retry stalls", async () => {
+    const collision = new Error("npm ERR! code EEXIST\nnpm ERR! path /usr/local/bin/fn\nnpm ERR! File exists");
+    const timeout = Object.assign(new Error("Command failed"), {
+      killed: true,
+      stderr: "npm warn deprecated prebuild-install@7.1.3: No longer maintained.",
+    });
+    const execFake = vi.fn().mockRejectedValueOnce(collision).mockRejectedValueOnce(timeout);
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(execFake).toHaveBeenCalledTimes(2);
+    expect(result.error).toMatch(/timed out after 5 minutes.*terminal/i);
+    expect(result.error).not.toContain("deprecated");
+  });
+
+  it("performUpdateInstall preserves a registry ETIMEDOUT diagnosis", async () => {
+    const execFake = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Command failed"), {
+        killed: false,
+        stderr: "npm error network request failed, reason: connect ETIMEDOUT 10.0.0.1:443",
+      }),
+    );
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(result.error).toContain("connect ETIMEDOUT");
+    expect(result.error).not.toMatch(/timed out after 5 minutes/i);
   });
 
   // FNXC:UpdateInstallPermissions 2026-07-10-14:00: a root-owned global dir

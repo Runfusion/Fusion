@@ -313,6 +313,35 @@ describe("CLI bundle output", () => {
     }
   });
 
+  it("dist/plugins/fusion-plugin-compound-engineering/ ships agent persona definitions", () => {
+    const sourceAgentsRoot = join(
+      workspaceRoot,
+      "plugins",
+      "fusion-plugin-compound-engineering",
+      "src",
+      "agents",
+    );
+    const stagedAgentsRoot = join(
+      cliRoot,
+      "dist",
+      "plugins",
+      "fusion-plugin-compound-engineering",
+      "agents",
+    );
+    const sourceAgentFiles = readdirSync(sourceAgentsRoot)
+      .filter((file) => file.endsWith(".md"))
+      .sort();
+    const stagedAgentFiles = readdirSync(stagedAgentsRoot)
+      .filter((file) => file.endsWith(".md"))
+      .sort();
+
+    expect(stagedAgentFiles).toEqual(sourceAgentFiles);
+    for (const agentFile of stagedAgentFiles) {
+      const stagedAgentPath = join(stagedAgentsRoot, agentFile);
+      expect(readFileSync(stagedAgentPath, "utf-8")).toMatch(/^---[\s\S]*?name:\s*\S+/);
+    }
+  });
+
   it("does not create skills directories for bundled plugins without skill sources", () => {
     const pluginId = "fusion-plugin-roadmap";
 

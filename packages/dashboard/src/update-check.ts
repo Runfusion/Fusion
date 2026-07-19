@@ -9,7 +9,7 @@ const CACHE_FILENAME = "update-check.json";
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
 const INSTALL_COMMAND = "npm install -g @runfusion/fusion@latest";
 const FORCE_INSTALL_COMMAND = "npm install --force -g @runfusion/fusion@latest";
-const INSTALL_TIMEOUT_MS = 120_000;
+const INSTALL_TIMEOUT_MS = 300_000;
 const INSTALL_MAX_BUFFER = 10 * 1024 * 1024;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,7 +39,12 @@ type ExecInstall = (
   options: { timeout: number; maxBuffer: number },
 ) => Promise<{ stdout: string; stderr: string }>;
 
-type InstallError = Error & { stdout?: string; stderr?: string };
+type InstallError = Error & {
+  stdout?: string;
+  stderr?: string;
+  code?: string | number | null;
+  killed?: boolean;
+};
 
 /**
  * Cache TTL in ms for the given frequency. Frequencies that don't expire by
@@ -105,6 +110,18 @@ function getInstallErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isInstallTimeoutError(error: unknown): boolean {
+  const installError = error as InstallError;
+  return installError?.killed === true;
+}
+
+function getInstallTimeoutMessage(): string {
+  return (
+    `Update timed out after ${INSTALL_TIMEOUT_MS / 60_000} minutes. ` +
+    "Close Fusion and retry from a terminal with: npm install -g @runfusion/fusion@latest"
+  );
+}
+
 /*
 FNXC:UpdateInstallPermissions 2026-07-10-14:00:
 The in-app "Update now" button runs `npm install -g @runfusion/fusion@latest` as the
@@ -116,7 +133,7 @@ EACCES, mirroring the CLI's Homebrew-path awareness. (`--force` cannot grant wri
 permission, so we do not retry it for this class — unlike bin-collision errors.)
 */
 function isPermissionInstallError(error: unknown): boolean {
-  const installError = error as InstallError & { code?: string };
+  const installError = error as InstallError;
   if (installError?.code === "EACCES" || installError?.code === "EPERM") return true;
   const message = [installError?.message, installError?.stderr, installError?.stdout]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
@@ -238,6 +255,19 @@ export async function performUpdateInstall(
       updated: true,
     };
   } catch (error) {
+    /*
+    FNXC:UpdateInstall 2026-07-19-09:50:
+    Native npm dependencies can take longer than two minutes to install on Windows. Allow five minutes, and when exec kills a slow install, report the timeout metadata before npm's preceding deprecation warnings.
+    */
+    if (isInstallTimeoutError(error)) {
+      return {
+        currentVersion,
+        latestVersion,
+        updated: false,
+        error: getInstallTimeoutMessage(),
+      };
+    }
+
     // FNXC:UpdateInstallPermissions 2026-07-10-14:00: a root-owned global dir
     // (from `sudo npm i -g`) yields EACCES/EPERM the non-root updater cannot
     // recover from — return actionable guidance rather than raw npm stderr.
@@ -272,7 +302,9 @@ export async function performUpdateInstall(
         currentVersion,
         latestVersion,
         updated: false,
-        error: getInstallErrorMessage(forceError),
+        error: isInstallTimeoutError(forceError)
+          ? getInstallTimeoutMessage()
+          : getInstallErrorMessage(forceError),
       };
     }
   }

@@ -141,9 +141,23 @@ export function installBundledCeAgents(
   const sourceRoot = options.sourceRoot ? resolve(options.sourceRoot) : resolveBundledAgentsRoot();
   const installIsCurrent = isCurrentInstalledProvenance(targetRoot);
 
-  const sourceFiles = existsSync(sourceRoot)
-    ? readdirSync(sourceRoot).filter((f) => f.endsWith(".md"))
-    : [];
+  let sourceFiles: string[];
+  /*
+  FNXC:CompoundEngineeringAgents 2026-07-19-09:50:
+  A published package without bundled persona definitions is corrupt. Fail at plugin startup instead of silently installing zero agents and breaking later skill fanout.
+  */
+  try {
+    sourceFiles = readdirSync(sourceRoot).filter((file) => file.endsWith(".md"));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw new Error(`Bundled agent persona source directory is missing: ${sourceRoot}`, { cause: error });
+    }
+    throw error;
+  }
+  if (sourceFiles.length === 0) {
+    throw new Error(`Bundled agent persona source directory contains no markdown definitions: ${sourceRoot}`);
+  }
 
   const results = sourceFiles.map<CeAgentInstallResult>((file) => {
     const agentId = file.replace(/\.md$/, "");

@@ -9,6 +9,7 @@ const execAsync = promisify(exec);
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
 const INSTALL_COMMAND = "npm install -g @runfusion/fusion@latest";
 const LOCAL_INSTALL_COMMAND = "npm install @runfusion/fusion@latest";
+const INSTALL_TIMEOUT_MS = 300_000;
 
 export type RunUpdateOptions = {
   check?: boolean;
@@ -98,7 +99,27 @@ function getInstallCommand(globalInstall: boolean, force = false): string {
   return force ? baseCommand.replace("npm install", "npm install --force") : baseCommand;
 }
 
-type InstallError = Error & { stdout?: string; stderr?: string };
+type InstallError = Error & {
+  stdout?: string;
+  stderr?: string;
+  killed?: boolean;
+};
+
+function isInstallTimeoutError(error: unknown): boolean {
+  const installError = error as InstallError;
+  /*
+  FNXC:UpdateInstall 2026-07-19-09:50:
+  Native npm dependencies can take longer than two minutes to install on Windows. Allow five minutes, and classify only an exec-killed process as that ceiling so registry ETIMEDOUT failures retain their real diagnosis.
+  */
+  return installError?.killed === true;
+}
+
+function installTimeoutError(globalInstall: boolean): Error {
+  const command = getInstallCommand(globalInstall);
+  return new Error(
+    `Update timed out after ${INSTALL_TIMEOUT_MS / 60_000} minutes. Retry from a terminal with: ${command}`,
+  );
+}
 
 function isBinCollisionInstallError(error: unknown): boolean {
   const installError = error as InstallError;
@@ -143,11 +164,14 @@ function printCollisionRemediation(binaryPath: string | null): void {
 async function installLatest(globalInstall: boolean, resolveBinaryPath: () => string | null = detectRunningBinaryPath): Promise<void> {
   try {
     await execAsync(getInstallCommand(globalInstall), {
-      timeout: 120_000,
+      timeout: INSTALL_TIMEOUT_MS,
       maxBuffer: 10 * 1024 * 1024,
     });
     return;
   } catch (error) {
+    if (isInstallTimeoutError(error)) {
+      throw installTimeoutError(globalInstall);
+    }
     if (!isBinCollisionInstallError(error)) {
       throw error;
     }
@@ -156,11 +180,14 @@ async function installLatest(globalInstall: boolean, resolveBinaryPath: () => st
 
     try {
       await execAsync(getInstallCommand(globalInstall, true), {
-        timeout: 120_000,
+        timeout: INSTALL_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024,
       });
       return;
     } catch (forceError) {
+      if (isInstallTimeoutError(forceError)) {
+        throw installTimeoutError(globalInstall);
+      }
       printCollisionRemediation(resolveBinaryPath());
       throw forceError;
     }
