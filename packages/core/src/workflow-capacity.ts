@@ -175,11 +175,12 @@ function resolveColumnBudgetKey(ir: WorkflowIr, columnId: string): string | unde
 export function resolveWipBudgetColumns(ir: WorkflowIr, targetColumn: string): string[] {
   const targetKey = resolveColumnBudgetKey(ir, targetColumn);
   if (!targetKey) return [];
-  const v2 = ir as WorkflowIrV2;
-  const columns = Array.isArray(v2.columns) ? v2.columns : [];
+  // A truthy targetKey proves findColumn located targetColumn, which proves
+  // `columns` is an array — and the loop necessarily re-collects targetColumn
+  // itself, so the set is never empty. No defensive fallbacks needed.
   const set: string[] = [];
-  for (const c of columns) {
+  for (const c of (ir as WorkflowIrV2).columns) {
     if (resolveColumnBudgetKey(ir, c.id) === targetKey) set.push(c.id);
   }
-  return set.length > 0 ? set : [targetColumn];
+  return set;
 }

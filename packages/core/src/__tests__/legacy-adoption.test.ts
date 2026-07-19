@@ -296,25 +296,68 @@ the frozen-row failure R10 forbids. These prove the sweep pages past the cap unt
 active census is drained, and that the `legacyAdoptedAt` stamp keeps a drained sweep
 idempotent on the next open.
 */
-describe("adoptLegacyTaskRowsOnOpen — paginates past the 500-row page cap", () => {
-  function makeFakeStore(rows: Array<Partial<Task> & { id: string }>) {
-    const listCalls: Array<{ limit?: number; offset?: number }> = [];
-    const store = {
-      listTasks: async (options?: { limit?: number; offset?: number }) => {
-        listCalls.push({ limit: options?.limit, offset: options?.offset });
-        const offset = options?.offset ?? 0;
-        const limit = options?.limit ?? rows.length;
-        return rows.slice(offset, offset + limit) as Task[];
-      },
-      updateTask: async (id: string, patch: Partial<Task>) => {
-        const row = rows.find((r) => r.id === id)!;
-        Object.assign(row, patch);
-        return row as Task;
-      },
-    } as unknown as TaskStore;
-    return { store, listCalls, rows };
-  }
+/*
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+The fake store optionally carries a fake PG asyncLayer so the drained-marker
+short-circuit is testable: `db.execute` answers the marker SELECT from
+`markerPresent`, records marker INSERTs, and can be forced to throw to prove the
+fail-open-toward-sweeping path. Omitting `backend` models SQLite mode (no
+bookkeeping table → no marker, sweep always runs).
+*/
+function makeFakeStore(
+  rows: Array<Partial<Task> & { id: string }>,
+  opts?: { backend?: boolean; markerPresent?: boolean; markerReadThrows?: boolean },
+) {
+  const listCalls: Array<{ limit?: number; offset?: number }> = [];
+  const markerWrites: string[] = [];
+  let markerPresent = opts?.markerPresent ?? false;
+  // Flatten a drizzle SQL object's chunks into inspectable text.
+  const sqlText = (q: unknown): string => {
+    const chunks = (q as { queryChunks?: unknown[] }).queryChunks ?? [];
+    return chunks
+      .map((c) => {
+        const v = (c as { value?: unknown }).value;
+        return Array.isArray(v) ? v.join("") : String(v ?? "");
+      })
+      .join(" ");
+  };
+  const asyncLayer = opts?.backend
+    ? {
+        db: {
+          execute: async (q: unknown) => {
+            const text = sqlText(q);
+            if (text.includes("SELECT")) {
+              if (opts?.markerReadThrows) throw new Error("marker read boom");
+              return markerPresent ? [{ version: "legacy-adoption-drained" }] : [];
+            }
+            if (text.includes("INSERT")) {
+              markerWrites.push(text);
+              markerPresent = true;
+              return [];
+            }
+            return [];
+          },
+        },
+      }
+    : undefined;
+  const store = {
+    asyncLayer,
+    listTasks: async (options?: { limit?: number; offset?: number }) => {
+      listCalls.push({ limit: options?.limit, offset: options?.offset });
+      const offset = options?.offset ?? 0;
+      const limit = options?.limit ?? rows.length;
+      return rows.slice(offset, offset + limit) as Task[];
+    },
+    updateTask: async (id: string, patch: Partial<Task>) => {
+      const row = rows.find((r) => r.id === id)!;
+      Object.assign(row, patch);
+      return row as Task;
+    },
+  } as unknown as TaskStore;
+  return { store, listCalls, rows, markerWrites };
+}
 
+describe("adoptLegacyTaskRowsOnOpen — paginates past the 500-row page cap", () => {
   it("adopts every legacy row beyond the first page, not just the newest 500", async () => {
     // 1101 legacy rows → 3 pages (500 + 500 + 101); a capped scan would strand 601.
     const rows: Array<Partial<Task> & { id: string }> = Array.from({ length: 1101 }, (_, i) => ({
@@ -340,5 +383,72 @@ describe("adoptLegacyTaskRowsOnOpen — paginates past the 500-row page cap", ()
 
     // Second open: every row is stamped `legacyAdoptedAt` — nothing is re-adopted.
     expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
+  });
+});
+
+/*
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+Drained-marker short-circuit contract: the sweep must skip when the marker is present,
+sweep when it is absent or unreadable, write the marker only after a fully-clean drain,
+and withhold it on any cycle that produced a mutating plan.
+*/
+describe("adoptLegacyTaskRowsOnOpen — drained-marker completion short-circuit", () => {
+  it("writes the non-numeric marker after a clean drain (no mutating plan)", async () => {
+    const rows = [
+      { id: "task-1", status: "done" },                                    // preserve gate → skip
+      { id: "task-2", status: "planning", legacyAdoptedAt: "2026-07-19" }, // already adopted → skip
+      { id: "task-3" },                                                    // nothing legacy → skip
+    ];
+    const { store, listCalls, markerWrites } = makeFakeStore(rows, { backend: true });
+
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
+    // The sweep still ran (marker was absent) …
+    expect(listCalls.length).toBe(1);
+    // … and a clean drain recorded the durable marker exactly once, upsert-style.
+    expect(markerWrites.length).toBe(1);
+    expect(markerWrites[0]).toContain("INSERT");
+    expect(markerWrites[0]).toContain("ON CONFLICT");
+  });
+
+  it("skips the sweep entirely when the marker is present", async () => {
+    const rows = [{ id: "task-1", status: "planning" }];
+    const { store, listCalls } = makeFakeStore(rows, { backend: true, markerPresent: true });
+
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
+    expect(listCalls.length).toBe(0);
+    // The (hypothetical) legacy row is untouched — marker presence means it cannot exist.
+    expect(rows[0].status).toBe("planning");
+  });
+
+  it("a mutating drain adopts but does NOT write the marker that cycle", async () => {
+    const rows = [{ id: "task-1", status: "planning" }];
+    const { store, markerWrites } = makeFakeStore(rows, { backend: true });
+
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(1);
+    expect(rows[0].status).toBeNull();
+    expect(markerWrites.length).toBe(0);
+
+    // Next open: the census is now clean → the marker lands, then later opens skip.
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
+    expect(markerWrites.length).toBe(1);
+  });
+
+  it("a userPaused legacy row withholds the marker without being mutated", async () => {
+    const rows = [{ id: "task-1", status: "planning", userPaused: true }];
+    const { store, markerWrites } = makeFakeStore(rows, { backend: true });
+
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
+    // Operator-paused rows are never adopted …
+    expect(rows[0].status).toBe("planning");
+    // … but they keep the census "not drained" so they stay adoptable after unpause.
+    expect(markerWrites.length).toBe(0);
+  });
+
+  it("falls back to sweeping when the marker read fails (fail-open toward correctness)", async () => {
+    const rows = [{ id: "task-1", status: "planning" }];
+    const { store } = makeFakeStore(rows, { backend: true, markerReadThrows: true });
+
+    expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(1);
+    expect(rows[0].status).toBeNull();
   });
 });

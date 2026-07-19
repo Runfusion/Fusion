@@ -149,6 +149,14 @@ version ABOVE this binary's SCHEMA_BASELINE_VERSION was migrated by a newer Fusi
 the old binary proceed writes rows using the previous schema's assumptions (the observed
 stale-Homebrew-binary failure mode). Compared numerically, not lexically; unparseable
 identifiers are ignored so a plugin marker cannot brick every open.
+
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+The ignore-unparseable rule is a load-bearing coupling, not just plugin defense:
+LEGACY_ADOPTION_DRAINED_MARKER (below) is a deliberately NON-NUMERIC bookkeeping row that
+`adoptLegacyTaskRowsOnOpen` (task-store/lifecycle-ops.ts) writes into
+fusion_schema_migrations after a fully-drained adoption sweep. This guard MUST keep
+skipping non-numeric versions, or the marker would present as a "newer database" and
+brick every open.
 */
 export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): void {
   const binaryVersion = Number(SCHEMA_BASELINE_VERSION);
@@ -170,6 +178,17 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
+
+/*
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+Durable "legacy adoption fully drained" marker row in fusion_schema_migrations.
+Written by the store-open adoption sweep after a full paginated drain in which no
+row produced a mutating adoption plan; its presence lets subsequent opens skip the
+whole-active-census scan (which would otherwise run on every open forever).
+Deliberately NON-NUMERIC so assertBinaryNotOlderThanDatabase ignores it by design
+(see that guard's FNXC note — the two sites are coupled).
+*/
+export const LEGACY_ADOPTION_DRAINED_MARKER = "legacy-adoption-drained";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
