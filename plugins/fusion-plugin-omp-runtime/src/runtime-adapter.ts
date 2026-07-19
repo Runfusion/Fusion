@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { AcpRuntimeAdapter } from "./acp/index.js";
 import {
   buildOmpAcpRuntimeSettings,
@@ -82,16 +83,66 @@ function compactDiagnostic(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/*
+FNXC:OmpAcp 2026-07-18-23:50:
+omp returns JSON-RPC errors as `{ message: "Internal error", data: { details: "..." } }`.
+The ACP SDK often only puts `message` on Error.message, which hid the real cause
+(e.g. fusion-custom-tools ENOENT or "No API key found for alibaba-coding-plan").
+Prefer data.details / nested cause when present so operators can fix auth or packaging.
+*/
+function extractErrorReason(error: unknown): string {
+  if (error == null) return "unknown error";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) {
+    const anyErr = error as Error & {
+      data?: { details?: unknown; message?: unknown } | string;
+      cause?: unknown;
+    };
+    const data = anyErr.data;
+    if (typeof data === "string" && data.trim()) {
+      return `${anyErr.message}: ${data.trim()}`;
+    }
+    if (data && typeof data === "object") {
+      const details = data.details;
+      if (typeof details === "string" && details.trim()) {
+        return `${anyErr.message}: ${details.trim()}`;
+      }
+      if (typeof data.message === "string" && data.message.trim() && data.message !== anyErr.message) {
+        return `${anyErr.message}: ${data.message.trim()}`;
+      }
+    }
+    if (anyErr.cause) {
+      const causeReason = extractErrorReason(anyErr.cause);
+      if (causeReason && causeReason !== anyErr.message) {
+        return `${anyErr.message}: ${causeReason}`;
+      }
+    }
+    return anyErr.message || String(error);
+  }
+  if (typeof error === "object") {
+    const rec = error as { message?: unknown; data?: { details?: unknown } };
+    const message = typeof rec.message === "string" ? rec.message : String(error);
+    const details = rec.data && typeof rec.data === "object" ? rec.data.details : undefined;
+    if (typeof details === "string" && details.trim()) {
+      return `${message}: ${details.trim()}`;
+    }
+    return message;
+  }
+  return String(error);
+}
+
 function describeCreateFailure(error: unknown): string {
-  const reason = error instanceof Error ? error.message : String(error ?? "unknown error");
+  const reason = extractErrorReason(error);
   return compactDiagnostic(
     `OMP ACP failed to start: ${reason}. Ensure the \`omp\` binary is installed and authenticated (` +
-      `\`omp acp\`, credentials under ~/.omp), or set provider API keys in the environment.`,
+      `\`omp acp\`, credentials under ~/.omp), or set provider API keys in the environment. ` +
+      `If the details mention fusion-custom-tools / mcp-schema-server ENOENT, rebuild the CLI package so mcp-schema-server.cjs ships next to the omp plugin. ` +
+      `If they mention "No API key" for a provider, pick a qualified model (e.g. minimax-code/MiniMax-M2.5 or zai/glm-5.2) or re-auth that provider in omp.`,
   );
 }
 
 function describePromptFailure(error: unknown): string {
-  const reason = error instanceof Error ? error.message : String(error ?? "unknown error");
+  const reason = extractErrorReason(error);
   return compactDiagnostic(`OMP ACP turn failed: ${reason}`);
 }
 
@@ -275,10 +326,25 @@ export class OmpRuntimeAdapter implements AgentRuntime {
       toolBridge = null;
     }
 
+    /*
+    FNXC:OmpAcp 2026-07-18-23:50:
+    Drop stdio MCP entries whose command binary is missing before session/new.
+    omp turns a single ENOENT into JSON-RPC Internal error and aborts the whole
+    ACP session (observed as "OMP ACP failed to start: Internal error").
+    */
     const mcpServers: AcpMcpServer[] = [
       ...operatorMcp,
       ...(toolBridge ? [toolBridge.mcpServer] : []),
-    ];
+    ].filter((server) => {
+      if (!("command" in server) || typeof server.command !== "string") return true;
+      const command = server.command.trim();
+      if (!command) return false;
+      // Absolute paths must exist; PATH names are left to omp's spawn resolution.
+      if (command.includes("/") || command.includes("\\")) {
+        return existsSync(command);
+      }
+      return true;
+    });
 
     const toolRules = buildOmpFusionToolRules({
       fusionToolCount: toolBridge?.toolCount,
