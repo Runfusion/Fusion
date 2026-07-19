@@ -6871,8 +6871,8 @@ export type {
   SliceWithFeatures,
   ValidationRunsResponse,
 } from "./missions.js";
-// FNXC:CodeOrganization 2026-07-18-16:30: re-export does not bind MissionWithHierarchy locally; interview helpers still type against it.
-import type { MissionWithHierarchy } from "./missions.js";
+// FNXC:CodeOrganization 2026-07-18-16:30: re-export does not bind mission types locally; interview helpers still type against them.
+import type { Milestone, MissionWithHierarchy, Slice } from "./missions.js";
 
 // ── Mission Interview API ─────────────────────────────────────────────────
 
