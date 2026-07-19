@@ -1102,6 +1102,7 @@ export {
   getTaskHardMergeBlocker,
   getTaskCompletionBlocker,
   getLatestFailedPreMergeReviewStep,
+  findPendingPreMergeStep,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,

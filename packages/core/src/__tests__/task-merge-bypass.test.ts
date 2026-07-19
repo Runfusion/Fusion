@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { StepStatus, WorkflowStepResult } from "../types.js";
-import { getLatestFailedPreMergeReviewStep, getTaskMergeBlocker } from "../task-merge.js";
+import { findPendingPreMergeStep, getLatestFailedPreMergeReviewStep, getTaskMergeBlocker } from "../task-merge.js";
 
 /*
  * FNXC:ReviewLaneBypass 2026-07-09-00:00:
@@ -76,6 +76,47 @@ describe("getLatestFailedPreMergeReviewStep", () => {
     ];
     const selected = getLatestFailedPreMergeReviewStep({ workflowStepResults: results });
     expect(selected?.workflowStepId).toBe("WS-later");
+  });
+});
+
+describe("findPendingPreMergeStep", () => {
+  it("returns undefined when workflowStepResults is undefined", () => {
+    expect(findPendingPreMergeStep({ workflowStepResults: undefined })).toBeUndefined();
+  });
+
+  it("returns undefined when no pre-merge step is pending", () => {
+    const results = [
+      stepResult({ status: "passed" }),
+      stepResult({ status: "failed" }),
+      stepResult({ workflowStepId: "WS-post", phase: "post-merge", status: "pending" }),
+    ];
+    expect(findPendingPreMergeStep({ workflowStepResults: results })).toBeUndefined();
+  });
+
+  it("returns the pending result when one exists", () => {
+    const results = [stepResult({ status: "pending" })];
+    const found = findPendingPreMergeStep({ workflowStepResults: results });
+    expect(found?.workflowStepId).toBe("WS-001");
+    expect(found?.status).toBe("pending");
+  });
+
+  it("returns the latest pending result when multiple exist", () => {
+    const results = [
+      stepResult({ workflowStepId: "WS-older", startedAt: "2026-07-17T10:00:00.000Z", status: "pending" }),
+      stepResult({ workflowStepId: "WS-newer", startedAt: "2026-07-17T16:10:10.052Z", status: "pending" }),
+    ];
+    const found = findPendingPreMergeStep({ workflowStepResults: results });
+    expect(found?.workflowStepId).toBe("WS-newer");
+  });
+
+  it("does NOT return failed or passed results (only pending)", () => {
+    const results = [
+      stepResult({ workflowStepId: "WS-passed", status: "passed" }),
+      stepResult({ workflowStepId: "WS-failed", status: "failed" }),
+      stepResult({ workflowStepId: "WS-pending", status: "pending" }),
+    ];
+    const found = findPendingPreMergeStep({ workflowStepResults: results });
+    expect(found?.workflowStepId).toBe("WS-pending");
   });
 });
 

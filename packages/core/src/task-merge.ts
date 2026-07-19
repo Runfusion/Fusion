@@ -323,6 +323,29 @@ export function getLatestFailedPreMergeReviewStep(
     })[0];
 }
 
+/**
+ * Find the latest `pending` pre-merge workflow step result.
+ * Returns `undefined` when no pending pre-merge step exists.
+ * Used by `resumeWorkflowStep` to locate the step to transition
+ * to `failed` so the existing `fn_task_bypass_review` escape hatch
+ * can then clear the merge blocker.
+ */
+export function findPendingPreMergeStep(
+  task: Pick<Task, "workflowStepResults">,
+): WorkflowStepResult | undefined {
+  return (task.workflowStepResults ?? [])
+    .filter(
+      (result) =>
+        (result.phase || "pre-merge") === "pre-merge" &&
+        result.status === "pending",
+    )
+    .sort((a, b) => {
+      const aTs = Date.parse(a.startedAt || "");
+      const bTs = Date.parse(b.startedAt || "");
+      return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+    })[0];
+}
+
 export function getTaskHardMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
 ): string | undefined {
