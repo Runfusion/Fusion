@@ -209,15 +209,18 @@ CREATE TABLE IF NOT EXISTS project.config (
 );
 
 CREATE TABLE IF NOT EXISTS project.distributed_task_id_state (
-  prefix text PRIMARY KEY,
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  prefix text NOT NULL,
   next_sequence integer NOT NULL,
   committed_cluster_task_count integer NOT NULL,
   last_committed_task_id text,
-  updated_at text NOT NULL
+  updated_at text NOT NULL,
+  PRIMARY KEY (project_id, prefix)
 );
 
 CREATE TABLE IF NOT EXISTS project.distributed_task_id_reservations (
-  reservation_id text PRIMARY KEY,
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  reservation_id text NOT NULL,
   prefix text NOT NULL,
   node_id text NOT NULL,
   sequence integer NOT NULL,
@@ -229,17 +232,18 @@ CREATE TABLE IF NOT EXISTS project.distributed_task_id_reservations (
   aborted_at text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
+  PRIMARY KEY (project_id, reservation_id),
   CONSTRAINT distributed_task_id_reservations_prefix_fkey
-    FOREIGN KEY (prefix) REFERENCES project.distributed_task_id_state(prefix) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, prefix) REFERENCES project.distributed_task_id_state(project_id, prefix) ON DELETE CASCADE,
   CONSTRAINT distributed_task_id_reservations_status_check
     CHECK (status IN ('reserved', 'committed', 'aborted', 'expired')),
   CONSTRAINT distributed_task_id_reservations_reason_check
     CHECK (reason IS NULL OR reason IN ('abort', 'expired', 'failed-create')),
-  CONSTRAINT distributed_task_id_reservations_prefix_sequence_unique UNIQUE (prefix, sequence),
-  CONSTRAINT distributed_task_id_reservations_prefix_task_id_unique UNIQUE (prefix, task_id)
+  CONSTRAINT distributed_task_id_reservations_prefix_sequence_unique UNIQUE (project_id, prefix, sequence),
+  CONSTRAINT distributed_task_id_reservations_prefix_task_id_unique UNIQUE (project_id, prefix, task_id)
 );
 CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsPrefixStatus"
-  ON project.distributed_task_id_reservations(prefix, status);
+  ON project.distributed_task_id_reservations(project_id, prefix, status);
 CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsExpiry"
   ON project.distributed_task_id_reservations(status, expires_at);
 

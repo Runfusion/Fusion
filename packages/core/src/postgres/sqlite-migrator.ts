@@ -99,20 +99,22 @@ function buildSharedSingletonConflictClause(pgSchema: string, pgTable: string, c
   if (pgTable === "distributed_task_id_state") {
     const colSet = new Set(cols.map((c) => c.pgName));
     const prefix = quoteIdent("prefix");
+    const projectId = quoteIdent("project_id");
+    const tableName = quoteIdent("distributed_task_id_state");
     const parts: string[] = [];
     if (colSet.has("next_sequence")) {
-      parts.push(`${quoteIdent("next_sequence")} = GREATEST(${quoteIdent("next_sequence")}, EXCLUDED.${quoteIdent("next_sequence")})`);
+      parts.push(`${quoteIdent("next_sequence")} = GREATEST(${tableName}.${quoteIdent("next_sequence")}, EXCLUDED.${quoteIdent("next_sequence")})`);
     }
     if (colSet.has("committed_cluster_task_count")) {
-      parts.push(`${quoteIdent("committed_cluster_task_count")} = GREATEST(${quoteIdent("committed_cluster_task_count")}, EXCLUDED.${quoteIdent("committed_cluster_task_count")})`);
+      parts.push(`${quoteIdent("committed_cluster_task_count")} = GREATEST(${tableName}.${quoteIdent("committed_cluster_task_count")}, EXCLUDED.${quoteIdent("committed_cluster_task_count")})`);
     }
     if (colSet.has("last_committed_task_id")) {
-      parts.push(`${quoteIdent("last_committed_task_id")} = CASE WHEN EXCLUDED.${quoteIdent("next_sequence")} > ${quoteIdent("next_sequence")} THEN EXCLUDED.${quoteIdent("last_committed_task_id")} ELSE ${quoteIdent("last_committed_task_id")} END`);
+      parts.push(`${quoteIdent("last_committed_task_id")} = CASE WHEN EXCLUDED.${quoteIdent("next_sequence")} > ${tableName}.${quoteIdent("next_sequence")} THEN EXCLUDED.${quoteIdent("last_committed_task_id")} ELSE ${tableName}.${quoteIdent("last_committed_task_id")} END`);
     }
     if (colSet.has("updated_at")) {
-      parts.push(`${quoteIdent("updated_at")} = GREATEST(${quoteIdent("updated_at")}, EXCLUDED.${quoteIdent("updated_at")})`);
+      parts.push(`${quoteIdent("updated_at")} = GREATEST(${tableName}.${quoteIdent("updated_at")}, EXCLUDED.${quoteIdent("updated_at")})`);
     }
-    return sql.raw(`ON CONFLICT (${prefix}) DO UPDATE SET ${parts.join(", ")}`);
+    return sql.raw(`ON CONFLICT (${projectId}, ${prefix}) DO UPDATE SET ${parts.join(", ")}`);
   }
   return sql.raw("ON CONFLICT DO NOTHING");
 }
