@@ -354,6 +354,18 @@ describe("runUpdate", () => {
       expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.2.3", expect.any(Object));
     });
 
+    it("refuses to shell out with a non-semver registry version (injection hardening)", async () => {
+      // Only a poisoned dist-tag can produce this; --force is the one path
+      // that installs a target that isn't strictly newer.
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.2.3" }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.4; rm -rf ~" } }) }));
+
+      await expect(runUpdate({ force: true })).rejects.toThrow("process.exit:1");
+
+      expect(execAsyncMock).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("is not a valid version string"));
+    });
+
     it("ignores cached fallback metadata written for a different channel", async () => {
       getConfiguredUpdateChannelMock.mockResolvedValue("beta");
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));

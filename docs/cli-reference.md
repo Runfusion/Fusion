@@ -126,6 +126,12 @@ onboarding does not auto-launch.
 
 ## `fn update`
 
+<!--
+FNXC:UpdateChannels 2026-07-19-16:20:
+User-facing update-channel contract: `--channel` persists the chosen track to the shared `updateChannel` global setting; stable resolves the npm `latest` dist-tag only while beta resolves the newer of `latest` and `beta`; switching beta → stable never downgrades and `--force` is the sole explicit downgrade path; installs always pin the exact resolved version, never a dist-tag.
+Keep this comment in sync with packages/cli/src/commands/update.ts when the contract changes.
+-->
+
 Check for and install the latest `@runfusion/fusion` CLI release from npm, on the configured release channel.
 
 ```bash

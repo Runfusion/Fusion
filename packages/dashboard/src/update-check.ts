@@ -72,10 +72,21 @@ local `isRemoteNewer` ignored prerelease identifiers, which is wrong the moment
 a `-beta.N` version exists (0.73.0-beta.2 vs -beta.3 compared equal).
 The install command pins the exact resolved version instead of `@latest` so a
 beta-channel install never silently lands on the stable dist-tag.
+
+FNXC:UpdateChannels 2026-07-19-16:20:
+PR #2345 review hardening: the pinned version originates from the npm
+registry's dist-tags and is interpolated into a shell-executed `npm install`.
+`buildInstallCommand` therefore requires a strict-semver-shaped version and
+throws otherwise — no `@latest` fallback (that would silently cross release
+tracks) and no path for registry-poisoned strings to reach the shell.
 */
-function buildInstallCommand(version: string | null, force = false): string {
-  const spec = version ? `@runfusion/fusion@${version}` : "@runfusion/fusion@latest";
-  return `npm install${force ? " --force" : ""} -g ${spec}`;
+const SAFE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+function buildInstallCommand(version: string, force = false): string {
+  if (!SAFE_VERSION_RE.test(version)) {
+    throw new Error(`Refusing to install: '${version}' is not a valid version string.`);
+  }
+  return `npm install${force ? " --force" : ""} -g @runfusion/fusion@${version}`;
 }
 
 function isBinCollisionInstallError(error: unknown): boolean {
@@ -221,6 +232,17 @@ export async function performUpdateInstall(
 ): Promise<UpdateInstallResult> {
   const runExec = options.exec ?? execAsync;
   const fusionDir = options.fusionDir ?? resolveGlobalDir();
+
+  // No resolved target → nothing safe to install. Callers guard this today;
+  // the guard here keeps the exec path unreachable if one ever stops.
+  if (!latestVersion || !SAFE_VERSION_RE.test(latestVersion)) {
+    return {
+      currentVersion,
+      latestVersion,
+      updated: false,
+      error: `No valid update target version to install${latestVersion ? ` ('${latestVersion}')` : ""}.`,
+    };
+  }
 
   try {
     await runExec(buildInstallCommand(latestVersion), getInstallOptions());

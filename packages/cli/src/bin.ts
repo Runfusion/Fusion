@@ -938,12 +938,19 @@ async function main() {
         // FNXC:UpdateChannels 2026-07-19-13:05: --channel <stable|beta> selects
         // and persists the release track; --force installs the channel target
         // even when not newer (the explicit beta → stable downgrade path).
+        // A bare trailing --channel (or one followed by another flag) errors
+        // instead of being silently ignored (PR #2345 review).
         const channelFlagIndex = args.indexOf("--channel");
+        const channelValue = channelFlagIndex !== -1 ? args[channelFlagIndex + 1] : undefined;
+        if (channelFlagIndex !== -1 && (channelValue === undefined || channelValue.startsWith("--"))) {
+          console.error("Error: --channel requires a value: stable or beta.");
+          process.exit(1);
+        }
         await runUpdate({
           check: args.includes("--check"),
           global: args.includes("--global") ? true : undefined,
           json: args.includes("--json"),
-          channel: channelFlagIndex !== -1 ? args[channelFlagIndex + 1] : undefined,
+          channel: channelValue,
           force: args.includes("--force"),
         });
         break;

@@ -91,9 +91,18 @@ async function fetchChannelTargetVersion(channel: UpdateChannel): Promise<string
   return targetVersion;
 }
 
+// FNXC:UpdateChannels 2026-07-19-16:20: the version comes from the npm
+// registry's dist-tags and is interpolated into a shell-executed npm install;
+// only a strict-semver-shaped string may pass (registry-poisoning hardening,
+// PR #2345 review).
+const SAFE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
 function getInstallCommand(globalInstall: boolean, version: string, force = false): string {
   // Pin the exact resolved version so the installed build always matches the
   // selected channel (installing `@latest` would drag a beta user to stable).
+  if (!SAFE_VERSION_RE.test(version)) {
+    throw new Error(`Refusing to install: '${version}' is not a valid version string.`);
+  }
   const spec = `@runfusion/fusion@${version}`;
   return `npm install${force ? " --force" : ""}${globalInstall ? " -g" : ""} ${spec}`;
 }

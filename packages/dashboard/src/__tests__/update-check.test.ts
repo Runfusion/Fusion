@@ -528,5 +528,28 @@ describe("update-check", () => {
 
       expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@0.73.0-beta.2", expect.any(Object));
     });
+
+    // FNXC:UpdateChannels 2026-07-19-16:20: the exec path is only reachable
+    // with a strict-semver-shaped target — no null fallback to @latest (which
+    // would cross release tracks) and no registry-poisoned shell input.
+    it("refuses to install when no target version resolved (no @latest fallback)", async () => {
+      const execFake = vi.fn();
+
+      const result = await performUpdateInstall("0.72.0", null, { exec: execFake, fusionDir });
+
+      expect(execFake).not.toHaveBeenCalled();
+      expect(result.updated).toBe(false);
+      expect(result.error).toContain("No valid update target version");
+    });
+
+    it("refuses to install a non-semver registry value (shell-injection hardening)", async () => {
+      const execFake = vi.fn();
+
+      const result = await performUpdateInstall("0.72.0", "1.2.3; rm -rf ~", { exec: execFake, fusionDir });
+
+      expect(execFake).not.toHaveBeenCalled();
+      expect(result.updated).toBe(false);
+      expect(result.error).toContain("No valid update target version");
+    });
   });
 });

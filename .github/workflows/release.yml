@@ -229,6 +229,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-win-*.exe.sha256
             packages/desktop/dist-electron/Fusion-*-win-*.exe.blockmap
             packages/desktop/dist-electron/latest.yml
+            packages/desktop/dist-electron/beta.yml
 
   # ── Build macOS desktop artifacts ────────────────────────────────────
   build-desktop-macos:
@@ -334,6 +335,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-mac-*.zip.sha256
             packages/desktop/dist-electron/Fusion-*-mac-*.blockmap
             packages/desktop/dist-electron/latest-mac.yml
+            packages/desktop/dist-electron/beta-mac.yml
 
   # ── Build Linux desktop artifacts ────────────────────────────────────
   build-desktop-linux:
@@ -430,6 +432,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.sha256
             packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.asc
             packages/desktop/dist-electron/latest-linux.yml
+            packages/desktop/dist-electron/beta-linux.yml
 
 
   # ── Build Android APK/AAB artifacts ──────────────────────────────────
