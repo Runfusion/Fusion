@@ -41,7 +41,7 @@ import type {
 import { runtimeLog } from "../logger.js";
 import { getActiveNotificationService } from "../notifier.js";
 import { StuckTaskDetector } from "../stuck-task-detector.js";
-import type { UsageLimitPauser } from "../usage-limit-detector.js";
+import { UsageLimitPauser } from "../usage-limit-detector.js";
 import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../mesh-lease-manager.js";
@@ -324,6 +324,12 @@ export class InProcessRuntime
           `TaskStore initialized on PostgreSQL (${backendBoot.backend.mode}) for project ${this.config.projectId}`,
         );
       }
+
+      /*
+      FNXC:ProviderRateLimitIsolation 2026-07-19-19:10:
+      Every project runtime owns one usage-limit coordinator and shares it across executor, triage, reviewer, and merger surfaces. Runtime isolation replaced the old dashboard-level construction site; constructing it here prevents a silently undefined pauser while keeping a provider outage local to the affected project/task.
+      */
+      this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore);
 
       // Initialize MessageStore early so TaskExecutor receives send_message capability.
       // FNXC:RuntimeSatelliteAsync 2026-06-24-12:45:
@@ -978,6 +984,7 @@ export class InProcessRuntime
         {
           semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
+          usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
           pluginRunner: this.pluginRunner,
           onSpecifyStart: (t) => {

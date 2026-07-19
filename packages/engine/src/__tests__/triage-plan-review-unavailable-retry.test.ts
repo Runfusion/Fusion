@@ -13,6 +13,13 @@ const { mockReviewStep, mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("../reviewer.js", () => ({
   reviewStep: mockReviewStep,
+  ReviewerProviderError: class ReviewerProviderError extends Error {
+    constructor(message: string, public readonly classification: string, options?: { provider?: string }) {
+      super(message);
+      this.provider = options?.provider;
+    }
+    readonly provider?: string;
+  },
 }));
 
 vi.mock("../pi.js", () => ({
@@ -255,18 +262,19 @@ describe("Plan Review unavailable retry", () => {
     expect(delayMs).toBeLessThanOrEqual(133_000);
   });
 
-  it("pauses every lane when Plan Review hits a provider usage limit", async () => {
+  it("parks only the provider-routed task when Plan Review hits a usage limit", async () => {
     const rootDir = await createFixtureRoot();
     roots.push(rootDir);
     const task = createRetryTask({ id: "FN-PLAN-429" });
     await writePrompt(rootDir, task.id, `# Task: ${task.id}\n\n## Mission\n\nKeep me.\n`);
     const store = createStore(task);
     const onUsageLimitHit = vi.fn().mockResolvedValue(undefined);
-    mockReviewStep.mockRejectedValue(new Error("429 overloaded_error"));
+    const { ReviewerProviderError } = await import("../reviewer.js");
+    mockReviewStep.mockRejectedValue(new ReviewerProviderError("429 overloaded_error", "usage-limit", { provider: "anthropic" }));
 
     await retryTask(rootDir, task, store, { usageLimitPauser: { onUsageLimitHit } as never });
 
-    expect(onUsageLimitHit).toHaveBeenCalledWith("triage", task.id, expect.stringContaining("429"));
+    expect(onUsageLimitHit).toHaveBeenCalledWith("triage", task.id, expect.stringContaining("429"), "anthropic");
   });
 
   it("does not pause lanes for a reviewer failure that is not a usage limit", async () => {

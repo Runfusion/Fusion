@@ -21,7 +21,7 @@
  * - Exhausted retry budgets escalate to a real failure (task marked failed or error set).
  *
  * **Not retried via this policy:**
- * - Usage-limit errors (handled by `UsageLimitPauser` with global pause)
+ * - Usage-limit errors (handled by `UsageLimitPauser` with a provider-scoped task park)
  * - User pauses (handled by pause flow)
  * - Stuck-task-detector kills (handled by stuck flow)
  * - Dependency-abort cleanups (handled by dep-abort flow)

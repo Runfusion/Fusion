@@ -1617,7 +1617,7 @@ export interface TaskExecutorOptions {
   semaphore?: AgentSemaphore;
   /** Worktree pool for recycling idle worktrees across tasks. */
   pool?: WorktreePool;
-  /** Usage limit pauser — triggers global pause when API limits are detected. */
+  /** Usage limit pauser — parks only the affected provider-routed task. */
   usageLimitPauser?: UsageLimitPauser;
   /** Stuck task detector — monitors agent sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
@@ -11615,7 +11615,7 @@ export class TaskExecutor {
 
       Why a ref instead of just throwing: pi-agent-core's `executePreparedToolCall` catches every throw from a tool handler and converts it into a `tool_error` result fed back to the model — a tool can NOT propagate an error out of `session.prompt()`. So throwing a rate-limit error from the review tool would just become more text for the model to read and retry against, which is exactly the loop this fixes (14 identical reviewer model markers hammering an already-limited provider).
 
-      Instead the tool records the fatal error here and returns a stop instruction; `agentWork` re-raises it right after `promptWithFallback` returns (next to `checkSessionError`, which exists for the same reason on the session's own errors). Once thrown from `agentWork` it reaches the machinery that already handles it: `withRateLimitRetry` backoff, then the outer catch's `UsageLimitPauser` global pause (usage-limit) or bounded `computeRecoveryDecision` requeue (transient).
+      Instead the tool records the fatal error here and returns a stop instruction; `agentWork` re-raises it right after `promptWithFallback` returns (next to `checkSessionError`, which exists for the same reason on the session's own errors). Once thrown from `agentWork` it reaches the machinery that already handles it: `withRateLimitRetry` backoff, then the outer catch's provider-scoped `UsageLimitPauser` park (usage-limit) or bounded `computeRecoveryDecision` requeue (transient).
       */
       const reviewerFatalRef: { current: Error | null } = { current: null };
       // Keyed by 0-indexed step (stepIndex) to match fn_review_step.

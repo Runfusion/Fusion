@@ -189,7 +189,7 @@ import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
-import { reviewStep } from "./reviewer.js";
+import { ReviewerProviderError, reviewStep } from "./reviewer.js";
 import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
@@ -198,7 +198,7 @@ import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 export interface TriageProcessorOptions {
   pollIntervalMs?: number;
   semaphore?: AgentSemaphore;
-  /** Usage limit pauser — triggers global pause when API limits are detected. */
+  /** Usage limit pauser — parks only the affected provider-routed task. */
   usageLimitPauser?: UsageLimitPauser;
   /** Stuck task detector — monitors triage sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
@@ -1850,7 +1850,7 @@ export class TriageProcessor {
         this.stuckAborted.delete(task.id);
         await this.handleStuckAbortRequeue(task, "catch");
       } else {
-        // Check if the error is a usage-limit error and trigger global pause
+        // Check if the error is a usage-limit error and park only this task.
         if (this.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await this.options.usageLimitPauser.onUsageLimitHit(
             "triage",
@@ -2769,7 +2769,7 @@ export class TriageProcessor {
     FNXC:PlanReview 2026-07-15-21:30:
     Reviewer PROVIDER failures (429/`overloaded_error`, dropped sockets) also land here, because the `reviewStep` catch above converts every throw — including `ReviewerProviderError` — into an UNAVAILABLE verdict. That laundering used to strand the task on a FIXED 30s re-park with no attempt counter, so a sustained provider outage re-ran Plan Review every 30s for hours (~1,900 requests/5h observed), which is the request volume that trips a provider's low-interactivity throttle and thereby prolongs the very outage being retried. Two rules prevent the storm:
 
-      1. A usage-limit failure must reach `UsageLimitPauser` so EVERY lane pauses, not just this task. The inline catch swallows the throw before triage's own usage-limit handler in `specifyTask` can see it, so this path fires the pauser itself. Without this, `reviewer.ts`'s escalation promise ("escalate so UsageLimitPauser pauses every lane") held only on the executor path.
+      1. A usage-limit failure must reach `UsageLimitPauser` so this provider-routed task parks without stopping healthy provider lanes. The inline catch swallows the throw before triage's own usage-limit handler in `specifyTask` can see it, so this path fires the pauser itself.
       2. Every re-park goes through the bounded `computeRecoveryDecision` backoff (60s → 120s → 240s, ±10% jitter) and terminalizes when the budget is spent. A reviewer that never yields a verdict is a real failure and must surface, not spin — the old park had neither backoff nor cap.
 
     `recoveryRetryCount` is the shared transient-triage budget this gate borrows; `clearPlanReviewRecoveryBudget` clears it on any real verdict so a task that survived a reviewer outage does not carry a spent budget into execution.
@@ -2791,8 +2791,11 @@ export class TriageProcessor {
     await this.store.logEntry(task.id, "[pre-merge] Workflow step unavailable: Plan Review", unavailableOutput);
 
     if (this.options.usageLimitPauser && unavailableError && isUsageLimitError(unavailableError)) {
-      planLog.warn(`${task.id}: Plan Review hit a provider usage limit — pausing all lanes: ${unavailableError}`);
-      await this.options.usageLimitPauser.onUsageLimitHit("triage", task.id, unavailableError).catch((err: unknown) => {
+      const unavailableProvider = reviewFailure instanceof ReviewerProviderError
+        ? reviewFailure.provider
+        : undefined;
+      planLog.warn(`${task.id}: Plan Review hit a provider usage limit — pausing only this provider-routed task: ${unavailableError}`);
+      await this.options.usageLimitPauser.onUsageLimitHit("triage", task.id, unavailableError, unavailableProvider).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to signal Plan Review usage limit to the pauser: ${msg}`);
       });

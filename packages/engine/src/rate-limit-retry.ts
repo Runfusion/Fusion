@@ -5,7 +5,7 @@
  * When an AI model returns a rate limit error (429, overloaded, quota, etc.),
  * this utility retries the operation with exponential backoff before letting
  * the error propagate to the caller's catch block, which triggers a global
- * pause via `UsageLimitPauser`.
+ * provider-scoped task park via `UsageLimitPauser`.
  *
  * **Backoff strategy:** `delay = min(baseDelayMs × 2^attempt, maxDelayMs)` with
  * ±10 % jitter to avoid thundering-herd effects across concurrent agents.
@@ -76,7 +76,7 @@ export interface RateLimitRetryOptions {
  * attempts. All other errors are re-thrown immediately.
  *
  * After all retries are exhausted, the **original** error is thrown so the
- * caller's existing catch block can trigger the global pause via
+ * caller's existing catch block can park the affected provider-routed task via
  * `UsageLimitPauser`.
  *
  * @example
@@ -138,7 +138,7 @@ export async function withRateLimitRetry<T>(
         continue;
       }
 
-      // All retries exhausted — throw so caller can trigger global pause
+      // All retries exhausted — throw so the caller can park this provider-routed task.
       if (attempt >= maxRetries) {
         throw lastError;
       }
