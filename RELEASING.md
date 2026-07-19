@@ -80,19 +80,26 @@ pnpm release --channel beta   # explicit, no prompt
 
 The script auto-enters changesets pre-mode (`.changeset/pre.json`, tag `beta`) the first time, versions to the next `-beta.N`, publishes with an explicit `--tag beta`, tags `vX.Y.Z-beta.N` (the tag push builds binaries and marks the GitHub Release as a prerelease), and skips the Homebrew tap and X draft. Changeset `.md` files are *preserved* through beta versioning — pre-mode records them in `pre.json` so the eventual stable release aggregates everything.
 
-### Promoting to stable (from the `release` branch)
+### Promoting to stable
 
-1. Fast-forward/merge `release` to the chosen beta's commit on `main`:
-   ```bash
-   git checkout release && git merge --ff-only vX.Y.Z-beta.N
-   ```
-   (First-time bootstrap: `git branch release main && git push -u origin release`.)
-2. Run the stable release there:
-   ```bash
-   pnpm release --channel stable   # or answer "stable" at the channel prompt
-   ```
-   The script exits pre-mode, versions to the clean `X.Y.Z` with the aggregated changelog, publishes to `latest`, marks the GitHub Release latest, and bumps the Homebrew tap.
-3. Back-merge `release` into `main` (the script prints the exact commands). This carries the consumed changesets, changelogs, version bump, and pre.json removal back — without it, the next beta double-releases old changesets.
+The easy path — run from `main` and let the script do the promotion:
+
+```bash
+pnpm release --channel stable   # or answer "stable" at the channel prompt
+```
+
+When run from `main` with the stable channel, the script starts **assisted promotion**:
+
+1. It proposes the newest `v*-beta*` tag reachable from HEAD as the promotion target (promote a tested beta, not main's tip); you can accept or type another tag/commit.
+2. It verifies `release` fast-forwards cleanly to that commit (a diverged release branch — e.g. unmerged hotfixes — fails with instructions instead of guessing).
+3. It creates a **temporary git worktree** on `release` at the target (bootstrapping the branch if it doesn't exist yet), installs dependencies there, and re-runs the whole stable release inside it — your checkout never leaves `main`. The Homebrew tap path is handed into the worktree via `FUSION_HOMEBREW_TAP_DIR`.
+4. On success the temp worktree is removed; on failure it is kept for inspection.
+
+The stable release itself exits pre-mode, versions to the clean `X.Y.Z` with the aggregated changelog, publishes to `latest`, marks the GitHub Release latest, and bumps the Homebrew tap.
+
+Afterwards, **back-merge `release` into `main`** (the script prints the exact commands). This carries the consumed changesets, changelogs, version bump, and pre.json removal back — without it, the next beta double-releases old changesets.
+
+Manual alternative: check out `release` in a worktree yourself, `git merge --ff-only vX.Y.Z-beta.N`, and run `pnpm release --channel stable` there.
 
 ### Hotfixes
 

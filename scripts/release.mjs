@@ -509,7 +509,12 @@ function cleanupSmoke(dir) {
  * can re-run the bump manually if needed; the release itself is already out.
  */
 function bumpHomebrewTap(version) {
-  const formulaPath = join("homebrew-tap", "Formula", "fusion.rb");
+  // FNXC:UpdateChannels 2026-07-19-15:10: the tap clone is gitignored and only
+  // exists in the primary checkout. Assisted promotion runs this script from a
+  // temporary worktree and passes the primary checkout's tap path via
+  // FUSION_HOMEBREW_TAP_DIR so stable releases still bump the formula.
+  const tapDir = process.env.FUSION_HOMEBREW_TAP_DIR || "homebrew-tap";
+  const formulaPath = join(tapDir, "Formula", "fusion.rb");
   if (!existsSync(formulaPath)) {
     warn(`Homebrew tap formula not found at ${formulaPath} — skipping tap bump.`);
     return;
@@ -553,7 +558,7 @@ function bumpHomebrewTap(version) {
 
   // homebrew-tap is a sibling clone (gitignored in this repo) with its own git
   // history; run git inside that working tree, not the main repo.
-  const tapCwd = "homebrew-tap";
+  const tapCwd = tapDir;
   run(`git add Formula/fusion.rb`, { cwd: tapCwd });
   const commit = run(
     `git commit -m "chore(tap): bump fusion to v${version}" -m "Auto-bumped by scripts/release.mjs after npm publish."`,
@@ -587,6 +592,113 @@ function findPackageDir(name) {
     }
   }
   return null;
+}
+
+// --- Stable promotion from main --------------------------------------------
+
+/*
+ * FNXC:UpdateChannels 2026-07-19-15:10:
+ * Choosing the stable channel while on `main` triggers assisted promotion
+ * instead of a hard fail. The operator picks a commit to promote (default:
+ * the newest v*-beta* tag reachable from HEAD — promotion blesses a tested
+ * beta, not whatever main drifted to), the script verifies `release`
+ * fast-forwards to it, then creates a TEMPORARY git worktree on `release` and
+ * re-runs itself there with --channel stable. The primary checkout never
+ * leaves `main` (repo standing rule: branch work happens in worktrees).
+ * The tap clone lives at <primary-root>/homebrew-tap and is gitignored, so it
+ * does not exist inside the temp worktree — its path is handed to the child
+ * via FUSION_HOMEBREW_TAP_DIR so the stable tap bump still works.
+ * Dry-runs stop after reporting the promotion plan: creating the worktree
+ * would move the local `release` ref, and dry-run must mutate nothing.
+ */
+if (!IS_BETA && run("git rev-parse --abbrev-ref HEAD", { capture: true }).stdout === "main") {
+  info("Stable release requested from 'main' — starting assisted promotion to the 'release' branch.");
+
+  const latestBetaTag = run("git tag --list 'v*-beta*' --merged HEAD --sort=-v:refname", { capture: true })
+    .stdout.split("\n")[0]?.trim() ?? "";
+  let promoteTarget = latestBetaTag;
+  if (!promoteTarget) {
+    warn("No v*-beta* tag is reachable from HEAD; defaulting to HEAD (promoting an untested tip — prefer promoting a beta tag).");
+    promoteTarget = "HEAD";
+  }
+
+  if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
+    const answer = await ask(`Promote which commit/tag to 'release'? [${promoteTarget}]: `);
+    if (answer !== "") promoteTarget = answer;
+  } else {
+    info(`Non-interactive: promoting ${promoteTarget}.`);
+  }
+
+  const targetSha = run(`git rev-parse --verify --quiet ${promoteTarget}^{commit}`, { capture: true, allowFail: true });
+  if (targetSha.status !== 0 || !targetSha.stdout) {
+    fail(`'${promoteTarget}' does not resolve to a commit.`);
+  }
+  const promoteSha = targetSha.stdout;
+
+  const originReleaseExists = run("git fetch origin release", { capture: true, allowFail: true }).status === 0;
+  const localReleaseExists = run("git show-ref --verify --quiet refs/heads/release", { capture: true, allowFail: true }).status === 0;
+  const releaseBase = localReleaseExists ? "release" : originReleaseExists ? "origin/release" : null;
+  if (releaseBase) {
+    const ff = run(`git merge-base --is-ancestor ${releaseBase} ${promoteSha}`, { capture: true, allowFail: true });
+    if (ff.status !== 0) {
+      fail(
+        `'${releaseBase}' does not fast-forward to ${promoteTarget} (${promoteSha.slice(0, 10)}).\n` +
+        "  The release branch has commits (hotfixes?) that are not on main. Merge or rebase manually,\n" +
+        "  then run the stable release from a 'release' worktree.",
+      );
+    }
+  } else {
+    warn("No 'release' branch exists yet (local or origin); it will be bootstrapped at the promoted commit.");
+  }
+
+  if (DRY_RUN) {
+    warn("--dry-run: stopping before promotion. No worktree created, no branch moved.");
+    info(`Would promote ${promoteTarget} (${promoteSha.slice(0, 10)}) to 'release' via a temporary worktree and run the stable release there.`);
+    process.exit(0);
+  }
+
+  const promoteDir = mkdtempSync(join(tmpdir(), "fusion-release-promote-"));
+  info(`Creating temporary release worktree at ${promoteDir}…`);
+  if (localReleaseExists) {
+    run(`git worktree add "${promoteDir}" release`);
+    run(`git merge --ff-only ${promoteSha}`, { cwd: promoteDir });
+  } else if (originReleaseExists) {
+    run(`git worktree add -b release "${promoteDir}" origin/release`);
+    run(`git merge --ff-only ${promoteSha}`, { cwd: promoteDir });
+  } else {
+    run(`git worktree add -b release "${promoteDir}" ${promoteSha}`);
+  }
+
+  info("Installing dependencies in the promotion worktree (fresh checkout)…");
+  run("pnpm install --prefer-offline", { cwd: promoteDir });
+
+  info("Re-running the release inside the promotion worktree (authorization prompts continue there)…");
+  const passThroughArgs = [
+    join("scripts", "release.mjs"),
+    "--channel", "stable",
+    ...(AUTO_YES ? ["--yes"] : []),
+    ...(INTERACTIVE ? ["--interactive"] : []),
+  ];
+  const child = spawnSync(process.execPath, passThroughArgs, {
+    cwd: promoteDir,
+    stdio: "inherit",
+    env: { ...process.env, FUSION_HOMEBREW_TAP_DIR: resolve("homebrew-tap") },
+  });
+
+  if (child.status === 0) {
+    // node_modules makes the worktree "dirty" to git; --force is required and safe here.
+    const removed = run(`git worktree remove --force "${promoteDir}"`, { capture: true, allowFail: true });
+    if (removed.status !== 0) {
+      warn(`Could not remove promotion worktree; clean up manually: git worktree remove --force "${promoteDir}"`);
+    } else {
+      ok("Promotion worktree removed.");
+    }
+    info("Reminder: back-merge 'release' into 'main' from this checkout (commands were printed above).");
+  } else {
+    warn(`Stable release in the promotion worktree exited with status ${child.status ?? "unknown"}.`);
+    warn(`Worktree kept for inspection: ${promoteDir}`);
+  }
+  process.exit(child.status ?? 1);
 }
 
 // --- Preflight ------------------------------------------------------------
