@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
+import {planLegacyAdoption} from "../legacy-adoption.js";
 import {mkdir, readdir, readFile, stat, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, watch, type Dirent} from "node:fs";
@@ -70,6 +71,14 @@ export async function initImpl(store: TaskStore): Promise<void> {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+      /*
+      FNXC:LegacyAdoption 2026-07-19-05:10 (U9b / R10 / KTD-8):
+      Store-open legacy adoption must run HERE, not only in the SQLite tail below — backend
+      mode returns early, and backend mode is production. Placing the call only after this
+      return would make it dead code exactly where pre-cutover rows actually live. Uses the
+      async store API (listTasks/updateTask), so it is PG-safe.
+      */
+      await adoptLegacyTaskRowsOnOpen(store);
       return;
     }
 
@@ -250,6 +259,7 @@ export async function initImpl(store: TaskStore): Promise<void> {
       // between the in-txn write and the post-commit clear (they otherwise
       // permanently inflate capacity counts for their target column).
       await store.recoverStaleTransitionPending();
+      await adoptLegacyTaskRowsOnOpen(store);
     } catch (err) {
       storeLog.warn("workflowColumns integrity pass failed during init", {
         phase: "init:workflow-columns-integrity",
@@ -257,6 +267,79 @@ export async function initImpl(store: TaskStore): Promise<void> {
       });
     }
   }
+
+/*
+FNXC:LegacyAdoption 2026-07-19-05:00 (U9b / R10 / KTD-8):
+Store-open legacy adoption — the SECOND consumer of the KTD-8 adoption table, sharing
+`planLegacyAdoption` with self-healing's startup sweep so the two cannot disagree about
+what a legacy row means.
+
+Why both: the self-healing sweep only runs where the ENGINE runs. A store opened without
+it (CLI commands, dashboard-only serve, embedded/test hosts) would otherwise leave
+pre-cutover rows carrying a legacy `task.status` whose writer the cutover deleted — frozen
+exactly as R10 forbids. Running in both places is safe because `legacyAdoptedAt` makes
+adoption idempotent: whichever opens first adopts, the other skips.
+
+Deliberately NOT audited here. Run-audit emission at store-open would have to go through
+the sync SQLite row-insert path, which is one of the masked no-op sites under PG mode; the
+engine sweep is the audited path. Adoption is logged instead, and a failure is warned and
+swallowed — a store must still open when adoption cannot run.
+
+FNXC:LegacyAdoption 2026-07-19-09:00 (PR #2335 review):
+The sweep PAGINATES until the active census is drained instead of scanning only the newest
+500 rows. `listTasks` orders by (created_at, id), which recency ordering means a capped
+single fetch would re-read the same newest page on every open and strand older legacy rows
+forever. Offset pagination is stable here: adoption patches never change created_at and
+adopted rows stay in the active list, so page boundaries do not shift mid-drain. Each page
+stays bounded (500) so store open never materializes the whole table at once.
+*/
+export async function adoptLegacyTaskRowsOnOpen(store: TaskStore): Promise<number> {
+  try {
+    const now = new Date().toISOString();
+    const pageSize = 500;
+    let offset = 0;
+    let adopted = 0;
+    for (;;) {
+      const tasks = await store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+      for (const task of tasks) {
+        if (task.userPaused === true) continue;
+        const plan = planLegacyAdoption(
+          {
+            status: task.status,
+            reviewLevel: task.reviewLevel,
+            enabledWorkflowSteps: task.enabledWorkflowSteps,
+            legacyAdoptedAt: task.legacyAdoptedAt,
+          },
+          now,
+        );
+        if (plan.action === "skip" || !plan.patch) continue;
+        try {
+          await store.updateTask(task.id, plan.patch);
+          adopted += 1;
+        } catch (error) {
+          storeLog.warn("Legacy adoption failed for task during store open", {
+            phase: "init:legacy-adoption",
+            taskId: task.id,
+            action: plan.action,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (tasks.length < pageSize) break;
+      offset += tasks.length;
+    }
+    if (adopted > 0) {
+      storeLog.log?.(`Legacy adoption adopted ${adopted} pre-cutover row(s) at store open`);
+    }
+    return adopted;
+  } catch (error) {
+    storeLog.warn("Legacy adoption pass failed during store open", {
+      phase: "init:legacy-adoption",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
 
 export function setupActivityLogListenersImpl(store: TaskStore): void {
     if (store.activityListenersWired) return;

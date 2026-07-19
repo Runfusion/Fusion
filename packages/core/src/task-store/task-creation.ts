@@ -13,6 +13,7 @@ import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, TaskCreateInput, Column, Settings} from "../types.js";
 import "../builtin-traits.js";
+import {applyReviewLevelPreset} from "../review-level-preset.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {sanitizeTitle, summarizeTitle} from "../ai-summarize.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
@@ -45,6 +46,8 @@ function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
 }
 
 export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
+    // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
+    input = applyReviewLevelPreset(input);
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
     }
@@ -449,6 +452,8 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
   }
 
 export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; }): Promise<Task> {
+    // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
+    input = applyReviewLevelPreset(input);
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:
     // Backend-mode createTask: delegates to createTaskBackend which uses the
     // async DistributedTaskIdAllocator (now wired for backend mode) and the
@@ -730,6 +735,8 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
   }
 
 export async function createTaskWithReservedIdImpl(store: TaskStore, input: TaskCreateInput, options: { taskId: string; createdAt?: string; updatedAt?: string; prompt?: string; applyDefaultWorkflowSteps?: boolean; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+    // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
+    input = applyReviewLevelPreset(input);
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
     }

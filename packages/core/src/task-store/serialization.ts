@@ -117,6 +117,12 @@ export function rowToTask(row: TaskRow): Task {
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
     // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; empty/null → undefined (no taint).
     bulkCompletionRefusalAt: row.bulkCompletionRefusalAt || undefined,
+    // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 — hydrate the durable pin; empty/null → undefined (unpinned).
+    workflowIrPin: row.workflowIrPin || undefined,
+    workflowIrPinNodeId: row.workflowIrPinNodeId || undefined,
+    workflowIrPinColumnId: row.workflowIrPinColumnId || undefined,
+    // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 — empty/null → undefined (never adopted).
+    legacyAdoptedAt: row.legacyAdoptedAt || undefined,
     worktreeSessionRetryCount: row.worktreeSessionRetryCount ?? undefined,
     completionHandoffLimboRecoveryCount: row.completionHandoffLimboRecoveryCount ?? undefined,
     verificationFailureCount: row.verificationFailureCount ?? undefined,
