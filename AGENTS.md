@@ -108,6 +108,8 @@ pnpm release --yes
 
 Only `@runfusion/fusion` is published; `@fusion/*` packages are bundled into it.
 
+Dashboard API routes use domain registrars under `packages/dashboard/src/routes/`; `createApiRoutes` is orchestrator-only and registrar mount order is a tested contract. See `packages/dashboard/src/routes/README.md`; `check:routes-modular` and mount-order tests enforce it.
+
 #### Importing across `@fusion/*` packages
 
 `@fusion/*` imports must be statically analyzable. Anti-pattern:

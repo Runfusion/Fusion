@@ -146,6 +146,7 @@ function resolveBundledPluginDirInDashboard(pluginId: string): string | null {
 
 import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 import { createApiRoutesContext } from "./routes/context.js";
+import { createRegistrarMounter } from "./routes/create-api-routes-mount-sequence.js";
 import type { ScopeValue } from "./routes/types.js";
 import { registerTaskWorkflowRoutes } from "./routes/register-task-workflow-routes.js";
 import { registerWorkflowRoutes } from "./routes/register-workflow-routes.js";
@@ -1115,6 +1116,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     rethrowAsApiError,
   };
 
+  const registrarMounter = createRegistrarMounter();
+
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
   const aiSessionStore = options?.aiSessionStore;
@@ -1128,18 +1131,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   };
 
-  // Registrar mount order is precedence-sensitive and mirrors
-  // .fusion/tasks/FN-2541/route-order-blueprint.md.
-  // Keep this sequence stable unless route-matching invariants are re-audited.
-  registerSettingsMemoryRoutes(routeContext, {
+  /*
+  FNXC:RouteModularity 2026-07-19-12:00:
+  The runtime mounter enforces the canonical registrar order in
+  routes/create-api-routes-mount-sequence.ts. Keep its documentation synchronized
+  with routes/README.md when changing a precedence-sensitive registrar mount.
+  */
+  registrarMounter.mount("registerSettingsMemoryRoutes", () => registerSettingsMemoryRoutes(routeContext, {
     githubToken,
     validateModelPresets,
     sanitizeBooleanSetting,
     sanitizeOverlapIgnorePaths,
     discoverDashboardPiExtensions,
-  });
-  registerSecretsRoutes(routeContext);
-  registerTaskWorkflowRoutes(routeContext, {
+  }));
+  registrarMounter.mount("registerSecretsRoutes", () => registerSecretsRoutes(routeContext));
+  registrarMounter.mount("registerTaskWorkflowRoutes", () => registerTaskWorkflowRoutes(routeContext, {
     runtimeLogger,
     upload,
     taskDetailActivityLogLimit: TASK_DETAIL_ACTIVITY_LOG_LIMIT,
@@ -1151,29 +1157,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     trimTaskDetailActivityLog,
     triggerCommentWakeForAssignedAgent: (...args) => triggerCommentWakeForAssignedAgent(...args),
     resolveSelfHealingManager: (...args) => resolveSelfHealingManager(...args),
-  });
-  registerWorkflowRoutes(routeContext);
-  registerPlanningSubtaskRoutes(routeContext, {
+  }));
+  registrarMounter.mount("registerWorkflowRoutes", () => registerWorkflowRoutes(routeContext));
+  registrarMounter.mount("registerPlanningSubtaskRoutes", () => registerPlanningSubtaskRoutes(routeContext, {
     store,
     aiSessionStore,
     parseLastEventId,
     replayBufferedSSE,
-  });
-  registerChatRoutes(routeContext, {
+  }));
+  registrarMounter.mount("registerChatRoutes", () => registerChatRoutes(routeContext, {
     parseLastEventId,
     replayBufferedSSE,
     validateOptionalModelField,
     upload,
-  });
-  registerChatRoomRoutes(routeContext, { upload });
-  registerMessagingScriptRoutes(routeContext);
-  registerGitGitHubRoutes(routeContext);
-  registerGitLabRoutes(routeContext);
-  registerFilesTerminalWorkspaceRoutes(routeContext);
-  registerAgentsProjectsNodesRoutes(routeContext);
-  registerPluginsAutomationRoutes(routeContext);
-  registerApprovalRoutes(routeContext);
-  registerWorktrunkRoutes(routeContext);
+  }));
+  registrarMounter.mount("registerChatRoomRoutes", () => registerChatRoomRoutes(routeContext, { upload }));
+  registrarMounter.mount("registerMessagingScriptRoutes", () => registerMessagingScriptRoutes(routeContext));
+  registrarMounter.mount("registerGitGitHubRoutes", () => registerGitGitHubRoutes(routeContext));
+  registrarMounter.mount("registerGitLabRoutes", () => registerGitLabRoutes(routeContext));
+  registrarMounter.mount("registerFilesTerminalWorkspaceRoutes", () => registerFilesTerminalWorkspaceRoutes(routeContext));
+  registrarMounter.mount("registerAgentsProjectsNodesRoutes", () => registerAgentsProjectsNodesRoutes(routeContext));
+  registrarMounter.mount("registerPluginsAutomationRoutes", () => registerPluginsAutomationRoutes(routeContext));
+  registrarMounter.mount("registerApprovalRoutes", () => registerApprovalRoutes(routeContext));
+  registrarMounter.mount("registerWorktrunkRoutes", () => registerWorktrunkRoutes(routeContext));
 
   // HeartbeatMonitor for triggering agent execution runs
   const heartbeatMonitor = options?.heartbeatMonitor;
@@ -1915,17 +1921,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   // Models
-  registerModelRoutes(routeContext);
-  registerCustomProviderRoutes(routeContext);
+  registrarMounter.mount("registerModelRoutes", () => registerModelRoutes(routeContext));
+  registrarMounter.mount("registerCustomProviderRoutes", () => registerCustomProviderRoutes(routeContext));
 
   // ---------- Auth routes ----------
-  registerAuthRoutes(routeContext);
+  registrarMounter.mount("registerAuthRoutes", () => registerAuthRoutes(routeContext));
 
   // ---------- Runtime-plugin probe routes (Hermes / OpenClaw / Paperclip) ----------
-  registerRuntimeProviderRoutes(routeContext);
+  registrarMounter.mount("registerRuntimeProviderRoutes", () => registerRuntimeProviderRoutes(routeContext));
 
   // ---------- CLI binary install / status routes ----------
-  registerFnBinaryRoutes(routeContext);
+  registrarMounter.mount("registerFnBinaryRoutes", () => registerFnBinaryRoutes(routeContext));
 
   /**
    * POST /api/ai/refine-text
@@ -2244,37 +2250,37 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
-  registerUsageRoutes(routeContext);
+  registrarMounter.mount("registerUsageRoutes", () => registerUsageRoutes(routeContext));
   /*
   FNXC:DashboardRoutes 2026-06-16-09:46:
   PR #1683 wires the Command Center / SDLC registrars into the dashboard router: U9 analytics+live, U14 knowledge index, U11 external-signal webhooks, U13 monitor ingest/metrics. All inherit the server-level daemon bearer auth and getScopedStore project scoping; the signal/monitor ingest paths add their own per-provider/ingest-secret verification on top — none is an unauthenticated task-creation endpoint.
   */
   // U9 — Command Center analytics + live snapshot endpoints. Thin adapters over
   // the core aggregators; inherit standard auth + getScopedStore project scoping.
-  registerCommandCenterRoutes(routeContext);
+  registrarMounter.mount("registerCommandCenterRoutes", () => registerCommandCenterRoutes(routeContext));
   // U14 — persistent knowledge index query + incremental-refresh endpoints.
   // Inherit standard auth + getScopedStore project scoping (same as U9); the
   // index holds sensitive repo/PR content so no endpoint is unauthenticated or
   // cross-project readable.
-  registerKnowledgeRoutes(routeContext);
-  registerReportRoutes({ ...routeContext, reportUpload: upload });
+  registrarMounter.mount("registerKnowledgeRoutes", () => registerKnowledgeRoutes(routeContext));
+  registrarMounter.mount("registerReportRoutes", () => registerReportRoutes({ ...routeContext, reportUpload: upload }));
   // U11 — inbound external signal webhooks (Sentry/Datadog/PagerDuty/generic).
   // Each route HMAC-verifies against a per-provider secret; never an
   // unauthenticated task-creation endpoint.
-  registerSignalRoutes(routeContext);
+  registrarMounter.mount("registerSignalRoutes", () => registerSignalRoutes(routeContext));
   // U13 — Monitor stage: deployment + incident ingestion (bearer-token authed,
   // never unauthenticated) + MTTR/deploy/incident metrics read. Closes the loop
   // by opening storm-guarded fix tasks back in triage.
-  registerMonitorRoutes(routeContext);
-  registerUpdateCheckRoutes(routeContext);
-  registerDiagnosticsRoutes(routeContext);
+  registrarMounter.mount("registerMonitorRoutes", () => registerMonitorRoutes(routeContext));
+  registrarMounter.mount("registerUpdateCheckRoutes", () => registerUpdateCheckRoutes(routeContext));
+  registrarMounter.mount("registerDiagnosticsRoutes", () => registerDiagnosticsRoutes(routeContext));
   // CLI Agent Executor hook ingestion (U17) — per-session token auth, exempt from
   // the daemon bearer-token middleware (hook scripts only hold the session token).
-  registerCliAgentHooksRoute(routeContext);
+  registrarMounter.mount("registerCliAgentHooksRoute", () => registerCliAgentHooksRoute(routeContext));
 
   // CLI Agent Executor adapter settings + autonomy approval (U15) — daemon-token
   // authed like the rest of /api (the approving principal is the token holder).
-  registerCliAgentSettingsRoutes(routeContext);
+  registrarMounter.mount("registerCliAgentSettingsRoutes", () => registerCliAgentSettingsRoutes(routeContext));
 
   // ── Automation / Scheduled Task Routes ────────────────────────────
   //
@@ -3384,22 +3390,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // 1) /agents + create, 2) import/export, 3) ordering-sensitive core lookups + /agents/:id,
   // 4) runtime control-plane (/runs/stop before /runs/:runId),
   // 5) reflections/ratings (latest before list), 6) generation routes.
-  registerAgentCoreListCreateRoutes(routeContext, {
+  registrarMounter.mount("registerAgentCoreListCreateRoutes", () => registerAgentCoreListCreateRoutes(routeContext, {
     sanitizeAgentTaskLinks,
     validateAgentInstructionsPayload,
     upload,
-  });
+  }));
 
-  registerAgentImportExportRoutes(routeContext);
-  registerOrgPortabilityRoutes(routeContext);
+  registrarMounter.mount("registerAgentImportExportRoutes", () => registerAgentImportExportRoutes(routeContext));
+  registrarMounter.mount("registerOrgPortabilityRoutes", () => registerOrgPortabilityRoutes(routeContext));
 
-  registerAgentCoreRoutes(routeContext, {
+  registrarMounter.mount("registerAgentCoreRoutes", () => registerAgentCoreRoutes(routeContext, {
     sanitizeAgentTaskLinks,
     validateAgentInstructionsPayload,
     upload,
-  });
+  }));
 
-  registerAgentRuntimeRoutes(routeContext, {
+  registrarMounter.mount("registerAgentRuntimeRoutes", () => registerAgentRuntimeRoutes(routeContext, {
     validateAgentInstructionsPayload,
     serializeAccessState,
     hasHeartbeatExecutor,
@@ -3416,24 +3422,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     readAgentMemoryFile: (...args) => readAgentMemoryFile(...args),
     writeAgentMemoryFile: (...args) => writeAgentMemoryFile(...args),
     isMemoryBackendError: (error): error is { code: string; backend?: string; message: string } => error instanceof MemoryBackendError,
-  });
+  }));
 
   // ── System Panel Routes (Command Center → System) ─────────────────────────
   // FNXC:SystemPanel 2026-07-12-11:25: operator restart/rebuild/logs/debug
   // controls. Registered here so the same heartbeat-monitor resolution used by
   // agent runtime routes powers "restart all agents".
-  registerSystemRoutes(routeContext, {
+  registrarMounter.mount("registerSystemRoutes", () => registerSystemRoutes(routeContext, {
     hasHeartbeatExecutor,
     heartbeatMonitor,
     isHeartbeatMonitorForProject,
     resolveHeartbeatMonitor,
-  });
+  }));
 
   // ── Agent Reflection Routes ──────────────────────────────────────────────
 
-  registerAgentReflectionRatingRoutes(routeContext);
+  registrarMounter.mount("registerAgentReflectionRatingRoutes", () => registerAgentReflectionRatingRoutes(routeContext));
 
-  registerAgentGenerationRoutes(routeContext);
+  registrarMounter.mount("registerAgentGenerationRoutes", () => registerAgentGenerationRoutes(routeContext));
 
   // ── Integrated domain routers ──────────────────────────────────────────────
   // Keep this call at the current position to preserve precedence with
@@ -3441,12 +3447,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // - /missions
   // - /insights
   // - /todos
-  registerIntegratedRouters({
+  registrarMounter.mount("registerIntegratedRouters", () => registerIntegratedRouters({
     router,
     store,
     options,
     aiSessionStore,
-  });
+  }));
 
   // ── Plugin Routes ─────────────────────────────────────────────────────────
   // Plugin management endpoints with projectId scoping support.
@@ -4640,31 +4646,31 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // 6) inbound settings/auth receive/export routes
   // ── Project Management Routes (Multi-Project Support) ───────────────────────
 
-  registerProjectRoutes(routeContext);
+  registrarMounter.mount("registerProjectRoutes", () => registerProjectRoutes(routeContext));
 
   // ── Node Management Routes (Multi-Node Support) ───────────────────────────
 
-  registerNodeRoutes(routeContext);
-  registerDockerNodeRoutes(routeContext);
-  registerDockerProvisioningRoutes(routeContext);
+  registrarMounter.mount("registerNodeRoutes", () => registerNodeRoutes(routeContext));
+  registrarMounter.mount("registerDockerNodeRoutes", () => registerDockerNodeRoutes(routeContext));
+  registrarMounter.mount("registerDockerProvisioningRoutes", () => registerDockerProvisioningRoutes(routeContext));
 
   // ── Remote Node Settings Sync Routes ──────────────────────────────────────
 
-  registerSettingsSyncRoutes(routeContext);
-  registerSecretsSyncRoutes(routeContext);
+  registrarMounter.mount("registerSettingsSyncRoutes", () => registerSettingsSyncRoutes(routeContext));
+  registrarMounter.mount("registerSecretsSyncRoutes", () => registerSecretsSyncRoutes(routeContext));
 
   // ── Mesh Topology Routes ────────────────────────────────────────────────
 
-  registerMeshRoutes(routeContext);
+  registrarMounter.mount("registerMeshRoutes", () => registerMeshRoutes(routeContext));
 
   // ── Node Discovery Routes (mDNS / DNS-SD) ────────────────────────────────
 
-  registerDiscoveryRoutes(routeContext);
+  registrarMounter.mount("registerDiscoveryRoutes", () => registerDiscoveryRoutes(routeContext));
 
   // ── Inbound Settings/Auth Sync Routes ─────────────────────────────────────
 
-  registerSettingsSyncInboundRoutes(routeContext);
-  registerSecretsSyncInboundRoutes(routeContext);
+  registrarMounter.mount("registerSettingsSyncInboundRoutes", () => registerSettingsSyncInboundRoutes(routeContext));
+  registrarMounter.mount("registerSecretsSyncInboundRoutes", () => registerSecretsSyncInboundRoutes(routeContext));
 
   /**
    * GET /api/activity-feed
@@ -4911,7 +4917,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // Dev server mount intentionally stays in this late position to keep route
   // precedence unchanged relative to existing wildcard handlers.
-  registerIntegratedDevServerRouter({ router, store });
+  registrarMounter.mount("registerIntegratedDevServerRouter", () => registerIntegratedDevServerRouter({ router, store }));
 
   if (options?.pluginStore && options?.pluginLoader) {
     const pluginRunner = options.pluginRunner as Parameters<typeof createPluginRouter>[2];
@@ -4950,11 +4956,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // ── Skills Routes ──────────────────────────────────────────────────────────
 
-  registerAgentSkillsRoutes(routeContext);
+  registrarMounter.mount("registerAgentSkillsRoutes", () => registerAgentSkillsRoutes(routeContext));
 
   // Remote node proxy routes stay last so explicit handlers always precede
   // the wildcard /proxy/:nodeId/{*splat} route in Express match order.
-  registerProxyRoutes(router, { store, runtimeLogger });
+  registrarMounter.mount("registerProxyRoutes", () => registerProxyRoutes(router, { store, runtimeLogger }));
+
+  registrarMounter.assertComplete();
 
   (router as Router & { dispose?: () => void }).dispose = dispose;
   return router;
