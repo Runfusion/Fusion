@@ -9,7 +9,9 @@ import {
 } from "./usage.js";
 
 const PROVIDER_RATE_LIMIT_PREFIX = "provider-rate-limit:";
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_POLL_INTERVAL_MS = 300_000;
+const DEFAULT_MAX_POLL_INTERVAL_MS = 3_600_000;
+const CHECKS_BEFORE_BACKOFF = 5;
 
 export type ProviderHealthProbe = (
   providerId: string,
@@ -21,7 +23,15 @@ export interface ProviderHealthMonitorOptions {
   authStorage?: AuthStorageLike;
   logger: RuntimeLogger;
   pollIntervalMs?: number;
+  maxPollIntervalMs?: number;
   probe?: ProviderHealthProbe;
+  now?: () => number;
+}
+
+interface ProviderMonitorState {
+  status: "unavailable" | "available";
+  failedChecks: number;
+  nextCheckAt: number;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -42,6 +52,16 @@ export function hasUsableProviderCapacity(usage: ProviderUsage | null): boolean 
   return usage?.status === "ok"
     && usage.windows.length > 0
     && usage.windows.every((window) => window.percentUsed < 100 && window.percentLeft > 0);
+}
+
+export function providerHealthProbeDelayMs(
+  failedChecks: number,
+  baseIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  maxIntervalMs = DEFAULT_MAX_POLL_INTERVAL_MS,
+): number {
+  if (failedChecks < CHECKS_BEFORE_BACKOFF) return baseIntervalMs;
+  const exponent = failedChecks - CHECKS_BEFORE_BACKOFF + 1;
+  return Math.min(baseIntervalMs * (2 ** exponent), maxIntervalMs);
 }
 
 export async function probeMeteredProviderHealth(
@@ -68,14 +88,18 @@ export async function probeMeteredProviderHealth(
  */
 export class ProviderHealthMonitor {
   private readonly pollIntervalMs: number;
+  private readonly maxPollIntervalMs: number;
   private readonly probe: ProviderHealthProbe;
-  private readonly states = new Map<string, "unavailable" | "available">();
+  private readonly now: () => number;
+  private readonly states = new Map<string, ProviderMonitorState>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
   constructor(private readonly options: ProviderHealthMonitorOptions) {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.maxPollIntervalMs = options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS;
     this.probe = options.probe ?? probeMeteredProviderHealth;
+    this.now = options.now ?? Date.now;
   }
 
   start(): void {
@@ -108,6 +132,10 @@ export class ProviderHealthMonitor {
     }
 
     await Promise.all(Array.from(providers, async (providerId) => {
+      const state = this.states.get(providerId);
+      const checkedAt = this.now();
+      if (state && state.nextCheckAt > checkedAt) return;
+
       const usage = await this.probe(providerId, this.options.authStorage).catch((error: unknown) => {
         this.options.logger.warn("Provider health probe failed", {
           providerId,
@@ -117,25 +145,40 @@ export class ProviderHealthMonitor {
       });
 
       if (!hasUsableProviderCapacity(usage)) {
-        if (this.states.get(providerId) !== "unavailable") {
+        const failedChecks = (state?.failedChecks ?? 0) + 1;
+        const retryDelayMs = providerHealthProbeDelayMs(
+          failedChecks,
+          this.pollIntervalMs,
+          this.maxPollIntervalMs,
+        );
+        if (state?.status !== "unavailable") {
           this.options.logger.warn("Provider unavailable; rate-limited tasks remain paused", {
             providerId,
             status: usage?.status ?? "unsupported",
             error: usage?.error,
           });
         }
-        this.states.set(providerId, "unavailable");
+        this.states.set(providerId, {
+          status: "unavailable",
+          failedChecks,
+          nextCheckAt: checkedAt + retryDelayMs,
+        });
         return;
       }
 
       /*
       FNXC:ProviderRateLimitRecovery 2026-07-19-20:15:
       Recovery is driven by an authenticated daemon-side usage/capacity transition, not by waking a parked task and spending a model call as a probe. The persisted pause reason seeds this monitor after restart; one provider probe fans out only to exact matching parks across project engines.
+      Provider probes start at a five-minute cadence; after five failed checks each provider backs off independently to 10/20/40/60 minutes. This bounds subscription API traffic without permanently stranding parks during a long outage.
       */
       const recoveredCounts = await Promise.all(stores.map((store) =>
         new UsageLimitPauser(store).onProviderAvailable(providerId)));
       const recoveredTasks = recoveredCounts.reduce((total, count) => total + count, 0);
-      this.states.set(providerId, "available");
+      this.states.set(providerId, {
+        status: "available",
+        failedChecks: 0,
+        nextCheckAt: checkedAt + this.pollIntervalMs,
+      });
       if (recoveredTasks > 0) {
         this.options.logger.info("Provider available again; resumed provider-paused tasks", {
           providerId,

@@ -3,6 +3,7 @@ import type { ProviderUsage } from "../usage.js";
 import {
   hasUsableProviderCapacity,
   ProviderHealthMonitor,
+  providerHealthProbeDelayMs,
   providerIdFromRateLimitReason,
 } from "../provider-health-monitor.js";
 
@@ -60,6 +61,39 @@ describe("ProviderHealthMonitor", () => {
     expect(hasUsableProviderCapacity(providerUsage({
       windows: [{ label: "Weekly", percentUsed: 100, percentLeft: 0, resetText: "resets in 1h" }],
     }))).toBe(false);
+  });
+
+  it("checks at five-minute cadence five times, then backs off to a one-hour cap", () => {
+    expect(providerHealthProbeDelayMs(1)).toBe(300_000);
+    expect(providerHealthProbeDelayMs(4)).toBe(300_000);
+    expect(providerHealthProbeDelayMs(5)).toBe(600_000);
+    expect(providerHealthProbeDelayMs(6)).toBe(1_200_000);
+    expect(providerHealthProbeDelayMs(7)).toBe(2_400_000);
+    expect(providerHealthProbeDelayMs(8)).toBe(3_600_000);
+    expect(providerHealthProbeDelayMs(20)).toBe(3_600_000);
+  });
+
+  it("does not re-probe before a provider's growing backoff expires", async () => {
+    let now = 0;
+    const store = createStore([
+      { id: "FN-9", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+    ]);
+    const probe = vi.fn().mockResolvedValue(providerUsage({ status: "error", error: "HTTP 429" }));
+    const monitor = new ProviderHealthMonitor({
+      getStores: () => [store],
+      logger: createLogger(),
+      probe,
+      now: () => now,
+    });
+
+    await monitor.checkNow();
+    now = 299_999;
+    await monitor.checkNow();
+    expect(probe).toHaveBeenCalledTimes(1);
+
+    now = 300_000;
+    await monitor.checkNow();
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("probes a persisted unavailable provider once and resumes exact matching parks across projects", async () => {
