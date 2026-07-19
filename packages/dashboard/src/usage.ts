@@ -707,6 +707,25 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
           return;
         }
 
+        /*
+         * FNXC:ClaudeUsage 2026-07-19-18:00:
+         * Claude Code 2.1.x can render its settings Usage tab while the CLI is
+         * unauthenticated. That screen contains ordinary session statistics but
+         * no subscription quota percentages, so the old detector waited the
+         * full minute and falsely described the result as a timeout. Surface the
+         * TUI's explicit login state immediately and tell remote-dashboard users
+         * where the login must happen.
+         */
+        if (/not logged in\s*[·•-]?\s*run\s*\/login/i.test(clean)) {
+          settled = true;
+          clearTimeout(timeout);
+          try { ptyProcess.kill(); } catch {
+            // Kill may fail if process already exited - ignore
+          }
+          reject(new Error("Claude CLI is not logged in on the Fusion server. Run `claude /login` there, then refresh Usage."));
+          return;
+        }
+
         // Auto-approve trust prompt
         if (
           !approvedTrust &&
