@@ -1,5 +1,6 @@
 /**
- * remaining-ops-6 operations.
+ * FNXC:CodeOrganization 2026-07-19-12:00:
+ * Domain rename from branch-and-pr-entities: branch groups, PR entities, and PR thread state.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure

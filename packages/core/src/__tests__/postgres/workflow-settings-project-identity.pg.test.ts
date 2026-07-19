@@ -23,7 +23,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
-import { getWorkflowSettingsProjectIdImpl } from "../../task-store/remaining-ops-6.js";
+import { getWorkflowSettingsProjectIdImpl } from "../../task-store/branch-and-pr-entities.js";
 import { resolveEffectiveSettingsById } from "../../workflow-settings-resolver.js";
 import type { TaskStore } from "../../store.js";
 import * as schema from "../../postgres/schema/index.js";
