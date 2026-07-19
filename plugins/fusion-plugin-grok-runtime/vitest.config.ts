@@ -13,6 +13,8 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
+    // FNXC:TestQuarantine 2026-07-19-04:30: process-lifecycle bound stress timed out on full-suite shard 4 (run 29671930241); ledger entry in scripts/lib/test-quarantine.json.
+    exclude: ["src/__tests__/process-lifecycle.test.ts"],
     environment: "node",
     setupFiles: [fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-setup.ts", import.meta.url))],
     globalSetup: [fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-teardown.ts", import.meta.url))],

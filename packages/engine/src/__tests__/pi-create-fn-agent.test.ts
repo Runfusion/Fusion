@@ -2400,33 +2400,52 @@ describe("createFnAgent", () => {
   it.each([
     ["connect", "TypeError"],
     ["list", "RangeError"],
-  ] as const)("fails configured MCP session bootstrap explicitly on %s failure and closes once", async (phase, reason) => {
-    const close = vi.fn(async () => undefined);
-    const mcpClient = {
-      connect: vi.fn(async () => {
-        if (phase === "connect") throw new TypeError("sensitive connection detail");
-      }),
-      listTools: vi.fn(async () => {
-        if (phase === "list") throw new RangeError("sensitive listing detail");
-        return { tools: [] };
-      }),
-      callTool: vi.fn(),
-      close,
-    };
+  ] as const)("continues without an MCP server after bounded %s retries are exhausted", async (phase, reason) => {
+    const clients: Array<{ close: ReturnType<typeof vi.fn> }> = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mcpClientFactory = vi.fn(() => {
+      const client = {
+        connect: vi.fn(async () => {
+          if (phase === "connect") throw new TypeError("sensitive connection detail");
+        }),
+        listTools: vi.fn(async () => {
+          if (phase === "list") throw new RangeError("sensitive listing detail");
+          return { tools: [] };
+        }),
+        callTool: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      clients.push(client);
+      return client;
+    });
     const { createFnAgent } = await import("../pi.js");
 
-    await expect(createFnAgent({
-      cwd: "/test/project",
-      systemPrompt: "test",
-      tools: "coding",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-4-5",
-      mcpServers: [{ name: "postiz", transport: "stdio", command: "redacted", enabled: true }],
-      mcpClientFactory: () => mcpClient as any,
-    })).rejects.toThrow(`MCP session bootstrap failed: server=postiz reason=${reason}`);
+    try {
+      await expect(createFnAgent({
+        cwd: "/test/project",
+        systemPrompt: "test",
+        tools: "coding",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        mcpServers: [{ name: "postiz", transport: "stdio", command: "redacted", enabled: true }],
+        mcpClientFactory: mcpClientFactory as any,
+        mcpBootstrapRetryDelayMs: 0,
+      })).resolves.toBeDefined();
 
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(createAgentSessionMock).not.toHaveBeenCalled();
+      expect(mcpClientFactory).toHaveBeenCalledTimes(3);
+      expect(clients).toHaveLength(3);
+      for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
+      expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+      const logs = [...consoleError.mock.calls, ...consoleWarn.mock.calls].flat().join("\n");
+      expect(logs).toContain(`reason=${reason}`);
+      expect(logs).toContain("MCP session continuing with unavailable servers: count=1");
+      expect(logs).not.toContain("sensitive connection detail");
+      expect(logs).not.toContain("sensitive listing detail");
+    } finally {
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
+    }
   });
 
   it("keeps MCP tools out of readonly sessions without the explicit opt-in", async () => {

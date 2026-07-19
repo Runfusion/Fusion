@@ -2408,6 +2408,9 @@ export {
   isEmbeddedPgOptedOut,
   EMBEDDED_PG_ENV,
   NO_EMBEDDED_PG_ENV,
+  TEST_MODE_ENV,
+  TEST_DATABASE_URL_ENV,
+  TEST_DATABASE_MIGRATION_URL_ENV,
 } from "./postgres/index.js";
 export type {
   BackendMode,

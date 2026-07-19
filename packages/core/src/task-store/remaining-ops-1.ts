@@ -34,7 +34,7 @@ import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/remaining-ops-8.js";
+import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";

@@ -45,6 +45,8 @@ describe("connectMcpSessionTools", () => {
 
     expect(toolset.connected).toEqual(["context7"]);
     expect(toolset.tools.map((tool) => tool.name)).toEqual(["mcp__context7__lookup"]);
+    expect(client.connect).toHaveBeenCalledWith(expect.anything(), { timeout: 15_000 });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 15_000 });
     expect(toolset.tools[0]!.parameters).toMatchObject({
       type: "object",
       properties: { topic: { type: "string", description: "Topic to look up" } },
@@ -77,6 +79,7 @@ describe("connectMcpSessionTools", () => {
     const toolset = await connectMcpSessionTools([stdioServer("disabled", false), stdioServer("bad"), stdioServer("good")], {
       clientFactory: (server) => server.name === "bad" ? bad : good,
       transportFactory,
+      maxAttempts: 1,
     });
 
     expect(toolset.skipped).toEqual([
@@ -84,6 +87,76 @@ describe("connectMcpSessionTools", () => {
       { name: "bad", reason: "error" },
     ]);
     expect(toolset.tools.map((tool) => tool.name)).toEqual(["mcp__good__read"]);
+  });
+
+  it("retries a failed server with fresh clients before exposing its tools", async () => {
+    const clients = [
+      { ...fakeClient([]), connect: vi.fn(async () => { throw new TypeError("offline"); }) },
+      { ...fakeClient([]), connect: vi.fn(async () => { throw new TypeError("offline"); }) },
+      fakeClient(["lookup"]),
+    ];
+    const clientFactory = vi.fn(() => clients.shift()!);
+    const logger = { log: vi.fn(), warn: vi.fn() };
+
+    const toolset = await connectMcpSessionTools([stdioServer("context7")], {
+      clientFactory,
+      transportFactory,
+      retryDelayMs: 0,
+      logger,
+    });
+
+    expect(clientFactory).toHaveBeenCalledTimes(3);
+    expect(toolset.connected).toEqual(["context7"]);
+    expect(toolset.skipped).toEqual([]);
+    expect(toolset.tools.map((tool) => tool.name)).toEqual(["mcp__context7__lookup"]);
+    expect(logger.warn).toHaveBeenCalledWith("Retrying MCP server for pi session: name=context7 transport=stdio attempt=2/3 reason=TypeError");
+    expect(logger.warn).toHaveBeenCalledWith("Retrying MCP server for pi session: name=context7 transport=stdio attempt=3/3 reason=TypeError");
+  });
+
+  it("records one skipped server after bounded retries are exhausted", async () => {
+    const clients: McpSessionClient[] = [];
+    const clientFactory = vi.fn(() => {
+      const client: McpSessionClient = {
+        ...fakeClient([]),
+        connect: vi.fn(async () => { throw new RangeError("unavailable"); }),
+      };
+      clients.push(client);
+      return client;
+    });
+
+    const toolset = await connectMcpSessionTools([stdioServer("context7")], {
+      clientFactory,
+      transportFactory,
+      retryDelayMs: 0,
+    });
+
+    expect(clientFactory).toHaveBeenCalledTimes(3);
+    expect(toolset.connected).toEqual([]);
+    expect(toolset.skipped).toEqual([{ name: "context7", reason: "RangeError" }]);
+    expect(clients).toHaveLength(3);
+    for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops retrying when bootstrap is aborted", async () => {
+    const controller = new AbortController();
+    const client = {
+      ...fakeClient([]),
+      connect: vi.fn(async () => {
+        controller.abort();
+        throw new TypeError("offline");
+      }),
+    };
+    const clientFactory = vi.fn(() => client);
+
+    const toolset = await connectMcpSessionTools([stdioServer("context7")], {
+      clientFactory,
+      transportFactory,
+      signal: controller.signal,
+    });
+
+    expect(clientFactory).toHaveBeenCalledTimes(1);
+    expect(toolset.skipped).toEqual([{ name: "context7", reason: "aborted" }]);
+    expect(client.close).toHaveBeenCalledTimes(1);
   });
 
   it("keeps empty tool-list connections and creates no tools", async () => {

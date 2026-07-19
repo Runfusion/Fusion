@@ -1746,6 +1746,10 @@ Activation UX/settings affordances are handled separately in FN-5204.
 
 `testMode?: boolean` exists at both global and project scopes. Project `testMode: true` takes precedence and forces planning, executor, reviewer/validator, mission validation, merger, and heartbeat to `mock/scripted` regardless of per-task or per-lane overrides. The dashboard surfaces this with the Settings Modal "Enable test mode" toggle and the shell banner: "Test mode — no real AI calls".
 
+When Fusion starts with global test mode enabled, it also isolates persistence from the normal database. The normal `DATABASE_URL` is ignored: Fusion uses the dedicated external URL in `FUSION_TEST_DATABASE_URL` (and optional `FUSION_TEST_DATABASE_MIGRATION_URL`) or, when no test URL is configured, the separate embedded cluster at `~/.fusion/embedded-postgres/test`. Database selection happens at process startup, so restart Fusion after changing global test mode. `FUSION_TEST_MODE=1` provides the same startup behavior for scripted runs.
+
+Automated test commands likewise remove inherited `DATABASE_URL` and `DATABASE_MIGRATION_URL` values before starting test workers. PostgreSQL integration suites continue to use their isolated `FUSION_PG_TEST_*` databases.
+
 ## Per-task token budget precedence
 
 1. `task.tokenBudgetOverride`

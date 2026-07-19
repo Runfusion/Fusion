@@ -112,7 +112,7 @@ import {
   resolveValidatorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
-import { assertMcpResolutionSucceeded, resolveMcpServersForStore } from "./mcp-resolution.js";
+import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { reviewStep, proseSignalsClearApproval, extractJsonObjectCandidates, ReviewerProviderError, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
@@ -2962,18 +2962,16 @@ export class TaskExecutor {
      * Executor-owned lanes (main execution, retry, workflow model nodes, self-fix, and spawned child sessions) resolve the same trusted MCP server set from the task store immediately before session creation so secret material is never persisted in task state.
      *
      * FNXC:McpConfig 2026-07-12-17:02:
-     * MAIN-008 forbids executor paths from silently consuming a partially
-     * materialized server set. Convert secret-resolution errors into a
-     * content-free bootstrap failure before any runtime can connect with
-     * missing credentials; only server names/counts and a coarse category may
-     * cross this seam.
+     * Secret-resolution failures remain content-free and observable. The
+     * resolver excludes each affected server so it cannot connect with missing
+     * credentials, while healthy MCP servers and task execution continue.
      */
     const resolved = await resolveMcpServersForStore(this.store, { agentId: agentId ?? undefined });
     if (resolved.errors.length > 0) {
       const serverNames = [...new Set(resolved.errors.map((error) => error.serverName))].sort();
       executorLog.warn(`MCP executor resolution failed: servers=${serverNames.join(",")} count=${serverNames.length} reason=secret-materialization`);
     }
-    return assertMcpResolutionSucceeded(resolved);
+    return resolved.servers;
   }
 
   /**

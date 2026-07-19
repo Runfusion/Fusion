@@ -1235,10 +1235,17 @@ export function createTestProcessEnv(env = process.env) {
   FNXC:TestInfrastructure 2026-06-17-17:02:
   Developer shells and release scripts can export NODE_ENV=production, but Vitest must resolve React, Testing Library, and Vite transforms through their test/development paths. Normalize spawned test processes here so pnpm test cannot inherit production React test-utils and stall/fail jsdom lanes.
   */
-  return {
+  const nextEnv = {
     ...env,
     NODE_ENV: "test",
   };
+  // A developer may legitimately export DATABASE_URL for their normal Fusion
+  // runtime. Test commands must never inherit that production target. PostgreSQL
+  // integration tests use the dedicated FUSION_PG_TEST_* harness variables or
+  // set a per-test DATABASE_URL after process setup.
+  delete nextEnv.DATABASE_URL;
+  delete nextEnv.DATABASE_MIGRATION_URL;
+  return nextEnv;
 }
 
 const fullSuiteEnv = {
