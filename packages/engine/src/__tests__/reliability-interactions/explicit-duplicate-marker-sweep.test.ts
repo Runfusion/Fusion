@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
@@ -86,17 +87,47 @@ const canRun = hasGit && hasPg;
     expect(untouched.status).toBe("failed");
   });
 
-  it("leaves marker tasks alone when the canonical target is missing", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
+  it.each(["missing", "done", "archived", "soft-deleted"] as const)("cleans an inactive %s canonical marker instead of parking a hidden decision", async (state) => {
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
-    const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: "DUPLICATE: FN-9999\n" });
+    let canonicalId = "FN-9999";
+    if (state !== "missing") {
+      const canonical = await fx.store.createTask({ title: "Inactive canonical", description: "canonical", column: state === "soft-deleted" ? "triage" : state });
+      canonicalId = canonical.id;
+      if (state === "soft-deleted") {
+        await fx.store.deleteTask(canonical.id, { removeLineageReferences: true });
+      }
+    }
+    const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: duplicateStub(canonicalId) });
+    const promptPath = join(fx.rootDir, ".fusion", "tasks", duplicate.id, "PROMPT.md");
 
     await (fx.manager as any).resolveExplicitDuplicateMarkerTasks();
 
-    expect((await fx.store.getTask(duplicate.id)).column).toBe("triage");
-    const activity = await fx.store.getActivityLog({ type: "task:auto-archived-duplicate", limit: 20 });
-    expect(activity.find((entry) => entry.taskId === duplicate.id)).toBeUndefined();
+    const updated = await fx.store.getTask(duplicate.id);
+    expect(updated.paused).not.toBe(true);
+    expect(updated.pausedReason ?? null).toBeNull();
+    expect(updated.status ?? null).toBeNull();
+    expect(existsSync(promptPath)).toBe(false);
+  });
+
+  it.each([
+    ["user pause", { userPaused: true, paused: true, pausedReason: "manual" }],
+    ["implicit user pause", { paused: true, pausedReason: null }],
+    ["unrelated pause", { paused: true, pausedReason: "awaiting-approval" }],
+  ])("preserves a %s while an inactive marker is encountered", async (_label, pause) => {
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    fixtures.push(fx);
+    const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: duplicateStub("FN-9999") });
+    await fx.store.updateTask(duplicate.id, pause);
+    const promptPath = join(fx.rootDir, ".fusion", "tasks", duplicate.id, "PROMPT.md");
+
+    await (fx.manager as any).resolveExplicitDuplicateMarkerTasks();
+
+    const updated = await fx.store.getTask(duplicate.id);
+    expect(updated.paused).toBe(true);
+    expect(updated.pausedReason ?? null).toBe(pause.pausedReason ?? null);
+    expect(existsSync(promptPath)).toBe(true);
   });
 
   it("leaves full specs untouched", async () => {

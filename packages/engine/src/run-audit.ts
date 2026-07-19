@@ -555,6 +555,8 @@ export type DatabaseMutationType =
    * Self-healing must leave file-scope lease queues intact while recording when stale durable Agent.taskId/state drift is cleared. Metadata: { agentId, taskId, taskColumn, agentState, status, blockedBy, overlapBlockedBy, hadFreshRun, hadActiveExecution, reason }.
    */
   | "task:reconcile-stale-agent-assignment"
+  /** Metadata: { taskId, canonicalId, canonicalColumn, canonicalDeleted, priorPausedReason } */
+  | "task:reconcile-stale-duplicate-decision"
   /**
    * FNXC:MergeQueue 2026-07-15-10:05:
    * Wedged single-flight merge reclaim. Metadata ids/outcomes-only:

@@ -2867,16 +2867,23 @@ export class TriageProcessor {
       }
 
       const canonicalId = explicitDuplicateMarker.canonicalId;
-      const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
-      if (
-        !canonicalTask ||
-        canonicalTask.deletedAt ||
-        canonicalTask.id.toLowerCase() === task.id.toLowerCase()
-      ) {
+      // A transient lookup failure must still fail open; only a genuine missing row is inactive.
+      const canonicalTask = await this.store.getTask(canonicalId);
+      if (canonicalTask?.id.toLowerCase() === task.id.toLowerCase()) {
         return false;
       }
 
-      planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
+      /*
+      FNXC:NearDuplicateDetection 2026-07-17-20:10:
+      FN-8356 requires missing, deleted, done, and archived duplicate canonicals to flow through
+      marker cleanup instead of being rejected here. The detail banner cannot offer a decision for
+      an inactive canonical, so parking the card would strand its Needs your decision badge.
+      */
+      if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+        planLog.log(`${task.id} explicit duplicate marker targets inactive ${canonicalId}; clearing marker for replanning`);
+      } else {
+        planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
+      }
       await this.finalizeApprovedTask(task, written, settings, options);
       return true;
     } catch (err) {
@@ -2931,6 +2938,26 @@ export class TriageProcessor {
      */
     if (explicitDuplicateMarker) {
       const canonicalId = explicitDuplicateMarker.canonicalId;
+      const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
+      const canClearInactiveMarker = task.userPaused !== true
+        && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
+        && (task.pausedReason == null || task.pausedReason === "duplicate-decision-required");
+
+      /*
+      FNXC:NearDuplicateDetection 2026-07-17-20:10:
+      FN-8356 prevents an inactive duplicate canonical from creating a prompt pause. The detail
+      view deliberately hides decisions for missing, deleted, done, or archived canonicals, so
+      remove only the marker and return eligible work to planning instead of stranding its badge;
+      explicit, implicit, and unrelated pauses are preserved.
+      */
+      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
+        if (canClearInactiveMarker) {
+          await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+        }
+        return;
+      }
+
       const resolution = settings.triageDuplicateResolution ?? "prompt";
       if (resolution === "delete") {
         await this.store.recordActivity({
