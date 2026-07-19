@@ -4,6 +4,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 type AdvisoryLockTransaction = Pick<PostgresJsDatabase<Record<string, never>>, "execute">;
 
 /**
+ * FNXC:PostgresLockOrdering 2026-07-18-17:12:
  * Serialize schema DDL behind any active SQLite cutover transaction.
  *
  * SQLite migration takes `fusion:sqlite-migration-state` before it reads the
