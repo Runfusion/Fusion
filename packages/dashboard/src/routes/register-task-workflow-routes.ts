@@ -3891,10 +3891,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   /**
-   * FNXC:ArtifactRegistry 2026-06-21-04:46:
-   * Documents view needs a cross-agent registry read surface for all artifact media classes. Keep query validation aligned with `/documents` so dashboard tabs share bounded pagination behavior while rejecting unknown artifact types before store access.
-   */
-  /**
    * FNXC:NativeStructureEmbed 2026-07-16-12:00:
    * Native-structure consumers need a single project-scoped read endpoint. Unavailable targets
    * deliberately return HTTP 200 with a typed payload so chat and mail render a placeholder;
@@ -3916,6 +3912,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /**
+   * FNXC:ArtifactRegistry 2026-06-21-04:46:
+   * Documents view needs a cross-agent registry read surface for all artifact media classes. Keep query validation aligned with `/documents` so dashboard tabs share bounded pagination behavior while rejecting unknown artifact types before store access.
+   */
   router.get("/artifacts", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);

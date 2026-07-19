@@ -889,7 +889,10 @@ export interface NativeStructureOpenTarget {
   missionId?: string;
 }
 
-/** A previewable native structure projected by the dashboard read layer. */
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A previewable native structure projected by the dashboard read layer.
+ */
 export interface NativeStructurePreviewPayload {
   available: true;
   kind: NativeStructureRef["kind"];
@@ -899,7 +902,10 @@ export interface NativeStructurePreviewPayload {
   openTarget: NativeStructureOpenTarget;
 }
 
-/** A native structure whose existing lifecycle state makes it unavailable for preview. */
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A native structure whose existing lifecycle state makes it unavailable for preview.
+ */
 export interface NativeStructureUnavailablePayload {
   available: false;
   kind: NativeStructureRef["kind"];

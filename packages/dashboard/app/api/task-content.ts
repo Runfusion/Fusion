@@ -208,7 +208,10 @@ export async function fetchArtifact(id: string, projectId?: string): Promise<Art
   return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId));
 }
 
-/** Fetch the shared compact projection for an in-app native structure reference. */
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * Fetch the shared compact projection for an in-app native structure reference.
+ */
 export async function fetchNativeStructurePreview(ref: NativeStructureRef): Promise<NativeStructurePreviewResult> {
   return api<NativeStructurePreviewResult>(
     withProjectId(`/native-structures/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}/preview`, ref.projectId),

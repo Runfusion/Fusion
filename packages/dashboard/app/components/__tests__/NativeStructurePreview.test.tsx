@@ -74,6 +74,14 @@ describe("NativeStructurePreview", () => {
     await waitFor(() => expect(screen.getByTestId("native-structure-preview-error")).toBeInTheDocument());
   });
 
+  it("does not fetch or crash for a deferred runtime kind", () => {
+    fetchPreview.mockClear();
+    const deferredRef = { kind: "roadmap-item", id: "R-1" } as unknown as NativeStructureRef;
+    render(<NativeStructurePreview ref={deferredRef} onOpen={vi.fn()} />);
+    expect(screen.getByTestId("native-structure-preview-unavailable")).toBeInTheDocument();
+    expect(fetchPreview).not.toHaveBeenCalled();
+  });
+
   it("lets a later caller-supplied payload replace a failed fetch", async () => {
     fetchPreview.mockRejectedValueOnce(new Error("offline"));
     const { rerender } = render(<NativeStructurePreview ref={refs[0]} onOpen={vi.fn()} />);

@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { BarChart3, Flag, Lightbulb, Map, Target } from "lucide-react";
+import { BarChart3, CircleAlert, Flag, Lightbulb, Map, Target } from "lucide-react";
 import type { NativeStructurePreviewResult, NativeStructureRef } from "@fusion/core";
 import { fetchNativeStructurePreview } from "../api";
 import "./NativeStructurePreview.css";
@@ -16,9 +16,13 @@ const icons = {
   "research-finding": Lightbulb,
   "eval-result": BarChart3,
   goal: Target,
-};
+} satisfies Record<NativeStructureRef["kind"], typeof Map>;
 
-function unavailableLabel(kind: NativeStructureRef["kind"]): string {
+function isSupportedKind(kind: string): kind is NativeStructureRef["kind"] {
+  return Object.prototype.hasOwnProperty.call(icons, kind);
+}
+
+function unavailableLabel(kind: string): string {
   return kind.replace(/-/g, " ");
 }
 
@@ -29,15 +33,22 @@ function unavailableLabel(kind: NativeStructureRef["kind"]): string {
  * than URL routes; rendering an anchor here would create dead destinations.
  */
 export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, onOpen }: NativeStructurePreviewProps) {
+  const supportedKind = isSupportedKind(ref.kind);
   const refKey = `${ref.kind}\u0000${ref.id}\u0000${ref.projectId ?? ""}`;
   const [fetchedPayload, setFetchedPayload] = useState<{ refKey: string; result: NativeStructurePreviewResult } | undefined>();
   const [error, setError] = useState(false);
   // FNXC:NativeStructureEmbed 2026-07-16-12:00: A ref update must not briefly render a prior fetch result; consumers can replace cards while messages or drafts rehydrate.
   const result = payload ?? (fetchedPayload?.refKey === refKey ? fetchedPayload.result : undefined);
-  const Icon = icons[ref.kind];
+  const Icon = supportedKind ? icons[ref.kind] : CircleAlert;
 
   useEffect(() => {
-    if (payload) return;
+    /*
+    FNXC:NativeStructureEmbed 2026-07-19-18:00:
+    Refs can arrive from persisted chat/mail content, so reject a future or malformed kind before
+    fetching. The five-kind route is the sole resolver contract; roadmap-item must not trigger a
+    plugin read or turn an invalid icon lookup into a render crash.
+    */
+    if (payload || !supportedKind) return;
     let active = true;
     setFetchedPayload(undefined);
     setError(false);
@@ -50,6 +61,15 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
       });
     return () => { active = false; };
   }, [payload, ref.kind, ref.id, ref.projectId, refKey]);
+
+  if (!supportedKind) {
+    return (
+      <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-unavailable" data-reason="missing">
+        <Icon aria-hidden="true" />
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">Preview unavailable</span><p>This structure is unavailable.</p></div>
+      </section>
+    );
+  }
 
   // FNXC:NativeStructureEmbed 2026-07-16-14:05: A caller-supplied projection is authoritative after a transient fetch failure, so it must replace the error placeholder for the same ref.
   if (error && !payload) {
