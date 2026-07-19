@@ -51,6 +51,8 @@ function createStore(overrides?: { tasks?: Task[] }) {
     getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
     claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
+    // FNXC:TaskVerificationRequest 2026-07-19-12:00: match createMockStore() in executor-test-helpers.ts.
+    createTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
     updateTask: vi.fn().mockResolvedValue({}),
   } as any;
   return store;
