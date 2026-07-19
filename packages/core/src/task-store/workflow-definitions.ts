@@ -12,8 +12,7 @@
 import { TaskStore } from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
+import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
 import { CentralCore } from "../central-core.js";
 import { fromJson } from "../db.js";
 import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../distributed-task-id.js";
@@ -466,19 +465,25 @@ export function consumePluginGateVerdictsImpl(store: TaskStore, taskId: string, 
 export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string): WorkflowIr {
     const selection = store.getTaskWorkflowSelection(taskId);
     const workflowId = selection?.workflowId;
-    if (!workflowId) return store.applyBuiltInPromptOverridesSync("builtin:coding", BUILTIN_CODING_WORKFLOW_IR);
+    /* FNXC:WorkflowBuiltins 2026-07-19-10:26: shares resolveDefaultWorkflowIr() with the async move resolver so sync and async paths cannot disagree on the no-selection default. */
+    if (!workflowId) return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
     if (isBuiltinWorkflowId(workflowId)) {
       const builtin = getBuiltinWorkflow(workflowId);
-      return store.applyBuiltInPromptOverridesSync(workflowId, builtin?.ir ?? BUILTIN_CODING_WORKFLOW_IR);
+      const ir = builtin?.ir;
+      return store.applyBuiltInPromptOverridesSync(workflowId, ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir);
     }
     try {
       const row = store.db
         .prepare("SELECT ir FROM workflows WHERE id = ?")
         .get(workflowId) as { ir: string } | undefined;
-      if (!row) return BUILTIN_CODING_WORKFLOW_IR;
+      /* FNXC:WorkflowBuiltins 2026-07-19-12:20 (PR #2341 review): the deleted-workflow and
+         read-error fallbacks must apply built-in prompt overrides exactly like the
+         no-selection branch above — otherwise a task whose custom workflow was deleted
+         silently loses the project's default-workflow prompt customizations. */
+      if (!row) return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
       return parseWorkflowIr(row.ir);
     } catch {
-      return BUILTIN_CODING_WORKFLOW_IR;
+      return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
     }
 }
 

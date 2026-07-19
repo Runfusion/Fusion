@@ -238,9 +238,20 @@ export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
  */
 export function getTaskMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { manual?: boolean } = {},
+  options: { manual?: boolean; skipColumnIdentityCheck?: boolean } = {},
 ): string | undefined {
-  if (task.column !== "in-review") {
+  /*
+  FNXC:WorkflowTransitionPolicy 2026-07-19-13:30 (PR #2341 review):
+  `skipColumnIdentityCheck` exists for callers that have ALREADY proven review-lane
+  identity by a stronger means than the literal column id — the KTD-5 transition
+  validator resolves the source column's `merge-blocker` trait flag from the workflow
+  IR, so a custom workflow's review lane can carry any column id. Those callers used
+  to spoof `{ ...task, column: "in-review" }`, which would silently misapply any
+  future column-dependent logic added here; the explicit option keeps the content
+  checks (paused / blocking status / incomplete steps / pre-merge step results) as
+  the sole deciders without lying about the task's actual column.
+  */
+  if (!options.skipColumnIdentityCheck && task.column !== "in-review") {
     return `task is in '${task.column}', must be in 'in-review'`;
   }
 

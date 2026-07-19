@@ -56,7 +56,7 @@ import {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn,
+  normalizeColumn, normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 } from "./types/board.js";
@@ -66,7 +66,7 @@ export {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn,
+  normalizeColumn, normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 };
@@ -1852,6 +1852,31 @@ export interface Task {
    * Null/undefined means no active taint.
    */
   bulkCompletionRefusalAt?: string;
+  /*
+  FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3):
+  The workflow IR version/content hash this task resolved when ENTERING its current node,
+  held until that node settles. `resolveWorkflowIrForTask` is live-per-call, so without a
+  durable pin a workflow edited mid-flight silently changes the graph under a running task.
+  On restart, recovery compares this pin against the current IR and parks with
+  `task:reconcile-workflow-drift` on mismatch rather than traversing a mutated graph.
+  */
+  workflowIrPin?: string;
+  /** The node entry {@link workflowIrPin} was taken for. Without it a restart cannot
+   *  distinguish a stale pin from the current node's pin and every resumed task reads as
+   *  drifted. */
+  workflowIrPinNodeId?: string;
+  /** The pinned node's column AT ENTRY, so drift detection flags a column deleted out
+   *  from under the task even when the node id itself survives. */
+  workflowIrPinColumnId?: string;
+  /*
+  FNXC:LegacyAdoption 2026-07-19-03:10 (U9b / R10 / KTD-8):
+  ISO timestamp stamped once when store-open reconcile or the self-healing startup sweep
+  adopts this pre-cutover row through the KTD-8 adoption table. Makes adoption idempotent
+  across restarts (never re-clear a status a human has since re-set, never re-park a row an
+  operator un-parked) and makes "zero frozen rows" provable: an un-stamped legacy row is by
+  definition one adoption never reached.
+  */
+  legacyAdoptedAt?: string;
   /** Number of times self-healing auto-requeued an `in-review` task that failed
    *  at session start with an unusable-worktree error. Bounded by
    *  `MAX_WORKTREE_SESSION_RETRIES`; when exhausted the task remains parked in

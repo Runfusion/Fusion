@@ -18,6 +18,11 @@ import type {
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
 import { THINKING_LEVELS } from "./types.js";
+import { resolveColumnFlags } from "./trait-registry.js";
+// Side-effect import: registers the built-in traits so `resolveColumnFlags`
+// resolves the built-in `merge-blocker`/`intake` flags during save-time
+// validation (U2). Custom/plugin traits that set the same flags resolve too.
+import "./builtin-traits.js";
 
 export class WorkflowIrError extends Error {
   constructor(message: string) {
@@ -322,6 +327,93 @@ const INTERPRETER_ENTRY_NODE_KINDS: ReadonlySet<WorkflowIrNodeKind> = new Set([
   "pr-respond",
   "pr-merge",
 ]);
+
+/*
+FNXC:WorkflowValidation 2026-07-18-22:10:
+U2 — a `merge-blocker` column blocks entry to complete-bound columns until a
+merge-class node has completed. If a workflow declares merge-blocker but the
+graph contains no reachable merge-class node, the gate can NEVER clear and the
+card is stranded forever. Save-time validation rejects that shape. Mirrors the
+engine's MERGE_REGION_KINDS plus the PR merge node (a PR-based workflow clears
+its merge-blocker via `pr-merge`).
+*/
+const MERGE_CLASS_NODE_KINDS: ReadonlySet<WorkflowIrNodeKind> = new Set([
+  "merge-gate",
+  "merge-attempt",
+  "manual-merge-hold",
+  "retry-backoff",
+  "recovery-router",
+  "branch-group-member-integration",
+  "branch-group-promotion",
+  "pr-merge",
+]);
+
+/** Collect the set of node ids reachable from `startId` over the given outgoing
+ *  edge map (top-level graph reachability). */
+function collectReachableNodeIds(
+  startId: string,
+  outgoing: Map<string, WorkflowIrEdge[]>,
+): Set<string> {
+  const reachable = new Set<string>([startId]);
+  const stack = [startId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const edge of outgoing.get(current) ?? []) {
+      if (!reachable.has(edge.to)) {
+        reachable.add(edge.to);
+        stack.push(edge.to);
+      }
+    }
+  }
+  return reachable;
+}
+
+/**
+ * U2 save-time hard error: a workflow declaring a `merge-blocker` column MUST
+ * contain a merge-class node reachable from `start`. Without one the merge gate
+ * never clears. Fails open (no rejection) when no column resolves the
+ * merge-blocker flag — a merge-less docs-only workflow is unaffected.
+ */
+function validateMergeBlockerReachability(
+  ir: WorkflowIrV2,
+  outgoing: Map<string, WorkflowIrEdge[]>,
+): void {
+  const blockerColumn = ir.columns.find((c) => resolveColumnFlags(c).mergeBlocker === true);
+  if (!blockerColumn) return;
+
+  const startNode = ir.nodes.find((n) => n.kind === "start");
+  // A start-less graph is rejected elsewhere; treat all nodes as candidates here
+  // so this check never masks that more fundamental error.
+  const reachable = startNode
+    ? collectReachableNodeIds(startNode.id, outgoing)
+    : new Set(ir.nodes.map((n) => n.id));
+
+  // A merge-class node is a merge-region node KIND, or the legacy/linear merge
+  // seam expressed as a prompt node with `config.seam === "merge"` (linear
+  // built-ins and custom seam workflows use the latter).
+  const isMergeClassNode = (n: WorkflowIrNode): boolean =>
+    MERGE_CLASS_NODE_KINDS.has(n.kind) || n.config?.seam === "merge";
+  const hasReachableMerge = ir.nodes.some((n) => isMergeClassNode(n) && reachable.has(n.id));
+  if (!hasReachableMerge) {
+    throw new WorkflowIrError(
+      `Workflow column '${blockerColumn.id}' declares the merge-blocker trait but the graph has ` +
+        `no reachable merge-class node (merge-gate/merge-attempt/manual-merge-hold/retry-backoff/` +
+        `recovery-router/branch-group-*/pr-merge). The merge-blocker gate can never clear without one.`,
+    );
+  }
+}
+
+/**
+ * Resolve a workflow's creation column — where new cards land (U2/R11). The
+ * intake-flagged column if present; otherwise the first column is the documented
+ * default. Returns undefined for a v1-style / empty-columns IR (no column model).
+ */
+export function resolveCreationColumn(ir: WorkflowIr): WorkflowIrColumn | undefined {
+  const columns = ir.version === "v2" ? ir.columns : undefined;
+  if (!columns || columns.length === 0) return undefined;
+  const intake = columns.find((c) => resolveColumnFlags(c).intake === true);
+  return intake ?? columns[0];
+}
 
 function validateRequiredTopLevelReachability(
   nodes: WorkflowIrNode[],
@@ -1511,6 +1603,10 @@ function validateV2(ir: WorkflowIrV2): void {
 
   const outgoing = buildOutgoing(ir.edges);
   validateParallelism(ir.nodes, outgoing, nodesById);
+
+  // U2: a merge-blocker column requires a reachable merge-class node, or its gate
+  // can never clear. Runs after edge validity + outgoing map are established.
+  validateMergeBlockerReachability(ir, outgoing);
 
   // Step-inversion (U1) — additive validation. Order matters: validate node
   // configs first, then structural rules.

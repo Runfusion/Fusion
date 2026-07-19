@@ -47,6 +47,14 @@ export function getTaskSelectClauseImpl2(store: TaskStore, slim: boolean, tableA
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata", "proposalClaimId",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
+      // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3): the IR pin and its node entry MUST be
+      // in the slim projection — restart recovery and the self-healing sweeps read tasks slim,
+      // and a pin absent from the projection reads as "unpinned", which is exactly the
+      // drift-blind traversal the pin exists to prevent.
+      "workflowIrPin", "workflowIrPinNodeId", "workflowIrPinColumnId",
+      // FNXC:LegacyAdoption 2026-07-19-03:10 (U9b / KTD-8): the startup adoption sweep lists tasks
+      // slim, so the idempotency stamp must be visible there or every restart re-adopts every row.
+      "legacyAdoptedAt",
       // `log` is fetched in slim mode so the server can aggregate
       // `timedExecutionMs` from `[timing] … in <N>ms` entries before
       // returning. The log itself is stripped from the response —

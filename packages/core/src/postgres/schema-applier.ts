@@ -37,7 +37,7 @@ FNXC:PostgresBigintCounters 2026-07-19-12:00:
 SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
 Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0026";
+export const SCHEMA_BASELINE_VERSION = "0027";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -123,8 +123,72 @@ export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
 /** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
 export const BIGINT_COUNTERS_VERSION = "0026";
 
+/**
+ * Thrown when the database was migrated by a NEWER Fusion binary than the one now
+ * opening it. Carries the offending versions so the operator sees what to upgrade.
+ */
+export class StaleBinarySchemaError extends Error {
+  constructor(
+    readonly databaseVersion: string,
+    readonly binaryVersion: string,
+  ) {
+    super(
+      `This Fusion binary is older than the database it opened: the database has schema `
+      + `migration ${databaseVersion} applied, but this binary only knows up to `
+      + `${binaryVersion}. Refusing to open so an old binary cannot write rows the newer `
+      + `schema's invariants depend on. Upgrade Fusion (e.g. \`brew upgrade fusion\`) and retry.`,
+    );
+    this.name = "StaleBinarySchemaError";
+  }
+}
+
+/*
+FNXC:StaleBinaryGuard 2026-07-19-03:10 (U9b / R10):
+Old-binary write refusal. Migration bookkeeping is forward-only, so a database carrying a
+version ABOVE this binary's SCHEMA_BASELINE_VERSION was migrated by a newer Fusion. Letting
+the old binary proceed writes rows using the previous schema's assumptions (the observed
+stale-Homebrew-binary failure mode). Compared numerically, not lexically; unparseable
+identifiers are ignored so a plugin marker cannot brick every open.
+
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+The ignore-unparseable rule is a load-bearing coupling, not just plugin defense:
+LEGACY_ADOPTION_DRAINED_MARKER (below) is a deliberately NON-NUMERIC bookkeeping row that
+`adoptLegacyTaskRowsOnOpen` (task-store/lifecycle-ops.ts) writes into
+fusion_schema_migrations after a fully-drained adoption sweep. This guard MUST keep
+skipping non-numeric versions, or the marker would present as a "newer database" and
+brick every open.
+*/
+export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): void {
+  const binaryVersion = Number(SCHEMA_BASELINE_VERSION);
+  if (!Number.isFinite(binaryVersion)) return;
+  let highest = -Infinity;
+  let highestRaw = "";
+  for (const version of applied) {
+    const parsed = Number(version);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed > highest) {
+      highest = parsed;
+      highestRaw = version;
+    }
+  }
+  if (highest > binaryVersion) {
+    throw new StaleBinarySchemaError(highestRaw, SCHEMA_BASELINE_VERSION);
+  }
+}
+
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
+
+/*
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+Durable "legacy adoption fully drained" marker row in fusion_schema_migrations.
+Written by the store-open adoption sweep after a full paginated drain in which no
+row produced a mutating adoption plan; its presence lets subsequent opens skip the
+whole-active-census scan (which would otherwise run on every open forever).
+Deliberately NON-NUMERIC so assertBinaryNotOlderThanDatabase ignores it by design
+(see that guard's FNXC note — the two sites are coupled).
+*/
+export const LEGACY_ADOPTION_DRAINED_MARKER = "legacy-adoption-drained";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -235,6 +299,17 @@ const RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0023_re
 const TASK_VERIFICATION_REQUEST_MIGRATION_PATH = join(MIGRATIONS_DIR, "0024_task_verification_request.sql");
 const SYMBOL_LOCKS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0025_symbol_locks.sql");
 const BIGINT_COUNTERS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0026_bigint_counters.sql");
+/**
+ * FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8; renumbered 0026->0027 after
+ * main claimed 0026 for bigint counters):
+ * Durable workflow IR pin (+ its node/column entry) and the one-time legacy-adoption
+ * stamp. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
+ */
+export const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION = "0027";
+const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0027_workflow_ir_pin_and_legacy_adoption.sql",
+);
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -330,6 +405,8 @@ export async function applySchemaBaseline(
     const taskVerificationRequestAlreadyApplied = applied.includes(TASK_VERIFICATION_REQUEST_VERSION);
     const symbolLocksAlreadyApplied = applied.includes(SYMBOL_LOCKS_SCHEMA_VERSION);
     const bigintCountersAlreadyApplied = applied.includes(BIGINT_COUNTERS_VERSION);
+    const workflowIrPinAndLegacyAdoptionAlreadyApplied = applied.includes(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION);
+    assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -743,6 +820,20 @@ export async function applySchemaBaseline(
       );
       schemaChanged = true;
     }
+    /*
+    FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8):
+    Migration files are manually registered — a .sql that is not wired through a version
+    constant AND an apply block here silently never runs. Apply 0027 independently of the
+    baseline so databases that already recorded 0000 gain the IR-pin and adoption columns;
+    without the forward migration those clusters crash on the first slim TaskStore SELECT.
+    */
+    if (!workflowIrPinAndLegacyAdoptionAlreadyApplied) {
+      const migrationSql = await readFile(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
   });
 }

@@ -419,6 +419,34 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.bulkCompletionRefusalAt !== undefined) {
         task.bulkCompletionRefusalAt = updates.bulkCompletionRefusalAt;
       }
+      /*
+      FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3):
+      Node entry SETS the pin; node settle CLEARS it (null). Both directions must be writable
+      through updateTask or the pin either never lands or outlives its node and reports drift
+      against a node the task already left.
+      */
+      if (updates.workflowIrPin === null) {
+        task.workflowIrPin = undefined;
+      } else if (updates.workflowIrPin !== undefined) {
+        task.workflowIrPin = updates.workflowIrPin;
+      }
+      if (updates.workflowIrPinNodeId === null) {
+        task.workflowIrPinNodeId = undefined;
+      } else if (updates.workflowIrPinNodeId !== undefined) {
+        task.workflowIrPinNodeId = updates.workflowIrPinNodeId;
+      }
+      if (updates.workflowIrPinColumnId === null) {
+        task.workflowIrPinColumnId = undefined;
+      } else if (updates.workflowIrPinColumnId !== undefined) {
+        task.workflowIrPinColumnId = updates.workflowIrPinColumnId;
+      }
+      // FNXC:LegacyAdoption 2026-07-19-03:10 (U9b / KTD-8): stamped once by adoption; null is
+      // reserved for tests/operator repair that need to force re-adoption.
+      if (updates.legacyAdoptedAt === null) {
+        task.legacyAdoptedAt = undefined;
+      } else if (updates.legacyAdoptedAt !== undefined) {
+        task.legacyAdoptedAt = updates.legacyAdoptedAt;
+      }
       if (updates.worktreeSessionRetryCount === null) {
         task.worktreeSessionRetryCount = undefined;
       } else if (updates.worktreeSessionRetryCount !== undefined) {

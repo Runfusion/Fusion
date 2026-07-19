@@ -63,6 +63,12 @@ export interface TaskRow {
   taskDoneRetryCount: number | null;
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
   bulkCompletionRefusalAt: string | null;
+  // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 durable IR pin + the node entry it belongs to.
+  workflowIrPin: string | null;
+  workflowIrPinNodeId: string | null;
+  workflowIrPinColumnId: string | null;
+  // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp (ISO timestamp / null).
+  legacyAdoptedAt: string | null;
   worktreeSessionRetryCount: number | null;
   completionHandoffLimboRecoveryCount: number | null;
   verificationFailureCount: number | null;
@@ -256,6 +262,13 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
   defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),
+  // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 — the pin must round-trip through persist so
+  // it survives the crash it exists to defend against.
+  defineTaskColumn("workflowIrPin", (task) => task.workflowIrPin ?? null),
+  defineTaskColumn("workflowIrPinNodeId", (task) => task.workflowIrPinNodeId ?? null),
+  defineTaskColumn("workflowIrPinColumnId", (task) => task.workflowIrPinColumnId ?? null),
+  // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp.
+  defineTaskColumn("legacyAdoptedAt", (task) => task.legacyAdoptedAt ?? null),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
   defineTaskColumn("completionHandoffLimboRecoveryCount", (task) => task.completionHandoffLimboRecoveryCount ?? 0),
   defineTaskColumn("verificationFailureCount", (task) => task.verificationFailureCount ?? 0),

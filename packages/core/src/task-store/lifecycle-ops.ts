@@ -7,6 +7,9 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
+import {planLegacyAdoption} from "../legacy-adoption.js";
+import {sql} from "drizzle-orm";
+import {MIGRATION_BOOKKEEPING_TABLE, LEGACY_ADOPTION_DRAINED_MARKER} from "../postgres/schema-applier.js";
 import {mkdir, readdir, readFile, stat, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, watch, type Dirent} from "node:fs";
@@ -70,6 +73,14 @@ export async function initImpl(store: TaskStore): Promise<void> {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+      /*
+      FNXC:LegacyAdoption 2026-07-19-05:10 (U9b / R10 / KTD-8):
+      Store-open legacy adoption must run HERE, not only in the SQLite tail below — backend
+      mode returns early, and backend mode is production. Placing the call only after this
+      return would make it dead code exactly where pre-cutover rows actually live. Uses the
+      async store API (listTasks/updateTask), so it is PG-safe.
+      */
+      await adoptLegacyTaskRowsOnOpen(store);
       return;
     }
 
@@ -256,7 +267,148 @@ export async function initImpl(store: TaskStore): Promise<void> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    /*
+    FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+    Adoption runs OUTSIDE the integrity-pass try block: a throw from
+    runWorkflowColumnsIntegrityPass/recoverStaleTransitionPending must not skip the
+    sweep for the boot cycle ("every pre-cutover row wakes OWNED" cannot depend on an
+    unrelated pass succeeding). Safe as a bare await — the sweep is internally fail-soft
+    and never throws.
+    */
+    await adoptLegacyTaskRowsOnOpen(store);
   }
+
+/*
+FNXC:LegacyAdoption 2026-07-19-05:00 (U9b / R10 / KTD-8):
+Store-open legacy adoption — the SECOND consumer of the KTD-8 adoption table, sharing
+`planLegacyAdoption` with self-healing's startup sweep so the two cannot disagree about
+what a legacy row means.
+
+Why both: the self-healing sweep only runs where the ENGINE runs. A store opened without
+it (CLI commands, dashboard-only serve, embedded/test hosts) would otherwise leave
+pre-cutover rows carrying a legacy `task.status` whose writer the cutover deleted — frozen
+exactly as R10 forbids. Running in both places is safe because `legacyAdoptedAt` makes
+adoption idempotent: whichever opens first adopts, the other skips.
+
+Deliberately NOT audited here. Run-audit emission at store-open would have to go through
+the sync SQLite row-insert path, which is one of the masked no-op sites under PG mode; the
+engine sweep is the audited path. Adoption is logged instead, and a failure is warned and
+swallowed — a store must still open when adoption cannot run.
+
+FNXC:LegacyAdoption 2026-07-19-09:00 (PR #2335 review):
+The sweep PAGINATES until the active census is drained instead of scanning only the newest
+500 rows. `listTasks` orders by (created_at, id), which recency ordering means a capped
+single fetch would re-read the same newest page on every open and strand older legacy rows
+forever. Offset pagination is stable here: adoption patches never change created_at and
+adopted rows stay in the active list, so page boundaries do not shift mid-drain. Each page
+stays bounded (500) so store open never materializes the whole table at once.
+
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+Completion short-circuit. Without one, the full active-census scan runs on EVERY store open
+forever — a permanent startup cost scaling with total task count, not the shrinking legacy
+backlog. After a full drain in which NO row produced a mutating adoption plan, a durable
+NON-NUMERIC marker row (LEGACY_ADOPTION_DRAINED_MARKER) is recorded in the
+fusion_schema_migrations bookkeeping table (INSERT ... ON CONFLICT DO NOTHING) and checked
+before sweeping on later opens. Non-numeric is deliberate: assertBinaryNotOlderThanDatabase
+ignores unparseable version identifiers by design (coupling documented at both sites).
+Safety rules:
+- Any mutating plan during a sweep (including one withheld only by userPaused) withholds
+  the marker that cycle — rows may still be arriving from an old binary (unlikely under the
+  stale-binary guard, but the check is cheap), and a paused legacy row must stay adoptable
+  after the operator unpauses.
+- A failed marker READ falls back to sweeping (fail-open toward correctness); a failed
+  marker WRITE is warned and swallowed (the next clean drain retries).
+- SQLite (non-backend) mode has no bookkeeping table → no marker, sweep always runs.
+*/
+async function hasLegacyAdoptionDrainedMarker(store: TaskStore): Promise<boolean> {
+  const db = store.asyncLayer?.db;
+  if (!db) return false;
+  try {
+    const rows = (await db.execute(
+      sql`SELECT version FROM public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} WHERE version = ${LEGACY_ADOPTION_DRAINED_MARKER}`,
+    )) as unknown as unknown[];
+    return rows.length > 0;
+  } catch (error) {
+    // Fail-open toward correctness: an unreadable marker means sweep.
+    storeLog.warn("Legacy-adoption drained-marker read failed — sweeping anyway", {
+      phase: "init:legacy-adoption",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+async function writeLegacyAdoptionDrainedMarker(store: TaskStore): Promise<void> {
+  const db = store.asyncLayer?.db;
+  if (!db) return;
+  try {
+    await db.execute(
+      sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_ADOPTION_DRAINED_MARKER}) ON CONFLICT (version) DO NOTHING`,
+    );
+  } catch (error) {
+    // Non-fatal: the next fully-clean drain writes it again.
+    storeLog.warn("Legacy-adoption drained-marker write failed", {
+      phase: "init:legacy-adoption",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function adoptLegacyTaskRowsOnOpen(store: TaskStore): Promise<number> {
+  try {
+    if (await hasLegacyAdoptionDrainedMarker(store)) return 0;
+    const now = new Date().toISOString();
+    const pageSize = 500;
+    let offset = 0;
+    let adopted = 0;
+    let mutationPlanned = false;
+    for (;;) {
+      const tasks = await store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+      for (const task of tasks) {
+        const plan = planLegacyAdoption(
+          {
+            status: task.status,
+            reviewLevel: task.reviewLevel,
+            enabledWorkflowSteps: task.enabledWorkflowSteps,
+            legacyAdoptedAt: task.legacyAdoptedAt,
+          },
+          now,
+        );
+        if (plan.action === "skip" || !plan.patch) continue;
+        // A mutating plan — applied or userPaused-withheld — blocks the drained
+        // marker this cycle (see FNXC note above).
+        mutationPlanned = true;
+        if (task.userPaused === true) continue;
+        try {
+          await store.updateTask(task.id, plan.patch);
+          adopted += 1;
+        } catch (error) {
+          storeLog.warn("Legacy adoption failed for task during store open", {
+            phase: "init:legacy-adoption",
+            taskId: task.id,
+            action: plan.action,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (tasks.length < pageSize) break;
+      offset += tasks.length;
+    }
+    if (adopted > 0) {
+      storeLog.log?.(`Legacy adoption adopted ${adopted} pre-cutover row(s) at store open`);
+    }
+    if (!mutationPlanned) {
+      await writeLegacyAdoptionDrainedMarker(store);
+    }
+    return adopted;
+  } catch (error) {
+    storeLog.warn("Legacy adoption pass failed during store open", {
+      phase: "init:legacy-adoption",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
 
 export function setupActivityLogListenersImpl(store: TaskStore): void {
     if (store.activityListenersWired) return;

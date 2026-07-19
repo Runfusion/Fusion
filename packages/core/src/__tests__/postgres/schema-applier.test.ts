@@ -32,6 +32,9 @@ import {
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
+  WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+  assertBinaryNotOlderThanDatabase,
+  StaleBinarySchemaError,
   cePluginSchemaInit,
   cliPressPluginSchemaInit,
   reportsPluginSchemaInit,
@@ -761,6 +764,75 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect(await getAppliedMigrations(ctx.db)).toContain(BULK_COMPLETION_REFUSAL_AT_VERSION);
   });
 
+  /*
+  FNXC:WorkflowIrPin 2026-07-19-03:30 (U9b / KTD-3 + KTD-8):
+  Same existing-DB shape as the 0018 regression above, for the durable IR pin (+ its node
+  and column entry) and the one-time legacy-adoption stamp. All five columns are in the
+  slim TaskStore projection, so a cluster that recorded 0000 and never received 0026 would
+  crash on the first slim SELECT rather than degrade — which is exactly why the baseline
+  edit alone is insufficient and the forward migration has to exist.
+  */
+  it("upgrades an existing DB missing the IR-pin and legacy-adoption columns (0027)", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0027';
+      ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin;
+      ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin_node_id;
+      ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin_column_id;
+      ALTER TABLE project.tasks DROP COLUMN legacy_adopted_at;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name IN ('workflow_ir_pin', 'workflow_ir_pin_node_id', 'workflow_ir_pin_column_id', 'legacy_adopted_at')
+      ORDER BY column_name
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns.map((c) => c.column_name)).toEqual([
+      "legacy_adopted_at",
+      "workflow_ir_pin",
+      "workflow_ir_pin_column_id",
+      "workflow_ir_pin_node_id",
+    ]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION);
+  });
+
+  /*
+  FNXC:StaleBinaryGuard 2026-07-19-03:30 (U9b / R10):
+  Old-binary write refusal. A database migrated by a NEWER Fusion must not be opened by an
+  older binary: the old binary writes rows under the previous schema's assumptions and
+  re-runs reconciles the newer version already superseded (the observed stale-Homebrew
+  failure mode, where a pre-fix binary re-ran the Ideas evacuation against a shared DB and
+  the audit trail showed an unidentifiable writer).
+  */
+  it("refuses to open a database migrated by a newer binary (stale-binary guard)", () => {
+    const future = String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0");
+    expect(() => assertBinaryNotOlderThanDatabase([SCHEMA_BASELINE_VERSION, future]))
+      .toThrow(StaleBinarySchemaError);
+    // Current and older versions are fine — this guard only fires on a FUTURE version.
+    expect(() => assertBinaryNotOlderThanDatabase(["0000", "0018", SCHEMA_BASELINE_VERSION]))
+      .not.toThrow();
+    // Non-numeric markers (plugin / hand-inserted) must not brick every open.
+    expect(() => assertBinaryNotOlderThanDatabase(["plugin-roadmap-001", SCHEMA_BASELINE_VERSION]))
+      .not.toThrow();
+  });
+
+  /*
+  Numeric, not lexical. A bare "9" is the case where the two disagree: numerically 9 is far
+  BELOW the current baseline (so an old marker must not trip the guard), but lexically "9"
+  sorts ABOVE "0027" and a string compare would refuse every open against such a database.
+  */
+  it("compares schema versions numerically, not lexically", () => {
+    expect(() => assertBinaryNotOlderThanDatabase(["9"])).not.toThrow();
+    expect(() => assertBinaryNotOlderThanDatabase(["0009"])).not.toThrow();
+    // A genuinely newer version still throws regardless of padding.
+    expect(() => assertBinaryNotOlderThanDatabase(["0028"])).toThrow(StaleBinarySchemaError);
+  });
+
 
   /*
   FNXC:ProjectDataIsolation 2026-07-14-12:10:
@@ -1294,6 +1366,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
+      WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1346,6 +1419,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
+      WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
     ]);
   });
 
@@ -1531,6 +1605,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
+      WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
     ]);
   });
 
@@ -1597,6 +1672,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
+      WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
     ]);
   });
 
@@ -1663,6 +1739,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
+      WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
     ]);
   });
 });
