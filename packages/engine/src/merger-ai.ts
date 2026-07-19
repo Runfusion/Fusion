@@ -161,6 +161,19 @@ function taskHasApprovedAiMergeReview(task: Task | undefined): boolean {
   );
 }
 
+function getOutstandingBlockingMergeReasons(task: Task | undefined): string[] {
+  const actions = task?.log?.map((entry) => entry.action).filter((action): action is string => typeof action === "string") ?? [];
+  for (let index = actions.length - 1; index >= 0; index--) {
+    const action = actions[index];
+    if (/AI merge: (?:landed|finalized).*task → done/i.test(action)) return [];
+    const blocked = action.match(/AI merge BLOCKED .*?unresolved correctness concern:\s*(.+)$/i);
+    if (blocked?.[1]) return [blocked[1].trim()];
+    const rejected = action.match(/AI merge review \(pass \d+\): rejected \(blocking\) —\s*(.+)$/i);
+    if (rejected?.[1]) return [rejected[1].trim()];
+  }
+  return [];
+}
+
 function matchesApprovedAiMergeSha(squashSha: string, approvedShas: Set<string>): boolean {
   if (approvedShas.size === 0) return true;
   const normalized = squashSha.toLowerCase();
@@ -795,6 +808,8 @@ export async function landOneRepo(
     await log(`AI merge: pre-merge prune failed: ${getErrorMessage(err)}`);
   }
   let advanceRetries = 0;
+  const taskAtStart = await store.getTask(taskId);
+  let outstandingReviewReasons = getOutstandingBlockingMergeReasons(taskAtStart);
   while (true) {
     throwIfAborted(signal, taskId);
     const tipSha = await git(["rev-parse", "--verify", `refs/heads/${integrationBranch}`], repoRootDir);
@@ -906,10 +921,13 @@ export async function landOneRepo(
       await log(`[timing] AI merge dependency sync completed in ${Date.now() - depsSyncStartedAt}ms${depsSyncResult ? (depsSyncResult.installCommand ? ` (${depsSyncResult.skipped ? "skipped" : "ran"}: ${depsSyncResult.installCommand})` : " (no command)") : " (failed — non-fatal, deps unavailable)"}`);
 
       // 2 + 3. Merge + review loop (corrective passes).
-      const squashSha = await mergeAndReview({
+      const reviewResult = await mergeAndReview({
         mergeRoot, branch, integrationBranch, tipSha, taskTitle, includeTaskId, trailers, taskId,
         maxPasses, mergeAgent, reviewAgent, audit, log, setStatus, store, signal,
+        initialPriorReasons: outstandingReviewReasons,
       });
+      const squashSha = reviewResult.squashSha;
+      outstandingReviewReasons = reviewResult.priorReasons;
 
       if (!squashSha) {
         // Branch had no net changes vs the tip — nothing to land. The caller
@@ -1993,9 +2011,10 @@ async function mergeAndReview(input: {
   setStatus: (status: string | null) => Promise<unknown>;
   store: TaskStore;
   signal?: AbortSignal;
-}): Promise<string | null> {
+  initialPriorReasons?: string[];
+}): Promise<{ squashSha: string | null; priorReasons: string[] }> {
   const { mergeRoot, branch, integrationBranch, tipSha, taskTitle, includeTaskId, trailers, taskId, maxPasses, mergeAgent, reviewAgent, audit, log, setStatus, store, signal } = input;
-  let priorReasons: string[] = [];
+  let priorReasons = [...(input.initialPriorReasons ?? [])];
 
   for (let attempt = 0; ; attempt++) {
     throwIfAborted(signal, taskId);
@@ -2017,7 +2036,7 @@ async function mergeAndReview(input: {
     }));
 
     let head = await git(["rev-parse", "HEAD"], mergeRoot);
-    if (head === tipSha) return null; // empty merge — nothing landed
+    if (head === tipSha) return { squashSha: null, priorReasons }; // empty merge — nothing landed
 
     // Guarantee the squash's task metadata (task-id subject prefix + board
     // association trailers) even if the agent omitted it — this amends HEAD, so
@@ -2041,7 +2060,7 @@ async function mergeAndReview(input: {
 
     if (verdict.verdict === "approve") {
       await log(`AI merge review (pass ${attempt + 1}): approved squash ${head}`);
-      return head;
+      return { squashSha: head, priorReasons };
     }
 
     const budgetExhausted = attempt >= maxPasses;
@@ -2054,7 +2073,7 @@ async function mergeAndReview(input: {
       // Advisory: land the squash with the concern logged.
       await audit.git({ type: "merge:ai-review-landed-with-concerns", target: integrationBranch, metadata: { taskId, attempt, reasons: verdict.reasons, squashSha: head } });
       await log(`AI merge: landing with unresolved advisory concern(s): ${verdict.reasons.join("; ")}`);
-      return head;
+      return { squashSha: head, priorReasons };
     }
 
     priorReasons = verdict.reasons;
