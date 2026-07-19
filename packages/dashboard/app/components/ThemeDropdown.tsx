@@ -15,6 +15,11 @@ interface ThemeDropdownProps {
   resolvedThemeMode?: "dark" | "light";
   onThemeModeChange?: (mode: ThemeMode) => void;
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
+  triggerVariant?: "compact" | "current-row";
+}
+
+export function resolveColorTheme(colorTheme: ColorTheme) {
+  return COLOR_THEMES.find((theme) => theme.value === colorTheme) ?? COLOR_THEMES[0];
 }
 
 function ThemeSwatch({ className }: { className: string }) {
@@ -31,6 +36,9 @@ function ThemeSwatch({ className }: { className: string }) {
 /*
 FNXC:Theme 2026-06-19-12:10:
 FN-6727 requires Command Center operators to change the global app theme from a compact dropdown that previews each color theme with the same rich swatch chips used by Settings; this component accepts App-threaded setters instead of creating another theme owner.
+
+FNXC:Theme 2026-07-16-14:30:
+FN-8146 merges Settings' current-theme summary into this dropdown trigger. The Settings variant carries mode and combined-value context while Command Center retains the compact swatch-and-label trigger.
 */
 export function ThemeDropdown({
   colorTheme,
@@ -40,6 +48,7 @@ export function ThemeDropdown({
   resolvedThemeMode = themeMode === "light" ? "light" : "dark",
   onThemeModeChange,
   onShadcnCustomColorsChange = () => {},
+  triggerVariant = "compact",
 }: ThemeDropdownProps) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
@@ -47,10 +56,14 @@ export function ThemeDropdown({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  const currentTheme = useMemo(
-    () => COLOR_THEMES.find((theme) => theme.value === colorTheme) ?? COLOR_THEMES[0],
-    [colorTheme],
-  );
+  const currentTheme = useMemo(() => resolveColorTheme(colorTheme), [colorTheme]);
+  const currentMode = themeMode === "system" ? resolvedThemeMode : themeMode;
+  const CurrentModeIcon = THEME_MODES.find((mode) => mode.value === currentMode)?.icon;
+  const modeLabel = themeMode === "system"
+    ? t("theme.system", "System")
+    : t(`theme.${themeMode}`, themeMode ? `${themeMode.charAt(0).toUpperCase()}${themeMode.slice(1)}` : "Dark");
+  const currentThemeLabel = t(`theme.colorTheme.${currentTheme.value}`, currentTheme.label);
+  const currentRowLabel = `${t("theme.currentTheme", "Current theme")} ${modeLabel} / ${currentThemeLabel}`;
   const listboxId = "theme-dropdown-listbox";
 
   useEffect(() => {
@@ -117,20 +130,38 @@ export function ThemeDropdown({
   };
 
   return (
-    <div className={`theme-dropdown${open ? " open" : ""}`} ref={rootRef}>
+    <div className={`theme-dropdown${triggerVariant === "current-row" ? " theme-dropdown--current-row" : ""}${open ? " open" : ""}`} ref={rootRef}>
       <button
         type="button"
-        className="theme-dropdown-trigger btn"
+        className={`theme-dropdown-trigger btn${triggerVariant === "current-row" ? " theme-dropdown-trigger--current-row" : ""}`}
+        aria-label={triggerVariant === "current-row" ? currentRowLabel : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
         onClick={() => setOpen((value) => !value)}
         onKeyDown={handleTriggerKeyDown}
       >
-        <ThemeSwatch className={currentTheme.className} />
-        <span className="theme-dropdown-trigger-label">
-          {t(`theme.colorTheme.${currentTheme.value}`, currentTheme.label)}
-        </span>
+        {triggerVariant === "current-row" ? (
+          <>
+            <span className="theme-dropdown-current-row-icon" aria-hidden="true">
+              {CurrentModeIcon ? <CurrentModeIcon size={20} /> : null}
+            </span>
+            <span className="theme-dropdown-current-row-info">
+              <span className="theme-dropdown-current-row-label">{t("theme.currentTheme", "Current theme")}</span>
+              <span className="theme-dropdown-current-row-value">
+                {modeLabel} / {currentThemeLabel}
+              </span>
+            </span>
+            <ThemeSwatch className={currentTheme.className} />
+          </>
+        ) : (
+          <>
+            <ThemeSwatch className={currentTheme.className} />
+            <span className="theme-dropdown-trigger-label">
+              {currentThemeLabel}
+            </span>
+          </>
+        )}
         <ChevronDown size={16} aria-hidden="true" />
       </button>
 

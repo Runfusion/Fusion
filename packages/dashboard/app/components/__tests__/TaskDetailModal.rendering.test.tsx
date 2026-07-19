@@ -343,6 +343,26 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    it("renders parent task link for API-created planning tasks", async () => {
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ sourceType: "api", sourceParentTaskId: "FN-PLANNER" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText(/Created via API/)).toBeInTheDocument();
+      const link = screen.getByRole("button", { name: "FN-PLANNER" });
+      await userEvent.click(link);
+      await waitFor(() => expect(noopOpenDetail).toHaveBeenCalled());
+    });
+
     it("renders compact github issue link for github import provenance", () => {
       render(
         <TaskDetailModal
@@ -1379,86 +1399,23 @@ describe("TaskDetailModal", () => {
     expect(screen.getByText(/No review items yet\./i)).toBeTruthy();
   });
 
-  describe("inline execution mode toggle", () => {
-    it("keeps inline priority and execution controls aligned with shared sizing and gap", () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "todo", priority: "high", executionMode: "fast" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const controls = screen.getByTestId("detail-meta-inline-controls");
-      const priorityControl = screen.getByRole("combobox", { name: "Task priority" });
-      const priorityChip = priorityControl.closest(".detail-priority-chip") as HTMLElement;
-      const modeToggle = screen.getByRole("button", { name: "Execution mode: fast" });
-
-      const controlsStyle = getComputedStyle(controls);
-      const priorityStyle = getComputedStyle(priorityChip);
-      const modeStyle = getComputedStyle(modeToggle);
-
-      expect(controlsStyle.gap).not.toBe("");
-      expect(controlsStyle.gap).not.toBe("normal");
-      expect(priorityStyle.minHeight).toBe(modeStyle.minHeight);
-      expect(priorityStyle.minHeight).not.toBe("0px");
+  describe("inline action row icon-only controls", () => {
+    it("renders priority and Fast controls as accessible icon-only Quick Add buttons", () => {
+      render(<TaskDetailModal initialTab="definition" task={makeTask({ column: "todo", priority: "high", executionMode: "fast" })} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      const priority = screen.getByTestId("detail-priority-trigger");
+      const fast = screen.getByRole("button", { name: "Execution mode: fast" });
+      expect(priority).toHaveClass("btn", "btn-icon", "btn-sm");
+      expect(priority).toHaveAttribute("title", "Priority: High");
+      expect(fast).toHaveClass("btn", "btn-icon", "btn-sm", "btn-primary");
+      expect(fast).toHaveAttribute("title", "Execution mode: fast");
+      expect(fast).not.toHaveTextContent("Fast");
     });
 
-    it("renders standard mode as an unpressed toggle", () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "triage", executionMode: "standard" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const toggle = screen.getByRole("button", { name: "Execution mode: standard" });
-      expect(toggle).toHaveAttribute("aria-pressed", "false");
-      expect(toggle).toHaveTextContent("Standard");
-      expect(toggle).not.toHaveClass("detail-execution-mode-toggle--fast");
+    it("removes bespoke toolbar SVG sizing rules", () => {
+      const css = readDashboardStylesSource();
+      expect(css).not.toMatch(/\.detail-oversight-menu-trigger svg\s*\{[^}]*width:\s*1em/);
+      expect(css).not.toMatch(/\.detail-execution-mode-toggle svg\s*\{[^}]*width:\s*1em/);
     });
-
-    it("renders fast mode as a pressed toggle", () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "todo", executionMode: "fast" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const toggle = screen.getByRole("button", { name: "Execution mode: fast" });
-      expect(toggle).toHaveAttribute("aria-pressed", "true");
-      expect(toggle).toHaveTextContent("Fast");
-      expect(toggle).toHaveClass("detail-execution-mode-toggle--fast");
-    });
-  });
-
-  it("defines fast execution mode svg highlight styles with warning tokens", () => {
-    const css = readDashboardStylesSource();
-
-    expectBaseRule(css, ".detail-execution-mode-toggle--fast svg", "color: var(--color-warning);");
-    expectBaseRule(
-      css,
-      ".detail-execution-mode-toggle--fast svg",
-      "background: color-mix(in srgb, var(--color-warning) 20%, transparent);",
-    );
   });
 
   it("appends daemon token query to attachment href/src URLs for direct browser loads", () => {
@@ -1587,6 +1544,32 @@ describe("TaskDetailModal", () => {
     );
 
     expect(screen.queryByText("Retry")).toBeNull();
+  });
+
+  it("suppresses failure alert and Retry actions while a stale failed task has automatic recovery pending", () => {
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({
+          status: "failed",
+          error: "Transient provider error",
+          recoveryRetryCount: 1,
+          nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onRetryTask={noopRetry}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("Retry with a different model/node")).toBeNull();
   });
 
   describe("retry action uniqueness for in-review failed tasks", () => {
@@ -2748,6 +2731,32 @@ describe("TaskDetailModal", () => {
 
     await waitFor(() => {
       expect(onArchiveTask).toHaveBeenCalledWith("FN-099");
+    });
+  });
+
+  it("deletes a triage-marker duplicate through the shared delete API", async () => {
+    const onDeleteTask = vi.fn().mockResolvedValue(makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234", duplicateSource: "triage-marker" } })}
+        tasks={[makeTask({ id: "FN-1234" })]}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={onDeleteTask}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Choose Delete to remove this duplicate, or Keep to continue anyway.");
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { removeLineageReferences: true });
     });
   });
 

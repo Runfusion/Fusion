@@ -14,6 +14,7 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   createWorkflowAuthoringTools: () => [],
   createChatTaskDocumentTools: () => [],
+  createChatTaskLogsReadTool: () => ({}),
 }));
 
 import {
@@ -73,7 +74,7 @@ describe("planning generation cancellation", () => {
 
     expect(promptSignal?.aborted).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
-    expect(getSession(sessionId)?.error).toMatch(/stopped by user/i);
+    expect((await getSession(sessionId))?.error).toMatch(/stopped by user/i);
 
     resolveHungPrompt?.();
     await new Promise((resolve) => setTimeout(resolve, 0));

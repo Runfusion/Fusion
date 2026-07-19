@@ -120,6 +120,7 @@ describe("WorkflowNodeRunnerRegistry", () => {
     });
 
     expect(result).toEqual({ outcome: "success", value: "legacy-merged" });
-    expect(merge).toHaveBeenCalledWith(task, context);
+    // FNXC:WorkflowExecution 2026-07-15-19:55: merge-attempt now forwards ctx.signal as a third arg so graph cancellation can abort the legacy merge seam; unwired tests pass undefined.
+    expect(merge).toHaveBeenCalledWith(task, context, undefined);
   });
 });

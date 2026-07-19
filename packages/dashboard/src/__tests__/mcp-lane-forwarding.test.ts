@@ -3,21 +3,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { createFnAgentMock, resolveMcpServersForStoreMock } = vi.hoisted(() => ({
+  /*
+  FNXC:DashboardTests 2026-07-18-12:20:
+  Planning defaults clarificationEnabled=false, so createSession forces a summary after the
+  first question (continueToSummaryAfterSuppressedQuestion). Mock every follow-up prompt as a
+  complete payload so MCP-forwarding assertions exercise the default product path instead of
+  throwing Clarification-disabled follow-up did not produce a summary.
+  */
   createFnAgentMock: vi.fn(async () => ({
     session: {
       state: { messages: [] as Array<{ role: string; content: string }> },
       prompt: vi.fn(async function (this: { state: { messages: Array<{ role: string; content: string }> } }, _message: string) {
+        const alreadyAnswered = this.state.messages.some((message) => message.role === "assistant");
         this.state.messages.push({
           role: "assistant",
-          content: JSON.stringify({
-            type: "question",
-            data: {
-              id: "q1",
-              text: "What should be built?",
-              type: "text",
-              required: true,
-            },
-          }),
+          content: JSON.stringify(
+            alreadyAnswered
+              ? {
+                  type: "complete",
+                  data: {
+                    title: "Build a feature",
+                    description: "Materialized MCP planning summary",
+                    suggestedSize: "M",
+                    keyDeliverables: ["docs MCP available"],
+                  },
+                }
+              : {
+                  type: "question",
+                  data: {
+                    id: "q1",
+                    text: "What should be built?",
+                    type: "text",
+                    required: true,
+                  },
+                },
+          ),
         });
       }),
       dispose: vi.fn(),

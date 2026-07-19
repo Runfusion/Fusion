@@ -4,9 +4,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import express from "express";
 import http from "node:http";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
@@ -50,6 +48,10 @@ import { resetRuntimeLogSink, setRuntimeLogSink } from "../runtime-logger.js";
 import { resetDiagnosticsSink, setDiagnosticsSink, type LogEntry } from "../ai-session-diagnostics.js";
 import * as updateCheckModule from "../update-check.js";
 import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
@@ -165,7 +167,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { AgentStore, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -208,14 +210,21 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     mergeTask: vi.fn(),
     archiveTask: vi.fn(),
     unarchiveTask: vi.fn(),
-    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main" }),
-    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main" }),
+    // Existing planning-route scenarios exercise the enabled checkpoint flow; explicit disabled cases override this default.
+    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
+    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
     updateSettings: vi.fn(),
     updateGlobalSettings: vi.fn(),
     getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
     getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-15:55:
+    FN-8277 parent-scoped uniqueness pre-check requires findRecentTasksBySourceParentTaskId;
+    default empty so planning create-task / subtask routes return 201 under mock stores.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     getAgentLogCount: vi.fn().mockResolvedValue(0),
     getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
@@ -560,6 +569,69 @@ describe("Planning Mode Routes", () => {
         expect(res.body.firstQuestion.type).toBe("single_select");
       });
 
+      it("rejects a first-turn completion until the agent asks a clarifying question", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
+          JSON.stringify({ type: "question", data: { id: "q-required", type: "text", question: "Which constraint matters most?" } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a detailed account-management experience" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required", question: "Which constraint matters most?" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(4);
+        expect(messages[2]?.content).toContain("Before producing a plan");
+      });
+
+      it("shows the mandatory first question when clarification is disabled", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: JSON.stringify({
+                type: "question",
+                data: { id: "q-required-disabled", type: "text", question: "Who is the primary user?" },
+              }) });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a feature", clarificationEnabled: false }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required-disabled" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(2);
+      });
+
       it("requires initialPlan in body", async () => {
         const res = await REQUEST(
           buildApp(),
@@ -657,6 +729,44 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/start-streaming", () => {
+      it("broadcasts a mandatory question instead of accepting a first-turn completion", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
+          JSON.stringify({ type: "question", data: { id: "q-stream-required", type: "text", question: "What risk should the plan address?" } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Build a detailed reporting workflow", clarificationEnabled: false, planningDepth: "small", customQuestionCount: 1 }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        planningStreamManager.consumeInitialTurn(res.body.sessionId)!();
+        await vi.waitFor(() => {
+          const questions = planningStreamManager.getBufferedEvents(res.body.sessionId, 0)
+            .filter((event) => event.event === "question");
+          expect(questions).toHaveLength(1);
+          expect(JSON.parse(questions[0]!.data)).toMatchObject({ id: "q-stream-required" });
+        });
+        expect(messages).toHaveLength(4);
+        expect(messages[2]?.content).toContain("Before producing a plan");
+      });
+
       it("rejects invalid planning depth", async () => {
         const res = await REQUEST(
           buildApp(),
@@ -1635,6 +1745,10 @@ describe("Planning Mode Routes", () => {
       it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
         const responses = [
           JSON.stringify({
+            type: "question",
+            data: { id: "q-offline-context", type: "text", question: "Which offline scenarios matter most?" },
+          }),
+          JSON.stringify({
             type: "complete",
             data: {
               title: "Plan offline sync",
@@ -1670,9 +1784,18 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        expect(startRes.body.firstQuestion.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
-        expect(startRes.body.firstQuestion.options?.[0]?.id).toBe(PLANNING_DEEPEN_PROCEED_OPTION_ID);
-        expect(startRes.body.firstQuestion.options?.map((option: { label: string }) => option.label)).toEqual([
+        expect(startRes.body.firstQuestion.question).toBe("Which offline scenarios matter most?");
+
+        const interviewRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(interviewRes.body.data.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+        expect(interviewRes.body.data.options?.[0]?.id).toBe(PLANNING_DEEPEN_PROCEED_OPTION_ID);
+        expect(interviewRes.body.data.options?.map((option: { label: string }) => option.label)).toEqual([
           "Proceed to final plan",
           "Conflict resolution strategy",
         ]);
@@ -1943,6 +2066,101 @@ describe("Planning Mode Routes", () => {
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
+      });
+
+      it("queues deletion behind an upsert that already passed its tombstone check", async () => {
+        let releaseUpsert!: () => void;
+        let announceUpsert!: (sessionId: string) => void;
+        const upsertGate = new Promise<void>((resolve) => {
+          releaseUpsert = resolve;
+        });
+        const upsertStarted = new Promise<string>((resolve) => {
+          announceUpsert = resolve;
+        });
+
+        class DeferredUpsertStore extends MockAiSessionStore {
+          deleteCalls: string[] = [];
+          private shouldDefer = true;
+
+          override async upsert(row: AiSessionRow): Promise<void> {
+            if (this.shouldDefer) {
+              this.shouldDefer = false;
+              announceUpsert(row.id);
+              await upsertGate;
+            }
+            await super.upsert(row);
+          }
+
+          override async delete(id: string): Promise<void> {
+            this.deleteCalls.push(id);
+            await super.delete(id);
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:20:
+        Cancellation must serialize its delete behind a write that has already begun so the older write cannot land after deletion and resurrect the planning session.
+        */
+        const deferredStore = new DeferredUpsertStore();
+        setAiSessionStore(deferredStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = buildApp();
+        const startRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise queued planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = await upsertStarted;
+        const cancelRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        await Promise.resolve();
+        expect(deferredStore.deleteCalls).toEqual([]);
+
+        releaseUpsert();
+        const [startRes, cancelRes] = await Promise.all([startRequest, cancelRequest]);
+
+        expect(startRes.status).toBe(201);
+        expect(cancelRes.status).toBe(200);
+        expect(deferredStore.deleteCalls).toEqual([sessionId]);
+        expect(await deferredStore.get(sessionId)).toBeNull();
+      });
+
+      it("reports persistence deletion failures instead of claiming session deletion succeeded", async () => {
+        class FailingDeleteStore extends MockAiSessionStore {
+          override async delete(): Promise<void> {
+            throw new Error("planning persistence delete failed");
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:46:
+        A failed authoritative session delete must fail the awaited cancellation request; otherwise the UI is told cleanup completed while the PostgreSQL row remains available for later writes.
+        */
+        const failingStore = new FailingDeleteStore();
+        setAiSessionStore(failingStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { aiSessionStore: failingStore as any }));
+        const startRes = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise failed planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const deleteRes = await REQUEST(app, "DELETE", `/api/ai-sessions/${startRes.body.sessionId}`);
+
+        expect(startRes.status).toBe(201);
+        expect(deleteRes.status).toBe(500);
+        expect(deleteRes.body.error).toContain("planning persistence delete failed");
       });
 
       it("returns 404 for non-existent session", async () => {
@@ -2253,7 +2471,6 @@ describe("Planning Mode Routes", () => {
                     status: storedSession.status,
                     title: storedSession.title,
                     projectId: storedSession.projectId,
-                    lockedByTab: null,
                     updatedAt: storedSession.updatedAt,
                     archived: false,
                   },
@@ -2626,7 +2843,8 @@ describe("Planning Mode Routes", () => {
         const planningSessionId = await createCompletedPlanningSession();
 
         // Precondition: the completed planning session is persisted as history.
-        const persistedBefore = mockStore.get(planningSessionId);
+        // FNXC:PostgresPlanningPersistence 2026-07-14-19:56: Session-store reads are asynchronous after the PostgreSQL cutover; await the history precondition instead of asserting against the Promise wrapper.
+        const persistedBefore = await mockStore.get(planningSessionId);
         expect(persistedBefore).not.toBeNull();
         expect(persistedBefore?.type).toBe("planning");
         expect(persistedBefore?.status).toBe("complete");
@@ -2659,7 +2877,7 @@ describe("Planning Mode Routes", () => {
 
         // Regression assertion: the completed planning session row must survive
         // task creation so it remains listable/restorable in history.
-        const persistedAfter = mockStore.get(planningSessionId);
+        const persistedAfter = await mockStore.get(planningSessionId);
         expect(persistedAfter).not.toBeNull();
         expect(persistedAfter?.type).toBe("planning");
         expect(persistedAfter?.status).toBe("complete");
@@ -3450,9 +3668,11 @@ describe("Saturated-slot regression: utility AI routes", () => {
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 0, // SATURATED: zero task slots available
         promptOverrides: {},
+        agentClarificationEnabled: true,
       }),
       getSettingsFast: vi.fn().mockResolvedValue({
         maxConcurrent: 0,
+        agentClarificationEnabled: true,
       }),
       ...overrides,
     } as Partial<TaskStore>);
@@ -3636,8 +3856,12 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(res.body.type).toBe("question");
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock aiSessionStore that returns conflict on acquire
+    /*
+    FNXC:PlanningMultiTab 2026-07-14-00:00:
+    Planning routes are lock-free: a lock held by another tab must never block a respond.
+    Multiple tabs read and interact with the same DB-backed session.
+    */
+    it("ignores tab locks — respond succeeds even when another tab holds the session lock", async () => {
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-a" }),
         releaseLock: vi.fn(),
@@ -3656,8 +3880,8 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(startRes.status).toBe(201);
       const sessionId = startRes.body.sessionId;
 
-      // Respond with conflicting tabId - mock returns conflict
-      const conflictRes = await REQUEST(
+      // A stale tabId from an old client must be ignored, not 409'd.
+      const res = await REQUEST(
         app,
         "POST",
         "/api/planning/respond",
@@ -3665,11 +3889,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-a",
-      });
+      expect(res.status).toBe(200);
+      expect(res.body.type).toBe("question");
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 
@@ -3686,8 +3908,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(retrySpy).toHaveBeenCalled();
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock that returns conflict
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-x" }),
         releaseLock: vi.fn(),
@@ -3695,7 +3918,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
 
       const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
 
-      const conflictRes = await REQUEST(
+      const res = await REQUEST(
         app,
         "POST",
         "/api/planning/session-locked-retry/retry",
@@ -3703,11 +3926,10 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-x",
-      });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, sessionId: "session-locked-retry" });
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 
@@ -3750,8 +3972,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(retrySpy).toHaveBeenCalled();
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock that returns conflict
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: subtask retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-locked" }),
         releaseLock: vi.fn(),
@@ -3759,7 +3982,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
 
       const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
 
-      const conflictRes = await REQUEST(
+      const res = await REQUEST(
         app,
         "POST",
         "/api/subtasks/subtask-locked-retry/retry",
@@ -3767,11 +3990,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-locked",
-      });
+      expect(res.status).toBe(200);
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 });
@@ -4020,6 +4241,35 @@ describe("Saturated-slot regression: heartbeat wake routes", () => {
   });
 });
 
+describe("GET /api/ai-sessions type filtering", () => {
+  it("returns planning rows for a valid type filter and preserves all types when omitted", async () => {
+    const sessions = [
+      { id: "planning-1", type: "planning", status: "complete", title: "Plan", projectId: null, updatedAt: "2026-07-15T00:00:00.000Z", archived: false },
+      { id: "subtask-1", type: "subtask", status: "complete", title: "Breakdown", projectId: null, updatedAt: "2026-07-15T00:00:00.000Z", archived: false },
+    ];
+    const mockAiSessionStore = {
+      listAll: vi.fn((_projectId: string | undefined, options?: { includeArchived?: boolean; type?: string }) =>
+        options?.type ? sessions.filter((session) => session.type === options.type) : sessions,
+      ),
+      listActive: vi.fn(() => []),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createMockStore(), { aiSessionStore: mockAiSessionStore as any }));
+
+    const filtered = await REQUEST(app, "GET", "/api/ai-sessions?includeCompleted=1&type=planning");
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.sessions).toEqual([expect.objectContaining({ id: "planning-1", type: "planning" })]);
+    expect(mockAiSessionStore.listAll).toHaveBeenCalledWith(undefined, { includeArchived: false, type: "planning" });
+
+    const unfiltered = await REQUEST(app, "GET", "/api/ai-sessions?includeCompleted=1");
+    expect(unfiltered.status).toBe(200);
+    expect(unfiltered.body.sessions).toHaveLength(2);
+    expect(unfiltered.body.sessions.map((session: { type: string }) => session.type)).toEqual(["planning", "subtask"]);
+    expect(mockAiSessionStore.listAll).toHaveBeenLastCalledWith(undefined, { includeArchived: false, type: undefined });
+  });
+});
+
 describe("DELETE /api/ai-sessions/cleanup", () => {
   let store: TaskStore;
 
@@ -4092,16 +4342,18 @@ describe("DELETE /api/ai-sessions/cleanup", () => {
 // ── FN-7949: delete-mid-generation resurrection race ──────────────────────
 // Reproduces the exact reported bug: deleting a Planning Mode session while
 // its background generation is still in flight must not let a straggling
-// write resurrect it. Uses a REAL AiSessionStore (backed by a temp SQLite
-// db) wired the same way server.ts wires it — via setAiSessionStore() for
+// write resurrect it. Uses a REAL PostgreSQL-backed AiSessionStore wired the
+// same way server.ts wires it — via setAiSessionStore() for
 // planning.ts's internal persistSession() calls AND via the routes.ts
 // aiSessionStore option for the DELETE endpoint — so the tombstone guard
 // added to AiSessionStore.upsert() is exercised end-to-end, not mocked out.
-describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
+pgDescribe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
   let store: TaskStore;
-  let db: InstanceType<typeof Database>;
   let realAiSessionStore: AiSessionStore;
-  let tmpRoot: string;
+  const pg = createSharedPgTaskStoreTestHarness({ prefix: "fusion_ai_session_delete" });
+
+  beforeAll(pg.beforeAll);
+  afterAll(pg.afterAll);
 
   function buildApp() {
     const app = express();
@@ -4165,13 +4417,12 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     };
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await pg.beforeEach();
     store = createMockStore();
     __resetPlanningState();
-    tmpRoot = mkdtempSync(join(tmpdir(), "kb-fn7949-ai-session-"));
-    db = new Database(join(tmpRoot, ".fusion"));
-    db.init();
-    realAiSessionStore = new AiSessionStore(db as any);
+    /* FNXC:PostgresAiSessionStore 2026-07-14-19:20: The resurrection regression exercises the authoritative PostgreSQL session store rather than a removed SQLite fallback. */
+    realAiSessionStore = new AiSessionStore(pg.layer());
     setAiSessionStore(realAiSessionStore);
   });
 
@@ -4179,12 +4430,7 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     __setCreateFnAgent(undefined as any);
     __resetPlanningState();
     realAiSessionStore.stopScheduledCleanup();
-    try {
-      db.close();
-    } catch {
-      // no-op
-    }
-    await rm(tmpRoot, { recursive: true, force: true });
+    await pg.afterEach();
   });
 
   it("does not resurrect a session deleted while a generation is still in flight", async () => {
@@ -4199,8 +4445,8 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     );
     expect(startRes.status).toBe(201);
     const sessionId = startRes.body.sessionId as string;
-    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
-    expect(realAiSessionStore.get(sessionId)?.status).toBe("awaiting_input");
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect((await realAiSessionStore.get(sessionId))?.status).toBe("awaiting_input");
 
     // Fire the respond call WITHOUT awaiting it — its underlying prompt()
     // call is deferred and will not resolve until we explicitly release it
@@ -4223,7 +4469,7 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.body).toEqual({ ok: true });
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
 
     const updatedEventIds: string[] = [];
     realAiSessionStore.on("ai_session:updated", (summary) => updatedEventIds.push(summary.id));
@@ -4239,12 +4485,15 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
 
     // The deleted session must not have been resurrected, and no
     // ai_session:updated event should have fired for it.
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
     expect(updatedEventIds).not.toContain(sessionId);
   });
 
   it("a normal delete with no in-flight generation continues to work exactly as before", async () => {
     setupPlanningMockAgentForFn7949();
+    const persisted = new Promise<void>((resolve) => {
+      realAiSessionStore.once("ai_session:updated", () => resolve());
+    });
 
     const startRes = await REQUEST(
       buildApp(),
@@ -4254,14 +4503,15 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
       { "Content-Type": "application/json" },
     );
     expect(startRes.status).toBe(201);
+    await persisted;
     const sessionId = startRes.body.sessionId as string;
-    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
 
     const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
 
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.body).toEqual({ ok: true });
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
   });
 
   function setupPlanningMockAgentForFn7949() {
@@ -5019,4 +5269,3 @@ describe("POST /api/ai/summarize-title with projectId scoping", () => {
     expect([400, 503]).toContain(res.status);
   });
 });
-

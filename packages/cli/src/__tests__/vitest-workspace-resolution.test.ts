@@ -9,6 +9,7 @@ const hiddenDistRootPrefix = ".tmp-fn-vitest-workspace-resolution-";
 const hiddenDistRoot = join(workspaceRoot, `${hiddenDistRootPrefix}${process.pid}`);
 
 const internalPackages = ["core", "engine", "dashboard"] as const;
+const claudeRuntimeDist = join(workspaceRoot, "plugins", "fusion-plugin-claude-runtime", "dist");
 const movedDistDirs: Array<{ from: string; to: string }> = [];
 
 function rmSyncWithRetry(path: string) {
@@ -50,23 +51,28 @@ function cleanupStaleHiddenDistRoots() {
   }
 }
 
+function hideDistDir(name: string, distPath: string) {
+  if (!existsSync(distPath)) {
+    return;
+  }
+
+  const hiddenPath = join(hiddenDistRoot, `${name}-dist`);
+  if (existsSync(hiddenPath)) {
+    rmSyncWithRetry(hiddenPath);
+  }
+  renameSync(distPath, hiddenPath);
+  movedDistDirs.push({ from: distPath, to: hiddenPath });
+}
+
 function hideInternalPackageDistDirs() {
   cleanupStaleHiddenDistRoots();
   mkdirSync(hiddenDistRoot, { recursive: true });
 
   for (const pkg of internalPackages) {
-    const distPath = join(workspaceRoot, "packages", pkg, "dist");
-    if (!existsSync(distPath)) {
-      continue;
-    }
-
-    const hiddenPath = join(hiddenDistRoot, `${pkg}-dist`);
-    if (existsSync(hiddenPath)) {
-      rmSyncWithRetry(hiddenPath);
-    }
-    renameSync(distPath, hiddenPath);
-    movedDistDirs.push({ from: distPath, to: hiddenPath });
+    hideDistDir(pkg, join(workspaceRoot, "packages", pkg, "dist"));
   }
+
+  hideDistDir("claude-runtime", claudeRuntimeDist);
 }
 
 function restoreInternalPackageDistDirs() {
@@ -156,6 +162,18 @@ describe("CLI Vitest workspace resolution", () => {
           find: String(/^@fusion-plugin-examples\/droid-runtime$/),
           replacement: join(workspaceRoot, "plugins", "fusion-plugin-droid-runtime", "src", "index.ts"),
         },
+        ...[
+          "hermes",
+          "openclaw",
+          "cursor",
+          "grok",
+          "claude",
+          "omp",
+          "paperclip",
+        ].map((runtime) => ({
+          find: String(new RegExp(`^@fusion-plugin-examples/${runtime}-runtime$`)),
+          replacement: join(workspaceRoot, "plugins", `fusion-plugin-${runtime}-runtime`, "src", "index.ts"),
+        })),
         {
           find: String(/^@fusion\/test-utils$/),
           replacement: join(workspaceRoot, "packages", "core", "src", "__test-utils__", "workspace.ts"),
@@ -183,17 +201,26 @@ describe("CLI Vitest workspace resolution", () => {
     expect(dashboardIndex).toBeGreaterThan(planningIndex);
   });
 
-  it("resolves non-mocked symbols from internal workspace packages when dist outputs are absent", async () => {
-    const [{ tempWorkspace }, { PRIORITY_EXECUTE }, { createRuntimeLogger }, { parseAgentResponse }] = await Promise.all([
+  it("resolves non-mocked symbols from internal workspace packages and Claude runtime when dist outputs are absent", async () => {
+    const [
+      { tempWorkspace },
+      { PRIORITY_EXECUTE },
+      { createRuntimeLogger },
+      { parseAgentResponse },
+      { probeClaudeBinary, discoverClaudeProviderModels },
+    ] = await Promise.all([
       import("@fusion/test-utils"),
       import("@fusion/engine"),
       import("@fusion/dashboard"),
       import("@fusion/dashboard/planning"),
+      import("@fusion-plugin-examples/claude-runtime"),
     ]);
 
     expect(typeof tempWorkspace).toBe("function");
     expect(typeof PRIORITY_EXECUTE).toBe("number");
     expect(typeof createRuntimeLogger).toBe("function");
+    expect(typeof probeClaudeBinary).toBe("function");
+    expect(typeof discoverClaudeProviderModels).toBe("function");
     expect(parseAgentResponse('{"type":"question","data":{"id":"q","type":"confirm","question":"Ok?","description":"desc"}}')).toEqual({
       type: "question",
       data: {

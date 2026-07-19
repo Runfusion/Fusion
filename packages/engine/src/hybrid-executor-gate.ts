@@ -25,7 +25,13 @@ export async function shouldUseHybridExecutor(centralCore: CentralCore): Promise
 
   try {
     const nodes = await centralCore.listNodes();
-    if (nodes.length > 1) {
+    /*
+    FNXC:HybridExecutorRouting 2026-07-18-01:35:
+    Local project registrations may create more than one local node record. HybridExecutor
+    only adds value when a remote node is routable, so node count must not enable duplicate
+    local runtimes for a local-only multi-project installation.
+    */
+    if (nodes.some((node) => node.type === "remote")) {
       return { enabled: true, reason: "multi-node" };
     }
 

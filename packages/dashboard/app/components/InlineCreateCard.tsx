@@ -17,6 +17,7 @@ import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
+import { PendingImagePreviews } from "./PendingImagePreviews";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const STORAGE_KEY = "kb-inline-create-text";
@@ -122,8 +123,13 @@ export function InlineCreateCard({
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [mergerProvider, setMergerProvider] = useState<string | undefined>(undefined);
+  const [mergerModelId, setMergerModelId] = useState<string | undefined>(undefined);
   /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: quick-create board card carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  const [validatorThinkingLevel, setValidatorThinkingLevel] = useState<string>("");
+  const [planningThinkingLevel, setPlanningThinkingLevel] = useState<string>("");
+  const [mergerThinkingLevel, setMergerThinkingLevel] = useState<string>("");
   const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -287,7 +293,8 @@ export function InlineCreateCard({
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const hasPlanningOverride = Boolean(planningProvider && planningModelId);
-  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride);
+  const hasMergerOverride = Boolean(mergerProvider && mergerModelId);
+  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride) + Number(hasMergerOverride);
   const effectiveWorkflowId = selectedWorkflowId || settings?.defaultWorkflowId || "builtin:coding";
 
   useEffect(() => {
@@ -435,7 +442,12 @@ export function InlineCreateCard({
       setValidatorModelId(undefined);
       setPlanningProvider(undefined);
       setPlanningModelId(undefined);
+      setMergerProvider(undefined);
+      setMergerModelId(undefined);
       setThinkingLevel("");
+      setValidatorThinkingLevel("");
+      setPlanningThinkingLevel("");
+      setMergerThinkingLevel("");
       setEnabledOptionalStepIds([]);
       setPriority(DEFAULT_TASK_PRIORITY);
       setDependencies([]);
@@ -493,6 +505,11 @@ export function InlineCreateCard({
       validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
       planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
       planningModelId: hasPlanningOverride ? planningModelId : undefined,
+      mergerModelProvider: hasMergerOverride ? mergerProvider : undefined,
+      mergerModelId: hasMergerOverride ? mergerModelId : undefined,
+      validatorThinkingLevel: validatorThinkingLevel !== "" ? validatorThinkingLevel as ThinkingLevel : undefined,
+      planningThinkingLevel: planningThinkingLevel !== "" ? planningThinkingLevel as ThinkingLevel : undefined,
+      mergerThinkingLevel: mergerThinkingLevel !== "" ? mergerThinkingLevel as ThinkingLevel : undefined,
       thinkingLevel: thinkingLevel !== "" ? (thinkingLevel as ThinkingLevel) : undefined,
       /*
       FNXC:InlineCreateWorkflowSteps 2026-06-29-02:45:
@@ -515,7 +532,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, thinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, hasMergerOverride, mergerProvider, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;
@@ -738,7 +755,12 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setMergerProvider(undefined);
+    setMergerModelId(undefined);
     setThinkingLevel("");
+    setValidatorThinkingLevel("");
+    setPlanningThinkingLevel("");
+    setMergerThinkingLevel("");
     setEnabledOptionalStepIds([]);
     setSelectedPresetId(undefined);
     setSelectedAgentId(null);
@@ -868,24 +890,13 @@ export function InlineCreateCard({
           />
         )}
       </div>
-      {pendingImages.length > 0 && (
-        <div className="inline-create-previews">
-          {pendingImages.map((img, i) => (
-            <div key={img.previewUrl} className="inline-create-preview">
-              <img src={img.previewUrl} alt={img.file.name} />
-              <button
-                type="button"
-                className="inline-create-preview-remove"
-                onClick={() => removeImage(i)}
-                disabled={submitting}
-                title={t("inline.removeImage", "Remove image")}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <PendingImagePreviews
+        images={pendingImages}
+        onRemove={removeImage}
+        disabled={submitting}
+        removeLabel={t("inline.removeImage", "Remove image")}
+        testIdPrefix="inline-create-preview"
+      />
       {isExpanded && (
         <div id="inline-create-controls" className="inline-create-footer">
           <div className="inline-create-controls">
@@ -1224,9 +1235,17 @@ export function InlineCreateCard({
               executorValue={executorSelectionValue}
               validatorValue={validatorSelectionValue}
               planningValue={planningSelectionValue}
+              mergerValue={getModelSelectionValue(mergerProvider, mergerModelId)}
               onExecutorChange={handleExecutorChange}
               onValidatorChange={handleValidatorChange}
               onPlanningChange={handlePlanningModelChange}
+              onMergerChange={(value) => { const next = parseModelSelection(value); setMergerProvider(next.provider); setMergerModelId(next.modelId); }}
+              mergerThinkingLevel={mergerThinkingLevel}
+              onMergerThinkingLevelChange={setMergerThinkingLevel}
+              validatorThinkingLevel={validatorThinkingLevel}
+              onValidatorThinkingLevelChange={setValidatorThinkingLevel}
+              planningThinkingLevel={planningThinkingLevel}
+              onPlanningThinkingLevelChange={setPlanningThinkingLevel}
               thinkingLevel={thinkingLevel}
               onThinkingLevelChange={handleThinkingLevelChange}
               defaultThinkingLevel={settings?.defaultThinkingLevel}

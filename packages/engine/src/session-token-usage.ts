@@ -1,6 +1,7 @@
-import type { AgentRole, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
+import type { AgentRole, RunMutationContext, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "./logger.js";
+import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 
 const log = createLogger("session-token-usage");
 const cacheMetricsLog = createLogger("token-cache-metrics");
@@ -83,7 +84,7 @@ export async function accumulateSessionTokenUsage(
   store: TaskStore,
   taskId: string,
   session: AgentSession,
-  options?: { agentId?: string; role?: AgentRole },
+  options?: { agentId?: string; role?: AgentRole; runContext?: RunMutationContext },
 ): Promise<void> {
   try {
     const stats = readSessionStats(session);
@@ -156,7 +157,8 @@ export async function accumulateSessionTokenUsage(
       hitRatio: computeCacheHitRatio(tokenUsage.inputTokens, tokenUsage.cachedTokens),
     }));
 
-    await store.updateTask(taskId, { tokenUsage });
+    await store.updateTask(taskId, { tokenUsage }, options?.runContext);
+    await enforceTaskTokenBudgetForPersist(store, taskId, options?.runContext);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`${taskId}: session token usage accumulate failed: ${message}`);

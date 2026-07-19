@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline as streamPipeline } from "node:stream/promises";
+import { applyTestModeOverrides, resolvePlanningSettingsModel } from "@fusion/core";
 import { listEligibleExecutorAgents } from "@fusion/engine";
 import { ApiError, badRequest, notFound, rateLimited } from "../api-error.js";
 import { createSessionDiagnostics } from "../ai-session-diagnostics.js";
@@ -898,6 +899,26 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
         throw badRequest("intent is required and must be a string");
       }
 
+      const hasPlanningProvider = planningModelProvider !== undefined;
+      const hasPlanningModelId = planningModelId !== undefined;
+      if (hasPlanningProvider !== hasPlanningModelId) {
+        throw badRequest("planningModelProvider and planningModelId must be provided together");
+      }
+      if (
+        hasPlanningProvider
+        && (typeof planningModelProvider !== "string" || planningModelProvider.trim().length === 0)
+      ) {
+        throw badRequest("planningModelProvider must be a non-empty string when provided");
+      }
+      if (
+        hasPlanningModelId
+        && (typeof planningModelId !== "string" || planningModelId.trim().length === 0)
+      ) {
+        throw badRequest("planningModelId must be a non-empty string when provided");
+      }
+      const explicitPlanningProvider = hasPlanningProvider ? planningModelProvider!.trim() : undefined;
+      const explicitPlanningModelId = hasPlanningModelId ? planningModelId!.trim() : undefined;
+
       const resolvedMode = mode ?? context?.mode ?? "create";
       if (resolvedMode !== "create" && resolvedMode !== "edit") {
         throw badRequest("mode must be 'create' or 'edit'");
@@ -907,6 +928,14 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+      const hasExplicitPlanningModel = Boolean(explicitPlanningProvider && explicitPlanningModelId);
+      const resolvedPlanningModel = applyTestModeOverrides(
+        hasExplicitPlanningModel
+          ? { provider: explicitPlanningProvider, modelId: explicitPlanningModelId }
+          : resolvedPlanningSettings,
+        settings,
+      );
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const { startAgentOnboardingSession } = await import("../agent-onboarding.js");
       const sessionId = await startAgentOnboardingSession(
@@ -919,8 +948,8 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
           existingAgentConfig: resolvedExistingAgentConfig,
         },
         scopedStore.getRootDir(),
-        planningModelProvider,
-        planningModelId,
+        resolvedPlanningModel.provider,
+        resolvedPlanningModel.modelId,
         settings.promptOverrides,
         options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3],
         scopedStore,
@@ -994,16 +1023,15 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
       if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
       if (!responses || typeof responses !== "object") throw badRequest("responses is required and must be an object");
 
-      const { respondToAgentOnboarding, getAgentOnboardingSummary, getAgentOnboardingSession } = await import("../agent-onboarding.js");
-      await respondToAgentOnboarding(sessionId, responses);
-      const summary = getAgentOnboardingSummary(sessionId);
-      if (summary) {
-        res.json({ type: "complete", data: summary });
-        return;
-      }
-      const session = getAgentOnboardingSession(sessionId);
-      if (!session?.currentQuestion) throw badRequest("Session did not produce a question");
-      res.json({ type: "question", data: session.currentQuestion });
+      /*
+      FNXC:AgentOnboarding 2026-07-14-18:20:
+      respondToAgentOnboarding now returns the Planning Mode-shaped respond contract, including a
+      successful question payload when generation fails after an answer (so this route no longer
+      400s with "Session did not produce a question" while SSE drives retry).
+      */
+      const { respondToAgentOnboarding } = await import("../agent-onboarding.js");
+      const result = await respondToAgentOnboarding(sessionId, responses);
+      res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       if (err instanceof Error && err.name === "SessionNotFoundError") throw notFound(err.message);

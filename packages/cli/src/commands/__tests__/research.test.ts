@@ -39,6 +39,7 @@ const researchStoreMock = Object.assign(Object.create(MockResearchStore.prototyp
   getRun: vi.fn(() => mockRun),
   listRuns: vi.fn(() => [mockRun]),
   createExport: vi.fn(),
+  updateRun: vi.fn(),
 });
 
 const storeMock = {
@@ -64,13 +65,13 @@ const { resolveResearchSettingsMock, providerRegistryMock, writeFileMock } = vi.
 // FN-7740: `research.ts` now imports `retryOnLock` (which imports
 // `isSqliteLockError` from @fusion/core), so a fully-mocked @fusion/core
 // module must stub it (project memory pitfall). `storeMock.close` above
-// backs the new close-on-every-exit-path discipline (except the documented
-// non-wait fire-and-forget branch in `runResearchCreate`).
+// backs the close-on-every-exit-path discipline, including queued non-wait
+// creation in `runResearchCreate`.
 vi.mock("@fusion/core", () => ({
   TaskStore: makeConstructibleMock(() => storeMock),
   // FNXC:PostgresCutover 2026-07-10: getStore() consults the PG startup factory
   // first; null routes the test through the legacy `new TaskStore` mock path.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: storeMock, shutdown: async () => storeMock.close() })),
   ResearchStore: MockResearchStore,
   resolveResearchSettings: resolveResearchSettingsMock,
   RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],
@@ -132,6 +133,9 @@ describe("research commands", () => {
   it("creates a run", async () => {
     await runResearchCreate({ query: "hello" });
     expect(orchestratorMock.createRun).toHaveBeenCalled();
+    expect(researchStoreMock.updateRun).toHaveBeenCalledWith("RR-002", { query: "hello" });
+    expect(orchestratorMock.startRun).not.toHaveBeenCalled();
+    expect(storeMock.close).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Created cited-research run"));
   });
 

@@ -23,11 +23,10 @@ const gitlabItem: TaskGitLabTrackedItem = {
 /*
  * FNXC:GitLabReconcile 2026-07-12-00:00:
  * listTasksForGitlabTrackingReconcile returns soft-deleted tasks with
- * gitlab_tracking JSONB. The store read/write pipeline does not yet serialize
- * gitlabTracking through createTask/updateTask (the feature is partial on this
- * branch), so we seed the column directly via adminDb and assert the reconcile
- * API returns the right tasks. Archived tasks are a separate async subsystem
- * not surfaced through this API (same limitation as the GitHub reconcile).
+ * gitlab_tracking JSONB through the same shared row mapper as normal task reads.
+ * The test seeds the column directly via adminDb to exercise reconciliation of
+ * externally persisted tracking metadata. Archived tasks are a separate async
+ * subsystem not surfaced through this API (same limitation as the GitHub reconcile).
  */
 pgTest("TaskStore.listTasksForGitlabTrackingReconcile", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -46,7 +45,7 @@ pgTest("TaskStore.listTasksForGitlabTrackingReconcile", () => {
   it("returns soft-deleted tasks with GitLab tracking, excludes active and non-tracked", async () => {
     const store = h.store();
     const softDeleted = await store.createTask({ description: "soft deleted" });
-    // Seed gitlab_tracking directly since updateTask does not persist it yet.
+    // Seed externally persisted gitlab_tracking directly for reconcile coverage.
     await h.adminDb().execute(
       sql`UPDATE project.tasks SET gitlab_tracking = ${JSON.stringify({ item: gitlabItem })}::jsonb WHERE id = ${softDeleted.id}`,
     );

@@ -10,104 +10,59 @@ function task(id: string): Task {
   return { id, title: id, status: "todo" } as Task;
 }
 
-function PopupGateHarness({
-  entries,
-  taskView,
-  taskPopupsBoardListOnly,
-}: {
+function popupTestId(taskId: string, originTaskView?: TaskView) {
+  return `floating-window-task-detail-${taskId}-${originTaskView ?? "global"}`;
+}
+
+function PopupGateHarness({ entries, taskView, taskPopupsBoardListOnly }: {
   entries: PoppedOutTaskEntry[];
   taskView: TaskView;
   taskPopupsBoardListOnly: boolean;
 }) {
-  return (
-    <>
-      {entries
-        .filter((entry) => isTaskPopupVisibleForView({ taskPopupsBoardListOnly, taskView, originTaskView: entry.originTaskView }))
-        .map(({ task: snapshot }) => (
-          <FloatingWindow
-            key={snapshot.id}
-            windowKey={`task-detail-${snapshot.id}`}
-            title={snapshot.id}
-            onClose={() => {}}
-            hideHeader
-            dragHandleSelector=".task-detail-content--embedded > .modal-header"
-            className="floating-window--task-detail"
-            persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
-            layer="task-detail"
-          >
-            <div className="task-detail-content--embedded">
-              <div className="modal-header">{snapshot.id}</div>
-              <div>{snapshot.title}</div>
-            </div>
-          </FloatingWindow>
-        ))}
-    </>
-  );
+  return <>{entries.filter((entry) => isTaskPopupVisibleForView({ taskPopupsBoardListOnly, taskView, originTaskView: entry.originTaskView })).map(({ task: snapshot, originTaskView }) => {
+    const windowKey = `task-detail-${snapshot.id}-${originTaskView ?? "global"}`;
+    return <FloatingWindow key={windowKey} windowKey={windowKey} title={snapshot.id} onClose={() => {}} hideHeader dragHandleSelector=".task-detail-content--embedded > .modal-header" className="floating-window--task-detail" persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY} layer="task-detail">
+      <div className="task-detail-content--embedded"><div className="modal-header">{snapshot.id}</div></div>
+    </FloatingWindow>;
+  })}</>;
 }
 
-function expectNoTaskPopupShell(taskId: string) {
-  expect(screen.queryByTestId(`floating-window-task-detail-${taskId}`)).not.toBeInTheDocument();
-  expect(screen.queryByTestId(`floating-window-overlay-task-detail-${taskId}`)).not.toBeInTheDocument();
+function expectNoTaskPopupShell(taskId: string, originTaskView?: TaskView) {
+  const id = popupTestId(taskId, originTaskView);
+  expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+  expect(screen.queryByTestId(id.replace("floating-window-", "floating-window-overlay-"))).not.toBeInTheDocument();
 }
+
+const origins: TaskView[] = ["board", "list", "planning", "agents", "command-center", "missions", "documents", "plugin:sample"];
 
 describe("App task popup view gating", () => {
-  it("keeps default/off popups visible regardless of the active view", () => {
-    render(
-      <PopupGateHarness
-        taskView="command-center"
-        taskPopupsBoardListOnly={false}
-        entries={[{ task: task("FN-7944-A"), originTaskView: "board" }]}
-      />,
-    );
+  it.each(origins)("renders a %s-origin popup only on its origin when scoping is enabled", (originTaskView) => {
+    const entry = { task: task(`FN-8016-${originTaskView}`), originTaskView };
+    const { rerender } = render(<PopupGateHarness taskView={originTaskView} taskPopupsBoardListOnly entries={[entry]} />);
+    expect(screen.getByTestId(popupTestId(entry.task.id, originTaskView))).toBeInTheDocument();
 
-    expect(screen.getByTestId("floating-window-task-detail-FN-7944-A")).toBeInTheDocument();
-    expect(screen.getByTestId("floating-window-overlay-task-detail-FN-7944-A")).toBeInTheDocument();
+    rerender(<PopupGateHarness taskView="settings" taskPopupsBoardListOnly entries={[entry]} />);
+    expectNoTaskPopupShell(entry.task.id, originTaskView);
   });
 
-  it("attaches enabled popups to the Board/List view where they were opened", () => {
-    const entries: PoppedOutTaskEntry[] = [
-      { task: task("FN-7944-board"), originTaskView: "board" },
-      { task: task("FN-7944-list"), originTaskView: "list" },
-    ];
-
-    const { rerender } = render(<PopupGateHarness taskView="board" taskPopupsBoardListOnly entries={entries} />);
-
-    expect(screen.getByTestId("floating-window-task-detail-FN-7944-board")).toBeInTheDocument();
-    expectNoTaskPopupShell("FN-7944-list");
-
-    rerender(<PopupGateHarness taskView="list" taskPopupsBoardListOnly entries={entries} />);
-
-    expectNoTaskPopupShell("FN-7944-board");
-    expect(screen.getByTestId("floating-window-task-detail-FN-7944-list")).toBeInTheDocument();
+  it("reproduces the planning-origin symptom and keeps another non-board/list view scoped", () => {
+    expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "planning", originTaskView: "planning" })).toBe(true);
+    expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "agents", originTaskView: "agents" })).toBe(true);
+    expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "agents", originTaskView: "planning" })).toBe(false);
   });
 
-  it("hides all attached popups on non-task views without leaving shells or overlays, then re-shows the same entry", () => {
-    const entries: PoppedOutTaskEntry[] = [
-      { task: task("FN-7944-board"), originTaskView: "board" },
-      { task: task("FN-7944-list"), originTaskView: "list" },
-    ];
-
-    const { rerender } = render(<PopupGateHarness taskView="board" taskPopupsBoardListOnly entries={entries} />);
-    expect(screen.getByTestId("floating-window-task-detail-FN-7944-board")).toBeInTheDocument();
-
-    rerender(<PopupGateHarness taskView="agents" taskPopupsBoardListOnly entries={entries} />);
-    expectNoTaskPopupShell("FN-7944-board");
-    expectNoTaskPopupShell("FN-7944-list");
-
-    rerender(<PopupGateHarness taskView="board" taskPopupsBoardListOnly entries={entries} />);
-    expect(screen.getByTestId("floating-window-task-detail-FN-7944-board")).toBeInTheDocument();
-    expect(screen.getByTestId("floating-window-body-task-detail-FN-7944-board")).toHaveTextContent("FN-7944-board");
+  it("treats legacy undefined-origin snapshots as globally visible", () => {
+    render(<PopupGateHarness taskView="planning" taskPopupsBoardListOnly entries={[{ task: task("FN-8016-legacy") }]} />);
+    expect(screen.getByTestId(popupTestId("FN-8016-legacy"))).toBeInTheDocument();
   });
 
-  it("does not render popups opened away from Board/List when attachment is enabled", () => {
-    render(
-      <PopupGateHarness
-        taskView="command-center"
-        taskPopupsBoardListOnly
-        entries={[{ task: task("FN-7944-command"), originTaskView: "command-center" }]}
-      />,
-    );
-
-    expectNoTaskPopupShell("FN-7944-command");
+  it("unmounts on navigation and remounts the original scoped entry", () => {
+    const entry = { task: task("FN-8016-remount"), originTaskView: "planning" as const };
+    const { rerender } = render(<PopupGateHarness taskView="planning" taskPopupsBoardListOnly entries={[entry]} />);
+    expect(screen.getByTestId(popupTestId(entry.task.id, entry.originTaskView))).toBeInTheDocument();
+    rerender(<PopupGateHarness taskView="agents" taskPopupsBoardListOnly entries={[entry]} />);
+    expectNoTaskPopupShell(entry.task.id, entry.originTaskView);
+    rerender(<PopupGateHarness taskView="planning" taskPopupsBoardListOnly entries={[entry]} />);
+    expect(screen.getByTestId(popupTestId(entry.task.id, entry.originTaskView))).toBeInTheDocument();
   });
 });

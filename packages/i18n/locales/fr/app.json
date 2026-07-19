@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "Impossible de récupérer les projets"
     },
-    "testMode": "Mode test — pas d'appels IA réels"
+    "testMode": "Mode test — pas d'appels IA réels",
+    "migrationInProgress": "Migration de la base de données en cours — le tableau de bord se reconnectera une fois terminée."
   },
   "appName": "",
   "approval": {
@@ -1165,32 +1166,6 @@
     "manageConnection": "Gérer la connexion",
     "retryConnection": "Réessayer la connexion",
     "retrying": "Nouvelle tentative…"
-  },
-  "backgroundTasks": {
-    "confirmMessage": "Cette session est active dans un autre onglet. Ouvrir quand même ?",
-    "confirmTitle": "Ouvrir une session active",
-    "dismissButton": "Rejeter",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "Tâches de fond",
-    "status": {
-      "activeElsewhere": "actif dans un autre onglet",
-      "failed": "Échec",
-      "generating": "génération...",
-      "needsInput": "nécessite une entrée"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "Entretien Jalon",
-      "missionInterview": "Entretien de mission",
-      "planning": "Planification",
-      "sliceInterview": "Entrevue de tranche",
-      "subtask": "Décomposition des sous-tâches"
-    }
   },
   "board": {
     "archived": "Archivé",
@@ -1417,13 +1392,6 @@
     "versionMismatchPrefix": "Votre",
     "versionMismatchSuffix": "Mettez à jour pour rester synchronisé."
   },
-  "storageMigrationNotice": {
-    "body": "",
-    "dismissLabel": "",
-    "getHelp": "",
-    "getHelpLabel": "",
-    "title": ""
-  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "Vérification…",
@@ -1611,6 +1579,43 @@
         "title": ""
       },
       "title": ""
+    },
+    "portability": {
+      "title": "Export / import d'organisation",
+      "description": "Téléchargez ou prévisualisez un bundle d'organisation expurgé des secrets.",
+      "export": {
+        "action": "Exporter le bundle d'organisation",
+        "working": "Export en cours…",
+        "success": "Export prêt",
+        "error": "Échec de l'export"
+      },
+      "import": {
+        "label": "JSON du bundle d'organisation",
+        "placeholder": "Collez un bundle d'organisation expurgé des secrets",
+        "preview": "Prévisualiser l'import",
+        "previewing": "Prévisualisation…",
+        "previewReady": "Aperçu prêt. Confirmez pour appliquer ce bundle.",
+        "apply": "Appliquer l'import",
+        "importing": "Import en cours…",
+        "invalid": "Collez un document JSON de bundle d'organisation valide",
+        "error": "Impossible de prévisualiser ou d'importer le bundle",
+        "confirmTitle": "Importer le bundle d'organisation ?",
+        "confirmMessage": "Cela applique la configuration prévisualisée à ce projet.",
+        "confirmApply": "Importer le bundle"
+      },
+      "versions": {
+        "title": "Versions de configuration",
+        "description": "Restaurez n'importe quelle version de configuration de projet enregistrée.",
+        "loading": "Chargement des versions…",
+        "empty": "Aucune version de configuration pour l'instant.",
+        "loadError": "Impossible de charger les versions de configuration",
+        "rollback": "Revenir en arrière",
+        "rollingBack": "Retour en cours…",
+        "rollbackError": "Impossible de revenir en arrière sur la configuration",
+        "confirmTitle": "Revenir à une configuration antérieure ?",
+        "confirmMessage": "Restaurer cette version ? Le retour est enregistré comme une nouvelle version.",
+        "confirmRollback": "Revenir en arrière"
+      }
     },
     "ecosystem": {
       "breadthTitle": "",
@@ -1802,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "Artefacts de revue"
     },
     "team": {
       "agent": "",
@@ -1880,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "Artefacts de revue",
+      "empty": "Aucun artefact de revue n'est encore disponible."
     }
   },
   "comments": {
@@ -2017,6 +2027,7 @@
     "connectRemoteButton": "Se connecter à Fusion distant",
     "couldNotStart": "Impossible de démarrer Fusion local",
     "loading": "Chargement de Fusion…",
+    "migrationInProgress": "Migration de la base de données en cours — cela peut prendre quelques minutes.",
     "opening": "Ouverture…",
     "retry": "Réessayer",
     "runLocalButton": "Exécuter Fusion localement",
@@ -2477,6 +2488,11 @@
     "taskMatches": "Tâches correspondantes"
   },
   "git": {
+    "addComment": "Add comment",
+    "addCommentPlaceholder": "Write a comment…",
+    "commentAuthorYou": "You",
+    "commentPosted": "Comment posted",
+    "failedToPostComment": "Failed to post comment",
     "add": "Ajouter",
     "addRemote": "Ajouter un distant",
     "advancesHelpFix": "<strong>Correctif :</strong> Fusion n'affiche <em>Synchroniser l'arbre de travail</em> que lorsqu'au moins une avance est réellement <code>pending</code> et que HEAD n'est pas aligné sur la pointe d'intégration. Si les entrées sont déjà traitées (subsumed/orphaned/reachable/superseded), aucune action de synchronisation n'est proposée.",
@@ -2865,7 +2881,17 @@
     "worktreesInUse_one": "",
     "worktreesInUse_other": "",
     "worktreesTotal_one": "",
-    "worktreesTotal_other": ""
+    "worktreesTotal_other": "",
+    "translateAction": "",
+    "translateDismiss": "",
+    "translateOffer": "",
+    "translateRegionAriaLabel": "",
+    "translateShowingOriginal": "",
+    "translateShowingTranslated": "",
+    "translateShowOriginal": "",
+    "translateShowTranslated": "",
+    "translateUnknownLanguage": "",
+    "translateWorking": ""
   },
   "githubStarPrompt": {
     "body": "",
@@ -3190,7 +3216,6 @@
     "refinedScope": "Portée affinée",
     "refineScope": "Affiner la portée {{label}} avec l'IA",
     "sendToBackground": "Envoyer en arrière-plan",
-    "sessionActiveAnotherTab": "La session est active dans un autre onglet.",
     "showThinking": "Afficher la réflexion",
     "startInterview": "Commencer l'entrevue",
     "targetLabel": {
@@ -3318,7 +3343,8 @@
     "unpauseUnavailable": "L'action Reprendre est indisponible",
     "useProjectDefault": "Utiliser le défaut du projet",
     "viewOptions": "Options d'affichage",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "Replanifier"
   },
   "mailbox": {
     "agent": "Agent",
@@ -3835,9 +3861,6 @@
     "selectGoal": "",
     "selectMissionToView": "Sélectionnez une mission pour voir les détails",
     "sendToBackground": "Envoyer en arrière-plan",
-    "sessionActiveAnother": "La session est active dans un autre onglet.",
-    "sessionActiveHeartbeat": "Cette session est active dans un autre onglet (pulsation en direct)",
-    "sessionActiveTab": "Cette session est active dans un autre onglet",
     "showDetails": "Afficher les détails",
     "showMetadata": "Afficher les métadonnées",
     "showThinking": "Afficher la réflexion",
@@ -3883,8 +3906,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "Structure",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle en cours...",
     "targetBranch": "Branche cible",
     "targetBranchPlaceholder": "p. ex. main",
     "taskIdPlaceholder": "ID de tâche (p. ex. FN-001)",
@@ -4613,7 +4634,6 @@
     "plain": "Texte brut",
     "planningComplete": "Planification terminée !",
     "planningCompleteSubheading": "Vérifiez et affinez votre tâche avant de la créer.",
-    "planningDepth": "Profondeur de planification",
     "planningModel": "Modèle de planification",
     "planningModelBlurb": "Choisit le modèle qui conduit l'entretien de planification et rédige l'ébauche finale.",
     "planningSessions": "Sessions de planification",
@@ -4635,8 +4655,6 @@
     "remove": "Supprimer",
     "retryFailed": "Nouvelle tentative échouée. Veuillez réessayer.",
     "retrying": "Nouvelle tentative…",
-    "sessionActiveOtherTab": "Cette session est active dans un autre onglet",
-    "sessionActiveOtherTabLive": "Cette session est active dans un autre onglet (signal de vie actif)",
     "sessionFailed": "La session a échoué lors de la connexion à l'IA.",
     "sessionFailed2": "Échec de la session",
     "showArchived": "Afficher les archivées",
@@ -4659,8 +4677,6 @@
     "subtaskTitle": "Titre",
     "suggestedDependencies": "Dépendances suggérées",
     "suggestedSize": "Taille suggérée",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle…",
     "thinkingElapsed": "Réflexion… ({{seconds}} s)",
     "title": "Mode planification",
     "tryAnExample": "Essayez un exemple :",
@@ -4670,7 +4686,8 @@
     "untitledSession": "Session sans titre",
     "usingDefault": "Modèle par défaut",
     "whatToBuild": "Que voulez-vous construire ?",
-    "whatToBuildPlaceholder": "ex : Construire un système d'authentification avec connexion, inscription et réinitialisation du mot de passe…"
+    "whatToBuildPlaceholder": "ex : Construire un système d'authentification avec connexion, inscription et réinitialisation du mot de passe…",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "Ajouter un élément",
@@ -5660,7 +5677,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "Sessions IA nécessitant une entrée ou ayant échoué",
     "resume": "Reprendre",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5901,7 +5922,34 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": "",
+      "mobileNavPrimaryItems": "Actions rapides du bas mobile",
+      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Tâches, Agents, Missions, Chat, Boîte de réception. Ajoutez des destinations éligibles ; les non sélectionnées restent dans Plus.",
+      "addNavItem": "Ajouter une action rapide",
+      "selectNavItem": "Choisir une destination",
+      "removeNavItem": "Retirer {{item}}",
+      "moveNavItemEarlier": "Déplacer {{item}} plus tôt",
+      "moveNavItemLater": "Déplacer {{item}} plus tard",
+      "ephemeralAgentTaskCreationPolicy": "Tâches de suivi des agents éphémères",
+      "ephemeralAgentTaskCreationPolicyHint": "Pas de valeur par défaut — non défini revient à Autoriser. « Sur validation » envoie une proposition à votre boîte pour une approbation en un clic ; Refuser bloque la création de tâches de suivi.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Autoriser",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Sur validation",
+      "ephemeralAgentTaskCreationPolicyDeny": "Refuser",
+      "reportModeHelp": "Comment les rapports in-app (bug, feedback, idée, aide) sont déposés. Par défaut : draft-review (l'opérateur revoit un brouillon avant dépôt).",
+      "reportModeByActionHelp": "Surcharge optionnelle par action du mode de rapport du projet (bug, feedback, idée ou aide). Aucune valeur par défaut — les actions non définies héritent de reportMode.",
+      "reviewArtifacts": "Artefacts de revue",
+      "reviewArtifactsHint": "Contrôle si les futures tâches éligibles génèrent des livrables de revue. Les rapports utilisateur et la capture d'activité restent séparés. Par défaut : désactivé.",
+      "reportRoadmapDedup": "Vérifier la feuille de route avant d’envoyer les rapports",
+      "reportRoadmapDedupHelp": "Lorsqu’elle est activée, les fonctionnalités correspondantes sont affichées en ligne au lieu de créer un autre problème ou une autre discussion GitHub. Par défaut : désactivé."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5937,7 +5985,11 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6262,8 +6314,8 @@
         "global": "Partagé entre tous les projets",
         "project": "Spécifique à ce projet"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6344,7 +6396,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6360,6 +6415,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
+      "taskDefinitionInInputLanguage": "",
+      "taskDefinitionInInputLanguageHelp": "",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6631,11 +6688,28 @@
       "ignoreHiddenDotPathsHelp": "",
       "ignoreHiddenDotPathsInOverlapChecks": "",
       "maxConcurrentTasksHint": "",
-      "pollIntervalMsHint": ""
-    },
-    "scope": {
-      "globalBanner": "Ces paramètres sont partagés entre tous vos projets Fusion.",
-      "projectBanner": "Ces paramètres n'affectent que ce projet."
+      "maxConcurrentVerifications": "",
+      "maxConcurrentVerificationsHint": "",
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "Résolution des doublons en triage",
+      "triageDuplicateResolutionHelp": "Bloquer les doublons détectés en triage pour une décision Conserver/Supprimer (par défaut), ou conserver/supprimer automatiquement sans bloquer.",
+      "triageDuplicateResolutionPrompt": "Bloquer pour décision (par défaut)",
+      "triageDuplicateResolutionKeep": "Conserver automatiquement",
+      "triageDuplicateResolutionDelete": "Supprimer automatiquement"
     },
     "title": "Paramètres",
     "worktrees": {
@@ -6696,7 +6770,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -6713,11 +6788,15 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -6736,6 +6815,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Nombre maximal de connexions serveur pour le PostgreSQL embarqué de Fusion. Appliqué après redémarrage de Fusion. Plage : 32–2 000. Par défaut : 500. PostgreSQL externe utilise la limite de son fournisseur.",
+      "embeddedConnectionCap": "Plafond de connexions PostgreSQL embarqué",
+      "embeddedConnectionCapError": "Saisissez une valeur entre 32 et 2 000.",
+      "advanced": "Paramètres de base de données avancés"
     }
   },
   "setup": {
@@ -7280,14 +7365,9 @@
     "reviewSubtasksHint": "Modifiez les titres, descriptions, tailles et dépendances avant de créer toutes les tâches d'un coup.",
     "sendToBackgroundAriaLabel": "Envoyer en arrière-plan",
     "sendToBackgroundTitle": "Envoyer en arrière-plan",
-    "sessionActiveAnotherTab": "La session est active dans un autre onglet.",
-    "sessionActiveAnotherTabLive": "Cette session est active dans un autre onglet (signal de présence actif)",
-    "sessionActiveAnotherTabTakeover": "Cette session est active dans un autre onglet",
     "showThinking": "Afficher la réflexion",
     "sizeLabel": "Taille",
     "startingBreakdown": "",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle...",
     "titleLabel": "Titre",
     "untitled": "Sans titre",
     "waitingForThinking": ""
@@ -7628,7 +7708,13 @@
       "copy": "Cette tâche semble être un quasi-doublon de",
       "headline": "Doublon potentiel détecté",
       "keepBtn": "Conserver",
-      "kept": "{{id}} conservé et avertissement de doublon ignoré"
+      "kept": "{{id}} conservé et avertissement de doublon ignoré",
+      "deleteBtn": "Supprimer",
+      "deleteConfirm": "Supprimer",
+      "deleted": "Supprimé {{id}}",
+      "deleteMessage": "Supprimer {{id}} comme doublon de {{duplicateOf}} ?",
+      "deleteTitle": "Supprimer la tâche en double",
+      "triageActions": "Choisissez Supprimer pour retirer ce doublon, ou Conserver pour continuer."
     },
     "nextRecoveryAt": "Prochaine récupération à {{time}}",
     "no": "Non",
@@ -7664,7 +7750,11 @@
       "rejected": "Plan rejeté — {{id}} renvoyé en planification pour replanning",
       "rejectMessage": "Rejeter ce plan ? La spécification sera supprimée et régénérée.",
       "rejectTitle": "Rejeter le plan",
-      "replanning": "Replanning de {{id}}…"
+      "replanning": "Replanning de {{id}}…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "En attente des vérifications du PR",
@@ -8333,11 +8423,17 @@
     "revertNeedsHumanDefault": "",
     "reverted": "",
     "revertTask": "",
+    "revertedBadge": "",
+    "revertedBadgeTitle": "",
     "undoOf": "",
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": "",
+    "statusReplan": "Replanifier"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8458,7 +8554,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "Configurez l'authentification dans les paramètres pour voir les données d'utilisation.",
@@ -9036,5 +9136,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "Déjà sur la feuille de route",
+      "message": "Ce signalement correspond à une fonctionnalité déjà planifiée."
+    }
   }
 }

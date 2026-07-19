@@ -37,6 +37,8 @@ vi.mock("../../api", async (importOriginal) => {
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
@@ -109,6 +111,18 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     expect(closeButtons).toHaveLength(1);
     expect(container.querySelectorAll(".modal-close")).toHaveLength(1);
     expect(container.querySelector(".settings-embedded-mobile-close")).toBeNull();
+  });
+
+  it("keeps the task-definition input-language toggle reachable in Project Models on mobile", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    renderModal({ presentation: "embedded", projectId: "proj-1", initialSection: "project-models" });
+    await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+    const toggle = await screen.findByRole("checkbox", { name: "Write task definitions in the operator's input language" });
+    expect(toggle).toBeVisible();
+    expect(toggle).not.toBeDisabled();
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
   });
 
   it("still renders and calls onClose in embedded+mobile when opened without a selected projectId (overview entry)", async () => {

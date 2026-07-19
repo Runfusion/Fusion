@@ -25,8 +25,9 @@
  *   These helpers are the async target the migrating store and the PostgreSQL
  *   integration tests consume.
  */
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
+import { projectScopeFor } from "../postgres/data-layer.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import type {
   GoalCitation,
@@ -265,7 +266,17 @@ export async function queryUsageEvents(
   projectId: string,
   query: UsageEventRangeQuery = {},
 ): Promise<UsageEvent[]> {
-  const conditions = [eq(schema.project.usageEvents.projectId, projectId)];
+  /*
+  FNXC:MultiProjectIsolation 2026-07-15-21:40:
+  An unbound (project-agnostic / analytics) layer reaches here as `layer.projectId ?? ""`. Scoping
+  on that literal `''` returned nothing at all: the write side never stores it — the
+  fusion_assign_project_id trigger rewrites `''` to the session project or `__legacy_unscoped__` —
+  so every unscoped read silently found zero events it had just written. Blank means unscoped, so
+  read across projects, matching taskProjectScope's no-op. See projectScopeFor.
+  */
+  const conditions: SQL[] = [];
+  const scope = projectScopeFor(schema.project.usageEvents.projectId, projectId);
+  if (scope) conditions.push(scope);
   if (query.from) {
     conditions.push(gte(schema.project.usageEvents.ts, query.from));
   }

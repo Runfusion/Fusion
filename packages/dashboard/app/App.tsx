@@ -48,6 +48,8 @@ import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
 import { isIOS, useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./hooks/useMobileScrollLock";
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
+import { recordActivity } from "./utils/activity-trace";
+import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useGithubSetupWarningDelay } from "./hooks/useGithubSetupWarningDelay";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
@@ -79,7 +81,7 @@ import { useScopedDismissFlag } from "./hooks/useScopedDismissFlag";
 import { useCapacityRiskBanner } from "./hooks/useCapacityRiskBanner";
 import { useMainPanelTaskDetail } from "./hooks/useMainPanelTaskDetail";
 import { useBoardScrollRestore } from "./hooks/useBoardScrollRestore";
-import { usePoppedOutTasks } from "./hooks/usePoppedOutTasks";
+import { usePoppedOutTasks, type PoppedOutTaskEntry } from "./hooks/usePoppedOutTasks";
 import { NativeShellOnboardingModal } from "./components/NativeShellOnboardingModal";
 import { NativeShellConnectionManager } from "./components/NativeShellConnectionManager";
 import { ShellConnectionStatus } from "./components/ShellConnectionStatus";
@@ -92,8 +94,7 @@ import {
   resolveDesktopShellRedirectTarget,
   requiresNativeShellOnboarding,
   shouldShowFirstEverBootLoader,
-  isSessionNeedingInputForBanner,
-  isPlanningAwaitingInput,
+  shouldShowSessionInBanner,
   getCliActionDisabledReasonForBanner,
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
@@ -105,13 +106,14 @@ export {
   requiresNativeShellOnboarding,
   shouldShowFirstEverBootLoader,
   isSessionNeedingInputForBanner,
-  isPlanningAwaitingInput,
+  shouldShowSessionInBanner,
   getCliActionDisabledReasonForBanner,
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
+import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
 import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
 import type { GraphWorkflowSelection } from "./components/GraphWorkflowSwitcherSlot";
@@ -212,25 +214,33 @@ export function getBoardTaskOpenRoute(options: {
 }
 
 export interface DashboardShortcutPopupState {
-  poppedOutTaskIds: string[];
+  poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task" | "originTaskView">>;
   quickChatOpen: boolean;
   terminalOpen: boolean;
   modalClosers: Array<[boolean, () => void]>;
 }
 
 export interface DashboardShortcutPopupHandlers {
-  closePoppedOutTask: (taskId: string) => void;
+  closePoppedOutTask: (taskId: string, originTaskView?: TaskView) => void;
   closeQuickChat: () => void;
   closeTerminal: () => void;
 }
 
+/*
+FNXC:TaskPopupViewGating 2026-07-15-15:20:
+FN-8016 scopes every newly opened task popup to its exact dashboard origin, not only Board/List. Legacy entries without an origin predate this contract and deliberately remain visible on every view for backwards compatibility.
+*/
 export function isTaskPopupVisibleForView(options: {
   taskPopupsBoardListOnly: boolean;
   taskView: TaskView;
   originTaskView?: TaskView;
 }): boolean {
-  if (!options.taskPopupsBoardListOnly) return true;
-  return (options.originTaskView === "board" || options.originTaskView === "list") && options.originTaskView === options.taskView;
+  if (!options.taskPopupsBoardListOnly || options.originTaskView === undefined) return true;
+  return options.originTaskView === options.taskView;
+}
+
+export function taskPopupIdentityKey(taskId: string, originTaskView?: TaskView): string {
+  return `${taskId}:${originTaskView ?? "global"}`;
 }
 
 /*
@@ -241,9 +251,9 @@ export function closeTopmostDashboardPopupForShortcut(
   state: DashboardShortcutPopupState,
   handlers: DashboardShortcutPopupHandlers,
 ): boolean {
-  const lastPoppedOutTaskId = state.poppedOutTaskIds[state.poppedOutTaskIds.length - 1];
-  if (lastPoppedOutTaskId) {
-    handlers.closePoppedOutTask(lastPoppedOutTaskId);
+  const lastPoppedOutTask = state.poppedOutTaskEntries[state.poppedOutTaskEntries.length - 1];
+  if (lastPoppedOutTask) {
+    handlers.closePoppedOutTask(lastPoppedOutTask.task.id, lastPoppedOutTask.originTaskView);
     return true;
   }
   if (state.quickChatOpen) {
@@ -263,6 +273,10 @@ export function closeTopmostDashboardPopupForShortcut(
 function AppInner() {
   const { t } = useTranslation("app");
   const { toasts, addToast, removeToast } = useToast();
+  useEffect(() => {
+    const latest = toasts[toasts.length - 1];
+    if (latest) recordActivity({ kind: latest.type === "error" ? "error" : "toast", label: latest.message });
+  }, [toasts]);
   const { shellApi, state: shellState, ready: shellReady, openConnectionManagerSignal } = useShellConnection();
   const shellHost = useShellHostContext();
 
@@ -373,18 +387,14 @@ function AppInner() {
   const { themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors } = useTheme();
 
   // Background AI sessions - required before useModalManager
-  const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, planningSessions: bgPlanningSessions, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
+  const { sessions: bgSessions, planningSessions: bgPlanningSessions } = useBackgroundSessions(currentProject?.id);
   /*
-   * FNXC:SessionBanner 2026-06-14-19:32:
-   * CLI agent sessions use `waiting_on_input` and `needs_attention` to represent user-actionable states. The banner feed must include those statuses in addition to the legacy planning-session statuses so visible CLI actions cannot be silently hidden from users.
-   *
-   * FNXC:SessionBanner 2026-07-05-00:00:
-   * Planning `awaiting_input` sessions are excluded from the banner feed: the banner's Resume button did not
-   * reliably redirect into Planning Mode. That signal now surfaces as a yellow `status-dot--pending` nav badge
-   * (see `planningNeedsInput` below) whose click target is the already-correct `planning` view navigation.
-   * Planning sessions in `error` status are unaffected and still render in the banner.
+   * FNXC:SessionBanner 2026-07-16-20:55:
+   * FN-8229 replaces the removed footer AI pill with this banner feed. It keeps
+   * non-planning generating and error sessions observable while Planning owns
+   * all of its statuses through the docked view and navigation badge.
    */
-  const sessionsNeedingInput = bgSessions.filter((s) => isSessionNeedingInputForBanner(s) && !isPlanningAwaitingInput(s));
+  const sessionsNeedingInput = bgSessions.filter(shouldShowSessionInBanner);
   const sessionBannersHidden = useSessionBannersHidden();
   const planningNeedsInput = bgPlanningSessions.some((s) => s.status === "awaiting_input");
 
@@ -402,6 +412,7 @@ function AppInner() {
 
   // Navigation history for browser back button (desktop + mobile).
   const { pushNav, replaceCurrent, removeNav } = useNavigationHistory({ enabled: true });
+  const viewNavRevertRef = useRef(new Map<TaskView, (() => void)[]>());
 
   // View state must be defined before useTasks since useTasks depends on taskView for SSE gating
   const { viewMode, setViewMode, taskView, setTaskView, handleChangeTaskView } = useViewState({
@@ -415,6 +426,20 @@ function AppInner() {
     themeMode,
     setThemeMode,
   });
+
+  useEffect(() => {
+    recordActivity({ kind: "view", label: String(viewMode) });
+  }, [viewMode]);
+  useEffect(() => {
+    /*
+    FNXC:ReportPipeline 2026-07-18-12:50:
+    Report traces must retain uncaught client errors independently of toast UI.
+    Window errors reveal failures that never produce a typed error toast.
+    */
+    const recordError = (event: ErrorEvent) => recordActivity({ kind: "error", label: event.message });
+    window.addEventListener("error", recordError);
+    return () => window.removeEventListener("error", recordError);
+  }, []);
 
   const { views: rawPluginDashboardViews } = usePluginDashboardViews(currentProject?.id);
   const graphPluginTaskView = useMemo(() => {
@@ -431,7 +456,10 @@ function AppInner() {
     return null;
   }, [rawPluginDashboardViews]);
 
-  // History-aware view change handler — pushes nav entry on back-navigation stack.
+  /*
+  FNXC:DashboardShortcuts 2026-07-16-00:00:
+  FN-8069 makes Settings and Command Center shortcuts true toggles. Retain the exact view-revert callback pushed to navigation history so a shortcut can remove that identity-matched entry and restore the captured prior view for shortcut and Header/MobileNavBar opens alike; the callback deletes itself for shortcut close and Browser Back paths (Runfusion/Fusion#2118).
+  */
   const handleTaskViewChange = useCallback((newView: TaskView) => {
     if (newView === "missions") {
       setMissionResumeSessionId(undefined);
@@ -444,9 +472,45 @@ function AppInner() {
     const previousView = taskView;
     handleChangeTaskView(newView);
     if (previousView !== newView) {
-      pushNav({ type: "view", revert: () => handleChangeTaskView(previousView) });
+      const revert = retainViewNavRevert(
+        newView,
+        previousView,
+        viewNavRevertRef.current,
+        handleChangeTaskView,
+      );
+      pushNav({ type: "view", revert });
     }
   }, [handleChangeTaskView, taskView, pushNav]);
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-19-19:30:
+  NativeStructurePreview deliberately reports callback/view-state destinations instead of URLs.
+  Listen once at the dashboard root so cards from general, task-bound, floating, and dock chat
+  open their owning view without duplicating navigation logic at any chat render call-site.
+  */
+  useEffect(() => {
+    const openNativeStructure = (event: Event) => {
+      const { payload } = (event as CustomEvent<NativeStructureOpenEventDetail>).detail;
+      if (!payload?.available) return;
+      const target = payload.openTarget;
+      if (target.view === "missions") {
+        // FNXC:NativeStructureEmbed 2026-07-20-01:00: Mission navigation resets stale selection
+        // state. Navigate before setting this preview's target so the destination opens the
+        // referenced mission rather than an unselected Missions view.
+        handleTaskViewChange("missions");
+        setMissionTargetId(target.missionId ?? target.id);
+        return;
+      }
+      if (target.view === "goals") {
+        handleTaskViewChange("goalsView");
+        setGoalAnchorId(target.id);
+        return;
+      }
+      handleTaskViewChange(target.view);
+    };
+    window.addEventListener(NATIVE_STRUCTURE_OPEN_EVENT, openNativeStructure);
+    return () => window.removeEventListener(NATIVE_STRUCTURE_OPEN_EVENT, openNativeStructure);
+  }, [handleTaskViewChange]);
 
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
@@ -470,13 +534,42 @@ function AppInner() {
   const { capture: captureCurrentBoardScrollSnapshot, requestRestore } = useBoardScrollRestore(taskView);
   const mainPanelDetailNavRevertRef = useRef<(() => void) | null>(null);
   /*
-  FNXC:FloatingWindow 2026-06-22-20:45:
-  Open popped-out task-detail windows. Each entry is a task snapshot rendered inside its own movable, resizable, non-blocking FloatingWindow. Several can be open at once and coexist with the right-dock pop-out and terminal (all click-through overlays). Snapshots survive a tasks revalidation; rendering prefers the live row by id and falls back to the snapshot. Pop-out dedupes by task id — re-popping an already-open task is a no-op (its window stays; focus-to-front in FloatingWindow handles re-raising on click).
+  FNXC:FloatingWindow 2026-07-15-15:20:
+  FN-8016 identifies a popped-out task detail by task id plus origin view. The same task can therefore coexist in separate view-scoped FloatingWindows while re-opening it on one view refreshes only that entry.
   */
   const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask } = usePoppedOutTasks();
+  const popupNavCloseRef = useRef(new Map<string, () => void>());
+
+  /*
+  FNXC:TaskDetailSwipeBack 2026-07-15-10:32:
+  Mobile task popups keep Board or List visible, but they are still task-detail
+  surfaces. Give each newly opened popup its own navigation callback so browser,
+  iOS swipe, and Android Back dismiss only that popup rather than leaving the
+  Fusion stack empty and allowing Back to skip past the originating task view.
+  */
+  const closePoppedOutTaskWithNav = useCallback((taskId: string, originTaskView?: TaskView) => {
+    const identityKey = taskPopupIdentityKey(taskId, originTaskView);
+    const closeFromHistory = popupNavCloseRef.current.get(identityKey);
+    if (closeFromHistory) {
+      popupNavCloseRef.current.delete(identityKey);
+      removeNav(closeFromHistory);
+    }
+    closePoppedOutTask(taskId, originTaskView);
+  }, [closePoppedOutTask, removeNav]);
+
   const popOutTaskDetailForCurrentView = useCallback((task: Task | TaskDetail) => {
+    const identityKey = taskPopupIdentityKey(task.id, taskView);
+    const alreadyOpen = poppedOutTaskEntries.some((entry) => entry.task.id === task.id && entry.originTaskView === taskView);
+    if (isMobile && !alreadyOpen) {
+      const closeFromHistory = () => {
+        popupNavCloseRef.current.delete(identityKey);
+        closePoppedOutTask(task.id, taskView);
+      };
+      popupNavCloseRef.current.set(identityKey, closeFromHistory);
+      pushNav({ type: "modal", close: closeFromHistory });
+    }
     popOutTaskDetail(task, taskView);
-  }, [popOutTaskDetail, taskView]);
+  }, [isMobile, poppedOutTaskEntries, popOutTaskDetail, pushNav, closePoppedOutTask, taskView]);
 
   const boardSourceTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const [graphWorkflowSelection, setGraphWorkflowSelection] = useState<GraphWorkflowSelection | null>(null);
@@ -525,6 +618,38 @@ function AppInner() {
   }, [initialLoadComplete]);
 
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [chatComposerPrefill, setChatComposerPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const [quickChatEverOpenedProjectId, setQuickChatEverOpenedProjectId] = useState<string | null>(null);
+  const quickChatProjectIdRef = useRef<string | undefined>(undefined);
+
+  /*
+  FNXC:ChatModal 2026-07-18-00:00:
+  FN-8257 requires Quick Chat to mount only after its first open, then remain mounted and hidden
+  across close/reopen so ChatView retains its selected session, transcript, and scroll position.
+  Reset the latch when the project changes so a hidden ChatView cannot leak one project's state
+  into another project; the FloatingWindow key supplies the matching React identity boundary.
+  */
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (quickChatProjectIdRef.current !== projectId) {
+      quickChatProjectIdRef.current = projectId;
+      setQuickChatEverOpenedProjectId(quickChatOpen && projectId ? projectId : null);
+      return;
+    }
+    if (quickChatOpen && projectId) {
+      setQuickChatEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, quickChatOpen]);
+
+  /*
+  FNXC:GitHubImportChat 2026-07-30-12:00:
+  Import Tasks can hand a selected GitHub link to Quick Chat without creating a task. Keep the
+  value and nonce at App scope so both modal and embedded imports seed every Chat presentation.
+  */
+  const openChatWithPrefill = useCallback((text: string) => {
+    setChatComposerPrefill({ text, nonce: Date.now() });
+    setQuickChatOpen(true);
+  }, []);
 
   const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
   // Keyboard visibility controls both MobileNavBar rendering and whether
@@ -637,9 +762,11 @@ function AppInner() {
     modelPricingOverrides,
     taskDetailChatFirst,
     quickChatButtonMode,
+    mobileNavPrimaryItems,
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
+    skipConfirmationDialogs,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
@@ -650,6 +777,7 @@ function AppInner() {
     todosEnabled,
     goalsEnabled,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     toggleAutoMerge,
     togglePlanAutoApprove,
     refresh: refreshAppSettings,
@@ -661,14 +789,13 @@ function AppInner() {
     originTaskView,
   }), [taskPopupsBoardListOnly, taskView]);
   /*
-  FNXC:TaskPopupViewGating 2026-07-13-00:00:
-  Default-off preserves today's globally visible task popups. When enabled, a popup is render-attached to the Board/List view where it was opened: switching views unmounts the FloatingWindow without clearing the hook snapshot, and returning to that same view remounts it with the shared persisted geometry.
+  FNXC:TaskPopupViewGating 2026-07-15-15:20:
+  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible; navigating away unmounts scoped FloatingWindow shells without deleting their state.
   */
   const visiblePoppedOutTaskEntries = useMemo(
     () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
     [poppedOutTaskEntries, taskPopupsVisibleOnCurrentView],
   );
-  const visiblePoppedOutTasks = useMemo(() => visiblePoppedOutTaskEntries.map((entry) => entry.task), [visiblePoppedOutTaskEntries]);
 
   const pluginDashboardViews = useMemo<PluginDashboardViewEntry[]>(() => {
     /*
@@ -705,6 +832,7 @@ function AppInner() {
   const nodesEnabled = experimentalFeatures.nodesView === true;
   const researchEnabled = experimentalFeatures.researchView === true;
   const evalsEnabled = experimentalFeatures.evalsView === true;
+  const ideationEnabled = experimentalFeatures.ideationView === true;
   /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: Missing or false `subtaskBreakdown` settings must hide the AI Subtask quick-add handoff across List, Board, and New Task Modal surfaces; only an explicit true wires the callback. */
   const subtaskBreakdownEnabled = experimentalFeatures.subtaskBreakdown === true;
   /*
@@ -767,13 +895,22 @@ function AppInner() {
     if (taskView === "evals" && !evalsEnabled) {
       handleChangeTaskView("board");
     }
+    /*
+    FNXC:Navigation 2026-08-01-00:00:
+    FN-8352 promotes Ideation to a default-off experimental top-level view.
+    Redirect persisted and deep-linked disabled views to Board so MainContent
+    never leaves users on a blank unavailable surface.
+    */
+    if (taskView === "ideation" && !ideationEnabled) {
+      handleChangeTaskView("board");
+    }
     if (taskView === "goalsView" && !goalsEnabled) {
       handleChangeTaskView("board");
     }
     if (taskView === "todos" && !todosEnabled) {
       handleChangeTaskView("board");
     }
-  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, goalsEnabled, todosEnabled, graphPluginTaskView]);
+  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, ideationEnabled, goalsEnabled, todosEnabled, graphPluginTaskView]);
 
   const {
     availableModels,
@@ -997,6 +1134,16 @@ function AppInner() {
     pushNav({ type: "modal", close: modalManager.closeNewTask });
   }, [modalManager, pushNav]);
 
+  const closeFilesWithNav = useCallback(() => {
+    removeNav(modalManager.closeFiles);
+    modalManager.closeFiles();
+  }, [modalManager, removeNav]);
+
+  const closeNewTaskWithNav = useCallback(() => {
+    removeNav(modalManager.closeNewTask);
+    modalManager.closeNewTask();
+  }, [modalManager, removeNav]);
+
   /*
   FNXC:Navigation 2026-06-21-00:00:
   FN-6886 keeps the existing planning payload setters but routes every programmatic Planning Mode entry point to the docked `planning` view instead of pushing a modal overlay history entry.
@@ -1055,7 +1202,7 @@ function AppInner() {
     */
     return closeTopmostDashboardPopupForShortcut(
       {
-        poppedOutTaskIds: visiblePoppedOutTasks.map((task) => task.id),
+        poppedOutTaskEntries: visiblePoppedOutTaskEntries,
         quickChatOpen,
         terminalOpen: modalManager.terminalOpen,
         modalClosers: [
@@ -1079,31 +1226,40 @@ function AppInner() {
         ],
       },
       {
-        closePoppedOutTask,
+        closePoppedOutTask: closePoppedOutTaskWithNav,
         closeQuickChat: () => setQuickChatOpen(false),
         closeTerminal: closeTerminalWithNav,
       },
     );
-  }, [closePoppedOutTask, closeTerminalWithNav, modalManager, quickChatOpen, visiblePoppedOutTasks]);
+  }, [closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, quickChatOpen, visiblePoppedOutTaskEntries]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
     pushNav({ type: "modal", close: modalManager.closeFiles });
   }, [modalManager, pushNav]);
 
+  const closeViewShortcutWithNav = useCallback((view: TaskView) => {
+    closeViewShortcut(
+      view,
+      viewNavRevertRef.current,
+      removeNav,
+      () => handleChangeTaskView("board"),
+    );
+  }, [handleChangeTaskView, removeNav]);
+
   /*
-  FNXC:DashboardShortcuts 2026-07-04-00:00:
-  FN-7553 wires openFiles/openSettings/openCommandCenter/newTask into the same global listener as the base quickChat/terminal actions (FN-7494/FN-7507), reusing openFilesWithNav, openSettingsWithNav, openCommandCenterWithNav, and openNewTaskWithNav so no second nav destination is introduced.
+  FNXC:DashboardShortcuts 2026-07-16-00:00:
+  All six configurable shortcuts toggle. Modal toggles retain their existing nav-aware closer; Settings and Command Center remove and invoke the exact retained history revert, restoring the captured prior view rather than Board. This applies equally to shortcut and existing Header/MobileNavBar opens without duplicate destinations or replayable history entries (Runfusion/Fusion#2118).
   */
   useDashboardKeyboardShortcuts({
     shortcuts: dashboardKeyboardShortcuts,
-    openQuickChat: () => setQuickChatOpen(true),
+    toggleQuickChat: () => setQuickChatOpen((open) => !open),
     toggleTerminal: toggleTerminalWithNav,
     closeTopmostPopup: closeTopmostPopupForShortcut,
-    openFiles: () => openFilesWithNav(),
-    openSettings: () => openSettingsWithNav(),
-    openCommandCenter: openCommandCenterWithNav,
-    openNewTask: openNewTaskWithNav,
+    toggleFiles: () => modalManager.filesOpen ? closeFilesWithNav() : openFilesWithNav(),
+    toggleSettings: () => taskView === "settings" ? closeViewShortcutWithNav("settings") : openSettingsWithNav(),
+    toggleCommandCenter: () => taskView === "command-center" ? closeViewShortcutWithNav("command-center") : openCommandCenterWithNav(),
+    toggleNewTask: () => modalManager.newTaskModalOpen ? closeNewTaskWithNav() : openNewTaskWithNav(),
   });
 
   const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {
@@ -1181,7 +1337,12 @@ function AppInner() {
 
   const handleOpenBackgroundSession = useCallback((session: AiSessionSummary) => {
     if (session.type === "planning") {
+      /*
+      FNXC:Navigation 2026-07-15-00:00:
+      Background planning sessions must navigate to the embedded `taskView === "planning"` surface as well as setting resume state. This mirrors the mission interview branches below and the openPlanning*WithNav helpers, so footer and needs-input resume entry points actually render the reconnected session.
+      */
       modalManager.openPlanningWithSession(session.id);
+      handleChangeTaskView("planning");
     } else if (session.type === "subtask") {
       modalManager.openSubtaskWithSession(session.id);
     } else if (session.type === "mission_interview") {
@@ -1201,7 +1362,7 @@ function AppInner() {
 
   // Dismissing the "needs input" banner only hides the prompt — it must NOT
   // delete the underlying session. Sessions remain accessible from the
-  // Planning modal's sidebar (or the AI background tasks pill) so the user
+  // Planning modal's sidebar or the session notification banner so the user
   // can return to them later. The banner already tracks dismissals locally
   // via its own `dismissedIds` set, so these handlers are intentional no-ops.
   const handleDismissNeedingInputSession = useCallback(() => {
@@ -1344,6 +1505,7 @@ function AppInner() {
     setShadcnCustomColors,
     resolvedThemeMode,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     reopenOnboardingWithNav,
     viewMode,
     projects,
@@ -1360,6 +1522,7 @@ function AppInner() {
     isRemote,
     remoteData,
     tasks,
+    bgPlanningSessions,
     workflowSteps,
     subscribePluginEvents,
     openDetailTask,
@@ -1374,6 +1537,8 @@ function AppInner() {
     skillsEnabled,
     experimentalFeatures,
     setQuickChatOpen,
+    chatComposerPrefill,
+    onOpenChatWithPrefill: openChatWithPrefill,
     setMailboxUnreadCount,
     setMissionTargetId,
     setMissionResumeSessionId,
@@ -1394,6 +1559,7 @@ function AppInner() {
     openSettingsWithNav,
     researchReadinessVersion,
     evalsEnabled,
+    ideationEnabled,
     memoryEnabled,
     goalsEnabled,
     handleOpenMission,
@@ -1534,7 +1700,8 @@ function AppInner() {
     setShowGitHubStarPrompt,
   };
   return (
-    <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
+    <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
+      <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
       <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
@@ -1604,6 +1771,7 @@ function AppInner() {
           devServerView: devServerEnabled,
           researchView: researchEnabled,
           evalsView: evalsEnabled,
+          ideationView: ideationEnabled,
           goalsView: goalsEnabled,
           leftSidebarNav: leftSidebarNavEnabled,
           rightDock: rightDockEnabled,
@@ -1638,6 +1806,7 @@ function AppInner() {
               devServerView: devServerEnabled,
               researchView: researchEnabled,
               evalsView: evalsEnabled,
+              ideationView: ideationEnabled,
               goalsView: goalsEnabled,
             }}
             pluginDashboardViews={pluginDashboardViews}
@@ -1675,11 +1844,6 @@ function AppInner() {
           projectId={currentProject.id}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
-          backgroundSessions={bgSessions}
-          backgroundGenerating={bgGenerating}
-          backgroundNeedsInput={bgNeedsInput}
-          onOpenBackgroundSession={handleOpenBackgroundSession}
-          onDismissBackgroundSession={bgDismiss}
           lastFetchTimeMs={lastFetchTimeMs}
           currentProjectPath={currentProject.path}
           onOpenProjectDirectory={handleOpenProjectDirectory}
@@ -1698,6 +1862,7 @@ function AppInner() {
         footerVisible={viewMode === "project" && !!currentProject}
         modalOpen={modalManager.anyModalOpen}
         keyboardOpen={mobileNavKeyboardOpen}
+        mobileNavPrimaryItems={mobileNavPrimaryItems}
         onOpenSettings={openSettingsWithNav}
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
@@ -1729,6 +1894,7 @@ function AppInner() {
           todoView: todosEnabled,
           researchView: researchEnabled,
           evalsView: evalsEnabled,
+          ideationView: ideationEnabled,
           goalsView: goalsEnabled,
         }}
         pluginDashboardViews={pluginDashboardViews}
@@ -1761,15 +1927,26 @@ function AppInner() {
           onOpenChange={setQuickChatOpen}
         />
       )}
-      {quickChatOpen && currentProject && (
+      {currentProject && quickChatEverOpenedProjectId === currentProject.id && (
         <FloatingWindow
+          key={currentProject.id}
           windowKey="chat-modal"
+          hidden={!quickChatOpen}
           title="Chat"
           onClose={() => setQuickChatOpen(false)}
           closeOnOutsidePointerDown={quickChatCloseOnOutsideClick}
           hideHeader
           dragHandleSelector=".chat-view--floating .view-header"
           className="floating-window--chat"
+          layer="task-detail"
+          /*
+          FNXC:ChatModal 2026-07-17-15:55:
+          Quick Chat and task-detail popups must share the task popup interaction stack: either
+          overlapping surface claims the front on pointer/focus. Other utility FloatingWindows keep
+          their higher utility band, so this scoped opt-in cannot change Terminal, Files, or New Task.
+          */
+          /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Chat is a full-screen sheet at ≤768px, so preserve its desktop location and size instead of restoring or overwriting them there. */
+          suspendGeometryPersistenceOnMobile
           persistGeometryKey="kb-dashboard-chat-floating-window"
           defaultSize={{ width: 980, height: 680 }}
           /*
@@ -1784,6 +1961,8 @@ function AppInner() {
               projectId={currentProject.id}
               experimentalFeatures={experimentalFeatures}
               floating
+              initialComposerDraft={chatComposerPrefill?.text}
+              initialComposerDraftNonce={chatComposerPrefill?.nonce}
               onMaximize={() => {
                 handleTaskViewChange("chat");
                 setQuickChatOpen(false);
@@ -1804,24 +1983,29 @@ function AppInner() {
       FNXC:TaskPopupGeometry 2026-07-03-00:00:
       Every task-detail FloatingWindow keeps its per-task windowKey for DOM identity, dedupe, cascade fallback, and z-index independence, but all task-detail popups share one persisted geometry key so operators do not resize or reposition the popup between tasks.
 
-      FNXC:TaskPopupLayer 2026-07-04-18:36:
-      Ordinary task-detail popups belong to the board/task-detail layer, not the global floating-utility stack. Pass the task-detail layer so board/right-dock task opens preserve the visible board context while utility windows keep the higher app-wide raise/focus contract.
+      FNXC:TaskPopupLayer 2026-07-17-15:55:
+      Task-detail popups and Quick Chat share the task-detail interaction stack, so pointer/focus
+      moves either overlapping surface above the other. Other utility windows retain their separate,
+      higher utility band and cannot be reordered by task-popup interaction.
 
-      FNXC:TaskPopupViewGating 2026-07-13-00:00:
-      Rendering uses visible entries only; the source hook keeps hidden popup snapshots mounted in React state rather than clearing them on view change. This distinction lets the opt-in setting attach each popup to its originating Board/List view while default-off continues to render all open popups globally.
+      FNXC:TaskPopupViewGating 2026-07-15-15:20:
+      Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {visiblePoppedOutTaskEntries.map(({ task: snapshot }) => {
+      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
-        const close = () => closePoppedOutTask(snapshot.id);
+        const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
+        const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
         return (
           <FloatingWindow
-            key={snapshot.id}
-            windowKey={`task-detail-${snapshot.id}`}
+            key={popupKey}
+            windowKey={`task-detail-${snapshot.id}-${originTaskView ?? "global"}`}
             title={liveTask.id}
             onClose={close}
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
             className="floating-window--task-detail"
+            /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Task pop-outs are full-screen sheets at ≤768px; preserve the shared desktop geometry record for their next movable reopen. */
+            suspendGeometryPersistenceOnMobile
             persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
             layer="task-detail"
           >
@@ -1865,10 +2049,11 @@ function AppInner() {
           handleGitHubImport,
         }}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
+        onOpenChatWithPrefill={openChatWithPrefill}
         onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
         taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate }}
+        settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
@@ -1897,7 +2082,8 @@ function AppInner() {
           </RetryWarningProvider>
         </FileBrowserProvider>
       </NavigationHistoryProvider>
-    </ModalDismissPreferenceProvider>
+      </ModalDismissPreferenceProvider>
+    </ConfirmDialogProvider>
   );
 }
 
@@ -1908,9 +2094,7 @@ export function App() {
         <ShellHostProvider>
           <ShellProvider>
             <NodeProvider>
-              <ConfirmDialogProvider>
-                <AppInner />
-              </ConfirmDialogProvider>
+              <AppInner />
             </NodeProvider>
           </ShellProvider>
         </ShellHostProvider>

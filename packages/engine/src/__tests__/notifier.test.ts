@@ -755,7 +755,7 @@ describe("NtfyNotifier", () => {
             "Title": "Plan needs approval for FN-002",
             "Priority": "high",
           }),
-          body: 'Task "Spec Task" needs your approval before it can proceed',
+          body: 'Task "Spec Task" needs your approval before implementation can start',
         })
       );
     });

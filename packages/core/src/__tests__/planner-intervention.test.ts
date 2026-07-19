@@ -36,7 +36,7 @@ class FakeRunAuditStore implements PlannerInterventionStore {
     return event;
   }
 
-  getRunAuditEvents(options: RunAuditEventFilter = {}): RunAuditEvent[] {
+  async getRunAuditEventsAsync(options: RunAuditEventFilter = {}): Promise<RunAuditEvent[]> {
     return this.events
       .filter((event) => (options.taskId ? event.taskId === options.taskId : true))
       .filter((event) => (options.mutationType ? event.mutationType === options.mutationType : true))
@@ -98,7 +98,7 @@ describe("recordPlannerIntervention", () => {
 });
 
 describe("getPlannerInterventionTimeline", () => {
-  it("returns entries newest-first and filters out non-intervention events", () => {
+  it("returns entries newest-first and filters out non-intervention events", async () => {
     const store = new FakeRunAuditStore();
 
     recordPlannerIntervention(store, {
@@ -127,16 +127,16 @@ describe("getPlannerInterventionTimeline", () => {
       timestamp: "2026-07-04T11:00:00.000Z",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-3");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-3");
 
     expect(timeline).toHaveLength(2);
     expect(timeline[0].reason).toBe("Second intervention");
     expect(timeline[1].reason).toBe("First intervention");
   });
 
-  it("returns [] when there are no interventions for the task", () => {
+  it("returns [] when there are no interventions for the task", async () => {
     const store = new FakeRunAuditStore();
-    expect(getPlannerInterventionTimeline(store, "FN-4")).toEqual([]);
+    expect(await getPlannerInterventionTimeline(store, "FN-4")).toEqual([]);
   });
 });
 

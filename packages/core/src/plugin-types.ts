@@ -311,6 +311,30 @@ export type PluginOnLoad = (ctx: PluginContext) => Promise<void> | void;
 export type PluginOnUnload = (ctx: PluginContext) => Promise<void> | void;
 /** Lifecycle hook: called during database schema initialization */
 export type PluginOnSchemaInit = (db: Database) => Promise<void> | void;
+/**
+ * Declarative PostgreSQL schema owned by a plugin.
+ *
+ * FNXC:PluginPostgresContract 2026-07-14-18:32:
+ * PostgreSQL plugins declare idempotent project-schema DDL without receiving
+ * the host's privileged migration connection. Fusion validates this immutable
+ * plan before onLoad and executes it through a short-lived migration-only
+ * capability, keeping ordinary plugin runtime code on the forced-RLS role.
+ *
+ * FNXC:PluginPostgresContract 2026-07-14-22:42:
+ * ALTER TABLE is intentionally limited to adding ordinary columns or setting
+ * their defaults/nullability. Fusion alone owns project_id, keys, RLS,
+ * policies, triggers, grants, ownership, and table identity.
+ */
+export interface PluginPostgresSchemaDefinition {
+  /** Monotonically increasing plugin schema version for diagnostics. */
+  version: number;
+  /** Stable snake_case namespace prefix for every referenced table (must end in `_`). */
+  tablePrefix: string;
+  /** One idempotent CREATE TABLE/INDEX or host-approved additive ALTER TABLE statement per item. */
+  statements: readonly string[];
+}
+/** PostgreSQL-native schema hook. It receives no database handle. */
+export type PluginOnPostgresSchemaInit = () => PluginPostgresSchemaDefinition;
 /** Lifecycle hook: called when a task is created */
 export type PluginOnTaskCreated = (task: Task, ctx: PluginContext) => Promise<void> | void;
 /** Lifecycle hook: called when a task moves between columns */
@@ -1123,6 +1147,7 @@ export interface FusionPlugin {
     onTaskCompleted?: PluginOnTaskCompleted;
     onError?: PluginOnError;
     onSchemaInit?: PluginOnSchemaInit;
+    onPostgresSchemaInit?: PluginOnPostgresSchemaInit;
     onAgentRunStart?: PluginOnAgentRunStart;
     onAgentRunEnd?: PluginOnAgentRunEnd;
   };

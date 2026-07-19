@@ -17,6 +17,42 @@ describe("tool-bridge", () => {
     ]);
   });
 
+  it("exposes every expanded chat fusion tool to the Grok MCP schema", () => {
+    /*
+    FNXC:ChatAgentTools 2026-07-15-00:00:
+    The Grok loopback bridge must publish every safe coordination/productivity
+    tool assembled by dashboard chat. Each fixture includes execute because the
+    MCP bridge can only invoke in-process Fusion tool closures.
+    */
+    const chatToolNames = [
+      "fn_task_list",
+      "fn_task_show",
+      "fn_task_search",
+      "fn_task_create",
+      "fn_delegate_task",
+      "fn_list_agents",
+      "fn_get_agent_config",
+      "fn_web_fetch",
+      "fn_goal_list",
+      "fn_goal_show",
+      "fn_memory_search",
+      "fn_memory_get",
+      "fn_research_run",
+      "fn_research_list",
+      "fn_research_get",
+      "fn_research_cancel",
+      "fn_research_retry",
+    ];
+    const tools = chatToolNames.map((name) => ({
+      name,
+      description: name,
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ content: [] }),
+    }));
+
+    expect(toolsToMcpToolDefs(tools).map((tool) => tool.name)).toEqual(chatToolNames);
+  });
+
   it("starts a bridge that executes Fusion custom tools over HTTP", async () => {
     const bridge = await startFusionToolBridge([
       {

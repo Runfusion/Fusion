@@ -1,0 +1,25 @@
+{
+  "id": "fusion-plugin-quality",
+  "name": "Quality",
+  "version": "0.1.0",
+  "description": "Task QA tab and Quality hub: preview servers, test runs, reports, screenshots, and suggested cases",
+  "author": "Fusion Team",
+  "dashboardViews": [
+    {
+      "viewId": "quality",
+      "label": "Quality",
+      "componentPath": "./dashboard-view",
+      "icon": "ShieldCheck",
+      "placement": "primary",
+      "order": 32
+    }
+  ],
+  "uiSlots": [
+    {
+      "slotId": "task-detail-tab",
+      "label": "QA",
+      "icon": "FlaskConical",
+      "componentPath": "./qa-tab"
+    }
+  ]
+}

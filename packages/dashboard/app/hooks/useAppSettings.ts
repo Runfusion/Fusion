@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchConfig, fetchSettings, updateSettings, updateGlobalSettings } from "../api";
 import type { GlobalSettings, ProjectSettings } from "@fusion/core";
+import { resolveMobileNavPrimaryItems } from "../../../core/src/mobile-nav-primary-items";
 import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
 import { setAutoReloadEnabled } from "../versionCheck";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
@@ -34,9 +35,11 @@ export interface UseAppSettingsResult {
   modelPricingOverrides?: ModelPricingOverrides;
   taskDetailChatFirst: boolean;
   quickChatButtonMode: QuickChatButtonMode;
+  mobileNavPrimaryItems: string[];
   quickChatCloseOnOutsideClick: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
+  skipConfirmationDialogs: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
@@ -54,6 +57,7 @@ export interface UseAppSettingsResult {
   toggleEnginePause: () => Promise<void>;
   toggleShowQuickChatFAB: () => Promise<void>;
   setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
+  setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   toggleAutoReloadOnVersionChange: () => Promise<void>;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
@@ -83,14 +87,20 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
   const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
   const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
-  const [taskPopupsBoardListOnly, setTaskPopupsBoardListOnly] = useState(false);
+  /*
+  FNXC:TaskPopupViewGating 2026-07-15-15:20:
+  FN-8016 makes per-view popup scoping the default. Explicit persisted false remains the compatibility opt-out for globally shared popups; only an absent field falls back to true.
+  */
+  const [taskPopupsBoardListOnly, setTaskPopupsBoardListOnly] = useState(true);
   const [showCostBadgeOnCards, setShowCostBadgeOnCards] = useState(false);
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
+  const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
+  const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
@@ -155,16 +165,18 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
             ? "floating"
             : "off";
       setQuickChatButtonMode(nextQuickChatButtonMode);
+      setMobileNavPrimaryItems(resolveMobileNavPrimaryItems(settings).primaryItems);
       setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
+      setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
       setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
-      setTaskPopupsBoardListOnly(settings.taskPopupsBoardListOnly === true);
+      setTaskPopupsBoardListOnly(settings.taskPopupsBoardListOnly !== false);
       /*
       FNXC:TaskCardCostBadge 2026-07-11-12:15:
       The app shell exposes the default-off card cost badge setting to the board context only after settings hydration, preserving the no-badge default for upgraded projects.
@@ -306,6 +318,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setShowQuickChatFAB(mode === "floating");
   }, []);
 
+  /*
+  FNXC:Navigation 2026-07-17-00:00:
+  The settings draft previews mobile quick-action order and membership in the app shell before Save;
+  persistence remains owned by SettingsModal's normal save path.
+  */
+  const setMobileNavPrimaryItemsImmediate = useCallback((items: string[]) => {
+    setMobileNavPrimaryItems(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: items }).primaryItems);
+  }, []);
+
   const toggleAutoReloadOnVersionChange = useCallback(async () => {
     const next = !autoReloadOnVersionChange;
     setAutoReloadOnVersionChangeState(next);
@@ -342,9 +363,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     modelPricingOverrides,
     taskDetailChatFirst,
     quickChatButtonMode,
+    mobileNavPrimaryItems,
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
+    skipConfirmationDialogs,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
@@ -362,6 +385,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     toggleEnginePause,
     toggleShowQuickChatFAB,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     toggleAutoReloadOnVersionChange,
     refresh,
   };

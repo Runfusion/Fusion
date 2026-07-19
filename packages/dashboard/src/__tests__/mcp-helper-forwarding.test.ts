@@ -1,10 +1,6 @@
 import express from "express";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { InsightStore, TaskStore as TaskStoreClass, type Task, type TaskStore } from "@fusion/core";
+import { type Task, type TaskStore } from "@fusion/core";
 import * as coreModule from "@fusion/core";
 import { request } from "../test-request.js";
 
@@ -72,10 +68,36 @@ function createTask(): Task {
   } as Task;
 }
 
-async function createInsightTaskStore(mode: boolean | "no-settings-scope"): Promise<{ root: string; store: TaskStore }> {
-  const root = mkdtempSync(join(tmpdir(), "kb-mcp-helper-forwarding-"));
-  const store = new TaskStoreClass(root, join(root, ".fusion-global-settings"), { inMemoryDb: true }) as TaskStore & { mcpEnabledForTest?: boolean; getSettingsByScope?: unknown };
-  await store.init();
+function createInsightTaskStore(mode: boolean | "no-settings-scope"): { root: string; store: TaskStore } {
+  const root = "/tmp/mcp-helper-forwarding";
+  let run = {
+    id: "INS-MCP",
+    projectId: "",
+    trigger: "manual",
+    status: "pending",
+    lifecycle: { attempt: 1, maxAttempts: 2 },
+  };
+  // FNXC:PostgresCutover 2026-07-16-07:20: MCP forwarding is a route-boundary
+  // assertion, not TaskStore persistence coverage. Model the async insight-run
+  // contract directly so this test no longer constructs the deleted SQLite mode.
+  const insightStore = {
+    findActiveRun: vi.fn(async () => undefined),
+    createRunOrThrowConflict: vi.fn(async (projectId: string, input: Record<string, unknown>) => {
+      run = { ...run, projectId, ...input } as typeof run;
+      return run;
+    }),
+    updateRun: vi.fn(async (_id: string, patch: Record<string, unknown>) => {
+      run = { ...run, ...patch, lifecycle: { ...run.lifecycle, ...(patch.lifecycle as object ?? {}) } } as typeof run;
+      return run;
+    }),
+    appendRunEvent: vi.fn(async () => undefined),
+    listStalePendingRuns: vi.fn(async () => []),
+  };
+  const store = {
+    getRootDir: () => root,
+    getSettings: vi.fn(async () => ({})),
+    getInsightStore: () => insightStore,
+  } as TaskStore & { mcpEnabledForTest?: boolean; getSettingsByScope?: unknown };
   if (mode === true) store.mcpEnabledForTest = true;
   if (mode === "no-settings-scope") {
     Object.defineProperty(store, "getSettingsByScope", { value: undefined, configurable: true });
@@ -242,7 +264,7 @@ describe("MCP forwarding for readonly dashboard helper seams", () => {
       extractedAt: "2026-06-26T00:00:00.000Z",
     });
     vi.spyOn(coreModule, "mergeInsights").mockReturnValue("# merged insights");
-    const { root, store } = await createInsightTaskStore(mode);
+    const { root, store } = createInsightTaskStore(mode);
     const app = express();
     app.use(express.json());
     const router = createInsightsRouter(store) as ReturnType<typeof createInsightsRouter> & { __disposeSweeper?: () => void };
@@ -257,8 +279,6 @@ describe("MCP forwarding for readonly dashboard helper seams", () => {
       expect(mockCreateFnAgent).toHaveBeenCalledWith(expect.objectContaining({ tools: "readonly", mcpServers: expectedServers }));
     } finally {
       router.__disposeSweeper?.();
-      await store.close();
-      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

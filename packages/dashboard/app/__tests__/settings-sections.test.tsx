@@ -24,7 +24,7 @@ import { PromptsSection } from "../components/settings/sections/PromptsSection";
 import { SecretsSection } from "../components/settings/sections/SecretsSection";
 import { WorktreesSection } from "../components/settings/sections/WorktreesSection";
 import type { SettingsFormState } from "../components/settings/sections/context";
-import { fetchWorkflow, fetchWorkflowSettingValues, updateWorkflowSettingValues } from "../api";
+import { fetchWorkflow, fetchWorkflows, fetchWorkflowSettingValues, updateWorkflowSettingValues } from "../api";
 import type { WorkflowSettingValuesPayload } from "../api";
 
 vi.mock("../components/AgentPromptsManager", () => ({
@@ -75,9 +75,11 @@ vi.mock("../components/CustomModelDropdown", () => ({
 
 expect.extend(jestDomMatchers);
 beforeEach(() => {
+  vi.mocked(fetchWorkflows).mockReset();
   vi.mocked(fetchWorkflow).mockReset();
   vi.mocked(fetchWorkflowSettingValues).mockReset();
   vi.mocked(updateWorkflowSettingValues).mockReset();
+  vi.mocked(fetchWorkflows).mockResolvedValue([]);
   vi.mocked(fetchWorkflow).mockResolvedValue({ id: "builtin:coding", name: "Coding", ir: {} } as never);
   vi.mocked(fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
   vi.mocked(updateWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
@@ -91,7 +93,6 @@ describe("AppearanceSection", () => {
     const [hidden, setHidden] = useState(false);
     return (
       <AppearanceSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={vi.fn()}
         themeMode="dark"
@@ -105,9 +106,12 @@ describe("AppearanceSection", () => {
 
   it("round-trips the session-banner toggle through its setter", () => {
     render(<AppearanceHost />);
-    const toggle = screen.getByText("Hide AI session notification banners")
-      .closest("label")!
-      .querySelector("input[type=checkbox]") as HTMLInputElement;
+    /*
+    FNXC:SettingsStyling 2026-07-15-17:35:
+    Resolved through the label→control association rather than by walking the DOM. The old `getByText(...).closest("label").querySelector("input")` assumed the label ELEMENT wrapped the checkbox, which was the `checkbox-label` markup's shape; the shared row primitive binds `htmlFor`/`id` instead, so the label is now a sibling of the control and the walk returned null.
+    `getByLabelText` asserts the binding an assistive technology actually uses, so it survives markup changes and additionally fails if that binding is ever broken — which the DOM walk could not detect.
+    */
+    const toggle = screen.getByLabelText("Hide AI session notification banners") as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(true);
@@ -117,12 +121,36 @@ describe("AppearanceSection", () => {
 });
 
 describe("GeneralSection", () => {
+  it("hides deprecated built-ins from the workflow enablement toggles", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      { id: "builtin:coding", name: "Coding", kind: "workflow", ir: {} },
+      { id: "builtin:brainstorming", name: "Brainstorming", kind: "workflow", ir: {} },
+      { id: "builtin:coding-ideas", name: "Coding (Ideas)", kind: "workflow", ir: {} },
+    ] as never);
+
+    render(
+      <GeneralSection
+        form={emptyForm}
+        setForm={vi.fn()}
+        addToast={vi.fn()}
+        prefixError={null}
+        setPrefixError={vi.fn()}
+        projectTrackingRepoOptions={[]}
+        projectTrackingRepoLoading={false}
+        projectTrackingRepoError={null}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Coding")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Brainstorming")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Coding (Ideas)")).not.toBeInTheDocument();
+  });
+
   it("emits the absolute file-browser path toggle via setForm", () => {
     function GeneralHost() {
       const [form, setForm] = useState({ allowAbsoluteFileBrowserPaths: false } as SettingsFormState);
       return (
         <GeneralSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           addToast={vi.fn()}
@@ -150,7 +178,6 @@ describe("NotificationsSection", () => {
     const setForm = vi.fn();
     render(
       <NotificationsSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={setForm}
         testNotificationLoading={{}}
@@ -168,7 +195,6 @@ describe("NotificationsSection", () => {
   it("nests the failure-notification mode field inside the padded provider body", () => {
     render(
       <NotificationsSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -186,7 +212,6 @@ describe("NotificationsSection", () => {
   it("shows the ntfy topic field only when ntfy is enabled", () => {
     const { rerender } = render(
       <NotificationsSection
-        scopeBanner={null}
         form={{ ntfyEnabled: false } as SettingsFormState}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -197,7 +222,6 @@ describe("NotificationsSection", () => {
     expect(screen.queryByLabelText("ntfy Topic")).not.toBeInTheDocument();
     rerender(
       <NotificationsSection
-        scopeBanner={null}
         form={{ ntfyEnabled: true } as SettingsFormState}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -210,11 +234,15 @@ describe("NotificationsSection", () => {
 });
 
 describe("SecretsSection", () => {
-  it("renders the scope banner, title, and the SecretsView card", () => {
+  /*
+  FNXC:SettingsScope 2026-07-15-18:52:
+  The scope-banner assertion went with the banner itself: sections no longer take a `scopeBanner` slot, because one section-level scope claim was false wherever a section mixed scopes. Scope now rides on each row's badge.
+  The rest of the contract — title plus the SecretsView card — is unchanged and still asserted.
+  */
+  it("renders the title and the SecretsView card", () => {
     render(
-      <SecretsSection scopeBanner={<div data-testid="scope-banner" />} addToast={vi.fn()} />,
+      <SecretsSection addToast={vi.fn()} />,
     );
-    expect(screen.getByTestId("scope-banner")).toBeInTheDocument();
     expect(screen.getByText("Secrets")).toBeInTheDocument();
     expect(screen.getByTestId("secrets-view")).toBeInTheDocument();
   });
@@ -236,7 +264,6 @@ describe("WorktreesSection", () => {
     const onAdd = vi.fn();
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, worktreeCopyFiles: [".env"] } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
@@ -273,7 +300,6 @@ describe("WorktreesSection", () => {
 
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, showWorktreeGrouping: false, worktreeCopyFiles: [] } as SettingsFormState}
         setForm={setForm}
         gitRemotes={[]}
@@ -298,7 +324,6 @@ describe("WorktreesSection", () => {
   it("keeps an empty copy-file row reachable when the setting is undefined", () => {
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, worktreeCopyFiles: undefined } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
@@ -315,6 +340,64 @@ describe("WorktreesSection", () => {
     expect(screen.getByLabelText("File to copy into new worktrees")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
   });
+
+  /*
+  FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
+  exclusive; the UI enforces this bidirectionally so the conflicting state is unreachable.
+  */
+  function renderWorktrees(form: Partial<SettingsFormState>) {
+    return render(
+      <WorktreesSection
+        form={{ worktreeCopyFiles: [], ...form } as SettingsFormState}
+        setForm={vi.fn()}
+        gitRemotes={[]}
+        worktrunkInstall={worktrunkInstall}
+        worktrunkInstallVerified={true}
+        onOpenWorktreesDirPicker={vi.fn()}
+        onWorktreeCopyFileChange={vi.fn()}
+        onRemoveWorktreeCopyFile={vi.fn()}
+        onAddWorktreeCopyFile={vi.fn()}
+        onOpenWorktreeCopyFilePicker={vi.fn()}
+      />,
+    );
+  }
+
+  it("disables the recycle toggle when worktree naming is task-id (mutually exclusive)", () => {
+    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "task-id" });
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(true);
+    expect(recycle.checked).toBe(false);
+    // The naming select stays enabled so the operator can switch away from task-id.
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(false);
+    expect(naming.value).toBe("task-id");
+  });
+
+  it("disables the naming select when recycling is on (mutually exclusive)", () => {
+    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "random" });
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(true);
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(false);
+    expect(recycle.checked).toBe(true);
+  });
+
+  it("leaves both controls editable when neither conflicting value is set", () => {
+    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "random" });
+    expect((screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement).disabled).toBe(false);
+  });
+
+  it("legacy conflict (both set): keeps the recycle toggle enabled+checked so it can be repaired", () => {
+    // Runtime treats this state as recycling (pinning off); the UI mirrors that and offers an escape hatch —
+    // turning recycling off re-enables the naming select. Both controls must never lock together.
+    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "task-id" });
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(false);
+    expect(recycle.checked).toBe(true);
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(true);
+  });
 });
 
 describe("GlobalModelsSection", () => {
@@ -322,7 +405,6 @@ describe("GlobalModelsSection", () => {
     const updateLaneThinkingValue = vi.fn();
     render(
       <GlobalModelsSection
-        scopeBanner={null}
         form={{ defaultThinkingLevel: "low" } as SettingsFormState}
         setForm={vi.fn()}
         availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }]}
@@ -356,7 +438,6 @@ describe("GlobalModelsSection", () => {
       } as SettingsFormState);
       return (
         <GlobalModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true }]}
@@ -419,7 +500,6 @@ describe("ProjectModelsSection", () => {
   it("opts Project Models lane and preset dropdowns into readable menu width", () => {
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{} as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -441,13 +521,88 @@ describe("ProjectModelsSection", () => {
     expect(screen.getByTestId("mock-model-dropdown-preset-validator-model")).toHaveAttribute("data-menu-width", "readable");
   });
 
+  it("renders and updates the supported input-language task-definition toggle", () => {
+    const setForm = vi.fn();
+    render(
+      <ProjectModelsSection
+        form={{ taskDefinitionInInputLanguage: false } as SettingsFormState}
+        setForm={setForm}
+        models={models}
+        addToast={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("checkbox", { name: "Write task definitions in the operator's input language" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/supported detectable input languages/i)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(setForm).toHaveBeenCalled();
+  });
+
+  it("colocates summarization model controls with AI summarization settings", () => {
+    render(
+      <ProjectModelsSection
+        form={{} as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          modelLanes: [
+            { laneId: "default", label: "Default", helperText: "Default", fallbackOrder: "global" },
+            { laneId: "merger", label: "Merger", helperText: "Merger", fallbackOrder: "global" },
+            { laneId: "summarization", label: "Summarization", helperText: "Summarization", fallbackOrder: "global" },
+          ] as never,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        addToast={vi.fn()}
+      />,
+    );
+
+    const summarizationSection = screen.getByTestId("project-models-ai-summarization");
+    const heading = screen.getByRole("heading", { name: "AI Title and Git Commit Message Summarization" });
+    const autoSummarizeTitles = screen.getByRole("checkbox", { name: "Auto-summarize long descriptions as titles" });
+    const summarizationDropdown = screen.getByTestId("mock-model-dropdown-summarizationModel");
+    const fallbackDropdown = screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel");
+    const defaultDropdown = screen.getByTestId("mock-model-dropdown-defaultModel");
+    const mergerDropdown = screen.getByTestId("mock-model-dropdown-mergerModel");
+
+    expect(summarizationSection).toContainElement(heading);
+    expect(summarizationSection).toContainElement(autoSummarizeTitles);
+    expect(summarizationSection).toContainElement(summarizationDropdown);
+    expect(summarizationSection).toContainElement(fallbackDropdown);
+    expect(defaultDropdown.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mergerDropdown.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(summarizationDropdown) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(fallbackDropdown) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps summarization controls behind the available-models guard", () => {
+    render(
+      <ProjectModelsSection
+        form={{} as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          modelLanes: [
+            { laneId: "default", label: "Default", helperText: "Default", fallbackOrder: "global" },
+            { laneId: "summarization", label: "Summarization", helperText: "Summarization", fallbackOrder: "global" },
+          ] as never,
+        }}
+        addToast={vi.fn()}
+      />,
+    );
+
+    const summarizationSection = screen.getByTestId("project-models-ai-summarization");
+    expect(within(summarizationSection).getByText("No models available. Configure authentication first.")).toBeInTheDocument();
+    expect(within(summarizationSection).queryByTestId("mock-model-dropdown-summarizationModel")).not.toBeInTheDocument();
+    expect(within(summarizationSection).queryByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).not.toBeInTheDocument();
+  });
+
   it("wires project model lane thinking overrides and reset", () => {
     const updateLaneThinkingValue = vi.fn();
     const resetLaneThinkingValue = vi.fn();
     const resetLaneValue = vi.fn();
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultThinkingLevel: "medium" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -487,7 +642,6 @@ describe("ProjectModelsSection", () => {
       } as SettingsFormState);
       return (
         <ProjectModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           models={{
@@ -502,6 +656,7 @@ describe("ProjectModelsSection", () => {
     render(<ProjectTitleFallbackHost />);
 
     const dropdown = screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel");
+    expect(screen.getByTestId("project-models-ai-summarization")).toContainElement(dropdown);
     expect(dropdown).toHaveAttribute("data-thinking-visible", "true");
     expect(dropdown).toHaveAttribute("data-thinking-value", "high");
     expect(dropdown).toHaveAttribute("data-default-thinking", "medium");
@@ -515,6 +670,89 @@ describe("ProjectModelsSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-value", "");
     expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-thinking-value", "");
+  });
+
+  it("renders merger fallback directly after merger and resets its complete lane", () => {
+    function ProjectMergerFallbackHost() {
+      const [form, setForm] = useState<SettingsFormState>({
+        mergerFallbackProvider: "anthropic",
+        mergerFallbackModelId: "claude-sonnet-4-5",
+        mergerFallbackThinkingLevel: "high",
+      } as SettingsFormState);
+      return <ProjectModelsSection
+        form={form}
+        setForm={setForm}
+        models={{
+          ...models,
+          modelLanes: [
+            { laneId: "default", label: "Default", helperText: "Default", fallbackOrder: "global" },
+            { laneId: "merger", label: "Merger", helperText: "Merger", fallbackOrder: "global" },
+            { laneId: "import-translate", label: "Translate", helperText: "Translate", fallbackOrder: "global" },
+          ] as never,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        addToast={vi.fn()}
+      />;
+    }
+    render(<ProjectMergerFallbackHost />);
+
+    const dropdown = screen.getByTestId("mock-model-dropdown-mergerFallbackModel");
+    expect(dropdown).toHaveAttribute("data-value", "anthropic/claude-sonnet-4-5");
+    expect(dropdown).toHaveAttribute("data-thinking-value", "high");
+    const dropdowns = Array.from(document.querySelectorAll("[data-testid^='mock-model-dropdown-']"));
+    const mergerIndex = dropdowns.indexOf(screen.getByTestId("mock-model-dropdown-mergerModel"));
+    expect(dropdowns[mergerIndex + 1]).toBe(dropdown);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(dropdown).toHaveAttribute("data-value", "");
+    expect(dropdown).toHaveAttribute("data-thinking-value", "");
+  });
+
+  it("renders default workflow model lanes with each fallback directly after its primary", async () => {
+    vi.mocked(fetchWorkflow).mockResolvedValue({
+      id: "builtin:coding",
+      name: "Coding",
+      ir: {
+        settings: [
+          "planning",
+          "planningFallback",
+          "execution",
+          "executionFallback",
+          "validator",
+          "validatorFallback",
+        ].flatMap((lane) => [
+          { id: `${lane}Provider`, name: `${lane} provider`, type: "string" },
+          { id: `${lane}ModelId`, name: `${lane} model`, type: "string" },
+          { id: `${lane}ThinkingLevel`, name: `${lane} thinking`, type: "enum" },
+        ]),
+      },
+    } as never);
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
+
+    render(
+      <ProjectModelsSection
+        form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        projectId="project-1"
+        addToast={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId("workflow-model-lane-validator-fallback");
+    const workflowLaneIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='workflow-model-lane-']"))
+      .map((element) => element.dataset.testid?.replace("workflow-model-lane-", ""));
+    expect(workflowLaneIds).toEqual([
+      "planning",
+      "planning-fallback",
+      "execution",
+      "execution-fallback",
+      "validator",
+      "validator-fallback",
+    ]);
   });
 
   it("wires workflow fallback lane thinking render, persist, and reset", async () => {
@@ -546,7 +784,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding", defaultThinkingLevel: "medium" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -599,7 +836,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -646,7 +882,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -707,7 +942,6 @@ describe("ProjectModelsSection", () => {
       } as SettingsFormState);
       return (
         <ProjectModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setFormState as never}
           models={models}
@@ -734,7 +968,7 @@ describe("ProjectModelsSection", () => {
 describe("PromptsSection", () => {
   it("renders the title and mounts AgentPromptsManager", () => {
     render(
-      <PromptsSection scopeBanner={null} form={emptyForm} setForm={vi.fn()} />,
+      <PromptsSection form={emptyForm} setForm={vi.fn()} />,
     );
     expect(screen.getByText("Prompts")).toBeInTheDocument();
     expect(screen.getByTestId("agent-prompts-manager")).toBeInTheDocument();
@@ -770,7 +1004,6 @@ describe("ExperimentalSection", () => {
     );
     return (
       <ExperimentalSection
-        scopeBanner={null}
         form={form}
         setForm={setFormState as never}
         knownFeatures={knownFeatures}

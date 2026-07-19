@@ -1,8 +1,9 @@
 // ChatView thinking-level control mount test (FN-7898).
 //
-// Asserts the Brain-icon ChatThinkingLevelControl renders ONLY in the direct-session
-// (non-CLI) composer, next to the attach button, and never renders for CLI-backed
-// sessions, never in the rooms composer, and never with no active session. Also verifies
+// Asserts the Brain-icon ChatThinkingLevelControl renders in the direct-session
+// (non-CLI) composer and the active room composer next to attach. Direct chat retains its
+// Model / Agent target section; rooms are level-only. It never renders for CLI-backed
+// sessions or direct chat with no active session. Also verifies
 // the control's displayed state tracks the active session across a session switch, and
 // that it renders without layout regression at a mobile viewport.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -195,6 +196,7 @@ describe("ChatView thinking-level control (FN-7898)", () => {
     _resetInitialViewportHeight();
     vi.clearAllMocks();
     mockFetchSettings.mockResolvedValue({} as Awaited<ReturnType<typeof api.fetchSettings>>);
+    localStorage.setItem("fusion:chat-scope", "direct");
     mockDesktopViewport();
     mockUseChatRooms.mockReturnValue(roomsState());
   });
@@ -255,7 +257,7 @@ describe("ChatView thinking-level control (FN-7898)", () => {
     expect(screen.queryByTestId("chat-thinking-btn")).toBeNull();
   });
 
-  it("(c) does NOT render in the rooms composer when chatScope is rooms with an active room", async () => {
+  it("(c) renders a level-only control beside attach in the rooms composer", async () => {
     const session = makeSession({ id: "sess-a", cliExecutorAdapterId: null });
     mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session] }));
     mockUseChatRooms.mockReturnValue(roomsState({ rooms: [roomA], activeRoom: roomA }));
@@ -263,12 +265,15 @@ describe("ChatView thinking-level control (FN-7898)", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
-    // The rooms composer's own attach button is present (proves the rooms
-    // composer rendered), but no thinking-level trigger exists anywhere.
-    expect(screen.getAllByTestId("chat-attach-btn").length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-thinking-btn")).toBeNull();
+    const attachButton = screen.getByTestId("chat-attach-btn");
+    const thinkingButton = screen.getByTestId("chat-thinking-btn");
+    expect(attachButton.nextElementSibling).toContainElement(thinkingButton);
+    fireEvent.click(thinkingButton);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
 
-    localStorage.removeItem("fusion:chat-scope");
+    localStorage.setItem("fusion:chat-scope", "direct");
   });
 
   it("(d) does NOT render when there is no active session", async () => {

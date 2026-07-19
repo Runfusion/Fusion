@@ -1,5 +1,5 @@
 import "./MobileNavBar.css";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -34,9 +34,11 @@ import { useTranslation } from "react-i18next";
 import { fetchScripts } from "../api";
 import type { PluginDashboardViewEntry } from "../api";
 import { useViewportMode } from "./Header";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
+import { resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;
@@ -111,10 +113,13 @@ export interface MobileNavBarProps {
     todoView?: boolean;
     researchView?: boolean;
     evalsView?: boolean;
+    ideationView?: boolean;
     goalsView?: boolean;
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
+  /** Ordered quick-action tabs; invalid values resolve to the safe default. */
+  mobileNavPrimaryItems?: string[];
 }
 
 function GitHubLogo({ size = 20 }: { size?: number }) {
@@ -166,14 +171,27 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
+  mobileNavPrimaryItems,
 }: MobileNavBarProps) {
   const { t } = useTranslation("app");
   const mode = useViewportMode();
+  const navigationHistory = useContext(NavigationHistoryContext);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
   const [scripts, setScripts] = useState<Record<string, string>>({});
   const [scriptsLoading, setScriptsLoading] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const [hasSheetDragged, setHasSheetDragged] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const sheetDragRef = useRef<{
+    startY: number;
+    startedAt: number;
+    eligible: boolean;
+    startedOnHandle: boolean;
+  } | null>(null);
+  const dragOffsetRef = useRef(0);
 
   const scriptEntries = useMemo(
     () => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)),
@@ -203,14 +221,106 @@ export function MobileNavBar({
     };
   }, [isScriptsSubmenuOpen, projectId]);
 
-  const closeMore = useCallback(() => setIsMoreOpen(false), []);
+  const resetSheetDrag = useCallback(() => {
+    sheetDragRef.current = null;
+    dragOffsetRef.current = 0;
+    setDragOffset(0);
+    setIsSheetDragging(false);
+  }, []);
+
+  const closeMore = useCallback(() => {
+    resetSheetDrag();
+    setHasSheetDragged(false);
+    setIsMoreOpen(false);
+  }, [resetSheetDrag]);
+
+  /*
+  FNXC:MobileNav 2026-07-16-14:30:
+  The More sheet must dismiss before navigation on iOS swipe-back, Android native Back, and browser Back.
+  Register its stable, idempotent closer as a modal entry, while reading nullable context so provider-less
+  component renders retain their existing behavior.
+  */
+  useEffect(() => {
+    if (!isMoreOpen || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: closeMore });
+  }, [closeMore, isMoreOpen, navigationHistory]);
+
+  const dismissMore = useCallback(() => {
+    navigationHistory?.removeNav(closeMore);
+    closeMore();
+  }, [closeMore, navigationHistory]);
+
+  /*
+  FNXC:MobileNav 2026-07-16-12:00:
+  The mobile More drawer must dismiss when a user drags down from its top or grab handle.
+  Keep scrollTop===0 as the body-drag guard so a scrolled sheet retains normal interior
+  scrolling; the non-passive native listener can cancel iOS Safari and Android Chrome
+  overscroll only for that eligible downward dismissal gesture.
+  */
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!isMoreOpen || !sheet) return;
+
+    const onTouchMove = (event: TouchEvent) => {
+      const drag = sheetDragRef.current;
+      const touch = event.touches[0];
+      if (!drag || !touch) return;
+
+      const offset = Math.max(0, touch.clientY - drag.startY);
+      const canDismiss = drag.eligible && (drag.startedOnHandle || sheet.scrollTop <= 0);
+      if (offset === 0 || !canDismiss) return;
+
+      event.preventDefault();
+      dragOffsetRef.current = offset;
+      setHasSheetDragged(true);
+      setIsSheetDragging(true);
+      setDragOffset(offset);
+    };
+
+    sheet.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => sheet.removeEventListener("touchmove", onTouchMove);
+  }, [isMoreOpen]);
+
+  const handleSheetTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const sheet = sheetRef.current;
+    const touch = event.touches[0];
+    if (!sheet || !touch) return;
+
+    const target = event.target instanceof Element ? event.target : null;
+    const startedOnHandle = Boolean(target?.closest(".mobile-more-sheet-handle"));
+    sheetDragRef.current = {
+      startY: touch.clientY,
+      startedAt: Date.now(),
+      eligible: startedOnHandle || sheet.scrollTop <= 0,
+      startedOnHandle,
+    };
+    dragOffsetRef.current = 0;
+    setDragOffset(0);
+    setIsSheetDragging(false);
+  }, []);
+
+  const finishSheetDrag = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const sheet = sheetRef.current;
+    const drag = sheetDragRef.current;
+    const touch = event.changedTouches[0];
+    const offset = dragOffsetRef.current;
+    const elapsed = drag ? Math.max(1, Date.now() - drag.startedAt) : 1;
+    const sheetHeight = sheet?.getBoundingClientRect().height ?? 0;
+    const dismissDistance = Math.max(100, sheetHeight / 4);
+    const shouldDismiss = Boolean(drag?.eligible && offset > 0 && (offset >= dismissDistance || offset / elapsed >= 0.6));
+
+    resetSheetDrag();
+    if (shouldDismiss && touch) {
+      dismissMore();
+    }
+  }, [dismissMore, resetSheetDrag]);
 
   const handleMoreAction = useCallback(
     (callback?: () => void) => {
-      closeMore();
+      dismissMore();
       callback?.();
     },
-    [closeMore],
+    [dismissMore],
   );
 
   useEffect(() => {
@@ -218,13 +328,13 @@ export function MobileNavBar({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsMoreOpen(false);
+        dismissMore();
       }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isMoreOpen]);
+  }, [dismissMore, isMoreOpen]);
 
   useLayoutEffect(() => {
     const navEl = navRef.current;
@@ -269,14 +379,6 @@ export function MobileNavBar({
   const skillsEnabled = Boolean(showSkillsTab);
   const todoViewEnabled = Boolean(experimentalFeatures?.todoView);
 
-  // Keep optional primary tabs limited to preserve touch-target width.
-  // Overflowed destinations remain available in the More sheet.
-  /*
-  FNXC:Navigation 2026-06-22-01:40:
-  Skills is never a top-level mobile tab; when enabled it lives only in the three-dot More overflow sheet.
-  */
-  const showSkillsTopLevel = false;
-  const showSkillsInMore = skillsEnabled && !showSkillsTopLevel;
   const sortedPrimaryPluginViews = pluginDashboardViews
     .filter((entry) => entry.view.placement === "primary")
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
@@ -297,20 +399,66 @@ export function MobileNavBar({
     .filter((entry) => !topLevelPluginViewKeys.has(`${entry.pluginId}:${entry.view.viewId}`))
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
 
-  const isMoreActive =
-    view === "documents"
-    || (Boolean(experimentalFeatures?.evalsView) && view === "evals")
-    || (Boolean(experimentalFeatures?.goalsView) && view === "goalsView")
-    || view === "research"
-    || view === "insights"
-    || view === "memory"
-    || view === "secrets"
-    || view === "devserver"
-    || view === "dev-server"
-    || (view === "todos" && todoViewEnabled)
-    || (view === "skills" && !showSkillsTopLevel)
+  const { primaryItems, omittedItems } = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems });
+  /*
+  FNXC:Navigation 2026-07-17-00:00:
+  Selectable mobile destinations use one registry so an available destination is rendered exactly once:
+  configured items are tabs and omitted items are More entries. Feature gates are enforced here rather
+  than by the core resolver, keeping persisted choices valid if an operator later enables a feature.
+  */
+  const destinationRegistry: Record<MobileNavSelectableItem, {
+    icon: ReactNode;
+    labelKey: string;
+    fallback: string;
+    moreTestId: string;
+    isActive: boolean;
+    isAvailable: boolean;
+    navigate: (surface: "primary" | "more") => void;
+    indicator?: boolean;
+    indicatorLabel?: string;
+    badge?: number;
+  }> = {
+    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
+    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board" || view === "list", isAvailable: true, navigate: () => onChangeView(view === "board" || view === "list" ? view : "board") },
+    agents: { icon: <Bot />, labelKey: "nav.agents", fallback: "Agents", moreTestId: "mobile-more-item-agents", isActive: view === "agents", isAvailable: true, navigate: () => onChangeView("agents") },
+    missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: () => onChangeView("missions") },
+    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: () => onChangeView("chat"), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
+    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: () => onChangeView("mailbox"), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
+    planning: { icon: <Lightbulb />, labelKey: "nav.planning", fallback: "Planning", moreTestId: "mobile-more-item-planning", isActive: view === "planning", isAvailable: true, navigate: (surface) => surface === "primary" ? planningHandler?.() : handleMoreAction(planningHandler), indicator: planningNeedsInput && view !== "planning", indicatorLabel: t("nav.planningNeedsInputAriaLabel", "Planning needs your input"), badge: activePlanningSessionCount },
+    activity: { icon: <Activity />, labelKey: "nav.activityLog", fallback: "Activity Log", moreTestId: "mobile-more-item-activity", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenActivityLog?.() : handleMoreAction(onOpenActivityLog) },
+    git: { icon: <GitBranch />, labelKey: "nav.gitManager", fallback: "Git Manager", moreTestId: "mobile-more-item-git", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenGitManager?.() : handleMoreAction(onOpenGitManager), badge: stashOrphanCount },
+    files: { icon: <Folder />, labelKey: "nav.files", fallback: "Files", moreTestId: "mobile-more-item-files", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenFiles?.() : handleMoreAction(onOpenFiles) },
+    workflows: { icon: <Workflow />, labelKey: "nav.workflows", fallback: "Workflows", moreTestId: "mobile-more-item-workflow", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenWorkflowEditor?.() : handleMoreAction(onOpenWorkflowEditor) },
+    automation: { icon: <Clock />, labelKey: "nav.automation", fallback: "Automation", moreTestId: "mobile-more-item-schedules", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSchedules?.() : handleMoreAction(onOpenSchedules) },
+    "github-import": { icon: <GitHubLogo />, labelKey: "nav.importFromGitHub", fallback: "Import from GitHub", moreTestId: "mobile-more-item-github", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenGitHubImport?.() : handleMoreAction(onOpenGitHubImport) },
+    usage: { icon: <Activity />, labelKey: "nav.usage", fallback: "Usage", moreTestId: "mobile-more-item-usage", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenUsage?.() : handleMoreAction(onOpenUsage) },
+    projects: { icon: <Grid3X3 />, labelKey: "nav.projects", fallback: "Projects", moreTestId: "mobile-more-item-projects", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onViewAllProjects?.() : handleMoreAction(onViewAllProjects) },
+    documents: { icon: <FileText />, labelKey: "nav.documents", fallback: "Artifacts", moreTestId: "mobile-more-item-documents", isActive: view === "documents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("documents") : handleMoreAction(() => onChangeView("documents")) },
+    secrets: { icon: <Lock />, labelKey: "nav.secrets", fallback: "Secrets", moreTestId: "mobile-more-item-secrets", isActive: view === "secrets", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("secrets") : handleMoreAction(() => onChangeView("secrets")) },
+    settings: { icon: <Settings />, labelKey: "nav.settings", fallback: "Settings", moreTestId: "mobile-more-item-settings", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSettings?.() : handleMoreAction(onOpenSettings) },
+    skills: { icon: <Zap />, labelKey: "nav.skills", fallback: "Skills", moreTestId: "mobile-more-item-skills", isActive: view === "skills", isAvailable: skillsEnabled, navigate: (surface) => surface === "primary" ? onChangeView("skills") : handleMoreAction(() => onChangeView("skills")) },
+    insights: { icon: <Sparkles />, labelKey: "nav.insights", fallback: "Insights", moreTestId: "mobile-more-item-insights", isActive: view === "insights", isAvailable: Boolean(experimentalFeatures?.insights), navigate: (surface) => surface === "primary" ? onChangeView("insights") : handleMoreAction(() => onChangeView("insights")) },
+    memory: { icon: <Brain />, labelKey: "nav.memory", fallback: "Memory", moreTestId: "mobile-more-item-memory", isActive: view === "memory", isAvailable: Boolean(experimentalFeatures?.memoryView), navigate: (surface) => surface === "primary" ? onChangeView("memory") : handleMoreAction(() => onChangeView("memory")) },
+    research: { icon: <Search />, labelKey: "nav.research", fallback: "Research", moreTestId: "mobile-more-item-research", isActive: view === "research", isAvailable: Boolean(experimentalFeatures?.researchView), navigate: (surface) => surface === "primary" ? onChangeView("research") : handleMoreAction(() => onChangeView("research")) },
+    evals: { icon: <Target />, labelKey: "nav.evals", fallback: "Evals", moreTestId: "mobile-more-item-evals", isActive: view === "evals", isAvailable: Boolean(experimentalFeatures?.evalsView), navigate: (surface) => surface === "primary" ? onChangeView("evals") : handleMoreAction(() => onChangeView("evals")) },
+    ideation: { icon: <Lightbulb />, labelKey: "nav.ideation", fallback: "Ideation", moreTestId: "mobile-more-item-ideation", isActive: view === "ideation", isAvailable: Boolean(experimentalFeatures?.ideationView), navigate: (surface) => surface === "primary" ? onChangeView("ideation") : handleMoreAction(() => onChangeView("ideation")) },
+    goals: { icon: <Target />, labelKey: "nav.goals", fallback: "Goals", moreTestId: "mobile-more-item-goals", isActive: view === "goalsView", isAvailable: Boolean(experimentalFeatures?.goalsView), navigate: (surface) => surface === "primary" ? onChangeView("goalsView") : handleMoreAction(() => onChangeView("goalsView")) },
+    todos: { icon: <CheckSquare />, labelKey: "nav.todos", fallback: "Todos", moreTestId: "mobile-more-item-todos", isActive: view === "todos", isAvailable: todoViewEnabled, navigate: (surface) => surface === "primary" ? onChangeView("todos") : handleMoreAction(() => onChangeView("todos")) },
+    "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
+  };
+  const effectivePrimaryItems = primaryItems.filter((item) => destinationRegistry[item].isAvailable);
+  const effectiveOmittedItems = omittedItems.filter((item) => destinationRegistry[item].isAvailable);
+  const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
     || (isPluginViewId(view) && !topLevelPrimaryPluginViews.some((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === view));
+
+  const renderSelectableItem = (item: MobileNavSelectableItem, surface: "primary" | "more") => {
+    const destination = destinationRegistry[item];
+    const isPrimary = surface === "primary";
+    const label = t(destination.labelKey, destination.fallback);
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span><span className="mobile-nav-tab-label">{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge">{formatCount(destination.badge)}</span> : null}</button>;
+    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge">{formatCount(destination.badge)}</span> : null}</button>;
+  };
 
   return (
     <>
@@ -320,131 +468,8 @@ export function MobileNavBar({
         role="tablist"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
-        {/*
-        FNXC:Navigation 2026-06-22-01:40:
-        Dashboard (Command Center) is the first mobile tab, before Tasks, matching the desktop sidebar order.
-        */}
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "command-center" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-command-center"
-          role="tab"
-          aria-selected={view === "command-center"}
-          onClick={() => onChangeView("command-center")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <Gauge />
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.commandCenter", "Dashboard")}</span>
-        </button>
+        {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
 
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "board" || view === "list" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-tasks"
-          role="tab"
-          aria-selected={view === "board" || view === "list"}
-          onClick={() => {
-            // If already on a tasks view, stay there; otherwise go to board
-            if (view === "board" || view === "list") {
-              onChangeView(view);
-            } else {
-              onChangeView("board");
-            }
-          }}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <LayoutGrid />
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.tasks", "Tasks")}</span>
-        </button>
-
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "agents" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-agents"
-          role="tab"
-          aria-selected={view === "agents"}
-          onClick={() => onChangeView("agents")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <Bot />
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.agents", "Agents")}</span>
-        </button>
-
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "missions" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-missions"
-          role="tab"
-          aria-selected={view === "missions"}
-          onClick={() => onChangeView("missions")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <Target />
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.missions", "Missions")}</span>
-        </button>
-
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "chat" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-chat"
-          role="tab"
-          aria-selected={view === "chat"}
-          onClick={() => onChangeView("chat")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <MessageSquare />
-            {chatHasUnreadResponse && view !== "chat" && (
-              <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={t("nav.chatUnreadAriaLabel", "Unread chat response")} />
-            )}
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.chat", "Chat")}</span>
-        </button>
-
-
-        {/*
-        FNXC:Navigation 2026-06-19-12:30:
-        Mailbox is a top-level mobile tab only and must not be duplicated in the three-dot More sheet; Todos lives only in the three-dot overflow/More menu, never the main tab list.
-        Keep unread and pending-approval indicators on this surviving Mailbox tab so removing the More-sheet duplicate does not hide mailbox state.
-        */}
-        <button
-          type="button"
-          className={`mobile-nav-tab${view === "mailbox" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-mailbox"
-          role="tab"
-          aria-selected={view === "mailbox"}
-          onClick={() => onChangeView("mailbox")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper">
-            <Mail />
-            {mailboxPendingApprovalCount > 0 && view !== "mailbox" && (
-              <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={t("nav.mailboxPendingAriaLabel", "Pending approvals")} />
-            )}
-          </span>
-          <span className="mobile-nav-tab-label">{t("nav.mailbox", "Mailbox")}</span>
-          {mailboxUnreadCount > 0 && (
-            <span className="mobile-nav-tab-badge">{formatCount(mailboxUnreadCount)}</span>
-          )}
-        </button>
-
-        {showSkillsTopLevel && (
-          <button
-            type="button"
-            className={`mobile-nav-tab${view === "skills" ? " mobile-nav-tab--active" : ""}`}
-            data-testid="mobile-nav-tab-skills"
-            role="tab"
-            aria-selected={view === "skills"}
-            onClick={() => onChangeView("skills")}
-          >
-            <span className="mobile-nav-tab-icon-wrapper">
-              <Zap />
-            </span>
-            <span className="mobile-nav-tab-label">{t("nav.skills", "Skills")}</span>
-          </button>
-        )}
 
 
         {topLevelPrimaryPluginViews.map((entry) => {
@@ -474,7 +499,13 @@ export function MobileNavBar({
           data-testid="mobile-nav-tab-more"
           role="tab"
           aria-selected={false}
-          onClick={() => setIsMoreOpen((prev) => !prev)}
+          onClick={() => {
+            if (isMoreOpen) {
+              dismissMore();
+            } else {
+              setIsMoreOpen(true);
+            }
+          }}
         >
           <span className="mobile-nav-tab-icon-wrapper">
             <MoreHorizontal />
@@ -490,10 +521,17 @@ export function MobileNavBar({
         <>
           <div
             className="mobile-more-sheet-backdrop"
-            onClick={closeMore}
+            onClick={dismissMore}
           />
-          <div className="mobile-more-sheet">
-            <div className="mobile-more-sheet-handle" />
+          <div
+            ref={sheetRef}
+            className={`mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            style={{ transform: `translateY(${dragOffset}px)` }}
+            onTouchStart={handleSheetTouchStart}
+            onTouchEnd={finishSheetDrag}
+            onTouchCancel={resetSheetDrag}
+          >
+            <div className="mobile-more-sheet-handle" aria-hidden="true" />
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
 
             {shellConnectionControl ? (
@@ -501,27 +539,6 @@ export function MobileNavBar({
                 {shellConnectionControl}
               </div>
             ) : null}
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-activity"
-              onClick={() => handleMoreAction(onOpenActivityLog)}
-            >
-              <Activity />
-              <span>{t("nav.activityLog", "Activity Log")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-git"
-              onClick={() => handleMoreAction(onOpenGitManager)}
-            >
-              <GitBranch />
-              <span>{t("nav.gitManager", "Git Manager")}</span>
-              {stashOrphanCount > 0 ? <span className="mobile-more-item-badge">{formatCount(stashOrphanCount)}</span> : null}
-            </button>
 
             <div className="mobile-more-split-row">
               <button
@@ -565,7 +582,7 @@ export function MobileNavBar({
                         data-testid={`mobile-more-script-item-${name}`}
                         onClick={() => {
                           if (onRunScript) onRunScript(name, command);
-                          closeMore();
+                          dismissMore();
                           setIsScriptsSubmenuOpen(false);
                         }}
                       >
@@ -579,7 +596,7 @@ export function MobileNavBar({
                         className="mobile-more-item mobile-more-subitem mobile-more-subitem--manage"
                         data-testid="mobile-more-scripts-manage"
                         onClick={() => {
-                          closeMore();
+                          dismissMore();
                           setIsScriptsSubmenuOpen(false);
                           onOpenScripts();
                         }}
@@ -596,7 +613,7 @@ export function MobileNavBar({
                       className="mobile-more-item mobile-more-subitem"
                       data-testid="mobile-more-scripts-manage"
                       onClick={() => {
-                        closeMore();
+                        dismissMore();
                         setIsScriptsSubmenuOpen(false);
                         onOpenScripts();
                       }}
@@ -609,201 +626,11 @@ export function MobileNavBar({
               </div>
             )}
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-files"
-              onClick={() => handleMoreAction(onOpenFiles)}
-            >
-              <Folder />
-              <span>{t("nav.files", "Files")}</span>
-            </button>
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-planning"
-              onClick={() => handleMoreAction(planningHandler)}
-            >
-              <span className="mobile-more-item-icon-wrapper">
-                <Lightbulb />
-                {planningNeedsInput && (
-                  <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={t("nav.planningNeedsInputAriaLabel", "Planning needs your input")} />
-                )}
-              </span>
-              <span>{t("nav.planning", "Planning")}</span>
-              {activePlanningSessionCount > 0 && (
-                <span className="mobile-more-item-badge">{formatCount(activePlanningSessionCount)}</span>
-              )}
-            </button>
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-workflow"
-              onClick={() => handleMoreAction(onOpenWorkflowEditor)}
-            >
-              <Workflow />
-              <span>{t("nav.workflows", "Workflows")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-schedules"
-              onClick={() => handleMoreAction(onOpenSchedules)}
-            >
-              <Clock />
-              <span>{t("nav.automation", "Automation")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-github"
-              onClick={() => handleMoreAction(onOpenGitHubImport)}
-            >
-              <GitHubLogo />
-              <span>{t("nav.importFromGitHub", "Import from GitHub")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-usage"
-              onClick={() => handleMoreAction(onOpenUsage)}
-            >
-              <Activity />
-              <span>{t("nav.usage", "Usage")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-projects"
-              onClick={() => handleMoreAction(onViewAllProjects)}
-            >
-              <Grid3X3 />
-              <span>{t("nav.projects", "Projects")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-documents"
-              onClick={() => handleMoreAction(() => onChangeView("documents"))}
-            >
-              <FileText />
-              {/* FNXC:Navigation 2026-06-21-18:25: FN-6890 changes only the displayed top-level label to Artifacts; mobile-more-item-documents and the documents view id stay stable. */}
-              <span>{t("nav.documents", "Artifacts")}</span>
-            </button>
-
-            {experimentalFeatures?.evalsView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-evals"
-                onClick={() => handleMoreAction(() => onChangeView("evals"))}
-              >
-                <Target />
-                <span>{t("nav.evals", "Evals")}</span>
-              </button>
-            )}
-            {experimentalFeatures?.goalsView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-goals"
-                onClick={() => handleMoreAction(() => onChangeView("goalsView"))}
-              >
-                <Target />
-                <span>{t("nav.goals", "Goals")}</span>
-              </button>
-            )}
-
-            {showSkillsInMore && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-skills"
-                onClick={() => handleMoreAction(() => onChangeView("skills"))}
-              >
-                <Zap />
-                <span>{t("nav.skills", "Skills")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.researchView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-research"
-                onClick={() => handleMoreAction(() => onChangeView("research"))}
-              >
-                <Search />
-                <span>{t("nav.research", "Research")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.insights && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-insights"
-                onClick={() => handleMoreAction(() => onChangeView("insights"))}
-              >
-                <Sparkles />
-                <span>{t("nav.insights", "Insights")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.memoryView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-memory"
-                onClick={() => handleMoreAction(() => onChangeView("memory"))}
-              >
-                <Brain />
-                <span>{t("nav.memory", "Memory")}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-secrets"
-              onClick={() => handleMoreAction(() => onChangeView("secrets"))}
-            >
-              <Lock />
-              <span>{t("nav.secrets", "Secrets")}</span>
-            </button>
-
-            {experimentalFeatures?.devServerView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-dev-server"
-                onClick={() => {
-                  handleMoreAction(() => onChangeView("dev-server"));
-                }}
-              >
-                <Monitor />
-                <span>{t("nav.devServer", "Dev Server")}</span>
-              </button>
-            )}
-
-            {todoViewEnabled && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-todos"
-                onClick={() => handleMoreAction(() => onChangeView("todos"))}
-              >
-                <CheckSquare />
-                <span>{t("nav.todos", "Todos")}</span>
-              </button>
-            )}
+            {effectiveOmittedItems
+              .filter((item) => item !== "settings")
+              .map((item) => renderSelectableItem(item, "more"))}
 
             {overflowPluginViews.map((entry) => {
                 const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
@@ -823,16 +650,14 @@ export function MobileNavBar({
               })}
 
             <div className="mobile-more-separator" />
+            {/*
+            FNXC:Navigation 2026-07-17-15:43:
+            Mobile More-sheet pins Settings below the `mobile-more-separator` divider so it stays at the bottom of
+            the list (FN-8250), not inline in the middle. The omitted-items guard prevents a duplicate when Settings
+            is promoted to a primary footer tab.
+            */}
+            {effectiveOmittedItems.includes("settings") && renderSelectableItem("settings", "more")}
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-settings"
-              onClick={() => handleMoreAction(onOpenSettings)}
-            >
-              <Settings />
-              <span>{t("nav.settings", "Settings")}</span>
-            </button>
           </div>
         </>
       )}

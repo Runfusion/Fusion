@@ -44,8 +44,8 @@ Setup-capable plugins (for example **Agent Browser**) expose an additional **set
 
 Plugin persistence is split across global and project scopes:
 
-- Plugin installs are **global**. Installation metadata is registered in `~/.fusion/fusion-central.db` and shared across all projects on this machine.
-- Enable/disable is **project-scoped**. The same globally installed plugin can be enabled in one project and disabled in another. Per-project activation/runtime state is tracked in `project_plugin_states`.
+- Plugin installs are **global**. Installation metadata is registered in PostgreSQL `central.plugin_installs` and shared across all projects on this Fusion control plane.
+- Enable/disable is **project-scoped**. The same globally installed plugin can be enabled in one project and disabled in another. Per-project activation/runtime state is tracked in PostgreSQL `central.project_plugin_states`.
 - `fn plugin list` shows the global install set plus enabled/disabled state for the current project context.
 
 For full multi-project details, see [Plugin Scope in Multi-Project Mode](./multi-project.md#plugin-scope-in-multi-project-mode).

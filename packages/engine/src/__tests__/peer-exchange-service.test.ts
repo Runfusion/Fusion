@@ -51,6 +51,7 @@ describe("PeerExchangeService", () => {
   let mockApplyRemoteSettings: ReturnType<typeof vi.fn>;
   let mockGetProjectSettingsSnapshot: ReturnType<typeof vi.fn>;
   let mockGetAuthMaterialSnapshot: ReturnType<typeof vi.fn>;
+  let mockApplyAuthMaterialSnapshot: ReturnType<typeof vi.fn>;
   let mockApplyProjectSettingsSnapshot: ReturnType<typeof vi.fn>;
   let mockEnqueueMeshWrite: ReturnType<typeof vi.fn>;
   let mockListPendingMeshWrites: ReturnType<typeof vi.fn>;
@@ -72,6 +73,7 @@ describe("PeerExchangeService", () => {
     mockApplyRemoteSettings = vi.fn();
     mockGetProjectSettingsSnapshot = vi.fn();
     mockGetAuthMaterialSnapshot = vi.fn();
+    mockApplyAuthMaterialSnapshot = vi.fn();
     mockApplyProjectSettingsSnapshot = vi.fn();
     mockEnqueueMeshWrite = vi.fn();
     mockListPendingMeshWrites = vi.fn();
@@ -81,6 +83,8 @@ describe("PeerExchangeService", () => {
     mockGetNode = vi.fn();
 
     mockCentralCore = {
+      // Default: not shared-Postgres backendMode so legacy settings-sync tests remain valid.
+      backendMode: false,
       listNodes: mockListNodes,
       getAllKnownPeerInfo: mockGetAllKnownPeerInfo,
       mergePeers: mockMergePeers,
@@ -89,6 +93,7 @@ describe("PeerExchangeService", () => {
       applyRemoteSettings: mockApplyRemoteSettings,
       getProjectSettingsSnapshot: mockGetProjectSettingsSnapshot,
       getAuthMaterialSnapshot: mockGetAuthMaterialSnapshot,
+      applyAuthMaterialSnapshot: mockApplyAuthMaterialSnapshot,
       applyProjectSettingsSnapshot: mockApplyProjectSettingsSnapshot,
       enqueueMeshWrite: mockEnqueueMeshWrite,
       listPendingMeshWrites: mockListPendingMeshWrites,
@@ -408,6 +413,104 @@ describe("PeerExchangeService", () => {
     });
   });
 
+  /*
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Under shared Postgres, settings gossip is forced off, queue rows are
+  topology/auth-scoped, and non-topology pending writes are failed rather than
+  replayed as multi-leader task/settings payloads.
+  */
+  describe("shared PostgreSQL backendMode", () => {
+    beforeEach(() => {
+      Object.defineProperty(mockCentralCore, "backendMode", { value: true, configurable: true });
+    });
+
+    it("force-disables settingsSyncEnabled even when the option is true", async () => {
+      mockGetSettingsForSync.mockResolvedValue(makeSettingsPayload());
+      const service = new PeerExchangeService(mockCentralCore, { settingsSyncEnabled: true });
+      setupSuccessfulSync();
+      await service.syncWithNode(makeNode());
+      expect(mockGetSettingsForSync).not.toHaveBeenCalled();
+    });
+
+    it("enqueues retryable peer failures as mesh.topology / topology-sync", async () => {
+      const node = makeNode();
+      mockListNodes.mockResolvedValue([makeNode({ id: "node_local", type: "local", status: "online" })]);
+      mockGetAllKnownPeerInfo.mockResolvedValue([]);
+      mockReportMeshState.mockResolvedValue({});
+      mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: "Service Unavailable" });
+      mockEnqueueMeshWrite.mockResolvedValue({ id: "mq-topo-1" });
+
+      const service = new PeerExchangeService(mockCentralCore);
+      const result = await service.syncWithNode(node);
+
+      expect(result.queuedWriteId).toBe("mq-topo-1");
+      expect(mockEnqueueMeshWrite).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: "mesh.topology",
+          entityType: "topology-sync",
+        }),
+      );
+      const payload = mockEnqueueMeshWrite.mock.calls[0][0].payload.request;
+      expect(payload.settings).toBeUndefined();
+      expect(payload.sharedState?.projectSettings).toBeUndefined();
+    });
+
+    it("replays topology scopes and fails retired task/settings queue rows", async () => {
+      const node = makeNode();
+      setupSuccessfulSync(node);
+      mockListPendingMeshWrites.mockResolvedValue([
+        {
+          id: "mq-topo",
+          originNodeId: "node_local",
+          targetNodeId: node.id,
+          projectId: null,
+          scope: "mesh.topology",
+          entityType: "topology-sync",
+          entityId: node.id,
+          operation: "sync",
+          payload: { request: { senderNodeId: "node_local", knownPeers: [], senderNodeUrl: "", timestamp: "2026-04-01T12:00:00.000Z" } },
+          intentVersion: "1.0",
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-04-01T12:00:00.000Z",
+          updatedAt: "2026-04-01T12:00:00.000Z",
+        },
+        {
+          id: "mq-task",
+          originNodeId: "node_local",
+          targetNodeId: node.id,
+          projectId: "proj-1",
+          scope: "task.strong",
+          entityType: "task-create",
+          entityId: "FN-1",
+          operation: "create",
+          payload: { request: {} },
+          intentVersion: "1.0",
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-04-01T12:00:00.000Z",
+          updatedAt: "2026-04-01T12:00:00.000Z",
+        },
+      ]);
+
+      const service = new PeerExchangeService(mockCentralCore);
+      const result = await service.syncWithNode(node);
+
+      expect(result.replaySummary).toEqual({
+        replayed: 1,
+        applied: 1,
+        failed: 0,
+        queuedWriteIds: ["mq-topo"],
+      });
+      expect(mockMarkMeshWriteFailed).toHaveBeenCalledWith(
+        "mq-task",
+        expect.objectContaining({ lastError: expect.stringContaining("retired") }),
+      );
+      expect(mockMarkMeshWriteReplayStarted).toHaveBeenCalledWith("mq-topo");
+      expect(mockMarkMeshWriteApplied).toHaveBeenCalledWith("mq-topo", {});
+    });
+  });
+
   describe("triggerSync()", () => {
     it("should trigger sync when called", async () => {
       mockListNodes.mockResolvedValue([
@@ -459,6 +562,60 @@ describe("PeerExchangeService", () => {
       const result = await service.syncWithNode(makeNode());
       expect(result.settingsApplied).toBeUndefined();
       expect(result.settingsVersion).toBeUndefined();
+    });
+
+    /*
+    FNXC:SharedPostgresMultiNode 2026-07-15-00:15:
+    Auth material must still travel when settings gossip is off (Postgres path).
+    */
+    it("includes and applies authMaterial when settingsSyncAuth is enabled without settings gossip", async () => {
+      Object.defineProperty(mockCentralCore, "backendMode", { value: true, configurable: true });
+      mockGetAuthMaterialSnapshot.mockReturnValue({
+        version: 1,
+        exportedAt: "2026-04-01T00:00:00.000Z",
+        checksum: "auth-checksum",
+        payload: { providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } } },
+      });
+      mockApplyAuthMaterialSnapshot.mockReturnValue({
+        success: true,
+        authCount: 1,
+        providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } },
+      });
+      const node = makeNode();
+      setupSuccessfulSync(node);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          senderNodeId: node.id,
+          senderNodeUrl: node.url,
+          knownPeers: [],
+          newPeers: [],
+          timestamp: "2026-04-01T12:00:00.000Z",
+          sharedState: {
+            authMaterial: {
+              version: 1,
+              exportedAt: "2026-04-01T00:00:00.000Z",
+              checksum: "remote-auth",
+              payload: { providerAuth: { anthropic: { type: "api_key", key: "sk-remote" } } },
+            },
+          },
+        }),
+      });
+
+      const service = new PeerExchangeService(mockCentralCore, {
+        settingsSyncEnabled: true, // forced off by backendMode
+        settingsSyncAuth: true,
+        providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } },
+      });
+      await service.syncWithNode(node);
+
+      expect(mockGetSettingsForSync).not.toHaveBeenCalled();
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.settings).toBeUndefined();
+      expect(body.sharedState?.authMaterial).toBeDefined();
+      expect(body.sharedState?.projectSettings).toBeUndefined();
+      expect(mockApplyAuthMaterialSnapshot).toHaveBeenCalled();
     });
   });
 

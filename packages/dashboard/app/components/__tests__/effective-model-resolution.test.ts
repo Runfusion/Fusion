@@ -77,6 +77,32 @@ describe("effective model resolution", () => {
     expect(extractPlanningModelFromLog(entries)).toEqual({ provider: "triage-provider", modelId: "triage-model" });
   });
 
+  /*
+  FNXC:TaskLogModelThinking 2026-07-15-11:20:
+  Engine lanes now write the "using model" markers as standalone `status` rows so they are not
+  glued together like streamed deltas. Resolution must read BOTH types: `status` for new rows,
+  `text` for the markers already persisted in every existing task's log. Accepting only one type
+  silently blanks the provider icons / effective-model headers on one side of that cutover.
+  */
+  it("resolves model markers from both new status rows and legacy text rows", () => {
+    const statusEntries = [
+      { ...log("executor", "Executor using model: status-provider/status-model"), type: "status" as const },
+      { ...log("reviewer", "Reviewer using model: status-reviewer/status-reviewer-model"), type: "status" as const },
+      { ...log("triage", "Triage using model: status-triage/status-triage-model"), type: "status" as const },
+    ];
+    expect(extractExecutorModelFromLog(statusEntries)).toEqual({ provider: "status-provider", modelId: "status-model" });
+    expect(extractReviewerModelFromLog(statusEntries)).toEqual({ provider: "status-reviewer", modelId: "status-reviewer-model" });
+    expect(extractPlanningModelFromLog(statusEntries)).toEqual({ provider: "status-triage", modelId: "status-triage-model" });
+
+    // Legacy rows written before the `status` type existed still resolve.
+    const legacyEntries = [log("executor", "Executor using model: legacy-provider/legacy-model")];
+    expect(extractExecutorModelFromLog(legacyEntries)).toEqual({ provider: "legacy-provider", modelId: "legacy-model" });
+
+    // A tool row is still never a model marker, whatever its text says.
+    const toolEntries = [{ ...log("executor", "Executor using model: tool-provider/tool-model"), type: "tool" as const }];
+    expect(extractExecutorModelFromLog(toolEntries)).toBeNull();
+  });
+
   it("parses runtime model markers for all roles while ignoring parenthesized diagnostics", () => {
     expect(parseRuntimeModelMarker("Triage using model: google/gemini-pro", "Triage")).toEqual({ provider: "google", modelId: "gemini-pro" });
     expect(parseRuntimeModelMarker("Executor using model: openai/gpt-4o (thinking effort: high)", "Executor")).toEqual({ provider: "openai", modelId: "gpt-4o" });

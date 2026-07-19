@@ -1,4 +1,4 @@
-import { app, type BrowserWindow, ipcMain, type Tray } from "electron";
+import { app, type BrowserWindow, ipcMain, shell, type Tray } from "electron";
 import {
   showExportSettingsDialog,
   showImportSettingsDialog,
@@ -109,6 +109,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow, tray: Tray, optio
   });
 
   ipcMain.handle("tray:updateStatus", (_event, status: EngineStatus) => updateTrayStatus(tray, status));
+  /*
+  FNXC:DesktopOAuth 2026-07-18-04:00:
+  OAuth flows call window.open AFTER awaiting POST /auth/login; when the round
+  trip outlives Chromium's transient user activation (~5s — observed with the
+  OpenAI Codex flow: method-select round-trip + localhost callback server +
+  auth-lock retries), the popup is silently blocked and setWindowOpenHandler
+  never fires, so the system browser never opens. This explicit IPC needs no
+  user activation. http/https only — reject everything else.
+  */
+  ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
+    if (typeof url !== "string") return false;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    await shell.openExternal(url);
+    return true;
+  });
+
   ipcMain.handle("native:showExportDialog", () => showExportSettingsDialog(mainWindow));
   ipcMain.handle("native:showImportDialog", () => showImportSettingsDialog(mainWindow));
   ipcMain.handle("app:getServerPort", () => options.getServerPort?.());

@@ -5,41 +5,46 @@ import { usePoppedOutTasks } from "../usePoppedOutTasks";
 const task = (id: string) => ({ id, title: id, status: "todo" } as never);
 
 describe("usePoppedOutTasks", () => {
-  it("popOut adds a task and dedupes by id", () => {
+  it("refreshes duplicate snapshots only for the same task and origin view", () => {
     const { result } = renderHook(() => usePoppedOutTasks());
+    const stale = { ...task("1"), title: "stale" };
+    const fresh = { ...task("1"), title: "fresh" };
 
     act(() => {
-      result.current.popOut(task("1"));
-      result.current.popOut(task("1"));
-      result.current.popOut(task("2"));
+      result.current.popOut(stale, "board");
+      result.current.popOut(fresh, "board");
+      result.current.popOut(task("1"), "planning");
     });
 
-    expect(result.current.tasks.map((t) => t.id)).toEqual(["1", "2"]);
+    expect(result.current.entries).toEqual([
+      { task: fresh, originTaskView: "board" },
+      { task: task("1"), originTaskView: "planning" },
+    ]);
   });
 
-  it("records the originating task view for view-attached popups", () => {
+  it("keeps the same task independently open on different origin views", () => {
     const { result } = renderHook(() => usePoppedOutTasks());
 
     act(() => {
       result.current.popOut(task("1"), "board");
-      result.current.popOut(task("2"), "list");
+      result.current.popOut(task("1"), "planning");
     });
 
     expect(result.current.entries.map((entry) => [entry.task.id, entry.originTaskView])).toEqual([
       ["1", "board"],
-      ["2", "list"],
+      ["1", "planning"],
     ]);
   });
 
-  it("close removes only the matching id", () => {
+  it("closes only the matching task and origin view", () => {
     const { result } = renderHook(() => usePoppedOutTasks());
 
     act(() => {
-      result.current.popOut(task("1"));
-      result.current.popOut(task("2"));
-      result.current.close("1");
+      result.current.popOut(task("1"), "board");
+      result.current.popOut(task("1"), "planning");
+      result.current.close("1", "planning");
     });
 
-    expect(result.current.tasks.map((t) => t.id)).toEqual(["2"]);
+    expect(result.current.entries).toEqual([{ task: task("1"), originTaskView: "board" }]);
   });
 });

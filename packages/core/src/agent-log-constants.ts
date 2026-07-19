@@ -10,6 +10,10 @@ export const AGENT_LOG_TOOL_TYPES = new Set<AgentLogEntry["type"]>([
   "tool_error",
 ]);
 
+/*
+ * FNXC:AgentLogging 2026-07-15-16:05:
+ * FN-7995 makes failed tool_error detail persist even when verbose tool output is disabled. Keep its shared storage bound identical to other tool details so diagnostic stacks remain safe for JSONL and dashboard reads.
+ */
 export function truncateAgentLogDetail(
   detail: string | null | undefined,
   type: AgentLogEntry["type"],

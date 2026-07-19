@@ -63,10 +63,10 @@ function createMockStore(): TaskStore {
   } as unknown as TaskStore;
 }
 
-function setupApp() {
+function setupApp(store = createMockStore()) {
   const app = express();
   app.use(express.json());
-  app.use("/api", createApiRoutes(createMockStore()));
+  app.use("/api", createApiRoutes(store));
   return app;
 }
 
@@ -86,6 +86,46 @@ describe("agent onboarding routes", () => {
     expect(res.status).toBe(201);
     expect(mockStartAgentOnboardingSession).toHaveBeenCalledTimes(1);
     expect(mockStartAgentOnboardingSession.mock.calls[0]?.[1]).toMatchObject({ mode: "create" });
+  });
+
+  it("uses the configured planning model when the request omits an override", async () => {
+    const store = createMockStore();
+    vi.mocked(store.getSettings).mockResolvedValue({
+      planningProvider: "openai-codex",
+      planningModelId: "gpt-5.6-sol",
+    } as Awaited<ReturnType<TaskStore["getSettings"]>>);
+    const app = setupApp(store);
+
+    const res = await request(app, "POST", "/api/agents/onboarding/start-streaming", JSON.stringify({
+      intent: "Create a computer-use tester",
+      context: { existingAgents: [], templates: [] },
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(mockStartAgentOnboardingSession).toHaveBeenCalledTimes(1);
+    expect(mockStartAgentOnboardingSession.mock.calls[0]?.[3]).toBe("openai-codex");
+    expect(mockStartAgentOnboardingSession.mock.calls[0]?.[4]).toBe("gpt-5.6-sol");
+  });
+
+  it("keeps test mode authoritative over explicit request model overrides", async () => {
+    const store = createMockStore();
+    vi.mocked(store.getSettings).mockResolvedValue({
+      testMode: true,
+      planningProvider: "openai-codex",
+      planningModelId: "gpt-5.6-sol",
+    } as Awaited<ReturnType<TaskStore["getSettings"]>>);
+    const app = setupApp(store);
+
+    const res = await request(app, "POST", "/api/agents/onboarding/start-streaming", JSON.stringify({
+      intent: "Create a test agent",
+      planningModelProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+      context: { existingAgents: [], templates: [] },
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(mockStartAgentOnboardingSession.mock.calls[0]?.[3]).toBe("mock");
+    expect(mockStartAgentOnboardingSession.mock.calls[0]?.[4]).toBe("scripted");
   });
 
   it("accepts edit mode and forwards existingAgentConfig", async () => {
@@ -111,6 +151,25 @@ describe("agent onboarding routes", () => {
         messageResponseMode: "on-heartbeat",
       },
     });
+  });
+
+  it.each([
+    { planningModelProvider: 42, planningModelId: "gpt-5.6-sol" },
+    { planningModelProvider: "openai-codex", planningModelId: {} },
+    { planningModelProvider: "   ", planningModelId: "gpt-5.6-sol" },
+    { planningModelProvider: "openai-codex", planningModelId: "   " },
+    { planningModelProvider: "openai-codex" },
+    { planningModelId: "gpt-5.6-sol" },
+  ])("rejects invalid planning model overrides: %j", async (override) => {
+    const app = setupApp();
+    const res = await request(app, "POST", "/api/agents/onboarding/start-streaming", JSON.stringify({
+      intent: "Create an agent",
+      ...override,
+      context: { existingAgents: [], templates: [] },
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(mockStartAgentOnboardingSession).not.toHaveBeenCalled();
   });
 
   it("rejects invalid mode", async () => {

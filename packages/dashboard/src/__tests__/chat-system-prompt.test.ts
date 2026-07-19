@@ -13,6 +13,15 @@ describe("chat system prompt guidance", () => {
     expect(CHAT_SYSTEM_PROMPT).toContain('to_id: "dashboard"');
   });
 
+  it("keeps the checked-out branch sticky unless explicitly requested", () => {
+    const lower = CHAT_SYSTEM_PROMPT.toLowerCase();
+
+    expect(lower).toContain("branch");
+    expect(lower).toContain("git checkout");
+    expect(lower).toContain("git switch");
+    expect(lower).toContain("unless the user explicitly asks");
+  });
+
   it("combined guidance enforces additive mailbox follow-ups, not mirroring", () => {
     const combined = `${CHAT_SYSTEM_PROMPT}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
 

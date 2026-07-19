@@ -34,12 +34,13 @@ import {
   resolvePluginEntryPath,
   resolveExecutionSettingsModel,
   resolveTitleSummarizerSettingsModel,
+  resolveImportTranslateSettingsModel,
   writeAgentMemoryFile,
   validateMcpServerDefinitionDetailed,
 } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { verifyWebhookSignature } from "./github-webhooks.js";
-import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
+import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionType } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession, normalizePlanningSummaryPayload } from "./planning.js";
 import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
@@ -103,9 +104,11 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
+  "fusion-plugin-quality",
 ]);
 
 function extractBundledPluginId(pathInput: string): string | null {
@@ -170,6 +173,7 @@ import { registerAgentCoreListCreateRoutes, registerAgentCoreRoutes } from "./ro
 import { registerAgentRuntimeRoutes } from "./routes/register-agent-runtime-routes.js";
 import { registerAgentReflectionRatingRoutes } from "./routes/register-agent-reflection-rating-routes.js";
 import { registerAgentImportExportRoutes, registerAgentGenerationRoutes } from "./routes/register-agent-import-export-generation-routes.js";
+import { registerOrgPortabilityRoutes } from "./routes/register-org-portability-routes.js";
 import { registerAgentSkillsRoutes } from "./routes/register-agent-skills-routes.js";
 import { registerPluginsAutomationRoutes } from "./routes/register-plugins-automation.js";
 import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
@@ -178,6 +182,7 @@ import { registerCustomProviderRoutes } from "./routes/register-custom-provider-
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
 import { registerCommandCenterRoutes } from "./routes/register-command-center-routes.js";
 import { registerKnowledgeRoutes } from "./routes/register-knowledge-routes.js";
+import { registerReportRoutes } from "./routes/register-report-routes.js";
 import { registerSignalRoutes } from "./routes/register-signal-routes.js";
 import { registerMonitorRoutes } from "./routes/monitor-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
@@ -204,12 +209,16 @@ const TASK_DETAIL_ACTIVITY_LOG_LIMIT = 500;
 export { __resetBatchImportRateLimiter } from "./routes/register-git-github.js";
 
 /**
- * Minimal interface matching pi-coding-agent's ModelRegistry API surface
- * used by the models route. Avoids a direct dependency on the pi-coding-agent package.
+ * Minimal interface matching pi 0.80.8+ ModelRuntime's ModelRegistry
+ * compatibility facade. Avoids a direct dependency on the pi-coding-agent package.
  */
 export interface ModelRegistryLike {
-  /** Reload models from disk to pick up changes. */
-  refresh(): void;
+  /**
+   * FNXC:ModelCatalog 2026-07-16-17:55:
+   * pi 0.80.8 refreshes asynchronously, so the models endpoint must wait for it
+   * before reading getAvailable() and surface any refresh failure to the caller.
+   */
+  refresh(): Promise<void>;
   /** Get models that have auth configured. */
   getAvailable(): Array<{ id: string; name: string; provider: string; reasoning: boolean; contextWindow: number }>;
   /** Optional pi ModelRegistry surface used for supplemental model registration. */
@@ -243,13 +252,13 @@ export interface AuthStorageLike {
       signal?: AbortSignal;
     },
   ): Promise<void>;
-  logout(provider: string): void;
+  logout(provider: string): Promise<void>;
   /** Get providers that accept API keys (non-OAuth). Returns provider id and name. */
   getApiKeyProviders?(): Array<{ id: string; name: string }>;
   /** Save an API key for a provider. Creates or overwrites the existing key. */
-  setApiKey?(providerId: string, apiKey: string): void;
+  setApiKey?(providerId: string, apiKey: string): Promise<void>;
   /** Remove the stored API key for a provider. No-op if not set. */
-  clearApiKey?(providerId: string): void;
+  clearApiKey?(providerId: string): Promise<void>;
   /** Check if a provider has an API key configured. */
   hasApiKey?(providerId: string): boolean;
   /** Get the configured API key for usage providers. */
@@ -1049,23 +1058,6 @@ function replayBufferedSSE(
   return true;
 }
 
-async function checkSessionLock(
-  sessionId: string,
-  tabId: string | undefined,
-  store: AiSessionStore | undefined,
-): Promise<{ allowed: true } | { allowed: false; currentHolder: string | null }> {
-  if (!tabId || !store) {
-    return { allowed: true };
-  }
-
-  const result = await store.acquireLock(sessionId, tabId);
-  if (result.acquired) {
-    return { allowed: true };
-  }
-
-  return { allowed: false, currentHolder: result.currentHolder };
-}
-
 /**
  * Public API route entrypoint used by server.ts.
  *
@@ -1164,7 +1156,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   registerPlanningSubtaskRoutes(routeContext, {
     store,
     aiSessionStore,
-    checkSessionLock,
     parseLastEventId,
     replayBufferedSSE,
   });
@@ -1255,6 +1246,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             rootDir: engine.getWorkingDirectory(),
             reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
             getActiveMergeTaskId: selfHealing.getActiveMergeTaskId.bind(selfHealing),
+            getStaleMergingStatusMinAgeMs: selfHealing.getStaleMergingStatusMinAgeMs.bind(selfHealing),
           };
         }
       }
@@ -1872,9 +1864,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/backups", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { createBackupManager } = await import("@fusion/core");
+      const { createBackupManager, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await scopedStore.getSettings();
-      const manager = createBackupManager(scopedStore.getFusionDir(), settings);
+      const manager = createBackupManager(resolveGlobalBackupRoot(scopedStore), settings);
       const backups = await manager.listBackups();
       
       // Calculate total size
@@ -1900,9 +1892,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/backups", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await scopedStore.getSettings();
-      const result = await runBackupCommand(scopedStore.getFusionDir(), settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(scopedStore), settings);
       
       if (result.success) {
         res.json({
@@ -2005,6 +1997,80 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         rethrowAsApiError(err, "AI service error");
       } else {
         rethrowAsApiError(err, "Failed to refine text");
+      }
+    }
+  });
+
+  /**
+   * POST /api/ai/translate-text
+   * AI-powered translation for GitHub/GitLab import preview title+body.
+   * Body: { fields: { title?: string, body?: string }, targetLocale: string, sourceLocale?: string }
+   * Returns: { fields: { title?: string, body?: string } }
+   *
+   * Rate limited: shared AI-helper budget (10 requests per hour per IP with refine/draft)
+   *
+   * FNXC:GitHubImportTranslate 2026-07-14-12:00:
+   * Import Tasks offers on-demand translation when selected content is not the dashboard language.
+   */
+  router.post("/ai/translate-text", async (req, res) => {
+    try {
+      const { fields, targetLocale, sourceLocale } = req.body ?? {};
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettings();
+
+      const {
+        validateTranslateRequest,
+        checkRateLimit,
+        getRateLimitResetTime,
+        translateText,
+        AiServiceError: _AiServiceErrorTranslate,
+        ValidationError,
+      } = await import("./ai-translate.js");
+
+      if (!checkRateLimit(ip)) {
+        const resetTime = getRateLimitResetTime(ip);
+        throw rateLimited(
+          `Rate limit exceeded. Maximum 10 AI helper requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
+        );
+      }
+
+      let validated;
+      try {
+        validated = validateTranslateRequest(fields, targetLocale, sourceLocale);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
+        throw err;
+      }
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      Manual (operator-clicked) translation resolves the same translate lane as auto-translation, so the model shown in Settings is the model that actually runs on both paths.
+      */
+      const resolvedTranslateModel = resolveImportTranslateSettingsModel(settings);
+      const translated = await translateText(
+        validated,
+        rootDir,
+        settings.promptOverrides,
+        scopedStore,
+        resolvedTranslateModel.provider,
+        resolvedTranslateModel.modelId,
+      );
+      res.json({ fields: translated });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      } else if (err instanceof Error && err.name === "AiServiceError") {
+        rethrowAsApiError(err, "AI service error");
+      } else {
+        rethrowAsApiError(err, "Failed to translate text");
       }
     }
   });
@@ -2191,6 +2257,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // index holds sensitive repo/PR content so no endpoint is unauthenticated or
   // cross-project readable.
   registerKnowledgeRoutes(routeContext);
+  registerReportRoutes({ ...routeContext, reportUpload: upload });
   // U11 — inbound external signal webhooks (Sentry/Datadog/PagerDuty/generic).
   // Each route HMAC-verifies against a per-provider secret; never an
   // unauthenticated task-creation endpoint.
@@ -3324,6 +3391,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   registerAgentImportExportRoutes(routeContext);
+  registerOrgPortabilityRoutes(routeContext);
 
   registerAgentCoreRoutes(routeContext, {
     sanitizeAgentTaskLinks,
@@ -4088,7 +4156,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.status(204).send();
   });
 
-  // ── AI Session Routes (Background Tasks) ─────────────────────────────────
+  // ── AI Session Routes ─────────────────────────────────────────────────────
 
   /**
    * GET /api/ai-sessions
@@ -4098,7 +4166,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * session that finished while the modal was closed remains selectable.
    * Pass `includeArchived=1` (only meaningful with `includeCompleted`) to
    * also surface sessions the user has explicitly archived.
-   * Query: { projectId?, includeCompleted?, includeArchived? }
+   * Query: { projectId?, includeCompleted?, includeArchived?, type? }
    */
   router.get("/ai-sessions", async (req, res) => {
     if (!aiSessionStore) {
@@ -4110,8 +4178,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       req.query.includeCompleted === "1" || req.query.includeCompleted === "true";
     const includeArchived =
       req.query.includeArchived === "1" || req.query.includeArchived === "true";
+    const requestedType = typeof req.query.type === "string" ? req.query.type : undefined;
+    const type = requestedType && ["planning", "subtask", "mission_interview", "milestone_interview", "slice_interview"].includes(requestedType)
+      ? requestedType as AiSessionType
+      : undefined;
+    /*
+    FNXC:PlanningMode 2026-07-15-00:00:
+    FN-7994 lets the Planning sidebar request only planning summaries, avoiding
+    non-planning inputPayload transfer. Invalid or absent values preserve the
+    historical all-types response.
+    */
     const sessions = includeCompleted
-      ? await aiSessionStore.listAll(projectId, { includeArchived })
+      ? await aiSessionStore.listAll(projectId, { includeArchived, type })
       : await aiSessionStore.listActive(projectId);
     res.json({ sessions });
   });
@@ -4211,79 +4289,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.json({ archived: Number(after?.archived ?? 0) === 1 });
   });
 
-  router.post("/ai-sessions/:id/lock", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const session = await aiSessionStore.get(id);
-    if (!session) {
-      throw notFound("Session not found");
-    }
-
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    const result = await aiSessionStore.acquireLock(id, tabId);
-    if (!result.acquired) {
-      res.json({ acquired: false, currentHolder: result.currentHolder });
-      return;
-    }
-
-    res.json({ acquired: true });
-  });
-
-  router.delete("/ai-sessions/:id/lock", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    await aiSessionStore.releaseLock(id, tabId);
-    res.json({ success: true });
-  });
-
-  router.post("/ai-sessions/:id/lock/force", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const session = await aiSessionStore.get(id);
-    if (!session) {
-      throw notFound("Session not found");
-    }
-
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    await aiSessionStore.forceAcquireLock(id, tabId);
-    res.json({ success: true });
-  });
-
-  router.delete("/ai-sessions/:id/lock/beacon", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const tabId = typeof req.query.tabId === "string" ? req.query.tabId.trim() : "";
-    if (tabId) {
-      await aiSessionStore.releaseLock(id, tabId);
-    }
-
-    res.status(200).end();
-  });
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  The /ai-sessions/:id/lock, /lock/force, and /lock/beacon endpoints were removed along with
+  the whole per-tab session-lock machinery. AI interview sessions (planning, subtask, mission,
+  milestone) are multi-tab: the persisted session row is the shared source of truth and any
+  tab may read and interact.
+  */
 
   /**
    * POST /api/ai-sessions/:id/ping
@@ -4366,12 +4378,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw notFound("Session not found");
     }
 
-    await aiSessionStore.delete(id);
-
+    let deletedByPlanningCleanup = false;
     try {
-      if (await getPlanningSession(id)) cleanupPlanningSession(id);
+      if (await getPlanningSession(id)) {
+        await cleanupPlanningSession(id);
+        deletedByPlanningCleanup = true;
+      }
     } catch {
       // Session may not belong to planning or may already be cleaned up.
+    }
+
+    if (!deletedByPlanningCleanup) {
+      await aiSessionStore.delete(id);
     }
 
     try {
@@ -4801,13 +4819,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const shouldClose = !options?.centralCore;
       const detector = new FirstRunDetector(central.getGlobalDir());
       const detectedProjects = await detector.detectExistingProjects(process.cwd());
-      let state = await detector.detectFirstRunState();
+      let state: "fresh-install" | "setup-wizard" | "normal-operation" = detectedProjects.length > 0
+        ? "setup-wizard"
+        : "fresh-install";
       let projects: Array<{ id: string; name: string; path: string }> = [];
+      let centralBackendAvailable = false;
 
       try {
         if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
           await central.init();
         }
+        centralBackendAvailable = true;
         state = await detector.detectFirstRunState(central);
         projects = await central.listProjects();
       } catch (error) {
@@ -4823,7 +4845,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json({
         state,
         detectedProjects,
-        hasCentralDb: detector.hasCentralDb(),
+        // FNXC:PostgresProjectDiscovery 2026-07-14-17:30: Report PostgreSQL
+        // central-registry availability, never legacy fusion-central.db presence.
+        hasCentralDb: centralBackendAvailable,
         registeredProjects: projects.map((p) => ({
           id: p.id,
           name: p.name,
@@ -5256,9 +5280,9 @@ async function executeSingleCommand(
   if (taskStore && isInProcessBackupCommand(command)) {
     const fusionDir = taskStore.getFusionDir();
     try {
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await taskStore.getSettings();
-      const result = await runBackupCommand(fusionDir, settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(taskStore), settings);
       const output = truncateAutomationOutput(result.output ?? "", "");
       return {
         success: result.success,

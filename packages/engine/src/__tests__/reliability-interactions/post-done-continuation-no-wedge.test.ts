@@ -89,6 +89,8 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).parseStepsFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
+  // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
+  (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
   (emitter as any).updateSettings = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
 
@@ -133,6 +135,9 @@ function createSelfHealingStore(tasks: Task[], settingsOverrides: Record<string,
   (emitter as any).recordRunAuditEvent = vi.fn().mockImplementation(async (event: any) => {
     audits.push(event);
   });
+  // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
+  (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
+  (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
   (emitter as any).emit = emitter.emit.bind(emitter);
   return emitter;
 }
@@ -251,7 +256,8 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveResumeState: true });
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
-    expect((task.log ?? []).some((entry: any) => entry.action.includes("Non-continuable session — fresh-session retry"))).toBe(true);
+    // FNXC:PostDoneContinuation 2026-07-16-11:57: Incomplete assistant-last transcripts use the dedicated stale-continuation recovery lane. Assert its fresh-session retry action rather than conflating it with the completed-work suppression path.
+    expect((task.log ?? []).some((entry: any) => entry.action.includes("Detected stale assistant-continuation session — fresh-session retry"))).toBe(true);
   });
 
   it("self-heals already wedged post-done non-continuable failures back to clean in-review", async () => {

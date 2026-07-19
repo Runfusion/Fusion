@@ -35,6 +35,18 @@ function hasProjectDbFile(dir: string, folderName: string, dbName: string): bool
   return isValidSqliteDatabaseFile(dbPath);
 }
 
+/**
+ * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+ * PostgreSQL-era projects are identified by `.fusion/project.json`. An openable
+ * `fusion.db` remains accepted only so pre-cutover projects can enter the
+ * one-time migration flow; it is no longer the current project marker.
+ */
+function hasFusionProjectMarkerOrLegacyDb(dir: string): boolean {
+  const fusionDir = join(dir, ".fusion");
+  return readProjectIdentity(fusionDir) !== null
+    || hasProjectDbFile(dir, ".fusion", "fusion.db");
+}
+
 // ── Types ────────────────────────────────────────────────────────────
 
 /** First-run state detection results */
@@ -49,7 +61,7 @@ export interface DetectedProject {
   path: string;
   /** Auto-generated or derived project name */
   name: string;
-  /** Whether the project has a valid fusion.db */
+  /** Whether the directory has a current project marker or valid legacy migration DB. */
   hasDb: boolean;
   /** Persisted project identity id if present */
   identityId?: string;
@@ -129,16 +141,12 @@ export class FirstRunDetector {
    * @param existingCentral — Optional existing CentralCore instance to use instead of creating a new one
    */
   async detectFirstRunState(existingCentral?: CentralCore): Promise<FirstRunState> {
-    const hasCentral = this.hasCentralDb();
-
-    if (!hasCentral) {
-      // No central DB - check for local project in cwd or parent directories
-      const cwd = process.cwd();
-      const detected = await this.detectExistingProjects(cwd);
-      return detected.length > 0 ? "setup-wizard" : "fresh-install";
-    }
-
-    // Central DB exists - check if it has projects
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * First-run state comes from the PostgreSQL central project registry, not
+     * the removed `fusion-central.db` file. A reachable empty registry with a
+     * local marker enters setup; a populated registry is normal operation.
+     */
     let central: CentralCore | undefined = existingCentral;
     let shouldClose = false;
 
@@ -148,17 +156,19 @@ export class FirstRunDetector {
         await central.init();
         shouldClose = true;
       } catch {
-        // Central DB exists but is unreadable — treat as fresh install
-        return "fresh-install";
+        const detected = await this.detectExistingProjects(process.cwd());
+        return detected.length > 0 ? "setup-wizard" : "fresh-install";
       }
     }
 
     try {
       const projects = await central.listProjects();
-      return projects.length === 0 ? "setup-wizard" : "normal-operation";
+      if (projects.length > 0) return "normal-operation";
+      const detected = await this.detectExistingProjects(process.cwd());
+      return detected.length > 0 ? "setup-wizard" : "fresh-install";
     } catch {
-      // Central DB exists but is unreadable - treat as setup wizard
-      return "setup-wizard";
+      const detected = await this.detectExistingProjects(process.cwd());
+      return detected.length > 0 ? "setup-wizard" : "fresh-install";
     } finally {
       if (shouldClose && central) {
         await central.close();
@@ -167,15 +177,21 @@ export class FirstRunDetector {
   }
 
   /**
-   * Check if the central database exists.
+   * Compatibility predicate for the mandatory central PostgreSQL backend.
    */
   hasCentralDb(): boolean {
-    const centralDbPath = join(this.globalDir, "fusion-central.db");
-    return existsSync(centralDbPath);
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * PostgreSQL is mandatory after cutover, so filesystem presence cannot
+     * represent central availability. Keep this compatibility predicate true;
+     * callers needing health/state must initialize CentralCore and query the
+     * central project registry.
+     */
+    return true;
   }
 
   /**
-   * Get the path to the central database.
+   * Get the legacy central SQLite path used only by migration tooling.
    */
   getCentralDbPath(): string {
     return join(this.globalDir, "fusion-central.db");
@@ -184,7 +200,8 @@ export class FirstRunDetector {
   /**
    * Detect existing projects by walking up the directory tree.
    *
-   * Starting from `cwd`, walks up looking for `.fusion/fusion.db` files.
+   * Starting from `cwd`, walks up looking for `.fusion/project.json` markers
+   * or legacy `.fusion/fusion.db` migration inputs.
    * Stops at home directory or root.
    *
    * @param cwd — Starting directory (default: process.cwd())
@@ -351,10 +368,10 @@ export class FirstRunDetector {
   }
 
   /**
-   * Check if a directory contains a valid fusion project (.fusion/fusion.db).
+   * Check for a current marker or a valid legacy migration database.
    */
   private hasFusionProject(dir: string): boolean {
-    return hasProjectDbFile(dir, ".fusion", "fusion.db");
+    return hasFusionProjectMarkerOrLegacyDb(dir);
   }
 
   private getDefaultGlobalDir(): string {
@@ -598,10 +615,10 @@ export class MigrationCoordinator {
   }
 
   /**
-   * Check if a directory is a valid fusion project (has .fusion/fusion.db).
+   * Check for a current marker or a valid legacy migration database.
    */
   private isValidFusionProject(dir: string): boolean {
-    return hasProjectDbFile(dir, ".fusion", "fusion.db");
+    return hasFusionProjectMarkerOrLegacyDb(dir);
   }
 }
 
@@ -631,26 +648,22 @@ export class BackwardCompat {
    * 1. If `projectId` provided → look up that project
    * 2. If no `projectId` and single project registered → auto-use it
    * 3. If no `projectId` and multiple projects → throw ProjectRequiredError
-   * 4. If no central DB → return legacy mode (use cwd directly)
    *
-   * @param cwd — Current working directory
+   * @param _cwd — Retained for API compatibility; registry paths are authoritative.
    * @param projectId — Optional explicit project ID/name
    * @returns Resolved context
    * @throws ProjectRequiredError when multiple projects and no selection
    */
   async resolveProjectContext(
-    cwd: string,
+    _cwd: string,
     projectId?: string
   ): Promise<ResolvedContext> {
-    // Check for legacy mode (no central DB)
-    const detector = new FirstRunDetector(this.central.getGlobalDir());
-    if (!detector.hasCentralDb()) {
-      return {
-        projectId: "legacy",
-        workingDirectory: cwd,
-        isLegacy: true,
-      };
-    }
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * Runtime project resolution always consults the PostgreSQL registry. The
+     * old filesystem test for fusion-central.db could incorrectly route a
+     * healthy PostgreSQL installation into removed SQLite legacy mode.
+     */
 
     // Explicit project ID provided
     if (projectId) {
@@ -696,11 +709,10 @@ export class BackwardCompat {
   }
 
   /**
-   * Check if running in legacy mode (no central database).
+   * Report whether removed SQLite legacy runtime mode is active.
    */
   async isLegacyMode(): Promise<boolean> {
-    const detector = new FirstRunDetector(this.central.getGlobalDir());
-    return !detector.hasCentralDb();
+    return false;
   }
 
   /**

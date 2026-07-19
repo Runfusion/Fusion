@@ -46,6 +46,21 @@ describe("useAppSettings", () => {
     mockUpdateSettings.mockResolvedValue({} as never);
   });
 
+  it("defaults omitted task popup scoping to enabled during hydration", async () => {
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.taskPopupsBoardListOnly).toBe(true);
+  });
+
+  it("preserves an explicit false task popup scoping opt-out during hydration", async () => {
+    mockFetchSettings.mockResolvedValueOnce({ taskPopupsBoardListOnly: false } as never);
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.taskPopupsBoardListOnly).toBe(false);
+  });
+
   it("loads settings state from API", async () => {
     const { result } = renderHook(() => useAppSettings("proj_123"));
 

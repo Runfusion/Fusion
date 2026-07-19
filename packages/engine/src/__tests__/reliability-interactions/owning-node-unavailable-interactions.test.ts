@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import type { NodeStatus, OwningNodeHandoffPolicy, Task, TaskStore } from "@fusion/core";
 import { TaskStore as CoreTaskStore } from "@fusion/core";
 import { MeshLeaseManager } from "../../mesh-lease-manager.js";
 import { Scheduler } from "../../scheduler.js";
+import { hasGit, hasPg, makePgTaskStore } from "./_helpers.js";
+
+const describeIfGit = hasGit && hasPg ? describe : describe.skip;
+const readFileState = vi.hoisted(() => ({ mockPromptRead: false }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -21,13 +21,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    readFile: vi.fn(),
+    readFile: async (...args: Parameters<typeof actual.readFile>) => (
+      readFileState.mockPromptRead ? "# Task\nFN-4813" : actual.readFile(...args)
+    ),
   };
 });
-
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-owning-node-handoff-"));
-}
 
 function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -72,23 +70,21 @@ function createMockHealthMonitor(statusMap: Record<string, NodeStatus | undefine
   } as unknown as import("../../node-health-monitor.js").NodeHealthMonitor;
 }
 
-describe("reliability interactions: owning-node unavailable handoff", () => {
-  let rootDir = "";
-  let globalDir = "";
+describeIfGit("reliability interactions: owning-node unavailable handoff", () => {
   let taskStore: CoreTaskStore;
+  let cleanup: (() => Promise<void>) | undefined;
 
   beforeEach(async () => {
     vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFile).mockResolvedValue("# Task\nFN-4813");
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    taskStore = new CoreTaskStore(rootDir, globalDir);
-    await taskStore.init();
+    const fixture = await makePgTaskStore();
+    taskStore = fixture.store;
+    cleanup = fixture.cleanup;
+    readFileState.mockPromptRead = true;
   });
 
   afterEach(async () => {
-    taskStore?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    readFileState.mockPromptRead = false;
+    await cleanup?.();
   });
 
   async function seedCheckedOutTask(overrides: Partial<Task> = {}): Promise<Task> {

@@ -233,6 +233,13 @@ export interface Slice {
  * A MissionFeature represents a deliverable within a slice.
  * Features can be linked to fn Tasks for implementation.
  */
+export interface ResearchFeatureProvenance {
+  researchRunId: string;
+  findingId: string;
+  /** Finding-specific cited source URLs; an empty array explicitly means uncited. */
+  sourceUrls: string[];
+}
+
 export interface MissionFeature {
   /** Unique identifier (e.g., "F-J6K9AB-G7H3") */
   id: string;
@@ -248,6 +255,8 @@ export interface MissionFeature {
   acceptanceCriteria?: string;
   /** Current lifecycle status */
   status: FeatureStatus;
+  /** Durable lineage when this canonical feature came from Fusion Research. */
+  researchProvenance?: ResearchFeatureProvenance;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -429,6 +438,10 @@ export interface SliceCreateInput {
 }
 
 /** Input for creating a new Feature */
+export interface ResearchFeatureCreateInput extends FeatureCreateInput {
+  researchProvenance: ResearchFeatureProvenance;
+}
+
 export interface FeatureCreateInput {
   /** Display name of the feature (required) */
   title: string;

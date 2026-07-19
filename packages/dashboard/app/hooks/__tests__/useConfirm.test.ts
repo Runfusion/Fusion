@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React, { useState } from "react";
 import { ConfirmDialogProvider, useConfirm } from "../useConfirm";
@@ -62,6 +62,16 @@ function Harness() {
       "button",
       {
         onClick: async () => {
+          const outcome = await confirmWithCheckbox({ title: "Reset Task", message: "Reset FN-001?" });
+          setResult(JSON.stringify(outcome));
+        },
+      },
+      "open-checkbox-without-checkbox"
+    ),
+    React.createElement(
+      "button",
+      {
+        onClick: async () => {
           const choice = await confirmWithChoice({
             title: "Delete Done",
             message: "Delete or archive?",
@@ -78,6 +88,30 @@ function Harness() {
 }
 
 describe("useConfirm", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("skips dialogs with the primary/default outcomes when enabled", async () => {
+    render(React.createElement(ConfirmDialogProvider, { skipConfirmations: true }, React.createElement(Harness)));
+
+    fireEvent.click(screen.getByText("open"));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("open-choice"));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("primary"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("open-checkbox-default-checked"));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent('{"choice":"primary","checkboxValue":true}'));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("open-checkbox-without-checkbox"));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent('{"choice":"primary","checkboxValue":false}'));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("resolves true when confirm is clicked", async () => {
     render(
       React.createElement(
@@ -93,6 +127,70 @@ describe("useConfirm", () => {
     await waitFor(() => {
       expect(screen.getByTestId("result").textContent).toBe("confirmed");
     });
+  });
+
+  it("keeps a mouse-opened confirm visible when its trailing click reaches the backdrop", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    const trigger = screen.getByText("open");
+    fireEvent.pointerDown(trigger, { pointerType: "mouse" });
+    fireEvent.click(trigger);
+
+    const overlay = await screen.findByText("Delete FN-001?").then(() => document.querySelector(".confirm-dialog-overlay"));
+    expect(overlay).toBeTruthy();
+    fireEvent.mouseDown(overlay as Element);
+    fireEvent.pointerUp(overlay as Element, { pointerType: "mouse" });
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByTestId("result")).toHaveTextContent("idle");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
+  });
+
+  it("keeps a touch-opened confirm visible when its trailing tap reaches the backdrop", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    const trigger = screen.getByText("open");
+    fireEvent.touchStart(trigger);
+    fireEvent.click(trigger);
+
+    const overlay = await screen.findByText("Delete FN-001?").then(() => document.querySelector(".confirm-dialog-overlay"));
+    expect(overlay).toBeTruthy();
+    fireEvent.touchEnd(overlay as Element);
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByTestId("result")).toHaveTextContent("idle");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
+  });
+
+  it("keeps a mobile touch-opened confirm visible through its delayed ghost mouse burst and only deletes after Confirm", async () => {
+    vi.useFakeTimers();
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    const trigger = screen.getByText("open");
+    fireEvent.touchStart(trigger);
+    fireEvent.touchEnd(trigger);
+    // JSDOM does not synthesize this click from touch events, unlike the browser.
+    fireEvent.click(trigger);
+
+    expect(screen.getByText("Delete FN-001?")).toBeInTheDocument();
+    const overlay = document.querySelector(".confirm-dialog-overlay");
+    expect(overlay).toBeTruthy();
+    fireEvent.mouseDown(overlay as Element);
+    fireEvent.mouseUp(overlay as Element);
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByTestId("result")).toHaveTextContent("idle");
+
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
   });
 
   it("resolves false when cancel is clicked", async () => {

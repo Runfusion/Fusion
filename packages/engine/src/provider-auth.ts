@@ -1,4 +1,9 @@
 /*
+FNXC:ProviderAuth 2026-07-16-17:30:
+pi 0.80.8+ moved OAuth conversion and persistence behind ModelRuntime. Fusion retains
+this adapter's legacy dashboard contract while the runtime consumes its CredentialStore,
+so the FN-7646 locked per-provider merge and Anthropic split remain behaviorally stable.
+
 FNXC:ProviderAuth 2026-07-07-00:00:
 FN-7622: relocated from packages/cli/src/commands/provider-auth.ts into @fusion/engine so the desktop
 in-process dashboard server (packages/desktop/src/local-runtime.ts, local-server.ts) and the CLI
@@ -7,33 +12,33 @@ skipping it entirely (the root cause of the desktop-vs-web truncated provider li
 packages/cli/src/commands/provider-auth.ts is now a thin re-export shim of this module; its
 observable behavior is unchanged.
 */
-import type {
-  AuthStorage,
-  ModelRegistry,
-  AuthCredential,
-} from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { FusionAuthStorage } from "./auth-storage.js";
 import {
   choosePreferredStoredCredential,
   readStoredCredentialsFromAuthFile,
   shouldHydrateStoredCredential,
   type StoredAuthCredential,
 } from "@fusion/core";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
-
-export type LoginCallbacks = Parameters<AuthStorage["login"]>[1] & {
+export interface LoginCallbacks {
+  onAuth: (info: { url: string; instructions?: string }) => void;
+  onDeviceCode?: (info: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }) => void;
+  onPrompt: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
   onManualCodeInput?: () => Promise<string>;
-};
+  onProgress?: (message: string) => void;
+  onSelect?: (prompt: { message: string; options: Array<{ id: string; label: string }> }) => Promise<string | undefined>;
+  signal?: AbortSignal;
+}
 
 export interface DashboardAuthStorage {
   reload(): void;
   getOAuthProviders(): Array<{ id: string; name: string }>;
   hasAuth(provider: string): boolean;
   login(providerId: string, callbacks: LoginCallbacks): Promise<void>;
-  logout(provider: string): void;
+  logout(provider: string): Promise<void>;
   getApiKeyProviders(): Array<{ id: string; name: string }>;
-  setApiKey(providerId: string, apiKey: string): void;
-  clearApiKey(providerId: string): void;
+  setApiKey(providerId: string, apiKey: string): Promise<void>;
+  clearApiKey(providerId: string): Promise<void>;
   hasApiKey(providerId: string): boolean;
   getApiKey(providerId: string): Promise<string | undefined>;
   get(providerId: string): { type?: string; key?: string } | undefined;
@@ -87,7 +92,7 @@ function getProviderDisplayName(providerId: string): string {
 }
 
 export function wrapAuthStorageWithApiKeyProviders(
-  authStorage: AuthStorage,
+  authStorage: FusionAuthStorage,
   modelRegistry: ModelRegistry,
   readFallbackAuthStorages: ReadFallbackAuthStorage[] = [],
 ): DashboardAuthStorage {
@@ -100,7 +105,7 @@ export function wrapAuthStorageWithApiKeyProviders(
     return legacyCredential?.type === "oauth" ? legacyCredential : undefined;
   };
 
-  const migrateStoredAnthropicSubscriptionCredential = () => {
+  const migrateStoredAnthropicSubscriptionCredential = async () => {
     const existingSubscription = authStorage.get(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) as StoredCredential | undefined;
     if (existingSubscription?.type === "oauth") {
       return existingSubscription;
@@ -116,7 +121,7 @@ export function wrapAuthStorageWithApiKeyProviders(
     Saving or clearing the separated `anthropic-api-key` provider overwrites the raw `anthropic` storage slot used by model execution.
     Read the primary auth storage directly and migrate legacy subscription OAuth from `anthropic` to `anthropic-subscription` before that write, because merged Anthropic reads intentionally expose `anthropic` as API-key-only.
     */
-    mergedAuthStorage.set(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID, legacySubscription as AuthCredential);
+    await mergedAuthStorage.set(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID, legacySubscription as StoredCredential);
     return legacySubscription;
   };
 
@@ -134,16 +139,16 @@ export function wrapAuthStorageWithApiKeyProviders(
     login: async (providerId, callbacks) => {
       if (providerId !== ANTHROPIC_STORAGE_PROVIDER_ID && providerId !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         await mergedAuthStorage.login(
-          providerId as Parameters<AuthStorage["login"]>[0],
-          callbacks as Parameters<AuthStorage["login"]>[1],
+          providerId,
+          callbacks,
         );
         return;
       }
 
       const existingApiKey = mergedAuthStorage.get(ANTHROPIC_STORAGE_PROVIDER_ID);
       await mergedAuthStorage.login(
-        ANTHROPIC_STORAGE_PROVIDER_ID as Parameters<AuthStorage["login"]>[0],
-        callbacks as Parameters<AuthStorage["login"]>[1],
+        ANTHROPIC_STORAGE_PROVIDER_ID,
+        callbacks,
       );
       const oauthCredential = authStorage.get(ANTHROPIC_STORAGE_PROVIDER_ID) as StoredCredential | undefined;
       if (oauthCredential?.type === "oauth") {
@@ -152,20 +157,20 @@ export function wrapAuthStorageWithApiKeyProviders(
         Anthropic subscription OAuth and raw Anthropic API-key auth must be separate UI providers: OAuth stays `anthropic`, while the UI/API key card uses `anthropic-api-key` and maps back to the `anthropic` model credential.
         Store subscription OAuth under an internal key after upstream login because the OAuth library writes through the same `anthropic` id used by model API-key execution.
         */
-        mergedAuthStorage.set(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID, oauthCredential as AuthCredential);
+        await mergedAuthStorage.set(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID, oauthCredential as StoredCredential);
         if (existingApiKey?.type === "api_key") {
-          mergedAuthStorage.set(ANTHROPIC_STORAGE_PROVIDER_ID, existingApiKey as AuthCredential);
+          await mergedAuthStorage.set(ANTHROPIC_STORAGE_PROVIDER_ID, existingApiKey as StoredCredential);
         } else {
-          authStorage.remove(ANTHROPIC_STORAGE_PROVIDER_ID);
+          await authStorage.remove(ANTHROPIC_STORAGE_PROVIDER_ID);
         }
       }
     },
-    logout: (provider) => {
+    logout: async (provider) => {
       if (provider !== ANTHROPIC_STORAGE_PROVIDER_ID && provider !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
-        mergedAuthStorage.logout(provider);
+        await mergedAuthStorage.logout(provider);
         return;
       }
-      mergedAuthStorage.logout(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID);
+      await mergedAuthStorage.logout(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID);
       /*
       FNXC:ProviderAuth 2026-06-29-23:59:
       Logging out Anthropic subscription auth must also remove pre-split OAuth credentials still stored under `anthropic`.
@@ -173,7 +178,7 @@ export function wrapAuthStorageWithApiKeyProviders(
       */
       const legacyAnthropicCredential = authStorage.get(ANTHROPIC_STORAGE_PROVIDER_ID) as StoredCredential | undefined;
       if (legacyAnthropicCredential?.type === "oauth") {
-        mergedAuthStorage.logout(ANTHROPIC_STORAGE_PROVIDER_ID);
+        await mergedAuthStorage.logout(ANTHROPIC_STORAGE_PROVIDER_ID);
       }
     },
     getApiKeyProviders: () => {
@@ -210,19 +215,19 @@ export function wrapAuthStorageWithApiKeyProviders(
         a.name.localeCompare(b.name),
       );
     },
-    setApiKey: (providerId, apiKey) => {
+    setApiKey: async (providerId, apiKey) => {
       const storageProviderId = toApiKeyStorageProviderId(providerId);
       if (storageProviderId === ANTHROPIC_STORAGE_PROVIDER_ID) {
-        migrateStoredAnthropicSubscriptionCredential();
+        await migrateStoredAnthropicSubscriptionCredential();
       }
-      mergedAuthStorage.set(storageProviderId, { type: "api_key", key: apiKey });
+      await mergedAuthStorage.set(storageProviderId, { type: "api_key", key: apiKey });
     },
-    clearApiKey: (providerId) => {
+    clearApiKey: async (providerId) => {
       const storageProviderId = toApiKeyStorageProviderId(providerId);
       if (storageProviderId === ANTHROPIC_STORAGE_PROVIDER_ID) {
-        migrateStoredAnthropicSubscriptionCredential();
+        await migrateStoredAnthropicSubscriptionCredential();
       }
-      mergedAuthStorage.remove(storageProviderId);
+      await mergedAuthStorage.remove(storageProviderId);
     },
     hasApiKey: (providerId) => {
       const credential = mergedAuthStorage.get(toApiKeyStorageProviderId(providerId));
@@ -253,9 +258,9 @@ export function wrapAuthStorageWithApiKeyProviders(
 }
 
 export function mergeAuthStorageReads(
-  authStorage: AuthStorage,
+  authStorage: FusionAuthStorage,
   readFallbackAuthStorages: ReadFallbackAuthStorage[] = [],
-): AuthStorage {
+): FusionAuthStorage {
   const readAuthStorages = [authStorage, ...readFallbackAuthStorages];
 
   // Providers the user has explicitly logged out from. These should not be
@@ -298,7 +303,7 @@ export function mergeAuthStorageReads(
     return selectCredential(providerId, readAuthStorages);
   };
 
-  const syncFallbackOauthCredentials = () => {
+  const syncFallbackOauthCredentials = async (): Promise<void> => {
     const providerIds = new Set(readFallbackAuthStorages.flatMap((storage) => storage.list()));
     for (const providerId of providerIds) {
       const storageProviderId = providerId === ANTHROPIC_STORAGE_PROVIDER_ID
@@ -317,32 +322,32 @@ export function mergeAuthStorageReads(
         FNXC:ProviderAuth 2026-06-29-23:48:
         Legacy Anthropic OAuth files may still store subscription credentials under `anthropic`; hydrate those as `anthropic-subscription` so Anthropic model/API-key reads only trust `api_key` credentials under `anthropic`.
         */
-        authStorage.set(storageProviderId, candidate as AuthCredential);
+        await authStorage.set(storageProviderId, candidate as StoredCredential);
       }
     }
   };
 
-  syncFallbackOauthCredentials();
+  void syncFallbackOauthCredentials();
 
   return new Proxy(authStorage, {
     get(target, prop, receiver) {
       if (prop === "logout") {
-        return (provider: string) => {
-          target.logout(provider);
+        return async (provider: string): Promise<void> => {
+          await target.logout(provider);
           loggedOutProviders.add(provider);
         };
       }
 
       if (prop === "remove") {
-        return (provider: string) => {
-          target.remove(provider);
+        return async (provider: string): Promise<void> => {
+          await target.remove(provider);
           loggedOutProviders.add(provider);
         };
       }
 
       if (prop === "set") {
-        return (provider: string, credential: AuthCredential) => {
-          target.set(provider, credential);
+        return async (provider: string, credential: StoredCredential): Promise<void> => {
+          await target.set(provider, credential);
           loggedOutProviders.delete(provider);
         };
       }
@@ -352,7 +357,7 @@ export function mergeAuthStorageReads(
           for (const storage of readAuthStorages) {
             storage.reload();
           }
-          syncFallbackOauthCredentials();
+          void syncFallbackOauthCredentials();
         };
       }
 
@@ -446,7 +451,7 @@ export function mergeAuthStorageReads(
 
       return Reflect.get(target, prop, receiver);
     },
-  }) as AuthStorage;
+  }) as FusionAuthStorage;
 }
 
 function resolveStoredApiKey(key: string | undefined): string | undefined {
@@ -465,10 +470,9 @@ function resolveOAuthApiKey(providerId: string, credential: StoredCredential): s
     return undefined;
   }
 
-  const oauthProviderId = providerId === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
-    ? ANTHROPIC_STORAGE_PROVIDER_ID
-    : providerId;
-  return getOAuthProvider(oauthProviderId)?.getApiKey(credential as OAuthCredentials);
+  // Runtime OAuth conversion is owned by ModelRuntime; this read-only dashboard
+  // fallback exposes the stored access token without importing removed pi oauth helpers.
+  return credential.access;
 }
 
 function resolveStoredCredentialApiKey(providerId: string, credential: StoredCredential | undefined): string | undefined {

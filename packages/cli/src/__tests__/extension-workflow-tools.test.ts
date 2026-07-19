@@ -4,6 +4,11 @@
  * PostgreSQL extension harness. Workflow state is seeded and read back through
  * `h.store()` (PG-backed), and the authoring tools resolve that same store via
  * the harness-injected `getStore(cwd)` cache.
+ *
+ * FNXC:CliTests 2026-07-16-08:45:
+ * FN-8102 restores the per-test extension registration and harness root to the
+ * intake-column cases. They must not reference pre-migration `api` or `tmpDir`
+ * locals that no longer exist in this PostgreSQL-backed suite.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
@@ -249,6 +254,8 @@ pgTest("pi extension workflow authoring tools", () => {
   ACTUAL landing column instead of a fixed "Column: triage" string.
   */
   it("lands a task in a custom workflow's intake column and echoes it in the response text", async () => {
+    const api = createMockApi();
+    registerExtension(api);
     const inboxIr: WorkflowIr = {
       version: "v2",
       name: "Inbox-intake workflow",
@@ -277,7 +284,7 @@ pgTest("pi extension workflow authoring tools", () => {
       { name: "Inbox-intake workflow", ir: inboxIr },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
     expect(createWorkflow.isError).not.toBe(true);
     const workflowId = createWorkflow.details.workflowId;
@@ -288,7 +295,7 @@ pgTest("pi extension workflow authoring tools", () => {
       { description: "Needs manual release", workflow_id: workflowId },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
 
     expect(result.isError).not.toBe(true);
@@ -298,13 +305,15 @@ pgTest("pi extension workflow authoring tools", () => {
   });
 
   it("still reports Column: triage for the default builtin:coding workflow (byte-identical regression guard)", async () => {
+    const api = createMockApi();
+    registerExtension(api);
     const createTask = api.tools.get("fn_task_create")!;
     const result = await createTask.execute(
       "create-default-task",
       { description: "Default workflow task" },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
 
     expect(result.isError).not.toBe(true);

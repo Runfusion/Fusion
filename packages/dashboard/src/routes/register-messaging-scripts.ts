@@ -4,6 +4,7 @@ import { ApprovalRequestStore, DASHBOARD_USER_ID, MessageStore, type MessageType
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getTerminalService } from "../terminal-service.js";
 import type { ApiRoutesContext } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
   const { router, options, getProjectContext, rethrowAsApiError, runtimeLogger } = ctx;
@@ -188,15 +189,9 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
 
     let msgStore = messageStoreCache.get(rootDir);
     if (!msgStore) {
-      // FNXC:RuntimeSatelliteAsync 2026-06-24-12:50:
-      // In backend mode, pass the AsyncDataLayer so MessageStore delegates to
-      // the async helpers; otherwise pass the sync SQLite Database (legacy path).
-      const layer = scopedStore.getAsyncLayer();
-      if (layer) {
-        msgStore = new MessageStore(null, { asyncLayer: layer });
-      } else {
-        msgStore = new MessageStore(scopedStore.getDatabase());
-      }
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Dashboard messages require the scoped PostgreSQL layer; the removed SQLite runtime is not a fallback. */
+      const layer = requireAsyncLayer(scopedStore, "Dashboard MessageStore");
+      msgStore = new MessageStore(null, { asyncLayer: layer });
       messageStoreCache.set(rootDir, msgStore);
     }
     return msgStore;
@@ -279,8 +274,8 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       let pendingApprovalCount = 0;
       try {
-        const layer = scopedStore.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+        const layer = requireAsyncLayer(scopedStore, "Messaging approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
         pendingApprovalCount = (await approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 })).length;
       } catch {
         pendingApprovalCount = 0;
@@ -402,6 +397,107 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       if (err instanceof ApiError) {
         throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:EphemeralAgentTaskCreation 2026-07-30-16:00:
+  Claim precedes task creation. Every retry uses the proposal's never-rotated key as proposalClaimId,
+  so the database unique index returns the one existing task across concurrent clicks, crashes, and reclaim races.
+  The durable creation lease also bounds a pre-persistence crash: expiry releases only transient ownership,
+  then a retry reuses that same key while any slow original insertion remains idempotent.
+  */
+  const TASK_PROPOSAL_CREATION_LEASE_MS = 30_000;
+
+  router.post("/messages/:id/create-proposed-task", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const msgStore = await getMessageStore(req);
+      let message = await msgStore.getMessage(req.params.id);
+      let metadata = message?.metadata;
+      if (!message || message.toId !== DASHBOARD_USER_ID || message.toType !== "user" || metadata?.kind !== "task-proposal" || !metadata.proposedTask || !metadata.proposalIdempotencyKey) throw badRequest("Invalid operator task proposal");
+      const messageId = message.id;
+
+      /*
+      FNXC:EphemeralAgentTaskCreation 2026-07-30-15:00:
+      A request observing an active creating lease must return in-progress when no durable
+      task is visible. Releasing that live lease here would let a second request create while
+      the original is still inserting. Only a separately scheduled expired-lease recovery may
+      release it; every create still carries the stable unique proposalClaimId.
+      */
+      const findCreatedTask = async (proposalIdempotencyKey: string) =>
+        (await scopedStore.listTasks({ includeArchived: true })).find((task) => task.proposalClaimId === proposalIdempotencyKey);
+
+      if (metadata.proposalStatus === "created" && metadata.createdTaskId) {
+        const task = await scopedStore.getTask(metadata.createdTaskId).catch(() => null);
+        if (task) {
+          res.json({ task, proposal: message });
+          return;
+        }
+      }
+
+      if (metadata.proposalStatus === "creating" && message) {
+        const creatingMessage = message;
+        const existingTask = await findCreatedTask(metadata.proposalIdempotencyKey);
+        if (existingTask) {
+          await msgStore.reconcileProposalCreation(messageId, existingTask.id);
+          message = await msgStore.getMessage(messageId);
+          if (message) {
+            res.json({ task: existingTask, proposal: message });
+            return;
+          }
+        }
+
+        /*
+        FNXC:EphemeralAgentTaskCreation 2026-07-30-16:00:
+        A creating claim survives a process death. Once its durable lease expires and no task is
+        findable by the never-rotated proposal key, release only transient ownership and retry the
+        normal claim path. A slow original insert and a reclaimer use the same unique key, so either
+        order returns one task rather than allowing a duplicate.
+        */
+        const leaseStartedAt = Date.parse(metadata.claimStartedAt ?? creatingMessage.updatedAt);
+        if (Number.isFinite(leaseStartedAt) && Date.now() - leaseStartedAt >= TASK_PROPOSAL_CREATION_LEASE_MS) {
+          await msgStore.reconcileProposalCreation(messageId, undefined);
+          message = await msgStore.getMessage(messageId);
+          metadata = message?.metadata;
+        } else {
+          // Do not release a currently held claim based on a read that may race its insert.
+          res.status(409).json({ error: "Task proposal is already being created", proposal: creatingMessage });
+          return;
+        }
+      }
+
+      if (message && metadata?.proposalStatus === "creating") {
+        res.status(409).json({ error: "Task proposal is already being created", proposal: message });
+        return;
+      }
+      if (!message || !metadata || metadata.proposalStatus !== "pending") throw badRequest("Task proposal is not pending");
+      const claim = await msgStore.claimProposalForCreation(messageId);
+      if (!claim.claimed || !claim.idempotencyKey || !claim.claimOwnerToken) throw badRequest("Task proposal is already being created");
+
+      let task;
+      try {
+        const proposal = metadata.proposedTask;
+        task = await scopedStore.createTask({ title: proposal!.title, description: proposal!.description, priority: proposal!.priority, dependencies: proposal!.dependencies, workflowId: proposal!.workflowId, proposalClaimId: claim.idempotencyKey });
+      } catch (error) {
+        await msgStore.releaseProposalClaim(messageId, claim.claimOwnerToken);
+        throw error;
+      }
+
+      // A post-create finalization failure must reconcile to the durable task, never release it for a new create.
+      let finalized = null;
+      try {
+        finalized = await msgStore.finalizeProposalCreation(messageId, claim.claimOwnerToken, task.id);
+      } catch {
+        // The durable task is the recovery source; reconciliation below links it on a retryable metadata failure.
+      }
+      if (!finalized) {
+        finalized = await msgStore.reconcileProposalCreation(messageId, task.id);
+      }
+      res.status(201).json({ task, proposal: finalized ?? await msgStore.getMessage(messageId) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });

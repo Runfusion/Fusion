@@ -229,6 +229,30 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
     description: "Thinking effort for the execution phase. Empty inherits from the task or default thinking level.",
   },
+  /*
+   * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+   * FN-8098 makes executor recovery workflow-configurable; unset values deliberately
+   * inherit the shared fallback pair so existing configurations continue to work.
+   */
+  {
+    id: "executionFallbackProvider",
+    name: "Executor fallback provider",
+    type: "string",
+    description: "Fallback provider for the execution phase.",
+  },
+  {
+    id: "executionFallbackModelId",
+    name: "Executor fallback model",
+    type: "string",
+    description: "Fallback model id for the execution phase.",
+  },
+  {
+    id: "executionFallbackThinkingLevel",
+    name: "Executor fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the executor fallback model. Empty inherits from shared fallback or executor thinking.",
+  },
   {
     id: "planningProvider",
     name: "Planning provider",
@@ -406,24 +430,17 @@ export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
   {
     id: "triageDecisionOnlyWorkflowId",
     name: "Triage decision-only workflow",
-    type: "enum",
+    type: "string",
     default: "builtin:quick-fix",
-    options: [
-      { value: "builtin:quick-fix", label: "Quick fix" },
-      { value: "builtin:coding", label: "Coding" },
-    ],
-    description: "Preferred workflow id for decision-only or investigation tasks that expect no code changes.",
+    description: "Preferred built-in or custom workflow id for decision-only or investigation tasks that expect no code changes.",
   },
   {
     id: "triageDefaultWorkflowId",
     name: "Triage default workflow",
-    type: "enum",
-    default: "builtin:coding",
-    options: [
-      { value: "builtin:coding", label: "Coding" },
-      { value: "builtin:quick-fix", label: "Quick fix" },
-    ],
-    description: "Default workflow id for standard coding tasks.",
+    type: "string",
+    default: "",
+    description:
+      "Optional built-in or custom workflow id override for triage. Empty inherits config.settings.defaultWorkflowId.",
   },
   {
     id: "leanPlanning",
@@ -476,6 +493,23 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     description:
       "Maximum automatic Code Review remediation attempts for this workflow. Leave unset for unbounded; set 0 to disable automatic revision.",
   },
+  {
+    id: "planReviewReplanCap",
+    name: "Plan Review replan cap",
+    type: "number",
+    minimum: 0,
+    integer: true,
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 makes the triage Plan Review replan ceiling operator-configurable per workflow.
+     * The write boundary rejects fractional and negative values so operators never save a
+     * value triage would discard. Leave this declaration without a default so an unset value falls back to
+     * PLAN_REVIEW_GATE_REPLAN_CAP; that preserves the source default while allowing its
+     * coordinated value to change without baking a second default into workflow settings.
+     */
+    description:
+      "Maximum automatic plan → REVISE → replan iterations before manual approval. Leave unset to use the built-in default; set 0 to require approval after the first REVISE.",
+  },
 ];
 
 /**
@@ -502,6 +536,8 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
  * judgment call elsewhere in this codebase.
  */
 export const DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS = 2 * 60 * 60 * 1000;
+
+export const PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID = "plannerHeartbeatPatrolEnabled";
 
 export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
   {
@@ -540,6 +576,53 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     description:
       "Milliseconds of executor-stage inactivity (no progress since the task's last column move/update) before the planner overseer reports the in-progress task as stuck, triggering bounded autonomous recovery (Autonomous level only). Default 7200000 (2 hours). Set higher to avoid nagging long-running steps; set lower to recover hung executors faster.",
   },
+  /*
+  FNXC:PlannerOversight 2026-07-14-12:00:
+  Session-advisor (OMP parity) is OFF by default. Operators must flip
+  `plannerOverseerAdvisorEnabled` and set both provider + model id before any
+  second-model transcript review runs — even when plannerOversightLevel is
+  autonomous. Lifecycle supervisor (stall/retry/confirm) is unaffected.
+
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor model gate. Both provider + model id must be set for live
+  transcript advising when the feature is enabled.
+  */
+  {
+    id: "plannerOverseerAdvisorEnabled",
+    name: "Session advisor (LLM)",
+    type: "boolean",
+    default: false,
+    description:
+      "Workflow-level enable for the planner overseer session advisor (live LLM transcript review). Prefer project Settings → General → Session advisor (and per-task / Quick Add eye toggle) for day-to-day control; this workflow flag still enables when the project default is off (backward compatible). When enabled, also set Session advisor model provider and model id. Does not change lifecycle stage watching, stall recovery, or merge confirmation.",
+  },
+  {
+    id: "plannerOverseerAdvisorProvider",
+    name: "Session advisor model provider",
+    type: "string",
+    default: "",
+    description:
+      "Provider id for the planner overseer session advisor (live transcript review). Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model id.",
+  },
+  {
+    id: "plannerOverseerAdvisorModelId",
+    name: "Session advisor model id",
+    type: "string",
+    default: "",
+    description:
+      "Model id for the planner overseer session advisor. Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model provider.",
+  },
+  /*
+   * FNXC:HeartbeatPatrol 2026-07-14-23:35:
+   * Idle no-task heartbeat patrol creates net-new work while plannerOversightLevel recovers tasks already in flight. Keep patrol as its own workflow setting so operators can reduce autonomous task creation volume without disabling stuck-task observation, steering, or recovery.
+   */
+  {
+    id: PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID,
+    name: "Planner heartbeat patrol enabled",
+    type: "boolean",
+    default: true,
+    description:
+      "Enable idle/no-task heartbeat proactive patrol guidance that encourages agents to create or delegate new follow-up tasks. Disable to keep idle agents to assigned work, direct messages, explicit operator requests, and safe read-only/logging coordination without disabling planner overseer stuck-task recovery.",
+  },
 ];
 
 export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
@@ -553,7 +636,19 @@ const TRIAGE_POLICY_DEFAULTS = new Map(
   BUILTIN_TRIAGE_POLICY_SETTINGS.map((setting) => [setting.id, setting.default]),
 );
 
-function formatTriagePolicyValue(id: string, value: unknown): string {
+function formatTriagePolicyValue(id: string, value: unknown, settings: Partial<Settings>): string {
+  /*
+   * FNXC:WorkflowRouting 2026-07-15-00:00:
+   * The triage prompt must name the operator's project default workflow when no
+   * per-workflow override is configured. This keeps planning guidance aligned
+   * with config.settings.defaultWorkflowId and accepts custom workflow IDs.
+   */
+  if (id === "triageDefaultWorkflowId") {
+    const explicitValue = typeof value === "string" ? value.trim() : "";
+    if (explicitValue && explicitValue !== "builtin:coding") return explicitValue;
+    const projectDefault = typeof settings.defaultWorkflowId === "string" ? settings.defaultWorkflowId.trim() : "";
+    return projectDefault || "builtin:coding";
+  }
   if (id === "triageNoCommitsDecisionVerbs") {
     const verbs = Array.isArray(value) ? value : TRIAGE_POLICY_DEFAULTS.get(id);
     return (Array.isArray(verbs) ? verbs : []).map((verb) => String(verb)).join(", ");
@@ -598,7 +693,7 @@ export function renderTriagePolicyPlaceholders(prompt: string, settings: Partial
   const values = settings as Record<string, unknown>;
   for (const setting of BUILTIN_TRIAGE_POLICY_SETTINGS) {
     const token = new RegExp(`\\{\\{${setting.id}\\}\\}`, "g");
-    rendered = rendered.replace(token, formatTriagePolicyValue(setting.id, values[setting.id] ?? setting.default));
+    rendered = rendered.replace(token, formatTriagePolicyValue(setting.id, values[setting.id] ?? setting.default, settings));
   }
   const leftover = rendered.match(/\{\{[^}]+\}\}/);
   if (leftover) {

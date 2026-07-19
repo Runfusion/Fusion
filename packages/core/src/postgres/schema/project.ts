@@ -96,10 +96,17 @@ export const tasks = projectSchema.table("tasks", {
   validatorModelId: text("validator_model_id"),
   planningModelProvider: text("planning_model_provider"),
   planningModelId: text("planning_model_id"),
+  mergerModelProvider: text("merger_model_provider"),
+  mergerModelId: text("merger_model_id"),
+  mergerThinkingLevel: text("merger_thinking_level"),
   mergeRetries: integer("merge_retries"),
   workflowStepRetries: integer("workflow_step_retries"),
   resumeLimboCount: integer("resume_limbo_count").default(0),
   graphResumeRetryCount: integer("graph_resume_retry_count").default(0),
+  consecutiveToolFailureRetryCount: integer("consecutive_tool_failure_retry_count").default(0),
+  executorEscalationAttempted: integer("executor_escalation_attempted").default(0),
+  toolFailureDetectorLogCursor: integer("tool_failure_detector_log_cursor"),
+  toolFailureRetryExhaustedAuditEmitted: integer("tool_failure_retry_exhausted_audit_emitted").default(0),
   resumeLimboTipSha: text("resume_limbo_tip_sha"),
   resumeLimboStepSignature: text("resume_limbo_step_signature"),
   // FNXC:WorkflowLifecycle 2026-07-12 (merge port from main): FN-7863 execute self-requeue streak.
@@ -107,6 +114,8 @@ export const tasks = projectSchema.table("tasks", {
   executeRequeueLoopSignature: text("execute_requeue_loop_signature"),
   recoveryRetryCount: integer("recovery_retry_count"),
   taskDoneRetryCount: integer("task_done_retry_count").default(0),
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
+  bulkCompletionRefusalAt: text("bulk_completion_refusal_at"),
   worktreeSessionRetryCount: integer("worktree_session_retry_count").default(0),
   completionHandoffLimboRecoveryCount: integer("completion_handoff_limbo_recovery_count").default(0),
   mergeConflictBounceCount: integer("merge_conflict_bounce_count").default(0),
@@ -135,6 +144,16 @@ export const tasks = projectSchema.table("tasks", {
   validatorThinkingLevel: text("validator_thinking_level"),
   planningThinkingLevel: text("planning_thinking_level"),
   executionMode: text("execution_mode").default("standard"),
+  /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Per-task session advisor override (null = inherit project default, 0 = off, 1 = on).
+  Listed in EXPECTED_PROJECT_COLUMNS so existing embedded-PG DBs self-heal via ALTER TABLE.
+
+  FNXC:PlannerOversight 2026-07-14-18:49:
+  Fresh installs also need migration 0008_session_advisor_enabled — self-heal alone
+  is not enough for Gate boot-smoke before health reconciliation runs.
+  */
+  sessionAdvisorEnabled: integer("session_advisor_enabled"),
   tokenUsageInputTokens: integer("token_usage_input_tokens"),
   tokenUsageOutputTokens: integer("token_usage_output_tokens"),
   tokenUsageCachedTokens: integer("token_usage_cached_tokens"),
@@ -223,6 +242,7 @@ export const tasks = projectSchema.table("tasks", {
   sourceMessageId: text("source_message_id"),
   sourceParentTaskId: text("source_parent_task_id"),
   sourceMetadata: jsonb("source_metadata"),
+  proposalClaimId: text("proposal_claim_id"),
   checkedOutBy: text("checked_out_by"),
   checkedOutAt: text("checked_out_at"),
   checkoutNodeId: text("checkout_node_id"),
@@ -279,6 +299,8 @@ export const tasks = projectSchema.table("tasks", {
   the gate is a full tasks-table scan. Sparse: most rows have NULL parent.
   */
   index("idxTasksSourceParentTaskId").on(t.sourceParentTaskId),
+  // FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00: proposal retries share one stable key, so the database—not a read-before-create race—enforces at-most-once materialization.
+  uniqueIndex("uqTasksProjectProposalClaimId").on(t.projectId, t.proposalClaimId).where(sql`${t.proposalClaimId} IS NOT NULL`),
   /*
   FNXC:TaskStoreReads 2026-06-26-10:00:
   Partial index for the hot kanban / board-read query shape
@@ -499,6 +521,35 @@ export const distributedTaskIdReservations = projectSchema.table("distributed_ta
   index("idxDistributedTaskIdReservationsExpiry").on(t.status, t.expiresAt),
 ]);
 
+// ── Durable symbol locks ─────────────────────────────────────────────
+/*
+FNXC:SymbolLock 2026-07-30-14:10:
+Mission-lineage admission needs one project-scoped row per canonical symbol.
+A composite primary key retains released/expired ownership history while the
+atomic store seam may reclaim those rows as held without cross-project conflict.
+*/
+export const symbolLocks = projectSchema.table("symbol_locks", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  symbolKey: text("symbol_key").notNull(),
+  ownerTaskId: text("owner_task_id").notNull(),
+  missionId: text("mission_id"),
+  featureId: text("feature_id"),
+  lineageId: text("lineage_id"),
+  nodeId: text("node_id"),
+  agentId: text("agent_id"),
+  status: text("status").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  renewedAt: text("renewed_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.symbolKey] }),
+  check("symbol_locks_status_check", sql`${t.status} IN ('held', 'released', 'expired')`),
+  index("idxSymbolLocksOwner").on(t.projectId, t.ownerTaskId),
+  index("idxSymbolLocksExpiry").on(t.status, t.expiresAt),
+]);
+
 // ── Workflow step definitions ────────────────────────────────────────
 export const workflowSteps = projectSchema.table("workflow_steps", {
   id: text("id").primaryKey(),
@@ -539,6 +590,31 @@ export const taskWorkflowSelection = projectSchema.table("task_workflow_selectio
   stepIds: jsonb("step_ids").notNull().default([]),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [primaryKey({ columns: [t.projectId, t.taskId] })]);
+
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+One latest request per project/task gives chat an observable queue while CAS writes
+prevent stale executor completions from overwriting a later request.
+*/
+export const taskVerificationRequests = projectSchema.table("task_verification_requests", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  requestId: text("request_id").notNull(),
+  status: text("status").notNull(),
+  profile: text("profile").notNull(),
+  command: text("command").notNull(),
+  scope: text("scope").notNull(),
+  requestedBy: text("requested_by").notNull(),
+  requestedAt: text("requested_at").notNull(),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  result: jsonb("result"),
+  rejectionReason: text("rejection_reason"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId] }),
+  unique("task_verification_requests_project_request_id_unique").on(t.projectId, t.requestId),
+  index("idx_task_verification_requests_status").on(t.projectId, t.status, t.requestedAt),
+]);
 
 // ── Activity log ─────────────────────────────────────────────────────
 export const activityLog = projectSchema.table("activity_log", {
@@ -856,6 +932,33 @@ export const workflowPromptOverrides = projectSchema.table("workflow_prompt_over
   index("idx_workflow_prompt_overrides_project").on(t.projectId),
 ]);
 
+/*
+FNXC:ConfigVersioning 2026-07-18-00:00:
+Configuration history is project-partitioned even for central/global settings:
+the reserved owner identity prevents a write initiated by one project from being
+misattributed to that incidental project's history.
+*/
+export const configurationRevisions = projectSchema.table("configuration_revisions", {
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
+  /* FNXC:ConfigVersioning 2026-07-18-14:00: a database-assigned sequence breaks same-millisecond timestamp ties so newest-first history remains chronological. */
+  sequence: bigint("sequence", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+  ownerScope: text("owner_scope").notNull(),
+  configKind: text("config_kind").notNull(),
+  configTarget: jsonb("config_target").notNull(),
+  configTargetKey: text("config_target_key").notNull(),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  diffs: jsonb("diffs").notNull().default([]),
+  changedBy: jsonb("changed_by").notNull(),
+  source: text("source").notNull(),
+  rollbackToRevisionId: text("rollback_to_revision_id"),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idx_configuration_revisions_target_newest").on(t.projectId, t.configKind, t.configTargetKey, t.createdAt, t.sequence),
+]);
+
 // ── Task documents + revisions ───────────────────────────────────────
 export const taskDocuments = projectSchema.table("task_documents", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
@@ -921,6 +1024,8 @@ export const researchRuns = projectSchema.table("research_runs", {
   topic: text("topic"),
   status: text("status").notNull(),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   trigger: text("trigger"),
   providerConfig: jsonb("provider_config"),
   sources: jsonb("sources").notNull().default([]),
@@ -944,6 +1049,7 @@ export const researchRuns = projectSchema.table("research_runs", {
 ]);
 
 export const researchExports = projectSchema.table("research_exports", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   runId: text("run_id").notNull(),
   format: text("format").notNull(),
@@ -956,6 +1062,7 @@ export const researchExports = projectSchema.table("research_exports", {
 ]);
 
 export const researchRunEvents = projectSchema.table("research_run_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   runId: text("run_id").notNull(),
   seq: integer("seq").notNull(),
@@ -975,6 +1082,8 @@ export const experimentSessions = projectSchema.table("experiment_sessions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   status: text("status").notNull(),
   metric: text("metric").notNull(),
   currentSegment: integer("current_segment").notNull().default(1),
@@ -995,6 +1104,7 @@ export const experimentSessions = projectSchema.table("experiment_sessions", {
 ]);
 
 export const experimentSessionRecords = projectSchema.table("experiment_session_records", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   sessionId: text("session_id").notNull(),
   segment: integer("segment").notNull(),
@@ -1012,7 +1122,10 @@ export const experimentSessionRecords = projectSchema.table("experiment_session_
 // ── Eval runs ────────────────────────────────────────────────────────
 export const evalRuns = projectSchema.table("eval_runs", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   status: text("status").notNull(),
   trigger: text("trigger").notNull(),
   scope: text("scope").notNull(),
@@ -1223,22 +1336,27 @@ export const pullRequestThreadState = projectSchema.table("pull_request_thread_s
 ]);
 
 export const goals = projectSchema.table("goals", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-}, (t) => [index("idxGoalsStatus").on(t.status)]);
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxGoalsStatus").on(t.status),
+]);
 
 export const missionGoals = projectSchema.table("mission_goals", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   missionId: text("mission_id").notNull(),
   goalId: text("goal_id").notNull(),
   createdAt: text("created_at").notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.missionId, t.goalId] }),
-  foreignKey({ columns: [t.missionId], foreignColumns: [missions.id] }).onDelete("cascade"),
-  foreignKey({ columns: [t.goalId], foreignColumns: [goals.id] }).onDelete("cascade"),
+  primaryKey({ columns: [t.projectId, t.missionId, t.goalId] }),
+  foreignKey({ columns: [t.projectId, t.missionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.goalId], foreignColumns: [goals.projectId, goals.id] }).onDelete("cascade"),
   index("idxMissionGoalsGoalId").on(t.goalId),
 ]);
 
@@ -1339,14 +1457,67 @@ export const missionFeatures = projectSchema.table("mission_features", {
   lastValidatorStatus: text("last_validator_status"),
   generatedFromFeatureId: text("generated_from_feature_id"),
   generatedFromRunId: text("generated_from_run_id"),
+  // FNXC:ResearchMissionBridge 2026-07-18-12:00: Store run/finding/source lineage as columns so duplicate promotion is project+slice scoped and citations remain queryable.
+  researchRunId: text("research_run_id"),
+  researchFindingId: text("research_finding_id"),
+  researchSourceUrls: jsonb("research_source_urls"),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),
   foreignKey({ columns: [t.projectId, t.sliceId], foreignColumns: [slices.projectId, slices.id] }).onDelete("cascade"),
   foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("set null"),
+  uniqueIndex("mission_features_research_promotion_unique").on(t.projectId, t.sliceId, t.researchRunId, t.researchFindingId),
+]);
+
+/*
+FNXC:Ideation 2026-07-30-15:30:
+Persist sessions and candidates under the same project partition as Missions.
+Composite project FKs make it impossible for convergence linkage to point into a
+foreign project's roadmap, while candidate cascade deletion keeps a deleted
+session from leaving unbounded brainstorm artifacts behind.
+*/
+export const ideationSessions = projectSchema.table("ideation_sessions", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  title: text("title").notNull(),
+  prompt: text("prompt"),
+  status: text("status").notNull().default("open"),
+  targetMissionId: text("target_mission_id"),
+  targetFeatureId: text("target_feature_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  convergedAt: text("converged_at"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.targetMissionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("restrict"),
+  foreignKey({ columns: [t.projectId, t.targetFeatureId], foreignColumns: [missionFeatures.projectId, missionFeatures.id] }).onDelete("restrict"),
+  check("ideation_sessions_status_check", sql`${t.status} IN ('open','converged','archived')`),
+]);
+
+export const ideationCandidates = projectSchema.table("ideation_candidates", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  sessionId: text("session_id").notNull(),
+  content: text("content").notNull(),
+  origin: text("origin").notNull(),
+  sourceRef: text("source_ref"),
+  selected: integer("selected").notNull().default(0),
+  linkedMissionId: text("linked_mission_id"),
+  linkedFeatureId: text("linked_feature_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [ideationSessions.projectId, ideationSessions.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.linkedMissionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("restrict"),
+  foreignKey({ columns: [t.projectId, t.linkedFeatureId], foreignColumns: [missionFeatures.projectId, missionFeatures.id] }).onDelete("restrict"),
+  check("ideation_candidates_origin_check", sql`${t.origin} IN ('agent','human','research')`),
+  check("ideation_candidates_selected_check", sql`${t.selected} IN (0, 1)`),
+  index("idxIdeationCandidatesSession").on(t.projectId, t.sessionId),
 ]);
 
 export const missionEvents = projectSchema.table("mission_events", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   missionId: text("mission_id").notNull(),
   eventType: text("event_type").notNull(),
   description: text("description").notNull(),
@@ -1354,7 +1525,8 @@ export const missionEvents = projectSchema.table("mission_events", {
   timestamp: text("timestamp").notNull(),
   seq: integer("seq").notNull().default(0),
 }, (t) => [
-  foreignKey({ columns: [t.missionId], foreignColumns: [missions.id] }).onDelete("cascade"),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.missionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("cascade"),
   index("idxMissionEventsMissionId").on(t.missionId),
   index("idxMissionEventsTimestamp").on(t.timestamp),
   index("idxMissionEventsType").on(t.eventType),
@@ -1413,7 +1585,10 @@ export const routines = projectSchema.table("routines", {
 
 export const projectInsights = projectSchema.table("project_insights", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   title: text("title").notNull(),
   content: text("content"),
   category: text("category").notNull(),
@@ -1431,7 +1606,10 @@ export const projectInsights = projectSchema.table("project_insights", {
 
 export const projectInsightRuns = projectSchema.table("project_insight_runs", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   trigger: text("trigger").notNull(),
   status: text("status").notNull(),
   summary: text("summary"),
@@ -1471,7 +1649,10 @@ export const projectInsightRunEvents = projectSchema.table("project_insight_run_
 // ── Todo lists ───────────────────────────────────────────────────────
 export const todoLists = projectSchema.table("todo_lists", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   title: text("title").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -1530,9 +1711,12 @@ export const pluginActivations = projectSchema.table("plugin_activations", {
 
 export const knowledgePages = projectSchema.table("knowledge_pages", {
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
+  // FNXC:KnowledgeIndex 2026-07-14-16:35:
+  // Knowledge pages contain task and PR history, so their Drizzle model must expose the project ownership added by migration 0006. Async dashboard reads and upserts use this key explicitly in addition to the database RLS policy.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   sourceKind: text("source_kind").notNull(),
   sourceId: text("source_id").notNull(),
-  sourceKey: text("source_key").notNull().unique(),
+  sourceKey: text("source_key").notNull(),
   title: text("title").notNull(),
   summary: text("summary"),
   content: text("content").notNull(),
@@ -1541,6 +1725,7 @@ export const knowledgePages = projectSchema.table("knowledge_pages", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
+  uniqueIndex("knowledge_pages_source_key_unique").on(t.projectId, t.sourceKey),
   index("idxKnowledgePagesSourceKind").on(t.sourceKind),
   index("idxKnowledgePagesUpdatedAt").on(t.updatedAt),
 ]);
@@ -1602,8 +1787,19 @@ export const aiSessions = projectSchema.table("ai_sessions", {
   thinkingOutput: text("thinking_output").default(""),
   error: text("error"),
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  DEAD COLUMNS — no code reads or writes these. The per-tab session lock they backed was
+  removed when AI interview sessions became multi-tab (the persisted row is the shared source
+  of truth; any tab may read and interact). They are retained, nullable and always NULL, only
+  because dropping them is an irreversible migration that would break any still-installed
+  older binary, whose upsert names `locked_by_tab`/`locked_at` explicitly. Drop them (plus
+  `idxAiSessionsLock`) in a later migration once no such binary can reach this database.
+  */
   lockedByTab: text("locked_by_tab"),
   lockedAt: text("locked_at"),
   archived: integer("archived").default(0),
@@ -1660,6 +1856,8 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   title: text("title"),
   status: text("status").notNull().default("active"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
   // FNXC:ChatThinkingLevel 2026-07-10: FN-7775 per-chat thinking-level override
@@ -1670,6 +1868,9 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   planningThinkingLevel: text("planning_thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
+  // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
+  pinnedAt: text("pinned_at"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),
@@ -1683,7 +1884,10 @@ export const cliSessions = projectSchema.table("cli_sessions", {
   taskId: text("task_id"),
   chatSessionId: text("chat_session_id"),
   purpose: text("purpose").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   adapterId: text("adapter_id").notNull(),
   agentState: text("agent_state").notNull().default("starting"),
   terminationReason: text("termination_reason"),
@@ -1724,6 +1928,8 @@ export const chatTokenUsage = projectSchema.table("chat_token_usage", {
   roomId: text("room_id"),
   messageId: text("message_id"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   agentId: text("agent_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
@@ -1772,17 +1978,19 @@ export const missionContractAssertions = projectSchema.table("mission_contract_a
 ]);
 
 export const missionFeatureAssertions = projectSchema.table("mission_feature_assertions", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   featureId: text("feature_id").notNull(),
   assertionId: text("assertion_id").notNull(),
   createdAt: text("created_at").notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.featureId, t.assertionId] }),
+  primaryKey({ columns: [t.projectId, t.featureId, t.assertionId] }),
   index("idxFeatureAssertionsFeatureId").on(t.featureId),
   index("idxFeatureAssertionsAssertionId").on(t.assertionId),
 ]);
 
 export const missionValidatorRuns = projectSchema.table("mission_validator_runs", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   featureId: text("feature_id").notNull(),
   milestoneId: text("milestone_id").notNull(),
   sliceId: text("slice_id").notNull(),
@@ -1798,6 +2006,7 @@ export const missionValidatorRuns = projectSchema.table("mission_validator_runs"
   updatedAt: text("updated_at").notNull(),
   taskId: text("task_id"),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxValidatorRunsFeatureId").on(t.featureId),
   index("idxValidatorRunsMilestoneId").on(t.milestoneId),
   index("idxValidatorRunsSliceId").on(t.sliceId),
@@ -1805,7 +2014,8 @@ export const missionValidatorRuns = projectSchema.table("mission_validator_runs"
 ]);
 
 export const missionValidatorFailures = projectSchema.table("mission_validator_failures", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   runId: text("run_id").notNull(),
   featureId: text("feature_id").notNull(),
   assertionId: text("assertion_id").notNull(),
@@ -1814,19 +2024,22 @@ export const missionValidatorFailures = projectSchema.table("mission_validator_f
   actual: text("actual"),
   createdAt: text("created_at").notNull(),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxValidatorFailuresRunId").on(t.runId),
   index("idxValidatorFailuresFeatureId").on(t.featureId),
   index("idxValidatorFailuresAssertionId").on(t.assertionId),
 ]);
 
 export const missionFixFeatureLineage = projectSchema.table("mission_fix_feature_lineage", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   sourceFeatureId: text("source_feature_id").notNull(),
   fixFeatureId: text("fix_feature_id").notNull(),
   runId: text("run_id").notNull(),
   failedAssertionIds: jsonb("failed_assertion_ids").notNull().default([]),
   createdAt: text("created_at").notNull(),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxFixLineageSourceFeatureId").on(t.sourceFeatureId),
   index("idxFixLineageFixFeatureId").on(t.fixFeatureId),
   index("idxFixLineageRunId").on(t.runId),
@@ -1841,6 +2054,42 @@ export const verificationCache = projectSchema.table("verification_cache", {
 }, (t) => [
   primaryKey({ columns: [t.treeSha, t.testCommand, t.buildCommand] }),
   index("idxVerificationCacheRecordedAt").on(t.recordedAt),
+]);
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation must survive modal close and page reload — the operator should never re-bill the AI helper for an issue already translated. Cache one translation per (project, provider, repo, issue, target locale).
+`sourceHash` is the hash of the original title+body: an edited issue produces a new hash so the stale translation is never served. Rows are only ever written for OPEN issues, and are pruned once an issue is observed closed, which is the requirement's natural expiry ("persist until the issue is closed").
+`projectId` is part of the PK because all projects share one flat `project` schema — omitting it (as the older `verification_cache` PK does) would leak one project's translations into another.
+*/
+export const importTranslationCache = projectSchema.table("import_translation_cache", {
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-23:30:
+  An unbound compatibility store owns cache rows in the explicit legacy
+  partition. Match fusion_assign_project_id so a defaulted insert and the
+  application scope predicate cannot disagree after a process restart.
+  */
+  projectId: text("project_id").notNull().default(sql`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`),
+  /** Import source: "github" | "gitlab". */
+  provider: text("provider").notNull(),
+  /** Canonical repo identity, e.g. "owner/repo" (GitLab: project path). */
+  repoKey: text("repo_key").notNull(),
+  /** Issue/PR/MR number within the repo. */
+  issueNumber: integer("issue_number").notNull(),
+  /** BCP-47 target locale the cached fields were translated into. */
+  targetLocale: text("target_locale").notNull(),
+  /** Hash of the ORIGINAL title+body; a mismatch means the issue was edited. */
+  sourceHash: text("source_hash").notNull(),
+  translatedTitle: text("translated_title").notNull(),
+  translatedBody: text("translated_body").notNull(),
+  /** Detected source language, or null when detection was inconclusive. */
+  detectedLocale: text("detected_locale"),
+  recordedAt: text("recorded_at").notNull(),
+}, (t) => [
+  primaryKey({
+    columns: [t.projectId, t.provider, t.repoKey, t.issueNumber, t.targetLocale],
+  }),
+  index("idxImportTranslationCacheRecordedAt").on(t.recordedAt),
 ]);
 
 export const approvalRequests = projectSchema.table("approval_requests", {
@@ -1889,6 +2138,8 @@ export const chatRooms = projectSchema.table("chat_rooms", {
   slug: text("slug").notNull(),
   description: text("description"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   createdBy: text("created_by"),
   status: text("status").notNull().default("active"),
   // FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.
@@ -1949,14 +2200,15 @@ export const projectTableNames = [
   "experiment_session_records", "eval_runs", "eval_task_results", "eval_run_events",
   "secrets", "__meta", "missions", "branch_groups", "pull_requests",
   "pull_request_thread_state", "goals", "mission_goals", "goal_citations",
-  "milestones", "slices", "mission_features", "mission_events", "plugins",
+  "milestones", "slices", "mission_features", "ideation_sessions", "ideation_candidates", "mission_events", "plugins",
   "routines", "project_insights", "project_insight_runs", "project_insight_run_events",
   "todo_lists", "todo_items", "usage_events", "plugin_activations",
   "knowledge_pages", "deployments", "incidents", "ai_sessions", "messages",
   "agent_ratings", "chat_sessions", "cli_sessions", "chat_messages",
   "run_audit_events", "mission_contract_assertions", "mission_feature_assertions",
   "mission_validator_runs", "mission_validator_failures",
-  "mission_fix_feature_lineage", "verification_cache", "approval_requests",
+  "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
+  "approval_requests",
   "approval_request_audit_events", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

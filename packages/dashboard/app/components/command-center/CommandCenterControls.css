@@ -114,8 +114,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
+FN-8007 makes the current-use dot's half-thumb edge inset match the native desktop range thumb. This preserves the min-relative thumb alignment used by the marker: one running agent stays visible at the start and over-cap use stays on the cap thumb.
+*/
 .cc-controls-range-wrap {
-  --cc-controls-range-thumb-size: var(--space-md);
+  --cc-controls-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);
   position: relative;
   display: flex;
   align-items: center;
@@ -135,13 +139,32 @@
 /*
 FNXC:CommandCenter 2026-06-20-00:25:
 Mobile users must be able to drag horizontal concurrency sliders without the page scroll gesture stealing the thumb movement. Scope touch-action to these range inputs and preserve desktop accent/full-width behavior while increasing the hit area with design tokens.
+
+FNXC:CommandCenter 2026-07-15-00:00:
+FN-7973 requires touch-action:none because the mobile pan-y ancestor lock otherwise claims near-horizontal thumb drags as page pans. This shared rule covers every Command Center concurrency range input while preserving disabled and loading no-op behavior.
 */
 .cc-controls-slider input[type="range"],
 .cc-controls-touch-slider {
   inline-size: 100%;
   min-block-size: var(--space-xl);
   accent-color: var(--accent);
-  touch-action: pan-y;
+  touch-action: none;
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-18:10:
+FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size token. This prevents browser-default thumb dimensions from changing the marker travel geometry; WebKit and Gecko must use the same dimensions as the half-thumb inset.
+*/
+.cc-controls-slider input[type="range"]::-webkit-slider-thumb,
+.cc-controls-touch-slider::-webkit-slider-thumb {
+  width: var(--cc-controls-range-thumb-size);
+  height: var(--cc-controls-range-thumb-size);
+}
+
+.cc-controls-slider input[type="range"]::-moz-range-thumb,
+.cc-controls-touch-slider::-moz-range-thumb {
+  width: var(--cc-controls-range-thumb-size);
+  height: var(--cc-controls-range-thumb-size);
 }
 
 @media (max-width: 768px) {

@@ -246,9 +246,14 @@ describe("remote access API route contracts", () => {
         url: "https://remote.example.com",
         lastError: null,
       }),
+      /*
+      FNXC:RemoteAccessTests 2026-07-17-22:18:
+      The stop endpoint preserves the provider that owned the completed tunnel so callers
+      can render the stopped lifecycle state consistently. Keep the mock aligned with that contract.
+      */
       stopRemoteTunnel: vi.fn().mockResolvedValue({
         state: "stopped",
-        provider: null,
+        provider: "cloudflare",
         url: null,
         lastError: null,
       }),

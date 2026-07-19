@@ -9,7 +9,6 @@ registry lacking these ids would never surface them even with openai-codex confi
 this suite encodes that failing-before/passing-after contract plus dedupe and the
 configuredProviders allow-list gate.
 */
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Router } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { registerModelRoutes } from "../routes/register-model-routes.js";
@@ -50,9 +49,19 @@ function createOpenAiCodexAuthStorage(openAiCodexConfigured: boolean) {
 }
 
 function createRealModelRegistryWithLegacyCodexCatalog(authStorage: ReturnType<typeof createOpenAiCodexAuthStorage>) {
-  const registry = ModelRegistry.inMemory(authStorage as never) as unknown as ModelRegistry & { models: Array<Record<string, unknown>> };
-  registry.models = registry.models.filter((model) => model.provider !== "openai-codex" || !GPT_5_6_IDS.includes(String(model.id)));
-  return registry;
+  // ModelRuntime supersedes the removed in-memory factory; model-route coverage only needs
+  // the facade contract and a legacy catalog with the supplemental rows removed.
+  const registeredProviders = new Map<string, any>([["openai-codex", {
+    models: BUILT_IN_CODEX_IDS.map((id) => ({ id, name: id, provider: "openai-codex", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 16_384 })),
+  }]]);
+  return {
+    registeredProviders,
+    authStorage,
+    refresh: async () => undefined,
+    getAvailable: () => registeredProviders.get("openai-codex")!.models.map((model: any) => ({ ...model, provider: "openai-codex" })),
+    getAll: () => registeredProviders.get("openai-codex")!.models.map((model: any) => ({ ...model, provider: "openai-codex" })),
+    registerProvider(providerId: string, config: any) { registeredProviders.set(providerId, config); },
+  };
 }
 
 interface FakeOpenAiCodexModel {

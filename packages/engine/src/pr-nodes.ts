@@ -216,8 +216,12 @@ export function buildRespondCallback(
   getStore: () => PrNodeStore,
   ops: PrRespondGithubOps,
   audit?: PrNodeDeps["audit"],
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * Forward the engine PluginRunner into the PR-response agent runner so grok-cli/no-key models use the same plugin-runtime path as chat/executor/merge.
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
 ): NonNullable<PrNodeDeps["respond"]> {
-  const gitOps = makePrResponseGitOps(ops.getCwd);
   return async ({ entity }) => {
     const store = getStore();
     // The engine owns a concrete TaskStore behind the structural PrNodeStore; the
@@ -242,8 +246,34 @@ export function buildRespondCallback(
     }
 
     const taskId = ops.getTaskId(entity);
-    const cwd = ops.getCwd(entity);
-    const runAgent = makePrResponseAgentRunner(settings, taskId, cwd, fullStore);
+    /*
+     * FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
+     * Resolve the review-response run cwd from the task's recorded worktree first.
+     * The CLI-injected ops.getCwd defaults to process.cwd() (no CLI composition
+     * site wires getTaskWorktree), which in a centrally-installed multi-project
+     * server is the install dir — git ops and the response agent would run outside
+     * the project repo. The engine owns the store, so it recovers the worktree
+     * here; ops.getCwd stays the fallback ONLY for structural stores without
+     * getTask (PrNodeStore does not declare it — tests/specialized wiring). A
+     * real getTask rejection (store failure, deleted task) propagates instead:
+     * the pr-respond node maps it to a routable `respond-error`, which beats
+     * running a mutating agent + git push in a cwd that may not even be the
+     * project repo. Structural stores are also withheld from the agent runner,
+     * whose store parameter is optional but assumed to have getTask.
+     */
+    const hasGetTask = typeof (fullStore as Partial<typeof fullStore>).getTask === "function";
+    const respondTask: { worktree?: string } | null = hasGetTask
+      ? await fullStore.getTask(taskId)
+      : null;
+    const cwd = respondTask?.worktree || ops.getCwd(entity);
+    const gitOps = makePrResponseGitOps(() => cwd);
+    const runAgent = makePrResponseAgentRunner(
+      settings,
+      taskId,
+      cwd,
+      hasGetTask ? fullStore : undefined,
+      pluginRunner,
+    );
 
     const result = await runPrResponseRun({
       entity,
@@ -276,12 +306,20 @@ export type { PrReviewThread, PrPushResult };
  * GitHub ops. Used by the runtime/executor wiring so the CLI layer stays free of
  * any store reference and the engine never imports the dashboard client.
  */
-export function buildPrNodeDeps(getStore: () => PrNodeStore, ops: PrNodeGithubOps): PrNodeDeps {
+export function buildPrNodeDeps(
+  getStore: () => PrNodeStore,
+  ops: PrNodeGithubOps,
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * Optional PluginRunner from the in-process runtime so PR-respond sessions can resolve grok-cli via getRuntimeById("grok").
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
+): PrNodeDeps {
   // U5: when the CLI injects `respondOps`, build the real review-response run
   // callback here (the engine binds the store + audit). An explicit `respond`
   // takes precedence (tests/specialized wiring); absent both → inert default.
   const respond = ops.respond
-    ?? (ops.respondOps ? buildRespondCallback(getStore, ops.respondOps, ops.audit) : undefined);
+    ?? (ops.respondOps ? buildRespondCallback(getStore, ops.respondOps, ops.audit, pluginRunner) : undefined);
   return {
     getStore,
     resolvePrSource: ops.resolvePrSource,

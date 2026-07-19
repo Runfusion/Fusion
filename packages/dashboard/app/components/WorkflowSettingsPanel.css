@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: This panel had drifted to six ad-hoc sizes (0.6/0.65/0.7/0.72/0.75rem) with no scale. Dense metadata (ids, sub-labels, customized badges) now names --font-size-2xs and tab/group/empty copy names --font-size-xs, so the panel has two deliberate rungs rather than six accidental ones. */
 /* WorkflowSettingsPanel (U6 / KTD-1/KTD-2) — sibling of the fields/column panels.
  * Mirrors .wf-fields-panel layout so the panels read side-by-side; adds an
  * internal tab pair (Definitions / Values). Design tokens only; animations use
@@ -37,7 +38,7 @@
 .wf-settings-tab {
   flex: 1;
   padding: 6px 8px;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -72,7 +73,7 @@
 }
 
 .wf-settings-empty {
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   margin: 0;
 }
@@ -82,7 +83,7 @@
   align-items: center;
   gap: 4px;
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
 }
 
 .wf-settings-note--info {
@@ -137,7 +138,7 @@
 
 .wf-setting-id-static {
   font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
   background: var(--surface-2, color-mix(in srgb, #ffffff 4%, transparent));
   padding: 1px 6px;
@@ -145,7 +146,7 @@
 }
 
 .wf-setting-id-edit {
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   background: none;
   border: none;
   color: var(--accent, #4f7cff);
@@ -159,7 +160,7 @@
   gap: 4px;
   width: 100%;
   margin: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   color: var(--ws-warning, #f59e0b);
 }
 
@@ -175,12 +176,12 @@
   gap: 2px;
   flex: 1;
   min-width: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
 }
 
 .wf-setting-sub > span {
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -189,7 +190,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
 }
 
@@ -210,7 +211,7 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
 }
 
 .wf-setting-options-label {
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -268,7 +269,7 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
 
 .wf-settings-value-group-title {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -283,7 +284,7 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
 
 .wf-settings-customized {
   align-self: flex-start;
-  font-size: 0.6rem;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--accent, #4f7cff);
@@ -294,7 +295,7 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
   align-items: center;
   gap: 4px;
   margin: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
 }
 
@@ -312,7 +313,7 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   padding: 0;
 }
@@ -341,14 +342,14 @@ Boolean workflow settings live in the editor's left sidebar, so their checkboxes
 
 .wf-settings-orphan-id {
   font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
 }
 
 .wf-settings-orphan-value {
   flex: 1;
   min-width: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;

@@ -41,9 +41,12 @@ npm install -g @runfusion/fusion
 fn dashboard                # or: fusion dashboard
 ```
 
+Fusion pins `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as a locked version pair. If a global npm install ever reports a `pi-*` export mismatch, build from source with `pnpm install`; it honors this repository's committed lockfile and is the reliable fallback while upstream pi-mono patch exports stabilize.
+
 ### From source (development)
 
 ```bash
+pnpm install
 pnpm dev dashboard
 ```
 

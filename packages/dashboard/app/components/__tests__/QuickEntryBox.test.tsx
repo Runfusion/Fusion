@@ -232,6 +232,8 @@ vi.mock("lucide-react", () => {
     Flag: MockIcon("lucide-flag"),
     TriangleAlert: MockIcon("lucide-triangle-alert"),
     Zap: MockIcon("lucide-zap"),
+    Eye: MockIcon("lucide-eye"),
+    EyeOff: MockIcon("lucide-eye-off"),
     Github: MockIcon("lucide-github"),
     Maximize2: MockIcon("lucide-maximize-2"),
     Minimize2: MockIcon("lucide-minimize-2"),
@@ -414,7 +416,7 @@ function mockMobileViewport() {
 FNXC:BoardComposer 2026-07-10-12:00:
 DOM order mirrors the reorganized composer action row: the options group (subtask, deps,
 models, node, agent) comes first, followed by the right-aligned primary group (attach, GitHub,
-Priority, Fast, Save) with Save as the LAST control.
+session advisor, Priority, Fast, Save) with Save as the LAST control.
 */
 const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Subtask", "subtask-button"],
@@ -424,9 +426,18 @@ const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Agent", "quick-entry-agent-button"],
   ["Attach", "quick-entry-attach"],
   ["GitHub", "quick-entry-github-toggle"],
+  ["Session advisor", "quick-entry-session-advisor-toggle"],
   ["Priority", "quick-entry-priority-button"],
   ["Fast", "quick-entry-fast-toggle"],
   ["Save", "quick-entry-save"],
+] as const;
+
+const QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
+  "quick-entry-attach",
+  "quick-entry-github-toggle",
+  "quick-entry-session-advisor-toggle",
+  "quick-entry-priority-button",
+  "quick-entry-fast-toggle",
 ] as const;
 
 const QUICK_ENTRY_PRIORITY_ICON_CLASS: Record<TaskPriority, string> = {
@@ -454,9 +465,33 @@ function expectPriorityOptionColor(priority: TaskPriority) {
   expect(icon?.getAttribute("style")).toContain(`color: ${getPriorityColorVar(priority)}`);
 }
 
+/**
+ * FNXC:QuickAddActionRow 2026-07-15-00:00:
+ * The primary action cluster is visually uniform only when every icon control opts into btn-icon.
+ * Assert the shared treatment rather than SVG attributes because ProviderIcon's public sm size is
+ * intentionally broader than this local CSS override.
+ */
+function expectQuickEntryPrimaryIconCluster() {
+  for (const testId of QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS) {
+    const button = screen.getByTestId(testId);
+    expect(button).toHaveClass("btn-icon");
+    expect(button.querySelector("svg")).not.toBeNull();
+  }
+}
+
 describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:QuickEntryFocus 2026-07-17-15:15:
+    FN-8245 found the fourth QuickEntryBox focus failure was cross-test jsdom
+    focus leakage, not a component refocus. Clear any detached predecessor's
+    active element before rendering so submit and action-button assertions start
+    from the same browser focus baseline under loaded worker execution.
+    */
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
     vi.mocked(fetchAgents).mockResolvedValue([]);
@@ -505,6 +540,9 @@ describe("QuickEntryBox", () => {
       vi.runOnlyPendingTimers();
     });
     vi.useRealTimers();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     localStorage.clear();
     restoreQuickEntryTestGlobals();
   });
@@ -892,16 +930,17 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
-      expect(actionButtonTestIds.slice(-5)).toEqual([
+      expect(actionButtonTestIds.slice(-6)).toEqual([
         "quick-entry-attach",
         "quick-entry-github-toggle",
+        "quick-entry-session-advisor-toggle",
         "quick-entry-priority-button",
         "quick-entry-fast-toggle",
         "quick-entry-save",
       ]);
 
       const primaryGroup = screen.getByTestId("quick-entry-primary-group");
-      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-save"]) {
         expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
       }
       const optionsGroup = screen.getByTestId("quick-entry-options-group");
@@ -1001,6 +1040,18 @@ describe("QuickEntryBox", () => {
         vi.runOnlyPendingTimers();
       });
     }
+
+    it("keeps the uniform icon cluster in the shared mobile button touch-target contract", async () => {
+      await renderMobileQuickEntryWithEnabledActions();
+      const actions = screen.getByTestId("quick-entry-actions");
+
+      expectQuickEntryPrimaryIconCluster();
+      for (const testId of QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS) {
+        const button = screen.getByTestId(testId);
+        expect(button).toHaveClass("btn");
+        expect(actions.contains(button)).toBe(true);
+      }
+    });
 
     it("captures an SVG touch target inside the priority button and opens the picker", async () => {
       await renderMobileQuickEntryWithEnabledActions();
@@ -1238,6 +1289,9 @@ describe("QuickEntryBox", () => {
           break;
         case "quick-entry-github-toggle":
           expect(screen.getByTestId(testId)).toHaveAttribute("aria-pressed", "false");
+          break;
+        case "quick-entry-session-advisor-toggle":
+          expect(screen.getByTestId(testId)).toHaveAttribute("aria-pressed", "true");
           break;
         case "quick-entry-priority-button":
           expect(await screen.findByTestId("quick-entry-priority-option-normal")).toBeTruthy();
@@ -1542,7 +1596,7 @@ describe("QuickEntryBox", () => {
 
   it("clears input after successful creation", async () => {
     const { props } = renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: "Task to create" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1550,8 +1604,12 @@ describe("QuickEntryBox", () => {
     await waitFor(() => {
       expect(props.onCreate).toHaveBeenCalled();
     });
-
-    expect((textarea as HTMLTextAreaElement).value).toBe("");
+    /*
+    FNXC:DashboardTests 2026-07-18-07:25:
+    Full-suite shard load can observe onCreate before the optimistic setDescription("")
+    commit flushes into the DOM. Wait for the cleared value, not only the mock call.
+    */
+    await waitForSubmitSuccessToClear(textarea);
   });
 
   it("shows error toast on failure and keeps input content", async () => {
@@ -2160,6 +2218,24 @@ describe("QuickEntryBox", () => {
       expectQuickEntryPriorityButton("normal");
     });
 
+    it("keeps every primary icon control in one btn-icon cluster across toggle and priority states", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      expectQuickEntryPrimaryIconCluster();
+      fireEvent.click(screen.getByTestId("quick-entry-session-advisor-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-github-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      expectQuickEntryPrimaryIconCluster();
+
+      for (const taskPriority of TASK_PRIORITIES) {
+        openPriorityMenu();
+        fireEvent.click(screen.getByTestId(`quick-entry-priority-option-${taskPriority}`));
+        expectQuickEntryPriorityButton(taskPriority);
+        expectQuickEntryPrimaryIconCluster();
+      }
+    });
+
     it("renders urgency-colored priority glyphs in the trigger and picker for every level", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -2552,11 +2628,94 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-github-toggle").getAttribute("aria-pressed")).toBe("false");
     });
 
-    it("resets Fast toggle to standard after successful task creation", async () => {
-      const { props } = renderQuickEntryBox({});
+    /*
+    FNXC:PlannerOversight 2026-07-14-19:34:
+    Session advisor eye must clear override to null when the flipped effective
+    value matches the project default (TaskDetailModal parity) — double-click
+    from default-off must not leave a hard-coded false that is still sent on create.
+    */
+    it("clears session advisor override to inherit after double-click on default-off", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.change(textarea, { target: { value: "Inherit session advisor after double-click" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      // null override → field omitted (undefined), not hard-coded false
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBeUndefined();
+    });
+
+    it("clears session advisor override to inherit after double-click on default-on", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: true,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      await waitFor(() => {
+        expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+      });
+
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.change(textarea, { target: { value: "Inherit session advisor default-on" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBeUndefined();
+    });
+
+    it("sends explicit session advisor override when effective differs from project default", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.change(textarea, { target: { value: "Explicit session advisor on" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBe(true);
+    });
+
+    it("resets Fast toggle to standard after successful task creation", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-fast-toggle")).toBeTruthy();
+      });
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
       fireEvent.change(textarea, { target: { value: "First fast task" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2570,9 +2729,15 @@ describe("QuickEntryBox", () => {
           }),
         );
       });
+      /*
+      FNXC:DashboardTests 2026-07-18-08:15:
+      Wait for create to leave the "Creating..." disabled state before re-expanding;
+      full-suite observed onCreate while isSubmitting still true and the fast toggle unmounted.
+      */
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      const fastToggle = await screen.findByTestId("quick-entry-fast-toggle");
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
 
       fireEvent.change(textarea, { target: { value: "Second standard task" } });
@@ -2607,9 +2772,12 @@ describe("QuickEntryBox", () => {
     it("resets priority to normal after successful task creation", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
       fireEvent.change(textarea, { target: { value: "Priority reset after save" } });
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-priority-button")).toBeTruthy();
+      });
       openPriorityMenu();
       fireEvent.click(screen.getByTestId("quick-entry-priority-option-high"));
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2617,9 +2785,12 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect(props.onCreate).toHaveBeenCalledTimes(1);
       });
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      expectQuickEntryPriorityButton("normal");
+      await waitFor(() => {
+        expectQuickEntryPriorityButton("normal");
+      });
     });
 
     it("resets priority to normal after Subtask flow", async () => {
@@ -3313,7 +3484,8 @@ describe("QuickEntryBox", () => {
       const file = new File(["image-bytes"], "pasted.png", { type: "image/png" });
       fireEvent.paste(textarea, { clipboardData: { files: [file] } });
 
-      expect(screen.getByAltText("pasted.png")).toBeInTheDocument();
+      // FNXC:QuickAddAttachments 2026-07-16-13:20: FN-8037 made the thumbnail <img> decorative (alt=""); the accessible handle for a pending image is its labelled open button.
+      expect(screen.getByRole("button", { name: "Open image pasted.png" })).toBeInTheDocument();
     });
 
     it("removes pending image previews", () => {
@@ -3324,9 +3496,9 @@ describe("QuickEntryBox", () => {
       const file = new File(["image-bytes"], "remove.png", { type: "image/png" });
       fireEvent.paste(textarea, { clipboardData: { files: [file] } });
 
-      expect(screen.getByAltText("remove.png")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open image remove.png" })).toBeInTheDocument();
       fireEvent.click(screen.getByTestId("quick-entry-preview-remove-0"));
-      expect(screen.queryByAltText("remove.png")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Open image remove.png" })).toBeNull();
     });
 
     it("uploads each pending image after task creation without refocusing", async () => {
@@ -3398,7 +3570,7 @@ describe("QuickEntryBox", () => {
         QUICK_ENTRY_BOX_CSS,
         ".quick-entry-actions .btn,\n  .quick-entry-actions .wf-optional-steps-dropdown-trigger",
       );
-      expect(touchRule).toContain("min-height: calc(var(--space-2xl) + var(--space-xs))");
+      expect(touchRule).toContain("min-height: var(--quick-entry-action-row-height-mobile)");
     });
 
     it("shows and clears a Quick Add drop target only for file drags", () => {
@@ -3443,8 +3615,8 @@ describe("QuickEntryBox", () => {
       fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [image, text] } });
 
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
-      expect(screen.getByAltText("dropped.png")).toBeInTheDocument();
-      expect(screen.queryByAltText("notes.txt")).toBeNull();
+      expect(screen.getByRole("button", { name: "Open image dropped.png" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open image notes.txt" })).toBeNull();
     });
 
     it("uploads images added by dropping files after task creation", async () => {
@@ -3503,13 +3675,13 @@ describe("QuickEntryBox", () => {
 
       fireEvent.change(textarea, { target: { value: "Create and reset" } });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      expect(screen.getByAltText("reset.png")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open image reset.png" })).toBeInTheDocument();
 
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => {
         expect(onCreate).toHaveBeenCalled();
-        expect(screen.queryByAltText("reset.png")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Open image reset.png" })).toBeNull();
       });
 
       expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:reset.png");
@@ -4374,7 +4546,7 @@ describe("QuickEntryBox", () => {
       );
 
       expect(optionalTriggerRule).not.toBeNull();
-      expect(cssDeclarationValue(optionalTriggerRule!, "min-height")).toBe("calc(var(--space-2xl) + var(--space-xs))");
+      expect(cssDeclarationValue(optionalTriggerRule!, "min-height")).toBe("var(--quick-entry-action-row-height-mobile)");
     });
 
     it("keeps inline deps/models controls in touch-target button classes on mobile", () => {
@@ -4783,13 +4955,19 @@ describe("QuickEntryBox", () => {
       const outsideElement = document.createElement("div");
       document.body.appendChild(outsideElement);
       try {
-        fireEvent.mouseDown(outsideElement);
+        /*
+        FNXC:DashboardTests 2026-07-18-08:45:
+        Dispatch a bubbling native MouseEvent so the document mousedown listener
+        in QuickEntryBox sees the outside target (RTL fireEvent alone was flaky
+        under full-suite and failed locally for this agent portal).
+        */
+        outsideElement.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        await waitFor(() => {
+          expect(screen.queryByText("Select agent")).toBeNull();
+        });
       } finally {
-        document.body.removeChild(outsideElement);
+        if (outsideElement.parentNode) document.body.removeChild(outsideElement);
       }
-
-      // Picker should be closed
-      expect(screen.queryByText("Select agent")).toBeNull();
     });
 
     it("repositions portaled picker on window resize while open", async () => {

@@ -9,14 +9,12 @@ import type {
 
 /*
 FNXC:PostgresCutover 2026-07-12:
-Task/state mesh replication is REMOVED — all replication is handled at the
-PostgreSQL level (nodes share the database). The task-metadata, agent,
-agent-run, activity-log, run-audit, and mission-hierarchy snapshot types and
-creators that used to live here are gone with it. What remains is the
-settings-adjacent pair still exchanged over the mesh: projectSettings (legacy
-sqlite topology settings sync) and authMaterial (auth.json is per-machine
-file state — the one domain that does not live in the database), plus the
-shared envelope/checksum plumbing they ride on.
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+Task/state mesh replication is REMOVED — shared PostgreSQL is the SoT.
+createProjectSettingsSnapshot remains for legacy helpers/tests only; live mesh
+routes no longer apply or emit projectSettings. authMaterial stays on the wire
+because auth.json is per-machine file state, plus the shared envelope/checksum
+plumbing.
 */
 
 export const SHARED_STATE_DEFAULT_LIMIT = 10_000;

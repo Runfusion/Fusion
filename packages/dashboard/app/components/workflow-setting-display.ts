@@ -41,6 +41,18 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     label: "Executor model",
     description: "Model used by task implementation agents.",
   },
+  /*
+   * FNXC:SettingsModels 2026-07-16-00:00:
+   * FN-8169 requires the Executor fallback to remain in the Models group so the shared lane catalog can render it immediately after Executor. Without these existing key classifications, pair filtering suppresses the fallback row entirely.
+   */
+  executionFallbackProvider: {
+    group: "models",
+    label: "Executor fallback provider",
+  },
+  executionFallbackModelId: {
+    group: "models",
+    label: "Executor fallback model",
+  },
   validatorProvider: {
     group: "models",
     label: "Reviewer provider",
@@ -100,6 +112,17 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
      * Built-in workflow values are editable even when definitions are read-only, so this label is the operator-facing cap for Code Review remediation without requiring a workflow duplicate.
      */
     description: "Leave empty for unbounded automatic Code Review remediation; set 0 to disable automatic revision.",
+  },
+  planReviewReplanCap: {
+    group: "review",
+    label: "Plan Review replan cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 exposes triage's separate consecutive Plan Review REVISE ceiling here. An
+     * empty value intentionally delegates to the engine constant rather than duplicating
+     * its default in the editable workflow setting.
+     */
+    description: "Leave empty to use the built-in Plan Review replan default; set 0 to require approval after the first REVISE.",
   },
   triageProactiveSubtaskSplittingEnabled: {
     group: "steps",

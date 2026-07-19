@@ -43,6 +43,12 @@ interface StarterPromptDefinition {
   messageFallback: string;
 }
 
+const BOTTOM_FOLLOW_THRESHOLD = 48;
+
+function isTranscriptNearBottom(container: HTMLElement): boolean {
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
+}
+
 const TASK_PLANNER_CHAT_STARTER_PROMPTS: StarterPromptDefinition[] = [
   {
     id: "recent-activity",
@@ -314,6 +320,11 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<{ close: () => void } | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
+  const isTranscriptAtBottomRef = useRef(true);
+  const previousMessageCountRef = useRef(0);
+  const previousActiveRef = useRef(false);
+  const isProgrammaticTranscriptScrollRef = useRef(false);
   const loadRequestRef = useRef(0);
   const streamRequestRef = useRef(0);
   const addToastRef = useRef(addToast);
@@ -398,9 +409,22 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   }) => {
     const { resolvedSessionId, content = "", inFlightGeneration, requestId, attach } = options;
     const isCurrentStreamRequest = () => streamRequestRef.current === requestId;
-    let accumulated = inFlightGeneration?.streamingText ?? "";
-    let accumulatedThinking = inFlightGeneration?.streamingThinking ?? "";
-    const streamingToolCalls = cloneToolCalls(inFlightGeneration?.toolCalls);
+    const inFlightSnapshot = attach ? inFlightGeneration : null;
+    let accumulated = inFlightSnapshot?.streamingText ?? "";
+    let accumulatedThinking = inFlightSnapshot?.streamingThinking ?? "";
+    const streamingToolCalls = cloneToolCalls(inFlightSnapshot?.toolCalls);
+
+    /*
+     * FNXC:TaskDetailPlannerChat 2026-07-15-00:00:
+     * A fresh reply, and an attach without a persisted in-flight snapshot, must start with empty
+     * streaming carriers so no previous turn appears before its first event. Only an attach with a
+     * valid snapshot restores text, thinking, and tools because that data belongs to the still-live
+     * generation the user is returning to.
+     */
+    if (!inFlightSnapshot) {
+      setStreamingThinking("");
+      setMessages((current) => current.filter((message) => message.id !== "streaming-assistant"));
+    }
 
     streamRef.current?.close();
     if (!isCurrentStreamRequest()) return;
@@ -576,14 +600,56 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
     };
   }, []);
 
+  const setTranscriptAtBottom = useCallback((atBottom: boolean) => {
+    isTranscriptAtBottomRef.current = atBottom;
+    setIsTranscriptAtBottom(atBottom);
+  }, []);
+
+  const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
+    // Assignment does not normally emit scroll, but preserve the user-pinned state if a host does.
+    isProgrammaticTranscriptScrollRef.current = true;
+    try {
+      container.scrollTop = container.scrollHeight;
+      setTranscriptAtBottom(true);
+    } finally {
+      isProgrammaticTranscriptScrollRef.current = false;
+    }
+  }, [setTranscriptAtBottom]);
+
+  const handleTranscriptScroll = useCallback(() => {
+    if (isProgrammaticTranscriptScrollRef.current) return;
+    const container = transcriptRef.current;
+    if (!container) return;
+    setTranscriptAtBottom(isTranscriptNearBottom(container));
+  }, [setTranscriptAtBottom]);
+
   useEffect(() => {
-    if (!transcriptRef.current) return;
+    const container = transcriptRef.current;
+    const wasActive = previousActiveRef.current;
+    previousActiveRef.current = active;
+    if (!container) return;
+
     if (messages.length === 0) {
-      transcriptRef.current.scrollTop = 0;
+      container.scrollTop = 0;
+      previousMessageCountRef.current = 0;
+      setTranscriptAtBottom(true);
       return;
     }
-    transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
-  }, [messages, composerState]);
+
+    const becameActive = active && !wasActive;
+    const receivedInitialMessages = previousMessageCountRef.current === 0;
+    /*
+     * FNXC:TaskDetailPlannerChat 2026-07-18-16:10:
+     * FN-8344 applies FN-8339's TaskChatTab sticky-bottom/manual-unsnap invariant to
+     * Planner Chat. Initial history and tab activation intentionally anchor the reader,
+     * while streamed snapshots follow only when the reader remains within the 48px tail
+     * threshold so manually reading earlier planner output is never overridden.
+     */
+    if (active && (becameActive || receivedInitialMessages || (isTranscriptAtBottomRef.current && isTranscriptAtBottom))) {
+      anchorTranscriptToBottom(container);
+    }
+    previousMessageCountRef.current = messages.length;
+  }, [active, anchorTranscriptToBottom, composerState, isTranscriptAtBottom, messages, setTranscriptAtBottom]);
 
   const sendMessageContent = useCallback(async (messageContent: string) => {
     const content = messageContent.trim();
@@ -948,7 +1014,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
         </button>
       )}
-      <div className="task-planner-chat-transcript" ref={transcriptRef} data-testid="task-planner-chat-transcript">
+      <div className="task-planner-chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} data-testid="task-planner-chat-transcript">
         {error && <div className="task-planner-chat-error" role="alert">{error}</div>}
         {loading ? (
           <div className="task-planner-chat-state" role="status" aria-live="polite">

@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/omp-runtime",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "type": "module",
   "description": "Oh My Pi (omp) runtime plugin for Fusion via Agent Client Protocol (omp acp)",
   "keywords": [
@@ -25,7 +25,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },

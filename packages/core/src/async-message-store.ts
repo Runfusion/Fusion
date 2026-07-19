@@ -19,6 +19,7 @@
  *   consume.
  */
 import { and, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import {
@@ -151,6 +152,44 @@ export async function getMessage(handle: QueryHandle, id: string): Promise<Messa
     .from(schema.project.messages)
     .where(eq(schema.project.messages.id, id));
   return rows[0] ? rowToMessage(rows[0] as MessageRow) : null;
+}
+
+export async function claimProposalForCreation(handle: QueryHandle, messageId: string): Promise<{ claimed: boolean; idempotencyKey?: string; claimOwnerToken?: string; message?: Message }> {
+  const existing = await getMessage(handle, messageId);
+  if (existing?.metadata?.kind !== "task-proposal" || existing.metadata.proposalStatus !== "pending" || !existing.metadata.proposalIdempotencyKey) return { claimed: false };
+  const owner = randomUUID();
+  const claimStartedAt = new Date().toISOString();
+  // FNXC:EphemeralAgentTaskCreation 2026-07-30-16:00: Persist a lease timestamp with the transient owner so a post-crash click can safely reclaim only stale creating proposals without rotating the stable key.
+  const metadata = { ...existing.metadata, proposalStatus: "creating" as const, claimOwnerToken: owner, claimStartedAt };
+  const updated = await handle.update(schema.project.messages).set({ metadata, updatedAt: claimStartedAt }).where(and(eq(schema.project.messages.id, messageId), sql`${schema.project.messages.metadata}->>'proposalStatus' = 'pending'`)).returning(messageColumns);
+  if (!updated[0]) return { claimed: false };
+  const message = rowToMessage(updated[0] as MessageRow);
+  return { claimed: true, idempotencyKey: metadata.proposalIdempotencyKey, claimOwnerToken: owner, message };
+}
+
+export async function finalizeProposalCreation(handle: QueryHandle, messageId: string, claimOwnerToken: string, createdTaskId: string): Promise<Message | null> {
+  const existing = await getMessage(handle, messageId);
+  if (!existing) return null;
+  if (existing.metadata?.proposalStatus === "created" && existing.metadata.createdTaskId === createdTaskId) return existing;
+  if (existing.metadata?.proposalStatus !== "creating" || existing.metadata.claimOwnerToken !== claimOwnerToken) return null;
+  const metadata = { ...existing.metadata, proposalStatus: "created" as const, createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.messages).set({ metadata, updatedAt: new Date().toISOString() }).where(and(eq(schema.project.messages.id, messageId), sql`${schema.project.messages.metadata}->>'claimOwnerToken' = ${claimOwnerToken}`)).returning(messageColumns);
+  return rows[0] ? rowToMessage(rows[0] as MessageRow) : null;
+}
+
+export async function releaseProposalClaim(handle: QueryHandle, messageId: string, claimOwnerToken: string): Promise<Message | null> {
+  const existing = await getMessage(handle, messageId);
+  if (existing?.metadata?.proposalStatus !== "creating" || existing.metadata.claimOwnerToken !== claimOwnerToken) return null;
+  // FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00: release only transient ownership; stable idempotency key is retained for an overlapping retry.
+  const metadata = { ...existing.metadata, proposalStatus: "pending" as const, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.messages).set({ metadata, updatedAt: new Date().toISOString() }).where(and(eq(schema.project.messages.id, messageId), sql`${schema.project.messages.metadata}->>'claimOwnerToken' = ${claimOwnerToken}`)).returning(messageColumns);
+  return rows[0] ? rowToMessage(rows[0] as MessageRow) : null;
+}
+
+export async function reconcileProposalCreation(handle: QueryHandle, messageId: string, resolvedTaskId: string | undefined): Promise<Message | null> {
+  const existing = await getMessage(handle, messageId);
+  if (!existing || existing.metadata?.proposalStatus !== "creating") return existing;
+  return resolvedTaskId ? finalizeProposalCreation(handle, messageId, existing.metadata.claimOwnerToken ?? "", resolvedTaskId) : releaseProposalClaim(handle, messageId, existing.metadata.claimOwnerToken ?? "");
 }
 
 /**

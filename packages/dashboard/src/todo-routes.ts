@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskStore } from "@fusion/core";
+import { TaskStore, type TaskCreateInput, type TaskPriority } from "@fusion/core";
 import {
   ApiError,
   badRequest,
@@ -55,6 +55,37 @@ function validateStringArray(arr: unknown, fieldName: string): string[] {
     throw badRequest(`${fieldName} must be an array of strings`);
   }
   return arr;
+}
+
+function validateOptionalTaskTitle(title: unknown): string | undefined {
+  if (title === undefined) return undefined;
+  if (typeof title !== "string") {
+    throw badRequest("title must be a string");
+  }
+  const trimmed = title.trim();
+  if (!trimmed) {
+    throw badRequest("title must not be blank");
+  }
+  if (trimmed.length > 200) {
+    throw badRequest("title must not exceed 200 characters");
+  }
+  return trimmed;
+}
+
+function validateOptionalTrimmedString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw badRequest(`${field} must be a string`);
+  }
+  return value.trim() || undefined;
+}
+
+function validateOptionalPriority(priority: unknown): TaskPriority | undefined {
+  if (priority === undefined) return undefined;
+  if (priority === "low" || priority === "normal" || priority === "high" || priority === "urgent") {
+    return priority;
+  }
+  throw badRequest("priority must be one of low, normal, high, urgent");
 }
 
 export function createTodoRouter(store: TaskStore, options?: ServerOptions): Router {
@@ -115,6 +146,36 @@ export function createTodoRouter(store: TaskStore, options?: ServerOptions): Rou
     }
   });
 
+  // FNXC:TodoApiRoutes 2026-07-16-00:52: `/:id` is single-segment while item routes are two or more segments, so these GET routes cannot shadow each other.
+  router.get("/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const todoStore = getScopedStore().getTodoStore();
+      const list = await todoStore.getList(id);
+      if (!list) {
+        throw notFound(`Todo list ${id} not found`);
+      }
+      const items = await todoStore.listItems(id);
+      res.json({ ...list, items });
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to get todo list");
+    }
+  });
+
+  router.get("/:id/items", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const todoStore = getScopedStore().getTodoStore();
+      const list = await todoStore.getList(id);
+      if (!list) {
+        throw notFound(`Todo list ${id} not found`);
+      }
+      res.json(await todoStore.listItems(id));
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to list todo items");
+    }
+  });
+
   router.patch("/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -158,6 +219,71 @@ export function createTodoRouter(store: TaskStore, options?: ServerOptions): Rou
       res.status(201).json(item);
     } catch (error) {
       rethrowAsApiError(error, "Failed to create todo item");
+    }
+  });
+
+  router.get("/items/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const todoStore = getScopedStore().getTodoStore();
+      const item = await todoStore.getItem(id);
+      if (!item) {
+        throw notFound(`Todo item ${id} not found`);
+      }
+      res.json(item);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to get todo item");
+    }
+  });
+
+  router.post("/items/:id/create-task", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const body = (req.body ?? {}) as {
+        title?: unknown;
+        priority?: unknown;
+        workflowId?: unknown;
+        assignedAgentId?: unknown;
+      };
+      const title = validateOptionalTaskTitle(body.title);
+      const priority = validateOptionalPriority(body.priority);
+      const workflowId = validateOptionalTrimmedString(body.workflowId, "workflowId");
+      const assignedAgentId = validateOptionalTrimmedString(body.assignedAgentId, "assignedAgentId");
+      const scopedStore = getScopedStore();
+      const todoStore = scopedStore.getTodoStore();
+      const item = await todoStore.getItem(id);
+      if (!item) {
+        throw notFound(`Todo item ${id} not found`);
+      }
+
+      /*
+      FNXC:TodoTaskCreation 2026-07-16-00:54:
+      Scripts must be able to create a todo then start it as Fusion board work.
+      Preserve todo provenance through API source metadata so the task retains its
+      todo item/list linkage without a schema migration.
+
+      FNXC:TodoTaskCreation 2026-07-16-00:54:
+      Do not set `column`: the project-default workflow's intake trait chooses
+      the landing column, preserving FN-7591/FN-7611 custom-workflow behavior.
+      */
+      const input: TaskCreateInput = {
+        title: title ?? item.text.slice(0, 200),
+        description: item.text,
+        ...(priority ? { priority } : {}),
+        ...(workflowId ? { workflowId } : {}),
+        ...(assignedAgentId ? { assignedAgentId } : {}),
+        source: {
+          sourceType: "api",
+          sourceMetadata: {
+            todoItemId: item.id,
+            todoListId: item.listId,
+          },
+        },
+      };
+      const task = await scopedStore.createTask(input);
+      res.status(201).json(task);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to create task from todo item");
     }
   });
 

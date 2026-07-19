@@ -32,1146 +32,285 @@ export {
 export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput } from "./gitlab-config.js";
 export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./settings-validation.js";
 
-/**
- * Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning.
- * Includes extra-high for maximum-effort requests on reasoning-capable models.
- *
- * FNXC:Settings-ThinkingLevel 2026-06-19-14:55:
- * The central thinking-level enum must expose `xhigh` so UI settings and API validation can pass maximum reasoning requests through to CLI adapters. Runtime adapters map `xhigh` to `high` for non-Opus models and `max` for Opus models.
+/*
+ * FNXC:WorkflowDeprecation 2026-07-15-16:35:
+ * Keep deprecated IDs browser-safe because Settings loads the management list
+ * (including disabled built-ins) but must not re-offer retired workflows for new
+ * selection. FN-7970 and FN-7969 preserve direct resolution for pre-existing
+ * Brainstorming and Coding (Ideas) task selections while hiding them elsewhere.
  */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
+  "builtin:brainstorming",
+  "builtin:coding-ideas",
+]);
 
-/**
- * The legacy default-workflow column set. Workflow-aware task movement resolves
- * valid columns from each task's workflow definition (the default workflow's
- * column IDs are byte-identical to these — KTD-1). New code should prefer the
- * workflow-resolved path (`resolveAllowedColumns` / `workflowHasColumn` in
- * `workflow-transitions.ts`) and trait predicates over string equality; this
- * enum remains the canonical id set for the built-in default workflow.
- */
-export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
-/**
- * The closed legacy column union — still the correct type for default-workflow
- * column ids. Movement entry points accept the wider {@link ColumnId}; runtime
- * code validates ids against the task's resolved workflow.
- */
-export type Column = (typeof COLUMNS)[number];
-
-/**
- * Column identifier accepted at task-movement entry points (KTD-1).
- * Equals the legacy `Column` union for autocomplete purposes, but admits
- * workflow-defined custom column ids; runtime paths validate the id against the
- * task's resolved workflow.
- */
-export type ColumnId = Column | (string & {});
-
-export const DEFAULT_COLUMN: Column = "triage";
-
-/**
- * Tests membership against the closed legacy column enum. Note: under the
- * workflowColumns flag, column validity is workflow-scoped — flag-aware code
- * should use `workflowHasColumn(ir, columnId)` (`workflow-transitions.ts`);
- * this remains correct for the flag-OFF path and default-workflow ids.
- */
-export function isColumn(value: unknown): value is Column {
-  return typeof value === "string" && (COLUMNS as readonly string[]).includes(value);
-}
-
-/**
- * @deprecated (workflowColumns, U12) Coerces an arbitrary value to a legacy
- * column, DISCARDING workflow-defined custom column ids — lossy under the
- * flag. Resolve and validate against the task's workflow instead. Retained
- * for the legacy flag-OFF path while the flag exists.
- */
-export function normalizeColumn(value: unknown, fallback: Column = DEFAULT_COLUMN): Column {
-  return isColumn(value) ? value : fallback;
-}
-
-/** Ordered task-priority levels for the core task domain contract. */
-export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
-
-/**
- * Default task priority used for legacy rows/entries and create flows when
- * callers omit the priority field.
- */
-export const DEFAULT_TASK_PRIORITY: TaskPriority = "normal";
-
-export const MERGE_REQUEST_STATES = [
-  "queued",
-  "running",
-  "retrying",
-  "succeeded",
-  "exhausted",
-  "cancelled",
-  "manual-required",
-] as const;
-
-export type MergeRequestState = (typeof MERGE_REQUEST_STATES)[number];
-
-export const WORKFLOW_WORK_ITEM_KINDS = [
-  "task",
-  "merge",
-  "retry",
-  "manual-hold",
-  "recovery",
-] as const;
-
-export type WorkflowWorkItemKind = (typeof WORKFLOW_WORK_ITEM_KINDS)[number];
-
-export const WORKFLOW_WORK_ITEM_STATES = [
-  "runnable",
-  "running",
-  "held",
-  "retrying",
-  "manual-required",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "exhausted",
-] as const;
-
-export type WorkflowWorkItemState = (typeof WORKFLOW_WORK_ITEM_STATES)[number];
-
-export interface WorkflowWorkItem {
-  id: string;
-  runId: string;
-  taskId: string;
-  nodeId: string;
-  kind: WorkflowWorkItemKind;
-  state: WorkflowWorkItemState;
-  attempt: number;
-  retryAfter: string | null;
-  leaseOwner: string | null;
-  leaseExpiresAt: string | null;
-  lastError: string | null;
-  blockedReason: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkflowWorkItemUpsertInput {
-  id?: string;
-  runId: string;
-  taskId: string;
-  nodeId: string;
-  kind: WorkflowWorkItemKind;
-  state?: WorkflowWorkItemState;
-  attempt?: number;
-  retryAfter?: string | null;
-  leaseOwner?: string | null;
-  leaseExpiresAt?: string | null;
-  lastError?: string | null;
-  blockedReason?: string | null;
-  now?: string;
-}
-
-export interface WorkflowWorkItemTransitionPatch {
-  attempt?: number;
-  retryAfter?: string | null;
-  leaseOwner?: string | null;
-  leaseExpiresAt?: string | null;
-  lastError?: string | null;
-  blockedReason?: string | null;
-  now?: string;
-}
-
-export interface WorkflowWorkItemDueFilter {
-  now?: string;
-  limit?: number;
-  kinds?: WorkflowWorkItemKind[];
-  states?: WorkflowWorkItemState[];
-}
-
-export interface MergeRequestWorkflowProjectionOptions {
-  runId?: string;
-  nodeId?: string;
-  now?: string;
-}
-
-export interface MergeQueueEntry {
-  taskId: string;
-  enqueuedAt: string;
-  priority: TaskPriority;
-  leasedBy: string | null;
-  leasedAt: string | null;
-  leaseExpiresAt: string | null;
-  attemptCount: number;
-  lastError: string | null;
-}
-
-export interface MergeRequestRecord {
-  taskId: string;
-  state: MergeRequestState;
-  createdAt: string;
-  updatedAt: string;
-  attemptCount: number;
-  lastError: string | null;
-}
-
-export interface CompletionHandoffMarker {
-  taskId: string;
-  acceptedAt: string;
-  source: string;
-}
-
-export interface MergeQueueEnqueueOptions {
-  priority?: TaskPriority;
-  now?: string;
-}
-
-export interface MergeQueueAcquireOptions {
-  leaseDurationMs: number;
-  now?: string;
-  /** If provided, the lease attempt targets this specific task first.
-   *  The task must be unexpired/available; otherwise falls back to normal queue-head selection. */
-  targetTaskId?: string;
-}
-
-export type MergeQueueReleaseOutcome =
-  | { kind: "success" }
-  | { kind: "failure"; error: string };
-
-export interface HandoffEvidence {
-  /** Reason text recorded on the run-audit event (for example "fn_task_done"). */
-  reason: string;
-  /** Optional run id captured for forensics. */
-  runId?: string;
-  /** Optional agent id captured for forensics. */
-  agentId?: string;
-}
-
-export interface HandoffToReviewOptions {
-  ownerAgentId: string | null;
-  evidence: HandoffEvidence;
-  moveOptions?: {
-    preserveResumeState?: boolean;
-    preserveProgress?: boolean;
-    preserveWorktree?: boolean;
-    preserveStatus?: boolean;
-    moveSource?: "user" | "engine";
-    skipMergeBlocker?: boolean;
-  };
-  /** Inject a clock for tests. */
-  now?: string;
-}
-
-/**
- * Dashboard high-fan-out blocker threshold. A blocker is considered high impact
- * when at least this many active todo tasks are waiting on it.
- */
-export const HIGH_FANOUT_BLOCKER_TODO_THRESHOLD = 5;
-
-/**
- * Default age gate (ms) before a high fan-out blocker is escalated in dashboards.
- */
-export const STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-
-/**
- * Execution mode for task implementation.
- * Controls how the executor agent approaches the task:
- * - "standard": Full execution with complete review workflow (default)
- * - "fast": Expedited execution with minimal overhead for simple tasks
- */
-export const EXECUTION_MODES = ["standard", "fast"] as const;
-export type ExecutionMode = (typeof EXECUTION_MODES)[number];
-
-/** Default execution mode for new tasks */
-export const DEFAULT_EXECUTION_MODE: ExecutionMode = "standard";
 
 /*
- * FNXC:PlannerOversight 2026-07-04-00:00:
- * Per-task override of the workflow-native `plannerOversightLevel` setting
- * (declared in `BUILTIN_OVERSIGHT_SETTINGS`, packages/core/src/builtin-workflow-settings.ts).
- * When a task sets this field, it wins over the workflow's effective oversight
- * value; unset (NULL in storage) means "inherit the workflow default". Values,
- * order, and default here must stay in sync with `BUILTIN_OVERSIGHT_SETTINGS`.
- */
-export const PLANNER_OVERSIGHT_LEVELS = ["off", "observe", "steer", "autonomous"] as const;
-export type PlannerOversightLevel = (typeof PLANNER_OVERSIGHT_LEVELS)[number];
-export const DEFAULT_PLANNER_OVERSIGHT_LEVEL: PlannerOversightLevel = "autonomous";
+FNXC:CodeOrganization 2026-07-15-00:00:
+Domain peels live under types/*.ts. Import locally so residual interfaces in this
+barrel can reference them, then re-export so the Vite @fusion/core alias and
+package consumers keep stable import paths.
+*/
+import {
+  THINKING_LEVELS,
+  COLUMNS,
+  DEFAULT_COLUMN,
+  isColumn,
+  normalizeColumn,
+  TASK_PRIORITIES,
+  DEFAULT_TASK_PRIORITY,
+} from "./types/board.js";
+import type { ThinkingLevel, Column, ColumnId, TaskPriority } from "./types/board.js";
+export {
+  THINKING_LEVELS,
+  COLUMNS,
+  DEFAULT_COLUMN,
+  isColumn,
+  normalizeColumn,
+  TASK_PRIORITIES,
+  DEFAULT_TASK_PRIORITY,
+};
+export type { ThinkingLevel, Column, ColumnId, TaskPriority };
 
-/** Controls whether triage should require completion documentation artifacts in task specs. */
-export const COMPLETION_DOCUMENTATION_MODES = ["off", "changeset", "changelog"] as const;
-export type CompletionDocumentationMode = (typeof COMPLETION_DOCUMENTATION_MODES)[number];
+import {
+  MERGE_REQUEST_STATES,
+  WORKFLOW_WORK_ITEM_KINDS,
+  WORKFLOW_WORK_ITEM_STATES,
+} from "./types/merge-queue.js";
+import type {
+  MergeRequestState,
+  WorkflowWorkItemKind,
+  WorkflowWorkItemState,
+  WorkflowWorkItem,
+  WorkflowWorkItemUpsertInput,
+  WorkflowWorkItemTransitionPatch,
+  WorkflowWorkItemDueFilter,
+  MergeRequestWorkflowProjectionOptions,
+  MergeQueueEntry,
+  MergeRequestRecord,
+  CompletionHandoffMarker,
+  MergeQueueEnqueueOptions,
+  MergeQueueAcquireOptions,
+  MergeQueueReleaseOutcome,
+  HandoffEvidence,
+  HandoffToReviewOptions,
+} from "./types/merge-queue.js";
+export {
+  MERGE_REQUEST_STATES,
+  WORKFLOW_WORK_ITEM_KINDS,
+  WORKFLOW_WORK_ITEM_STATES,
+};
+export type {
+  MergeRequestState,
+  WorkflowWorkItemKind,
+  WorkflowWorkItemState,
+  WorkflowWorkItem,
+  WorkflowWorkItemUpsertInput,
+  WorkflowWorkItemTransitionPatch,
+  WorkflowWorkItemDueFilter,
+  MergeRequestWorkflowProjectionOptions,
+  MergeQueueEntry,
+  MergeRequestRecord,
+  CompletionHandoffMarker,
+  MergeQueueEnqueueOptions,
+  MergeQueueAcquireOptions,
+  MergeQueueReleaseOutcome,
+  HandoffEvidence,
+  HandoffToReviewOptions,
+};
 
-/** Theme mode for light/dark/system preference */
-export const THEME_MODES = ["dark", "light", "system"] as const;
-export type ThemeMode = (typeof THEME_MODES)[number];
+import {
+  HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
+  STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+  EXECUTION_MODES,
+  DEFAULT_EXECUTION_MODE,
+  PLANNER_OVERSIGHT_LEVELS,
+  DEFAULT_PLANNER_OVERSIGHT_LEVEL,
+  COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
+  THEME_MODES,
+  COLOR_THEMES,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  isLocale,
+} from "./types/execution-and-ui.js";
+import type {
+  ExecutionMode,
+  PlannerOversightLevel,
+  CompletionDocumentationMode,
+  ReviewArtifactsMode,
+  ThemeMode,
+  ColorTheme,
+  Locale,
+} from "./types/execution-and-ui.js";
+export {
+  HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
+  STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+  EXECUTION_MODES,
+  DEFAULT_EXECUTION_MODE,
+  PLANNER_OVERSIGHT_LEVELS,
+  DEFAULT_PLANNER_OVERSIGHT_LEVEL,
+  COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
+  THEME_MODES,
+  COLOR_THEMES,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  isLocale,
+};
+export type {
+  ExecutionMode,
+  PlannerOversightLevel,
+  CompletionDocumentationMode,
+  ReviewArtifactsMode,
+  ThemeMode,
+  ColorTheme,
+  Locale,
+};
 
-/** Color theme options for the dashboard */
-export const COLOR_THEMES = [
-  "default",
-  "ocean",
-  "forest",
-  "sunset",
-  "zen",
-  "berry",
-  "high-contrast",
-  "industrial",
-  "monochrome",
-  "slate",
-  "ash",
-  // FNXC:DashboardTheming 2026-06-19-15:36: "air" is the source-of-truth id for the minimal, borderless, paper-like dashboard theme; keep bootstrap validators and theme options in sync with this union.
-  "air",
-  "graphite",
-  "silver",
-  "solarized",
-  "factory",
-  "factory-mono",
-  "ayu",
-  "one-dark",
-  "nord",
-  "dracula",
-  "gruvbox",
-  "tokyo-night",
-  "catppuccin-mocha",
-  "github-dark",
-  "everforest",
-  "rose-pine",
-  "kanagawa",
-  "night-owl",
-  "palenight",
-  "monokai-pro",
-  "slime",
-  "brutalist",
-  "neon-city",
-  "parchment",
-  "terminal",
-  "glass",
-  // FNXC:DashboardTheming 2026-07-01-00:00: Glass Silver is the silver/gray frosted sibling of Glass; keep this id in lockstep with dashboard/desktop validators and selector metadata so persisted explicit choices survive startup.
-  "glass-silver",
-  "horizon",
-  "vitesse",
-  "outrun",
-  "snazzy",
-  "porple",
-  "espresso",
-  "mars",
-  "poimandres",
-  "ember",
-  "rust",
-  "copper",
-  "foundry",
-  "carbon",
-  "sandstone",
-  "lagoon",
-  "frost",
-  "lavender",
-  "neon-bloom",
-  "sepia",
-  "shadcn",
-  // FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default for unset installs; keep it adjacent to the shadcn base so dashboard options and bootstrap validators preserve published theme order while explicit legacy ids remain valid.
-  "shadcn-ember",
-  // FNXC:DashboardTheming 2026-06-20-18:20: FN-6816 adds the user-customizable shadcn variant; keep this union in lockstep with dashboard theme options, swatches, theme-data base blocks, and the shadcn custom color token list.
-  "shadcn-custom",
-  // FNXC:DashboardTheming 2026-06-19-16:07: FN-6756 extends the published color-theme union with shadcn-family accent variants; keep dashboard theme options, bootstrap validation, swatches, and theme-data token blocks in lockstep with this ordered list.
-  // FNXC:DashboardTheming 2026-06-20-00:00: FN-6813 renames the grayscale-base mono theme to shadcn-mono-red and adds the remaining mono accent variants; keep Shadcn Gray adjacent to Shadcn Black so the color-family order stays stable with FN-6814.
-  // FNXC:DashboardTheming 2026-06-21-00:00: FN-6815 adds shadcn-gray-blue as the slate-neutral blue-gray sibling; keep it adjacent to Shadcn Gray so the published union mirrors dashboard option order.
-  "shadcn-blue",
-  "shadcn-green",
-  "shadcn-red",
-  "shadcn-purple",
-  "shadcn-pink",
-  "shadcn-orange",
-  "shadcn-yellow",
-  "shadcn-mono-red",
-  "shadcn-mono-blue",
-  "shadcn-mono-green",
-  "shadcn-mono-purple",
-  "shadcn-mono-pink",
-  "shadcn-mono-orange",
-  "shadcn-mono-yellow",
-  "shadcn-black",
-  "shadcn-gray",
-  "shadcn-gray-blue",
-] as const;
-export type ColorTheme = (typeof COLOR_THEMES)[number];
-
-/** UI locales supported across the dashboard and terminal UI. `en` is the
- *  source-of-truth language and the fallback for all others. Adding a locale
- *  here (plus translated catalogs) is the only code change a new language
- *  needs — see `@fusion/i18n`. zh-CN and zh-TW are independent catalogs and
- *  are never auto-converted between scripts. */
-export const SUPPORTED_LOCALES = ["en", "zh-CN", "zh-TW", "fr", "es", "ko"] as const;
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
-/** Source-of-truth language and the fallback for all locales. */
-export const DEFAULT_LOCALE: Locale = "en";
-
-/** Narrow an arbitrary value to a supported `Locale`. */
-export function isLocale(value: unknown): value is Locale {
-  return (
-    typeof value === "string" &&
-    (SUPPORTED_LOCALES as readonly string[]).includes(value)
-  );
-}
-
-export type PrStatus = "open" | "closed" | "merged" | "draft";
-export type MergeStrategy = "direct" | "pull-request";
-export type MergeIntegrationWorktreeMode =
-  | "reuse-task-worktree"
-  | "cwd-integration-branch" // explicit opt-in; surfaces a warning at startup. See FN-5348.
-  | "cwd-main"; // legacy alias for cwd-integration-branch; deprecated. Normalized at read time.
-
-let warnedLegacyCwdMain = false;
-
-export function __resetLegacyCwdMainWarningForTests(): void {
-  warnedLegacyCwdMain = false;
-}
-
-export function normalizeMergeIntegrationWorktreeMode(
-  value: unknown,
-): MergeIntegrationWorktreeMode {
-  if (value === "reuse-task-worktree" || value === "cwd-integration-branch") {
-    return value;
-  }
-
-  if (value === "cwd-main") {
-    if (!warnedLegacyCwdMain) {
-      warnedLegacyCwdMain = true;
-      console.warn("[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch");
-    }
-    return "cwd-integration-branch";
-  }
-
-  return "reuse-task-worktree";
-}
-
-export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
-export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
-
-export const MERGE_ADVANCE_AUTO_SYNC_MODES = ["off", "ff-only", "stash-and-ff"] as const;
-export type MergeAdvanceAutoSyncMode = (typeof MERGE_ADVANCE_AUTO_SYNC_MODES)[number];
-export function normalizeMergeAdvanceAutoSyncMode(value: unknown): MergeAdvanceAutoSyncMode {
-  return value === "off" || value === "ff-only" || value === "stash-and-ff" ? value : "stash-and-ff";
-}
-/** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
- *
- *  Both `smart-*` strategies share the same cascade: pre-merge fetch +
- *  fast-forward of local main from origin (graceful degrade on failure),
- *  then AI, then auto-resolve lock/generated/trivial files. They differ only
- *  in the final per-file fallback when conflicts remain:
- *
- *  - "smart-prefer-main" (default): fall back to `-X ours` so main's state
- *    wins. Best when concurrent tasks could regress just-merged sibling work.
- *  - "smart-prefer-branch": fall back to `-X theirs` so the task branch wins.
- *    Best when one agent at a time is dominant and you trust their output.
- *  - "ai-only": run AI on every attempt; never silently prefer one side.
- *  - "abort": run AI once; if conflict remains, fail the merge so a human
- *    can resolve it.
- *
- *  Legacy values `"smart"` and `"prefer-main"` are accepted for backwards
- *  compatibility and normalized via {@link normalizeMergeConflictStrategy}.
- *  `"smart"` maps to `"smart-prefer-branch"` (its historical fallback) and
- *  `"prefer-main"` maps to `"smart-prefer-main"`. */
-export type MergeConflictStrategy =
-  | "smart-prefer-main"
-  | "smart-prefer-branch"
-  | "ai-only"
-  | "abort"
-  /** @deprecated use "smart-prefer-branch" */
-  | "smart"
-  /** @deprecated use "smart-prefer-main" */
-  | "prefer-main";
-
-/** Canonical (post-migration) values that the merger actually dispatches on. */
-export type CanonicalMergeConflictStrategy = Exclude<
+import {
+  __resetLegacyCwdMainWarningForTests,
+  normalizeMergeIntegrationWorktreeMode,
+  DIRECT_MERGE_COMMIT_STRATEGIES,
+  MERGE_ADVANCE_AUTO_SYNC_MODES,
+  normalizeMergeAdvanceAutoSyncMode,
+  normalizeMergeConflictStrategy,
+  MERGE_STRATEGY_OVERLAP_BEHAVIORS,
+  normalizeMergeStrategyOverlapBehavior,
+  POST_MERGE_AUDIT_MODES,
+  normalizePostMergeAuditMode,
+  MERGE_AUDIT_AUTO_RECOVERY_MODES,
+  normalizeMergeAuditAutoRecovery,
+  MERGER_MODES,
+  normalizeMergerMode,
+  AUTO_RECOVERY_MODES,
+  normalizeAutoRecovery,
+} from "./types/merge-policy.js";
+import type {
+  PrStatus,
+  MergeStrategy,
+  MergeIntegrationWorktreeMode,
+  DirectMergeCommitStrategy,
+  MergeAdvanceAutoSyncMode,
   MergeConflictStrategy,
-  "smart" | "prefer-main"
->;
+  CanonicalMergeConflictStrategy,
+  MergeStrategyOverlapBehavior,
+  PostMergeAuditMode,
+  MergeAuditAutoRecoveryMode,
+  MergerMode,
+  MergerSettings,
+  AutoRecoveryMode,
+  AutoRecoveryFailureClass,
+  AutoRecoverySettings,
+  UnavailableNodePolicy,
+  OwningNodeHandoffPolicy,
+} from "./types/merge-policy.js";
+export {
+  __resetLegacyCwdMainWarningForTests,
+  normalizeMergeIntegrationWorktreeMode,
+  DIRECT_MERGE_COMMIT_STRATEGIES,
+  MERGE_ADVANCE_AUTO_SYNC_MODES,
+  normalizeMergeAdvanceAutoSyncMode,
+  normalizeMergeConflictStrategy,
+  MERGE_STRATEGY_OVERLAP_BEHAVIORS,
+  normalizeMergeStrategyOverlapBehavior,
+  POST_MERGE_AUDIT_MODES,
+  normalizePostMergeAuditMode,
+  MERGE_AUDIT_AUTO_RECOVERY_MODES,
+  normalizeMergeAuditAutoRecovery,
+  MERGER_MODES,
+  normalizeMergerMode,
+  AUTO_RECOVERY_MODES,
+  normalizeAutoRecovery,
+};
+export type {
+  PrStatus,
+  MergeStrategy,
+  MergeIntegrationWorktreeMode,
+  DirectMergeCommitStrategy,
+  MergeAdvanceAutoSyncMode,
+  MergeConflictStrategy,
+  CanonicalMergeConflictStrategy,
+  MergeStrategyOverlapBehavior,
+  PostMergeAuditMode,
+  MergeAuditAutoRecoveryMode,
+  MergerMode,
+  MergerSettings,
+  AutoRecoveryMode,
+  AutoRecoveryFailureClass,
+  AutoRecoverySettings,
+  UnavailableNodePolicy,
+  OwningNodeHandoffPolicy,
+};
 
-/** Translate legacy `mergeConflictStrategy` values into their canonical form.
- *  Pass-through for already-canonical values; defaults to "smart-prefer-main"
- *  when the input is undefined. */
-export function normalizeMergeConflictStrategy(
-  value: MergeConflictStrategy | undefined,
-): CanonicalMergeConflictStrategy {
-  switch (value) {
-    case "smart":
-      return "smart-prefer-branch";
-    case "prefer-main":
-      return "smart-prefer-main";
-    case undefined:
-      return "smart-prefer-main";
-    default:
-      return value;
-  }
-}
+import { NOTIFICATION_EVENTS } from "./types/workflow-steps.js";
+import type {
+  ModelPreset,
+  WorkflowStepMode,
+  WorkflowStepToolMode,
+  WorkflowStepGateMode,
+  WorkflowStepPhase,
+  WorkflowStep,
+  NtfyNotificationEvent,
+  NotificationEvent,
+  NotificationPayload,
+  NotificationProviderConfig,
+  CustomProvider,
+  WorkflowStepInput,
+  WorkflowStepResult,
+  WorkflowRunStepInstanceStatus,
+  WorkflowRunStepInstance,
+  WorkflowStepTemplate,
+} from "./types/workflow-steps.js";
+export { NOTIFICATION_EVENTS };
+export type {
+  ModelPreset,
+  WorkflowStepMode,
+  WorkflowStepToolMode,
+  WorkflowStepGateMode,
+  WorkflowStepPhase,
+  WorkflowStep,
+  NtfyNotificationEvent,
+  NotificationEvent,
+  NotificationPayload,
+  NotificationProviderConfig,
+  CustomProvider,
+  WorkflowStepInput,
+  WorkflowStepResult,
+  WorkflowRunStepInstanceStatus,
+  WorkflowRunStepInstance,
+  WorkflowStepTemplate,
+};
 
-export const MERGE_STRATEGY_OVERLAP_BEHAVIORS = [
-  "flip-to-prefer-branch",
-  "warn-only",
-  "ignore",
-] as const;
 
-export type MergeStrategyOverlapBehavior = (typeof MERGE_STRATEGY_OVERLAP_BEHAVIORS)[number];
-
-export function normalizeMergeStrategyOverlapBehavior(
-  value: unknown,
-): MergeStrategyOverlapBehavior {
-  return typeof value === "string"
-    && (MERGE_STRATEGY_OVERLAP_BEHAVIORS as readonly string[]).includes(value)
-    ? value as MergeStrategyOverlapBehavior
-    : "flip-to-prefer-branch";
-}
-
-export const POST_MERGE_AUDIT_MODES = ["block", "warn", "off"] as const;
-
-/** Controls how the merger reacts to a dirty post-merge audit (FN-4333). */
-export type PostMergeAuditMode = (typeof POST_MERGE_AUDIT_MODES)[number];
-
-export function normalizePostMergeAuditMode(value: unknown): PostMergeAuditMode {
-  return typeof value === "string"
-    && (POST_MERGE_AUDIT_MODES as readonly string[]).includes(value)
-    ? (value as PostMergeAuditMode)
-    : "block";
-}
-
-export const MERGE_AUDIT_AUTO_RECOVERY_MODES = ["deterministic-only", "programmatic", "ai-assisted", "off"] as const;
-
-/** Controls how aggressively the merger tries to auto-recover from audit blocks (FN-4315). */
-export type MergeAuditAutoRecoveryMode = (typeof MERGE_AUDIT_AUTO_RECOVERY_MODES)[number];
-
-export function normalizeMergeAuditAutoRecovery(value: unknown): MergeAuditAutoRecoveryMode {
-  return typeof value === "string"
-    && (MERGE_AUDIT_AUTO_RECOVERY_MODES as readonly string[]).includes(value)
-    ? (value as MergeAuditAutoRecoveryMode)
-    : "ai-assisted";
-}
-
-export const MERGER_MODES = ["ai", "deterministic"] as const;
-
-/**
- * Merge execution path (FN-5633).
- *  - "ai" (default): the standalone AI merge path — a clean-room worktree where
- *    an AI agent merges the task branch and an AI reviewer audits it (with
- *    corrective retries) before a fast-forward landing. Bypasses the legacy
- *    scaffolding entirely.
- *  - "deterministic": **DEPRECATED (master-plan U0, 2026-06-21) and INERT.** Once
- *    routed to the legacy `aiMergeTask` pipeline; now ignored — every merge uses
- *    the unified "ai" path (`runAiMerge`). The value is retained (not removed) to
- *    avoid a breaking `@runfusion/fusion` type change, and the engine logs a
- *    one-time deprecation warning when it observes a resolved "deterministic".
- *
- * FNXC:MergerUnification 2026-06-21-19:05: `merger.mode` is published surface, so
- * the type and the `MergerSettings.mode` field stay; only the "deterministic"
- * VALUE is deprecated/inert. Removing the type is a separate breaking change.
- */
-export type MergerMode = (typeof MERGER_MODES)[number];
-
-export function normalizeMergerMode(value: unknown): MergerMode {
-  return typeof value === "string" && (MERGER_MODES as readonly string[]).includes(value)
-    ? (value as MergerMode)
-    : "ai";
-}
-
-/** Settings for the AI merge path (FN-5633). */
-export interface MergerSettings {
-  /**
-   * Which merge path to use. Default: "ai".
-   * @deprecated master-plan U0 (2026-06-21): the value is inert — every merge now
-   * uses the unified AI merge path (`runAiMerge`). Field retained as published
-   * surface; "deterministic" only triggers a one-time deprecation warning.
-   */
-  mode?: MergerMode;
-  /** How many AI corrective rounds before landing the best result (advisory) or
-   *  hard-failing (blocking). Default: 3. The reviewer uses the project's
-   *  validator/reviewer model lane — there is no merge-specific model setting. */
-  maxReviewPasses?: number;
-  /** Dangerous compatibility escape hatch for the AI merge landing path.
-   *  When true (default for resolved project settings), Fusion restores the legacy
-   *  stash → fast-forward → restore behavior when the checked-out integration
-   *  worktree is dirty. Set false to explicitly opt out and fail closed before
-   *  unrelated local edits can be reintroduced after landing. */
-  allowDirtyLocalCheckoutSync?: boolean;
-}
-
-export const AUTO_RECOVERY_MODES = ["off", "deterministic-only", "programmatic", "ai-assisted"] as const;
-
-export type AutoRecoveryMode = (typeof AUTO_RECOVERY_MODES)[number];
-
-export type AutoRecoveryFailureClass =
-  | "file-scope-invariant"
-  | "post-squash-audit-blocker"
-  | "branch-cross-contamination"
-  | "branch-conflict-tripwire"
-  | "branch-conflict-recovery-exhausted"
-  | "branch-conflict-unrecoverable"
-  | "message-delivery-failure";
-
-export interface AutoRecoverySettings {
-  mode: AutoRecoveryMode;
-  perClass?: Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>;
-  maxRetries?: number;
-}
-
-export function normalizeAutoRecovery(value: unknown): AutoRecoverySettings {
-  const fallback: AutoRecoverySettings = { mode: "deterministic-only", maxRetries: 3 };
-  if (!value || typeof value !== "object") return fallback;
-
-  const candidate = value as {
-    mode?: unknown;
-    perClass?: unknown;
-    maxRetries?: unknown;
-  };
-  const mode = typeof candidate.mode === "string" && (AUTO_RECOVERY_MODES as readonly string[]).includes(candidate.mode)
-    ? candidate.mode as AutoRecoveryMode
-    : fallback.mode;
-  const perClass = typeof candidate.perClass === "object" && candidate.perClass
-    ? Object.fromEntries(
-      Object.entries(candidate.perClass as Record<string, unknown>)
-        .filter(([k, v]) => (
-          [
-            "file-scope-invariant",
-            "post-squash-audit-blocker",
-            "branch-cross-contamination",
-            "branch-conflict-tripwire",
-            "branch-conflict-recovery-exhausted",
-            "branch-conflict-unrecoverable",
-            "message-delivery-failure",
-          ].includes(k)
-          && typeof v === "string"
-          && (AUTO_RECOVERY_MODES as readonly string[]).includes(v)
-        )),
-    ) as Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>
-    : undefined;
-  const maxRetries = typeof candidate.maxRetries === "number" && Number.isFinite(candidate.maxRetries)
-    ? Math.max(0, Math.floor(candidate.maxRetries))
-    : fallback.maxRetries;
-
-  return { mode, perClass, maxRetries };
-}
-/** Policy for handling task execution when the selected node is unavailable/unhealthy. */
-export type UnavailableNodePolicy = "block" | "fallback-local";
-
-export type OwningNodeHandoffPolicy = "block" | "reassign-to-local" | "reassign-any-healthy";
-
-export interface ModelPreset {
-  id: string;
-  name: string;
-  executorProvider?: string;
-  executorModelId?: string;
-  validatorProvider?: string;
-  validatorModelId?: string;
-}
-
-/** A reusable workflow step definition that can run after task implementation. */
-/** Execution mode for a workflow step. */
-export type WorkflowStepMode = "prompt" | "script";
-export type WorkflowStepToolMode = "readonly" | "coding";
-export type WorkflowStepGateMode = "gate" | "advisory";
-
-/** Lifecycle phase for workflow step execution. */
-export type WorkflowStepPhase = "pre-merge" | "post-merge";
-
-export interface WorkflowStep {
-  /** Unique identifier (e.g., "WS-001") */
-  id: string;
-  /** Built-in template source ID when this step was materialized from a template. */
-  templateId?: string;
-  /** Display name (e.g., "Documentation Review") */
-  name: string;
-  /** Short description for UI display */
-  description: string;
-  /** Execution mode — "prompt" runs an AI agent, "script" runs a named project script */
-  mode: WorkflowStepMode;
-  /** Lifecycle phase — "pre-merge" runs before merge (default), "post-merge" runs after merge success */
-  phase?: WorkflowStepPhase;
-  /** Gate behavior — gate blocks merge/auto-revive on failure, advisory records non-blocking findings. */
-  gateMode: WorkflowStepGateMode;
-  /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
-  prompt: string;
-  /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
-  toolMode?: WorkflowStepToolMode;
-  /** Name of a skill to load into this step's session (e.g.
-   *  "compound-engineering:ce-work"). When set, the step session loads the named
-   *  skill (discovery + selection) and the engine injects the Fusion workflow-step
-   *  conventions preamble. Only meaningful for skill-executor graph nodes. */
-  skillName?: string;
-  /**
-   * Browser capability requested by prompt-mode steps. When true, the executor
-   * loads the agent-browser navigation skill when available, preflights the
-   * `agent-browser` CLI, and records browser-verification activity in the agent
-   * log. Ignored for script-mode steps.
-   */
-  requiresBrowser?: boolean;
-  /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
-  scriptName?: string;
-  /** Whether this step is available for selection on new tasks */
-  enabled: boolean;
-  /** When true, this step is automatically pre-selected when creating new tasks.
-   *  Users can still deselect it — this only controls the initial default state. */
-  defaultOn?: boolean;
-  /** AI model provider override for the workflow step agent (e.g., "anthropic").
-   *  Must be set together with `modelId`. When both model fields are undefined,
-   *  the executor uses global settings defaults. Only used when mode is "prompt". */
-  modelProvider?: string;
-  /** AI model ID override for the workflow step agent (e.g., "claude-sonnet-4-5").
-   *  Must be set together with `modelProvider`. When both model fields are undefined,
-   *  the executor uses global settings defaults. Only used when mode is "prompt". */
-  modelId?: string;
-  /**
-   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-   * Workflow IR nodes may pin reasoning effort independently from the model pair so authors can inherit the model while overriding thinking level. Runtime precedence is node/step `thinkingLevel` > task `thinkingLevel` > settings `defaultThinkingLevel`.
-   */
-  thinkingLevel?: ThinkingLevel;
-  /** (workflow-editor-consolidation U1/U2, KTD-1/KTD-3) when this legacy step has
-   *  been migrated into a fragment WorkflowDefinition, the fragment's id is stamped
-   *  here so the lazy step migration is idempotent (already-stamped rows are
-   *  skipped). Stored in the `migrated_fragment_id` column. */
-  migratedFragmentId?: string;
-  /** ISO-8601 timestamp of creation */
-  createdAt: string;
-  /** ISO-8601 timestamp of last update */
-  updatedAt: string;
-}
-
-/** Input for creating a new workflow step. */
-/** Event types that can trigger ntfy notifications */
-export type NtfyNotificationEvent =
-  | "in-review"
-  | "merged"
-  | "failed"
-  | "awaiting-approval"
-  | "awaiting-user-review"
-  | "planning-awaiting-input"
-  | "cli-agent-awaiting-input"
-  | "gridlock"
-  | "board-stall-unrecovered"
-  | "db-corruption-detected"
-  | "fallback-used"
-  | "memory-dreams-processed"
-  | "token-budget"
-  | "message:agent-to-user"
-  | "message:agent-to-agent"
-  | "message:room"
-  | "oauth-token-expired"
-  | "task-created"
-  | "workflow-notify";
-
-/** Known notification event types. Providers may support additional custom events. */
-export const NOTIFICATION_EVENTS = [
-  "in-review",
-  "merged",
-  "failed",
-  "awaiting-approval",
-  "awaiting-user-review",
-  "planning-awaiting-input",
-  /*
-   * FNXC:ToolPermissionNotifications 2026-06-27-00:00:
-   * CLI tool-permission requests are a distinct user-facing notification event from plan approval. Operators must be able to enable external alerts when a terminal-backed agent waits for human input.
-   */
-  "cli-agent-awaiting-input",
-  "gridlock",
-  "board-stall-unrecovered",
-  "db-corruption-detected",
-  "fallback-used",
-  "memory-dreams-processed",
-  "token-budget",
-  "message:agent-to-user",
-  "message:agent-to-agent",
-  "message:room",
-  "oauth-token-expired",
-  "task-created",
-  "workflow-notify",
-] as const;
-
-/** Notification event type. Known events plus provider-specific custom events. */
-export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number] | (string & {});
-
-/** Standard payload shape shared across notification providers. */
-export interface NotificationPayload {
-  taskId?: string;
-  taskTitle?: string;
-  taskDescription?: string;
-  event: NotificationEvent;
-  timestamp?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Declarative notification provider configuration persisted in settings. */
-export interface NotificationProviderConfig {
-  id: string;
-  name: string;
-  enabled: boolean;
-  config: Record<string, unknown>;
-}
-
-export interface CustomProvider {
-  id: string;
-  name: string;
-  apiType: "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
-  baseUrl: string;
-  apiKey?: string;
-  /**
-   * OpenAI-compatible opt-in for providers that explicitly support the `developer` role.
-   * Omitted/false forces legacy `system` role emission to avoid provider 400s.
-   */
-  supportsDeveloperRole?: boolean;
-  /**
-   * FNXC:ProviderAuth 2026-07-08-00:00:
-   * FN-7689: opt-in for custom `openai-compatible`/`openai-responses` gateways that proxy an
-   * Anthropic-format backend (e.g. `usai/claude_4_6_sonnet`). When true, registered
-   * `openai-completions` models get pi-ai's `compat.cacheControlFormat = "anthropic"`, which makes
-   * pi-ai emit Anthropic-style `cache_control` breakpoints on the system prompt, last
-   * conversation message, and last tool. Without this, pi-ai's `detectCompat` only auto-enables
-   * caching for OpenRouter `anthropic/*` models, so a generic custom gateway re-bills the entire
-   * context prefix uncached every turn (measured cachedTokens=0/cacheWriteTokens=0 across 243
-   * runs, ~327.5:1 input:output ratio). Default off — never force cache_control on gateways that
-   * did not opt in, since non-Anthropic-compatible backends (Together, Fireworks, etc.) can 400 on
-   * unexpected `cache_control` fields. Inert for `anthropic-compatible` (already auto-caches) and
-   * `google-generative-ai` (no cache_control concept).
-   */
-  anthropicPromptCaching?: boolean;
-  models?: { id: string; name: string }[];
-}
-
-export interface WorkflowStepInput {
-  /** Built-in template source ID when creating a concrete step from a template. */
-  templateId?: string;
-  name: string;
-  description: string;
-  /** Execution mode — defaults to "prompt" if not specified */
-  mode?: WorkflowStepMode;
-  /** Lifecycle phase — defaults to "pre-merge" if not specified */
-  phase?: WorkflowStepPhase;
-  /** Gate behavior — defaults by mode (prompt: advisory, script: gate) when omitted. */
-  gateMode?: WorkflowStepGateMode;
-  /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
-  prompt?: string;
-  /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
-  toolMode?: WorkflowStepToolMode;
-  /** Name of a skill to load into this step's session (e.g.
-   *  "compound-engineering:ce-work"). See `WorkflowStep.skillName`. */
-  skillName?: string;
-  /** Script name from project settings (required when mode is "script").
-   *  Must reference a named script in `settings.scripts` — no raw commands. */
-  scriptName?: string;
-  /** Defaults to true if not specified */
-  enabled?: boolean;
-  /** When true, this step is automatically pre-selected when creating new tasks.
-   *  Users can still deselect — this only controls the initial default state. */
-  defaultOn?: boolean;
-  /** AI model provider override. Must be set together with modelId. Only used when mode is "prompt". */
-  modelProvider?: string;
-  /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
-  modelId?: string;
-  /** Optional per-node reasoning-effort override; inherits from task/settings when omitted. */
-  thinkingLevel?: ThinkingLevel;
-  /** (workflow-editor-consolidation U2, KTD-3) fragment id stamped when this step
-   *  was migrated into a fragment WorkflowDefinition. Set by the migration only. */
-  migratedFragmentId?: string;
-}
-
-/** Result of a workflow step execution on a task. */
-export interface WorkflowStepResult {
-  /** ID of the workflow step that ran (e.g., "WS-001") */
-  workflowStepId: string;
-  /** Name of the workflow step at execution time */
-  workflowStepName: string;
-  /** Lifecycle phase at execution time */
-  phase?: WorkflowStepPhase;
-  /** Runtime source for distinguishing graph-authored node progress from optional-toggle checks. */
-  source?: "optional-group" | "node";
-  /** Execution status */
-  status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
-  /** Output from the workflow step agent (findings, errors, etc.) */
-  output?: string;
-  /**
-   * Machine-readable verdict from prompt-mode structured output.
-   * Absent for script-mode steps and legacy prose-only prompt outputs.
-   */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  /**
-   * Optional notes from prompt-mode structured output.
-   * Absent for script-mode steps and legacy prose-only prompt outputs.
-   */
-  notes?: string;
-  /** ISO-8601 timestamp when the step started */
-  startedAt?: string;
-  /** ISO-8601 timestamp when the step completed */
-  completedAt?: string;
-  /*
-   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
-   * A privileged operator can bypass a `status:"failed"` pre-merge review step
-   * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`
-   * no-verdict dispatch defect) so a card stranded solely by that failure can
-   * advance to merge (FN-7720). The bypass REWRITES this result's `status` to a
-   * terminal, non-blocking value (`"skipped"`) and stamps the fields below as an
-   * explicit audit trail — it never fabricates a reviewer `verdict`. Only the
-   * `getTaskMergeBlocker` "task has failed pre-merge workflow steps" reason is
-   * cleared; every other merge-blocker condition (paused, incomplete steps,
-   * blocking task status, still-`pending` pre-merge steps) is untouched.
-   */
-  /** Operator identity that performed the bypass, if this result was bypassed. */
-  bypassedBy?: string;
-  /** ISO-8601 timestamp when the bypass was applied. */
-  bypassedAt?: string;
-  /** Mandatory operator-supplied justification for the bypass. */
-  bypassReason?: string;
-  /** The `status` this result carried immediately before the bypass rewrote it (always `"failed"` for the supported bypass path). */
-  bypassedFromStatus?: WorkflowStepResult["status"];
-  /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
-  bypassedFromVerdict?: WorkflowStepResult["verdict"];
-  /*
-   * FNXC:WorkflowStepResults 2026-07-09-00:10:
-   * FN-7727: self-healing recovery re-runs a failed pre-merge review node
-   * (`code-review`, `code-review-remediation`, `plan-review`,
-   * `browser-verification`) in place, and the recorder upsert previously
-   * REPLACED the prior `status:"failed"` entry — erasing its captured
-   * `output`/`notes`/`verdict`/timestamps forever (the diagnostic trail
-   * FN-7642 worked to capture, and the history FN-7720's bypass affordance
-   * needs to show). `priorAttempts` preserves a BOUNDED, single-level history
-   * of prior terminal-failure (`failed`/`advisory_failure`) attempts on the
-   * surviving entry — snapshots never carry their own nested `priorAttempts`,
-   * so history cannot grow unbounded. This field is READ-ONLY history: it
-   * never participates in merge-blocking (`getTaskMergeBlocker`), self-healing
-   * recovery selection (`latestFailedPreMergeStep`), or progress/timing
-   * computation — only the current (this) entry's fields do. Written by the
-   * shared `upsertWorkflowStepResult` helper (`workflow-step-results.ts`).
-   */
-  /** Bounded, single-level history of prior terminal-failure attempts this entry replaced. Read-only; never affects merge-blocking or recovery selection. */
-  priorAttempts?: WorkflowStepResult[];
-}
-
-/**
- * Lifecycle status of one persisted step instance (step-inversion U4, KTD-6).
- * - `pending` — expanded but not yet started.
- * - `in-progress` — actively executing inside its foreach sub-walk.
- * - `awaiting-integration` — work complete on a parallel-mode branch, waiting
- *   for the ordered integration stage (KTD-11; unused at concurrency 1).
- * - `completed` — terminal success (integrated in parallel mode).
- * - `failed` — terminal failure.
- */
-export type WorkflowRunStepInstanceStatus =
-  | "pending"
-  | "in-progress"
-  | "awaiting-integration"
-  | "completed"
-  | "failed";
-
-/**
- * Persisted run-state for one expanded step instance inside a foreach region
- * (step-inversion U4, KTD-6). One row per `(taskId, runId, foreachNodeId,
- * stepIndex)`; mirrors the `workflow_run_branches` posture. Resume reconstructs
- * the instance set from `pinnedStepCount` + per-instance `currentNodeId` /
- * `reworkCount`. `baselineSha` / `checkpointId` are the RETHINK reset anchors
- * (previously in-memory, lost on restart). `branchName` / `integratedAt` and the
- * `awaiting-integration` status serve parallel mode (KTD-11); null/unused at
- * concurrency 1. This is the core row shape; the engine-side instance model is
- * separate and engine-owned.
- */
-export interface WorkflowRunStepInstance {
-  taskId: string;
-  runId: string;
-  /** Node id of the foreach region that expanded this instance. */
-  foreachNodeId: string;
-  /** Zero-based index of the step this instance runs. */
-  stepIndex: number;
-  /** Step count pinned at expansion; resume fails on mismatch with live steps[]. */
-  pinnedStepCount: number;
-  /** Current sub-walk node id for the in-flight instance; null when not started. */
-  currentNodeId?: string | null;
-  status: WorkflowRunStepInstanceStatus;
-  /** Git sha the RETHINK reset rewinds to; null when no baseline captured. */
-  baselineSha?: string | null;
-  /** Session checkpoint to rewind to on RETHINK; null when none captured. */
-  checkpointId?: string | null;
-  /** Number of rework cycles consumed against the rework budget. */
-  reworkCount: number;
-  /** Per-instance branch name in worktree-isolation mode (KTD-11); null otherwise. */
-  branchName?: string | null;
-  /** ISO-8601 timestamp the instance branch was integrated (KTD-11); null otherwise. */
-  integratedAt?: string | null;
-  /** ISO-8601 timestamp of the last write to this row. */
-  updatedAt: string;
-}
-
-/*
-FNXC:WorkflowStepTemplate 2026-06-25-00:00:
-U6 deleted the built-in step-template catalog array (the former value export). The
-`WorkflowStepTemplate` SHAPE is KEPT because plugin-contributed step templates still use
-it (they feed the
-workflow-editor optional-group palette via `getPluginWorkflowStepTemplates`). It is no
-longer backed by any built-in catalog: the former built-in `browser-verification` /
-`code-review` literals now live inlined in their optional-group node builders
-(`builtin-browser-verification-group.ts` / `builtin-code-review-group.ts`).
-*/
-/** A workflow step template shape used by plugin-contributed steps (palette entries). */
-export interface WorkflowStepTemplate {
-  /** Unique template identifier (e.g., "documentation-review") */
-  id: string;
-  /** Display name (e.g., "Documentation Review") */
-  name: string;
-  /** Short description for UI */
-  description: string;
-  /** Full agent prompt template */
-  prompt: string;
-  /** Execution mode for plugin-contributed templates; defaults to prompt. */
-  mode?: WorkflowStepMode;
-  /** Task lifecycle phase for plugin-contributed templates; defaults to pre-merge. */
-  phase?: "pre-merge" | "post-merge";
-  /** Script name for script-mode plugin templates. */
-  scriptName?: string;
-  /** Tool set available when the template runs as a prompt-mode step. */
-  toolMode?: WorkflowStepToolMode;
-  /** Failure behavior for materialized steps from this template. */
-  gateMode?: WorkflowStepGateMode;
-  /** Whether this template should be auto-selected for new tasks. */
-  defaultOn?: boolean;
-  /** AI model provider override for prompt-mode templates. */
-  modelProvider?: string;
-  /** AI model ID override for prompt-mode templates. */
-  modelId?: string;
-  /** Optional per-node reasoning-effort override for prompt-mode templates. */
-  thinkingLevel?: ThinkingLevel;
-  /** Grouping category (e.g., "Quality", "Security") */
-  category: string;
-  /** Optional icon identifier for UI (e.g., "file-text", "shield") */
-  icon?: string;
-  /** Optional default enabled state for plugin-provided templates. */
-  enabled?: boolean;
-}
-
-export type PrConflictState = "clean" | "conflicting" | "behind" | "blocked" | "unknown";
-
-export interface PrConflictDiagnostics {
-  conflictingFiles: string[];
-  suggestedCommands: string[];
-  capturedAt: string;
-}
-
-export interface PrInfo {
-  url: string;
-  number: number;
-  status: PrStatus;
-  title: string;
-  headBranch: string;
-  baseBranch: string;
-  commentCount: number;
-  isDraft?: boolean;
-  draft?: boolean;
-  /**
-   * FNXC:PrAutoMergeGate 2026-06-28-00:33:
-   * FN-7182: `true` means this PR was created or linked by the dashboard Create PR action as an explicit human handoff.
-   * Pipeline PR-merge-strategy PRs leave this unset so automatic PR-mode merging keeps working. PrInfo is persisted as JSON, so this provenance flag needs no SQLite migration.
-   */
-  manual?: boolean;
-  autoMergeOnGreen?: boolean;
-  autoMergeStrategy?: "merge" | "squash" | "rebase";
-  lastMergeError?: string;
-  lastMergeErrorAt?: string;
-  checkRollup?: "success" | "failure" | "pending" | "none";
-  mergeable?: PrConflictState;
-  conflictDiagnostics?: PrConflictDiagnostics;
-  lastCommentAt?: string;
-  lastCheckedAt?: string;
-  lastReviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-}
-
-export type IssueState = "open" | "closed";
-
-export interface IssueInfo {
-  url: string;
-  number: number;
-  state: IssueState;
-  title: string;
-  stateReason?: "completed" | "not_planned" | "reopened";
-  lastCheckedAt?: string;
-}
-
-export interface TaskGithubTrackedIssue {
-  owner: string;
-  repo: string;
-  number: number;
-  url: string;
-  nodeId?: string;
-  createdAt: string;
-  lastSyncedAt?: string;
-}
-
-export type GithubIssueAction = "close" | "delete" | "leave" | "auto";
-
-export type GitLabTrackedItemKind = "project_issue" | "group_issue" | "merge_request";
-
-/*
-FNXC:GitLabTracking 2026-07-02-00:00:
-GitLab tracking is a first-class task contract instead of overloading GitHub tracking because GitLab items can come from GitLab.com or self-managed instances and may be project issues, group issues, or merge requests. Store only public metadata and stale/link timestamps; never persist GitLab tokens here.
-*/
-export interface TaskGitLabTrackedItem {
-  /** GitLab work item kind imported or linked to this task. */
-  kind: GitLabTrackedItemKind;
-  /** Canonical browser URL for GitLab.com or a self-managed GitLab instance. */
-  url: string;
-  /** GitLab web instance/base URL, for example https://gitlab.com or a self-managed host. */
-  instanceUrl: string;
-  /** Parsed host for compact display/dedup diagnostics. */
-  host: string;
-  /** GitLab IID visible inside a project or group namespace. */
-  iid: number;
-  /** Optional global GitLab database id when import APIs supplied it. */
-  id?: number;
-  /** Project numeric id when the item belongs to a concrete project. */
-  projectId?: number;
-  /** Project path with namespace, when available from import or URL parsing. */
-  projectPath?: string;
-  /** Group id/path for group-issue searches where GitLab returns a group-scoped source. */
-  groupId?: number | string;
-  groupPath?: string;
-  /** Optional display title and live state snapshot; these are staleable metadata, not auth state. */
-  title?: string;
-  state?: string;
-  createdAt: string;
-  linkedAt?: string;
-  lastSyncedAt?: string;
-  staleAt?: string;
-  staleReason?: string;
-}
-
-export interface TaskGitLabTracking {
-  /** Per-task linked GitLab metadata. Separate from GitHub tracking because GitLab supports GitLab.com plus self-managed project/group/MR URLs without GitHub issue semantics. */
-  item?: TaskGitLabTrackedItem;
-  /** ISO-8601 of the most recent manual unlink, retained for audit. */
-  unlinkedAt?: string;
-}
-
-export interface TaskGithubTracking {
-  /** Per-task enabled override. When undefined, project/global default applies. */
-  enabled?: boolean;
-  /** "owner/repo" override; when undefined, project/global default repo applies. */
-  repoOverride?: string;
-  /** Linked GitHub issue. Set after issue creation succeeds. Cleared via unlinkGithubIssue(). */
-  issue?: TaskGithubTrackedIssue;
-  /** ISO-8601 of the most recent manual unlink, retained for audit. */
-  unlinkedAt?: string;
-}
-
-/**
- * Durable provenance metadata for tasks imported from external issue trackers.
- *
- * Distinct from {@link IssueInfo}, which captures live issue status snapshots.
- * This contract stores source identity so the originating issue can be
- * re-associated even when live status is unavailable.
- */
-export interface TaskSourceIssue {
-  /** Issue provider key (for example: "github", "gitlab", "jira"). */
-  provider: string;
-  /** Repository/project identifier in provider-specific canonical form. */
-  repository: string;
-  /** Stable provider-specific external issue identifier (string to support non-numeric IDs). */
-  externalIssueId: string;
-  /** Human-visible issue number in the source tracker. */
-  issueNumber: number;
-  /** Optional canonical URL to the source issue. */
-  url?: string;
-  /**
-   * FNXC:GithubSourceIssueAnalytics 2026-06-18-17:56:
-   * Command Center "Fixed by Fusion" analytics need the real source-issue closure time when Fusion closed or observed the issue, replacing the prior `updatedAt` completion approximation when exact data is available.
-   * ISO-8601 timestamp for when the source issue was closed; absent when the issue has never been observed closed.
-   */
-  closedAt?: string;
-}
+import type {
+  PrConflictState,
+  PrConflictDiagnostics,
+  PrInfo,
+  IssueState,
+  IssueInfo,
+  TaskGithubTrackedIssue,
+  GithubIssueAction,
+  GitLabTrackedItemKind,
+  TaskGitLabTrackedItem,
+  TaskGitLabTracking,
+  TaskGithubTracking,
+  TaskSourceIssue,
+} from "./types/task-tracking.js";
+export type {
+  PrConflictState,
+  PrConflictDiagnostics,
+  PrInfo,
+  IssueState,
+  IssueInfo,
+  TaskGithubTrackedIssue,
+  GithubIssueAction,
+  GitLabTrackedItemKind,
+  TaskGitLabTrackedItem,
+  TaskGitLabTracking,
+  TaskGithubTracking,
+  TaskSourceIssue,
+};
 
 export interface BatchStatusRequest {
   taskIds: string[];
@@ -1275,8 +414,15 @@ export interface ActivityLogEntry {
 /** The set of agent roles that produce log entries. */
 export type AgentRole = "triage" | "executor" | "reviewer" | "merger";
 
-/** The discriminator for agent log entry types. */
-export type AgentLogType = "text" | "tool" | "thinking" | "tool_result" | "tool_error";
+/*
+FNXC:AgentLog-EntryTypes 2026-07-15-11:20:
+`text` means a STREAMED DELTA FRAGMENT: renderers re-glue consecutive `text` rows with `join("")` and no separator, because that is the only way to reconstitute a streamed message (the FN-5787/5789/5803 streamed-spacing lineage). `AgentLogger` is the only producer of true deltas.
+
+`status` means a COMPLETE, SELF-CONTAINED engine message (e.g. "Reviewer using model: x/y", "Deterministic merge verification passed") written directly by an engine lane rather than streamed from a model. It exists because engine lanes previously wrote these as `text`, so N consecutive standalone messages were glued edge-to-edge into one run-on string under an accurate-but-misleading "N entries" header.
+
+Never emit `status` for model-streamed output, and never emit `text` for a whole standalone message. Renderers must render each `status` row as its own block and must never `join("")` them. Rows written before this type existed persist as `text`, so read paths that resolve engine markers out of the log must accept BOTH types (see dashboard effective-model-resolution.ts).
+*/
+export type AgentLogType = "text" | "status" | "tool" | "thinking" | "tool_result" | "tool_error";
 
 /** A single chunk of agent output persisted to disk (JSONL in agent.log). */
 export interface AgentLogEntry {
@@ -1284,12 +430,18 @@ export interface AgentLogEntry {
   timestamp: string;
   /** The task this log entry belongs to. */
   taskId: string;
-  /** The text content (delta for "text"/"thinking", tool name for "tool"/"tool_result"/"tool_error"). */
+  /** The text content (delta for "text"/"thinking", complete message for "status", tool name for "tool"/"tool_result"/"tool_error"). */
   text: string;
-  /** The kind of entry — text delta, tool invocation marker, thinking block, tool result, or tool error. */
+  /** The kind of entry — streamed text delta, standalone engine status message, tool invocation marker, thinking block, tool result, or tool error. */
   type: AgentLogType;
-  /** For tool entries: human-readable summary of tool args (e.g. file path, command).
-   *  For tool_result/tool_error: summary of the result or error message. */
+  /**
+   * For `tool`: human-readable argument summary (for example a file path or command).
+   * `tool` and successful `tool_result` detail are persisted only when `persistAgentToolOutput` is enabled;
+   * failed `tool_error` detail is always persisted as bounded diagnostic signal.
+   *
+   * FNXC:AgentLogging 2026-07-15-16:05: FN-7995 requires failed tool-call errors to remain available
+   * to task transcript renderers even when verbose successful tool output is disabled.
+   */
   detail?: string;
   /** Which agent produced this entry. Absent in logs written before this field was added. */
   agent?: AgentRole;
@@ -1645,6 +797,129 @@ export interface ArtifactWithTask extends Artifact {
   taskColumn?: string;
 }
 
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Remote-desktop producers can register a document descriptor through the existing
+artifact registry by assigning this MIME type. The descriptor remains a document
+in the gallery, avoiding a raw external-session link while still making the
+review deliverable visible on both review surfaces.
+*/
+export const LIVE_DEMO_ARTIFACT_MIME_TYPE = "application/vnd.runfusion.live-demo+json";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Review surfaces admit feature videos and explicitly marked live-demo descriptors.
+Ordinary documents remain excluded; the marker uses the existing persisted
+mimeType field because agent artifact registration already forwards it without
+requiring a parallel schema or metadata-registration path.
+*/
+export function isReviewArtifact(artifact: Pick<Artifact, "type" | "mimeType">): boolean {
+  return artifact.type === "video"
+    || (artifact.type === "document" && artifact.mimeType?.toLowerCase().split(";", 1)[0] === LIVE_DEMO_ARTIFACT_MIME_TYPE);
+}
+
+/** Reads the persisted PROMPT.md override without adding task-store persistence. */
+export function parseReviewArtifactsModeOverride(prompt: string | undefined): ReviewArtifactsMode | undefined {
+  if (!prompt) return undefined;
+  const match = prompt.match(/^\*\*Review Artifacts:\*\*\s*(off|user-facing|on)\s*$/im);
+  return match?.[1]?.toLowerCase() as ReviewArtifactsMode | undefined;
+}
+
+/** Resolves review-artifact generation policy: PROMPT header → project setting → conservative default. */
+export function resolveReviewArtifactsMode(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+): ReviewArtifactsMode {
+  return parseReviewArtifactsModeOverride(prompt) ?? settings.reviewArtifacts ?? "off";
+}
+
+export type ReviewArtifactTaskClassification = "user-facing" | "backend" | "trivial";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-13:00:
+The `user-facing` policy must be a real generation gate, not a label that
+producers reinterpret. Triage may declare a task classification in PROMPT.md;
+otherwise a task with the standard frontend UX contract is user-facing and all
+other work conservatively remains backend. This keeps trivial/backend work from
+silently producing review media while allowing `on` or the existing mode header
+to explicitly opt in.
+*/
+export function classifyReviewArtifactTask(prompt: string | undefined): ReviewArtifactTaskClassification {
+  const explicit = prompt?.match(/^\*\*Review Artifact Task Type:\*\*\s*(user-facing|backend|trivial)\s*$/im)?.[1]?.toLowerCase();
+  if (explicit === "user-facing" || explicit === "backend" || explicit === "trivial") return explicit;
+  if (/^##\s+Frontend UX Criteria\s*$/im.test(prompt ?? "")) return "user-facing";
+  return "backend";
+}
+
+/**
+ * Determines whether an automatic review-artifact producer may generate media
+ * for a task. A mode marker still wins policy resolution; task classification
+ * controls the `user-facing` mode only.
+ */
+export function isReviewArtifactGenerationEligible(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+  classification = classifyReviewArtifactTask(prompt),
+): boolean {
+  const mode = resolveReviewArtifactsMode(settings, prompt);
+  return mode === "on" || (mode === "user-facing" && classification === "user-facing");
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Chat and mail share this compact reference contract so their consumers never invent
+ * incompatible structure identifiers. `roadmap-item` remains a deferred future kind until
+ * its plugin exposes a PostgreSQL-safe read adapter and a restored dashboard destination.
+ */
+export interface NativeStructureRef {
+  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal";
+  id: string;
+  projectId?: string;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Dashboard destinations are callback/view-state based rather than HTML routes. Consumers use
+ * this stable descriptor with their navigation callback; it is intentionally not a URL.
+ */
+export interface NativeStructureOpenTarget {
+  view: "missions" | "insights" | "evals" | "goals";
+  id: string;
+  missionId?: string;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A previewable native structure projected by the dashboard read layer.
+ */
+export interface NativeStructurePreviewPayload {
+  available: true;
+  kind: NativeStructureRef["kind"];
+  kindLabel: string;
+  title: string;
+  excerpt: string;
+  openTarget: NativeStructureOpenTarget;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A native structure whose existing lifecycle state makes it unavailable for preview.
+ */
+export interface NativeStructureUnavailablePayload {
+  available: false;
+  kind: NativeStructureRef["kind"];
+  id: string;
+  reason: "missing" | "soft-deleted";
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Unavailability is a typed result so shared consumers show a safe placeholder instead of
+ * crashing. Eval results have no archive lifecycle and therefore only return `missing`.
+ */
+export type NativeStructurePreviewResult = NativeStructurePreviewPayload | NativeStructureUnavailablePayload;
+
 /**
  * Goal-citation Slice 2 success-signal surfaces where goal IDs are extracted.
  */
@@ -1877,7 +1152,7 @@ export interface CentralClaimStore {
     runId: string | null;
     renewedAt: string;
     expectedEpoch?: number | null;
-  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow };
+  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow } | Promise<{ ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow }>;
   renewTaskClaim(input: {
     projectId: string;
     taskId: string;
@@ -1886,14 +1161,14 @@ export interface CentralClaimStore {
     runId: string | null;
     renewedAt: string;
     expectedEpoch: number;
-  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null };
+  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null } | Promise<{ ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null }>;
   releaseTaskClaim(input: {
     projectId: string;
     taskId: string;
     nodeId: string;
     agentId: string;
-  }): { ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null };
-  getTaskClaim(projectId: string, taskId: string): TaskClaimRow | null;
+  }): { ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null } | Promise<{ ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null }>;
+  getTaskClaim(projectId: string, taskId: string): TaskClaimRow | null | Promise<TaskClaimRow | null>;
 }
 
 /**
@@ -1963,9 +1238,9 @@ export interface TaskTokenUsage {
 }
 
 export interface TaskTokenBudget {
-  /** Total-token soft cap. When reached, emits one notification and continues. */
+  /** Input, output, and cache-write token soft cap (cache reads excluded). When reached, emits one notification and continues. */
   soft?: number;
-  /** Total-token hard cap. When reached, pauses the task with pausedReason="token_budget_exceeded". */
+  /** Input, output, and cache-write token hard cap (cache reads excluded). When reached, pauses the task with pausedReason="token_budget_exceeded". */
   hard?: number;
   /** Optional per-size overrides keyed by Task.size (S/M/L). Falls back to soft/hard when absent. */
   perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } };
@@ -2205,10 +1480,47 @@ export interface PrThreadState {
   updatedAt: number;
 }
 
+/**
+ * FNXC:Lifecycle 2026-07-16-09:40:
+ * FN-8141 cross-stage overseer memory. FN-8141 was laundered into `done`
+ * because the planner overseer is stage-scoped and memoryless: it emitted
+ * `stage=executor signal=failed` (parked failed with work incomplete) twice,
+ * then an hour later saw `stage=merger signal=progressing` and let an empty
+ * no-op merge finalize the task `done` — nothing connected the failed executor
+ * verdict to the merger's finalize decision.
+ *
+ * This is the derived (NOT persisted-as-a-column) most-recent executor-stage
+ * overseer signal, reconstructed on demand from the durable
+ * `overseer:intervention` timeline the overseer already writes (see
+ * `deriveExecutorSignalMemory` in the engine). It is the evidence the
+ * merger-layer no-op-finalize veto (`evaluateNoOpFinalizeExecutorVeto`) reads
+ * to refuse completing a zero-diff task whose executor never finished green.
+ * Since the executor stage only exists while a task is `in-progress`, a later
+ * green re-execution appends a non-`failed` executor observation that becomes
+ * the newest entry (clearing `incompleteWork`) — this is how "no subsequent
+ * execution completed green" is derived: the memory always reflects the LATEST
+ * executor observation.
+ */
+export interface ExecutorOverseerSignalMemory {
+  /** The most recent executor-stage `OverseerObservationSignal` (bare string to avoid pulling the engine stage taxonomy into core). */
+  signal: string;
+  /**
+   * True iff `signal` is the failed-with-incomplete-work executor shape
+   * (the overseer's `signal: "failed"` executor observation — "Executor stage
+   * parked failed with work incomplete"). A later `progressing`/`complete`/etc.
+   * executor observation supersedes it, deriving `false`.
+   */
+  incompleteWork: boolean;
+  /** epoch-ms (or intervention-entry timestamp) of the observation that produced this memory. */
+  observedAt: number;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
   lineageId?: string;
+  /** Stable task-proposal idempotency key; unique per project when present. */
+  proposalClaimId?: string;
   title?: string;
   description: string;
   /**
@@ -2258,6 +1570,12 @@ export interface Task {
    */
   customFields?: Record<string, unknown>;
   status?: string;
+  /**
+   * FNXC:TaskActivity 2026-07-28-12:00:
+   * Dashboard-only signal from a fresh planner agent-log SSE entry. It is never
+   * persisted or sent to the server; authoritative task updates clear it.
+   */
+  recentAgentActivityAt?: string;
   /** ID of the in-progress task whose file scope overlaps with this task,
    *  causing the scheduler to defer it. Set when the scheduler queues
    *  the task due to file-scope overlap; cleared (set to `undefined`)
@@ -2433,6 +1751,13 @@ export interface Task {
    *  Must be set together with `planningModelProvider`. When both planning model
    *  fields are undefined, the triage agent uses global settings defaults. */
   planningModelId?: string;
+  /**
+   * FNXC:Settings-MergerModel 2026-07-16-12:00:
+   * Per-task merger overrides take precedence over the project/global merger lane only when both fields are set; merger sessions otherwise retain their existing settings-based resolution.
+   */
+  mergerModelProvider?: string;
+  /** Must be set together with `mergerModelProvider`. */
+  mergerModelId?: string;
   /** IDs of workflow steps enabled for this task, run after implementation completes */
   enabledWorkflowSteps?: string[];
   /** Results from workflow step executions (populated after task implementation) */
@@ -2465,6 +1790,20 @@ export interface Task {
    *  and by successful forward progress; capped by the executor before terminal
    *  `status:"failed"` is recorded to preserve the FN-5704 anti-loop exemption. */
   graphResumeRetryCount?: number | null;
+  /**
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+   * FN-7996 persists the bounded same-model retry budget for consecutive terminal tool errors. The executor atomically claims it per run cursor so concurrent failures cannot exceed the configured cap.
+   */
+  consecutiveToolFailureRetryCount?: number | null;
+  /**
+   * FNXC:ExecutorEscalation 2026-07-16-21:00:
+   * Records consumption of the one opt-in alternate model/node attempt after FN-7996 exhausts same-model retries. Reset with the retry window so unrelated failure surfaces receive their own bounded escalation.
+   */
+  executorEscalationAttempted?: boolean | null;
+  /** Agent-log boundary captured at executor-run start; only later terminal outcomes qualify. */
+  toolFailureDetectorLogCursor?: number | null;
+  /** Durable compare-and-set marker which permits one exhaustion audit per retry window. */
+  toolFailureRetryExhaustedAuditEmitted?: boolean | null;
   /** Branch tip SHA snapshot captured at the last reclaim/unpause attempt used
    *  by resume-limbo detection to determine whether commits advanced. */
   resumeLimboTipSha?: string;
@@ -2502,6 +1841,17 @@ export interface Task {
    *  failures. Capped by `MAX_TASK_DONE_RETRIES`; when exhausted the task stays
    *  in `in-review` for human inspection. Cleared on successful completion. */
   taskDoneRetryCount?: number;
+  /**
+   * FNXC:Lifecycle 2026-07-16-21:40:
+   * ISO-8601 timestamp stamped when the executor's `bulk-step-completion-without-review`
+   * refusal fires for this task's current execution lifecycle (FN-8141). While set, any
+   * step in `skipped` state is "tainted": it must not count toward AUTOMATIC promotion
+   * (executor completion-finalize, self-healing stuck-in-progress / stranded-todo recovery,
+   * graph merge boundary) — see `evaluateSkipBypassTaint`. Cleared on an honest exit: an
+   * ACCEPTED fn_task_done (explicit or non-tainted implicit) or an operator manual retry.
+   * Null/undefined means no active taint.
+   */
+  bulkCompletionRefusalAt?: string;
   /** Number of times self-healing auto-requeued an `in-review` task that failed
    *  at session start with an unusable-worktree error. Bounded by
    *  `MAX_WORKTREE_SESSION_RETRIES`; when exhausted the task remains parked in
@@ -2566,9 +1916,16 @@ export interface Task {
    * ordinary tasks in "awaiting-approval" with no in-band exit). No code writes
    * "release-authorization" anymore; releases are kept out of Fusion by agent instruction
    * (AGENTS.md → "Releasing"), not an engine gate. The field is retained only so existing
-   * task rows persisted with the legacy value still deserialize; the dashboard now treats
-   * any such hold as an ordinary manual plan-approval hold (Approve/Reject Plan render
-   * normally). Undefined means either no hold or a manual-approval hold.
+   * task rows persisted with the legacy value still deserialize; the dashboard treats
+   * that legacy value as an ordinary manual plan-approval hold (Approve/Reject Plan render
+   * normally).
+
+   * FNXC:PlanReviewReplan 2026-07-15-11:09:
+   * Live writer: triage Plan Review REVISE replan-cap escalation stamps
+   * `plan-review-replan-cap` when automatic REVISE replans hit PLAN_REVIEW_GATE_REPLAN_CAP.
+   * Dashboard badge/detail banner/notifications must surface that reason so operators know
+   * approval is required because Plan Review did not converge — not a generic require-all gate.
+   * Undefined means either no hold or a routine manual plan-approval hold.
    */
   awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap";
   /*
@@ -2592,6 +1949,8 @@ export interface Task {
    */
   validatorThinkingLevel?: ThinkingLevel;
   planningThinkingLevel?: ThinkingLevel;
+  /** Independent per-task merger reasoning-effort override; unset inherits merger settings. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** Execution mode for task implementation.
    *  - "standard": Full execution with complete review workflow (default)
    *  - "fast": Expedited execution with minimal overhead for simple tasks
@@ -2602,6 +1961,14 @@ export interface Task {
    *  "inherit workflow default" — see `resolveEffectivePlannerOversightLevel` in
    *  workflow-settings-resolver.ts for precedence. */
   plannerOversightLevel?: PlannerOversightLevel;
+  /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * Per-task override for the session advisor (LLM overseer agent). `true`/`false` force
+   * on/off for this task; unset inherits `sessionAdvisorEnabledByDefault` from project
+   * settings (then workflow `plannerOverseerAdvisorEnabled` for backward compat).
+   * See `resolveTaskSessionAdvisorEnabled` in session-advisor.ts.
+   */
+  sessionAdvisorEnabled?: boolean;
   /**
    * FNXC:PlannerOversight 2026-07-04-00:00:
    * FN-7531 transient, engine-populated snapshot of the planner overseer's
@@ -2765,6 +2132,36 @@ export type RetrySummary = {
   total: number;
 };
 
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+Chat may request only a server-resolved verification profile. The persisted record
+keeps executor-owned subprocess results observable without exposing raw commands.
+*/
+export type TaskVerificationStatus = "requested" | "running" | "passed" | "failed" | "rejected";
+export type TaskVerificationProfile = "verify:fast" | "test-command";
+export interface TaskVerificationResultSummary {
+  success: boolean;
+  exitCode: number | null;
+  durationMs: number;
+  timedOut: boolean;
+  stdoutTail: string;
+  stderrTail: string;
+}
+export interface TaskVerificationRequest {
+  taskId: string;
+  requestId: string;
+  status: TaskVerificationStatus;
+  profile: TaskVerificationProfile;
+  command: string;
+  scope: "package" | "workspace";
+  requestedBy: string;
+  requestedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  result?: TaskVerificationResultSummary;
+  rejectionReason?: string;
+}
+
 export interface TaskDetail extends Task {
   prompt: string;
   /** Derived aggregate of retry counters (computed on read; never persisted). */
@@ -2782,6 +2179,8 @@ export interface TaskCreateInput {
   title?: string;
   /** Optional lineage override for trusted replication/import paths only. */
   lineageId?: string;
+  /** Stable task-proposal idempotency key; repeated creates return the same task. */
+  proposalClaimId?: string;
   /**
    * Opt-in createTask override for soft-deleted ID reuse.
    * Not persisted to storage.
@@ -2864,6 +2263,9 @@ export interface TaskCreateInput {
    *  Must be set together with `planningModelProvider`. When both planning model
    *  fields are undefined, the triage agent uses global settings defaults. */
   planningModelId?: string;
+  /** Per-task merger override; provider and model id must be supplied together. */
+  mergerModelProvider?: string;
+  mergerModelId?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
   /**
@@ -2872,6 +2274,8 @@ export interface TaskCreateInput {
    */
   validatorThinkingLevel?: ThinkingLevel;
   planningThinkingLevel?: ThinkingLevel;
+  /** Independent per-task merger reasoning-effort override; unset inherits merger settings. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** When true, trigger AI title summarization if description is long and no title provided */
   summarize?: boolean;
   /** Mission ID to link this task to (for mission hierarchy) */
@@ -2903,6 +2307,11 @@ export interface TaskCreateInput {
    *  When set, wins over the workflow's effective `plannerOversightLevel`. Unset means
    *  "inherit workflow default". */
   plannerOversightLevel?: PlannerOversightLevel;
+  /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * Per-task session advisor override at create time. Unset inherits project default.
+   */
+  sessionAdvisorEnabled?: boolean;
 }
 
 // ── Todo List Types ──────────────────────────────────────────────────────
@@ -3183,7 +2592,22 @@ export interface DashboardKeyboardShortcuts {
   newTask?: string;
 }
 
+export interface BackupSettingsMigrationCandidate {
+  source: "global" | "project";
+  projectId?: string;
+  value: unknown;
+}
+
+/** A preserved operator-choice record when legacy project backup values diverge. */
+export interface BackupSettingsMigrationConflict {
+  key: "autoBackupEnabled" | "autoBackupSchedule" | "autoBackupRetention" | "autoBackupDir";
+  candidates: BackupSettingsMigrationCandidate[];
+  recordedAt: string;
+}
+
 export interface GlobalSettings {
+  /** Maximum PostgreSQL server connections for Fusion's embedded database. Applied on the next Fusion restart. */
+  embeddedPostgresMaxConnections?: number;
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
   /** Color theme preference for accent colors and styling. Default: "shadcn-ember"; "default" and "ocean" remain valid explicit legacy selections. */
@@ -3192,6 +2616,18 @@ export interface GlobalSettings {
   shadcnCustomColors?: Record<string, string>;
   /** Dashboard font size scale percentage. Bounded to 85-125. Default: 100. */
   dashboardFontScalePct?: number;
+  /** When true, automatic database backups for the shared PostgreSQL cluster are enabled. Default: false. */
+  autoBackupEnabled?: boolean;
+  /** Cron expression for the shared database backup schedule. Default: "0 2 * * *". */
+  autoBackupSchedule?: string;
+  /** Number of shared database backup files to retain. Default: 7. */
+  autoBackupRetention?: number;
+  /** Directory for shared database backup files, relative to the global Fusion directory. Default: ".fusion/backups". */
+  autoBackupDir?: string;
+  /** Durable candidates requiring an operator choice after project-to-global backup migration. */
+  backupSettingsMigrationConflicts?: BackupSettingsMigrationConflict[];
+  /** When false, fn dashboard and fn serve skip automatic mDNS/DNS-SD LAN discovery. Default: true (FN-8202 opt-out). */
+  localNetworkDiscoveryEnabled?: boolean;
   /**
    * FNXC:DashboardShortcuts 2026-07-04-00:00:
    * Dashboard keyboard shortcuts are global operator preferences because they control browser UI affordances, not project execution policy. Defaults keep Space for Quick Chat and Ctrl+` for Terminal; blank values intentionally disable an action.
@@ -3202,6 +2638,11 @@ export interface GlobalSettings {
    * Modal backdrop dismissal is a global operator preference, not project policy. Default false keeps fixed modal overlays from closing on accidental outside clicks unless the operator opts in.
    */
   dismissModalsOnOutsideClick?: boolean;
+  /**
+   * FNXC:Settings 2026-07-16-05:30:
+   * This global operator preference defaults to false. When enabled, the dashboard skips centralized critical-action confirmations and proceeds with their primary/default choice. It must never be project-scoped so shared projects cannot force destructive actions without a prompt.
+   */
+  skipConfirmationDialogs?: boolean;
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
@@ -3272,6 +2713,12 @@ export interface GlobalSettings {
   /** When true, enables ntfy.sh push notifications for task completion and failures.
    *  Requires ntfyTopic to be set. Default: false. */
   ntfyEnabled?: boolean;
+  /**
+   * FNXC:AgentClarification 2026-07-16-12:00:
+   * Controls proactive planner clarification checkpoints. Disabled sessions re-prompt
+   * for a final summary; enabled sessions hold for input and notify via ntfy/mailbox.
+   */
+  agentClarificationEnabled?: boolean;
   /** ntfy.sh topic name for push notifications. When set along with ntfyEnabled,
    *  notifications are sent to {ntfyBaseUrl}/{topic} (default: https://ntfy.sh/{topic})
    *  when tasks complete or fail. */
@@ -3530,6 +2977,19 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for merger agent sessions.
    *  Must be set together with `mergerGlobalProvider`. */
   mergerGlobalModelId?: string;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Global baseline translate lane. Import auto-translation runs one short readonly call per issue, so operators typically pin a cheap/fast model here rather than inheriting the executor/planner model.
+  */
+  /** Global baseline AI model provider for import auto-translation.
+   *  Must be set together with `importTranslateGlobalModelId`. Falls back to the
+   *  summarization lane, then `defaultProvider`/`defaultModelId`. */
+  importTranslateGlobalProvider?: string;
+  /** Global baseline AI model ID for import auto-translation.
+   *  Must be set together with `importTranslateGlobalProvider`. */
+  importTranslateGlobalModelId?: string;
+  /** Optional global translate-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  importTranslateGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   executionGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
@@ -3593,6 +3053,8 @@ export interface GlobalSettings {
    *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
    *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
+  /** When true, task chat receives engine-authored progress, failure, and rollback updates. Default: false. */
+  proactiveTaskChatEnabled?: boolean;
   /** When true, persist `thinking` log entries from agent reasoning deltas for
    *  permanent (non-ephemeral) agents. Default: false (suppressed). */
   persistAgentThinkingLogPermanent?: boolean;
@@ -3795,6 +3257,9 @@ export type SecretsEnvConfig = SecretsEnvSettings;
  * Runtime state fields (globalPause, enginePaused) also live here because
  * different projects may need independent pause control.
  */
+export type ReportMode = "draft-review" | "auto-file";
+export type ReportActionType = "bug" | "feedback" | "idea" | "help";
+
 export interface ProjectSettings {
   /** Hard stop: when true, all automated agent activity is **immediately**
    *  terminated — active triage, execution, and merge agent sessions are
@@ -3853,6 +3318,26 @@ export interface ProjectSettings {
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
+  /**
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+   * Bounded same-model retry before the executor terminal park. Tool markers are ignored, terminal tool_error counts, tool_result resets; per-run cursor claims prevent concurrent over-retry and count 0 preserves prior behavior. Values are floored and the backoff timer is unref'd. FN-7998 consumes this stable policy shape for escalation.
+   */
+  executorToolFailureRetryCount?: number;
+  executorToolFailureRetryBackoffMs?: number;
+  executorToolFailureThreshold?: number;
+  /**
+   * FNXC:ExecutorEscalation 2026-07-16-21:00:
+   * Opt-in single-shot escalation runs only after FN-7996 exhausts same-model retries. The task model target enters the model-selection hierarchy as an override and the node target enters routing as a task override; default off prevents surprise cost or behavior changes.
+   */
+  executorModelEscalationEnabled?: boolean;
+  executorEscalationProvider?: string;
+  executorEscalationModelId?: string;
+  executorEscalationNodeId?: string;
+  /**
+   * FNXC:VerificationConcurrency 2026-07-15-03:35:
+   * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
+   */
+  maxConcurrentVerifications?: number;
   /** Maximum number of concurrent triage/specification agents. When undefined,
    *  falls back to maxConcurrent. */
   maxTriageConcurrent?: number;
@@ -4067,10 +3552,10 @@ export interface ProjectSettings {
    */
   openMobileTasksInPopup?: boolean;
   /**
-   * When true, open task-detail popups render only on the Board/List view where they were opened. Default: false.
+   * When true, open task-detail popups render only on the view where they were opened. Default: true.
    *
-   * FNXC:TaskPopupViewGating 2026-07-13-00:00:
-   * This project-scoped setting is default-off so currently opened task-detail FloatingWindows remain visible across all main-content views unless operators opt in. When true, open task-detail popups attach to the Board/List view where they were opened; popup state is preserved across view switches and never cleared, so returning to that view restores the same popups and persisted position.
+   * FNXC:TaskPopupViewGating 2026-07-15-15:20:
+   * FN-8016 removed the Board/List restriction so every dashboard view can own task-detail FloatingWindows. This project-scoped setting defaults on; explicit false retains legacy globally shared popups. Scoped popup state is preserved across view switches and returning restores the same persisted position.
    */
   taskPopupsBoardListOnly?: boolean;
   /**
@@ -4088,11 +3573,24 @@ export interface ProjectSettings {
    *  checked out elsewhere. Default: false. */
   executorAllowSiblingBranchRename?: boolean;
   /** Controls how worktree directory names are generated when creating fresh worktrees.
-   *  Only applies when recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
    *  - "random": Human-friendly adjective-noun names (e.g., swift-falcon) — default
-   *  - "task-id": Use the task ID (e.g., fn-042)
+   *  - "task-id": Use the task ID (e.g., fn-042) — ALSO enables task-pinned worktrees (see below)
    *  - "task-title": Use a slugified version of the task title (e.g., fix-login-bug)
-   *  Default: "random". */
+   *  Default: "random".
+   *
+   *  For "random" and "task-title", this only affects the generated name and applies when
+   *  recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
+   *
+   *  FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   *  "task-id" additionally enables the TASK-PINNED invariant: a task lives in exactly one derivable
+   *  directory `<worktreesDir>/<lowercased-task-id>` for its whole lifecycle. Acquisition
+   *  derives→validates→reuses-or-recreates at that same path (never suffixed), and `task.worktree` becomes a
+   *  self-correcting cache. Task pinning and `recycleWorktrees` are MUTUALLY EXCLUSIVE — enabling both is
+   *  rejected at the settings-write boundary (see `assertWorktreeNamingRecycleExclusive`), because pinning
+   *  each task to its own directory is incompatible with the cross-task recycle pool. Pinning therefore only
+   *  applies when `recycleWorktrees` is off; the runtime also degrades a legacy config that carries both back
+   *  to recycling. Worktrunk-managed layouts own their own path derivation, so pinning is bypassed when that
+   *  backend is on. */
   worktreeNaming?: "random" | "task-id" | "task-title";
   /** Project-level worktrunk integration overrides.
    *  Merged with global `worktrunk` field-by-field so partial project values
@@ -4189,6 +3687,17 @@ export interface ProjectSettings {
   executionModelId?: string;
   /** Workflow-declared execution-lane thinking override. Inherits through task/default thinking when unset. */
   executionThinkingLevel?: ThinkingLevel;
+  /*
+   * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+   * FN-8098 lets execution sessions select their own recovery model before the shared
+   * fallback pair, so reviewer, merger, planning, and executor lanes can recover independently.
+   */
+  /** Workflow fallback provider for executor sessions. Must pair with `executionFallbackModelId`; resolves before the shared global fallback pair. */
+  executionFallbackProvider?: string;
+  /** Workflow fallback model ID for executor sessions. Must pair with `executionFallbackProvider`; resolves before the shared global fallback pair. */
+  executionFallbackModelId?: string;
+  /** Workflow executor-fallback thinking override. Inherits shared fallback thinking, then executor primary thinking. */
+  executionFallbackThinkingLevel?: ThinkingLevel;
   /** Workflow-declared planning-lane thinking override. Inherits through task/default thinking when unset. */
   planningThinkingLevel?: ThinkingLevel;
   /** AI model provider for validator/reviewer agent.
@@ -4220,6 +3729,8 @@ export interface ProjectSettings {
    *  - "changelog": require updating an existing changelog file (do not invent a new one)
    *  Default: "off" */
   completionDocumentationMode?: CompletionDocumentationMode;
+  /** Controls whether task review deliverables are generated: off, user-facing, or on. PROMPT.md may override it. */
+  reviewArtifacts?: ReviewArtifactsMode;
   /** Mapping of task sizes to preset IDs used for auto-selection during task creation. */
   defaultPresetBySize?: { S?: string; M?: string; L?: string };
   /** When true, auto-merge will automatically resolve common conflict patterns
@@ -4386,11 +3897,13 @@ export interface ProjectSettings {
    *    to permanent executor agents using the reporting chain heuristic.
    *  Tasks without an eligible permanent executor remain queued. */
   ephemeralAgentsEnabled?: boolean;
-  /**
-   * FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
-   * Gates whether ephemeral/runtime-managed task-worker agents may create new tasks via `fn_task_create`.
-   * Default true preserves the existing behavior where a task-worker can spin off follow-up tasks.
-   * When false, an ephemeral caller's `fn_task_create` is rejected while human/dashboard/CLI callers and permanent agents remain unaffected. */
+  /*
+  FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
+  The three-state policy routes ephemeral-worker follow-ups to allow, operator validation, or deny.
+  The policy has no schema default because resolver fallback must preserve persisted legacy false as deny.
+  */
+  ephemeralAgentTaskCreationPolicy?: EphemeralTaskCreationPolicy;
+  /** @deprecated Legacy compatibility read only; resolve with resolveEphemeralTaskCreationPolicy. */
   ephemeralAgentsCanCreateTasks?: boolean;
   /** Approval policy for agent provisioning tools (fn_agent_create/fn_agent_delete). */
   agentProvisioning?: {
@@ -4612,6 +4125,12 @@ export interface ProjectSettings {
    * `archived`, so the dashboard's yellow "Duplicate" chip with Keep/Archive
    * actions surfaces it for a human decision. Default: false. */
   autoArchiveDuplicateTasksEnabled?: boolean;
+  /**
+   * FNXC:DuplicateIntake 2026-07-16-13:00:
+   * Issue #2225 requires triage marker duplicates to stay visible by default: `prompt`
+   * blocks for Keep/Delete, `keep` replans, and `delete` restores legacy deletion.
+   */
+  triageDuplicateResolution?: "prompt" | "keep" | "delete";
   /** How much agent log content to preserve when a task is moved to cold archive storage.
    *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
    *  - "full": copy the full agent.log into archive.db
@@ -4633,6 +4152,14 @@ export interface ProjectSettings {
    *  Default: false. */
   githubTrackingEnabledByDefault?: boolean;
   /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * When true, new tasks default the session advisor (LLM overseer agent) to enabled.
+   * Individual tasks can override via `sessionAdvisorEnabled`. Default: false (opt-in).
+   * Provider/model still come from workflow settings (`plannerOverseerAdvisorProvider` /
+   * `plannerOverseerAdvisorModelId`).
+   */
+  sessionAdvisorEnabledByDefault?: boolean;
+  /**
    * FNXC:GithubImportTracking 2026-07-01-00:00:
    * This project-scoped switch is intentionally narrower than githubTrackingEnabledByDefault: it only forces imported GitHub issues to become GitHub-tracked tasks so the source issue is adopted, while ordinary new tasks keep their existing default behavior.
    * Default: false.
@@ -4641,6 +4168,19 @@ export interface ProjectSettings {
   /** Project default GitHub tracking repo in `owner/repo` format (FN-3868).
    *  Falls back to global githubTrackingDefaultRepo when unset. */
   githubTrackingDefaultRepo?: string;
+  /**
+   * FNXC:ReportPipeline 2026-07-16-12:00:
+   * In-app reports default to review before egress; operators can opt into
+   * direct filing globally or for one of the four guided report actions.
+   */
+  reportMode?: ReportMode;
+  reportModeByAction?: Partial<Record<ReportActionType, ReportMode>>;
+  /**
+   * FNXC:ReportPipeline 2026-07-18-12:00:
+   * Roadmap deduplication is opt-in because projects without a roadmap must
+   * retain the existing Issues-and-Discussions-only report behavior.
+   */
+  reportRoadmapDedup?: boolean;
   /**
    * FNXC:GitLabConfiguration 2026-07-02-00:00:
    * FN-7422 adds durable GitLab instance/API URL settings for GitLab.com and self-managed hosts. FN-7423 layers token settings onto the same project-over-global configuration contract without adding runtime GitLab imports or tracking.
@@ -4674,14 +4214,6 @@ export interface ProjectSettings {
   /** Personal access token used when githubAuthMode is "token" (FN-3868).
    *  Stored as a plain settings string in this phase. */
   githubAuthToken?: string;
-  /** When true, automatic database backups are enabled. Default: false. */
-  autoBackupEnabled?: boolean;
-  /** Cron expression for backup schedule. Default: "0 2 * * *" (daily at 2 AM). */
-  autoBackupSchedule?: string;
-  /** Number of backup files to retain (oldest deleted when exceeded). Default: 7. */
-  autoBackupRetention?: number;
-  /** Directory for backup files, relative to project root. Default: ".fusion/backups". */
-  autoBackupDir?: string;
   /** When true, scheduled memory backups are enabled. Default: false. */
   memoryBackupEnabled?: boolean;
   /** Cron expression for memory backup schedule. Default: "0 3 * * *" (daily at 3 AM). */
@@ -4701,6 +4233,16 @@ export interface ProjectSettings {
    *  characters will automatically receive an AI-generated title (max 60 chars).
    *  Default: false. */
   autoSummarizeTitles?: boolean;
+  /*
+  FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+  This opt-in localizes only planner-authored task-definition prose for supported detectable
+  locales (en/es/fr/ko/zh-CN). Chinese always resolves to zh-CN because Traditional Chinese
+  is not variant-detected; headings, markers, code, and unsupported input such as Japanese
+  remain canonical English so deterministic PROMPT.md gates keep parsing safely.
+  */
+  /** When true, writes generated task-definition prose in the operator's detected supported
+   *  input language. Default: false; uncertain or unsupported input falls back to English. */
+  taskDefinitionInInputLanguage?: boolean;
   /** When true, merge commit messages include an AI-generated summary of the
    *  changes instead of just listing step commit subjects. Body composition
    *  includes a narrative line, bullet summary, and `git diff --stat` when
@@ -4729,6 +4271,45 @@ export interface ProjectSettings {
   mergerModelId?: string;
   /** Optional project merger-lane thinking override. Inherits through global merger thinking then default thinking when unset. */
   mergerThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:Settings-MergerModel 2026-07-16-00:00:
+  Merger session retries need a project-scoped fallback lane so operators can pin a merge-capable recovery model without changing the shared global fallback. Both provider and model id must be set; partial pairs fall through to the shared global fallback pair.
+  */
+  /** Project fallback AI model provider for merger agent sessions.
+   *  Must be set together with `mergerFallbackModelId`. Resolves before the global
+   *  `fallbackProvider`/`fallbackModelId` pair. */
+  mergerFallbackProvider?: string;
+  /** Project fallback AI model ID for merger agent sessions.
+   *  Must be set together with `mergerFallbackProvider`. */
+  mergerFallbackModelId?: string;
+  /** Optional project merger-fallback thinking override. Falls through to global fallback thinking, then merger thinking. */
+  mergerFallbackThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Import Tasks auto-translation is a dedicated one-off AI helper lane, kept separate from the summarization lane so operators can pin a cheap/fast translation model without dragging title summarization onto it.
+  Both provider and model id must be set together; partial pairs are ignored and fall through to global translate lane, then summarization, then project/global default.
+  */
+  /** Project AI model provider for GitHub/GitLab import auto-translation.
+   *  Must be set together with `importTranslateModelId`. Falls back to
+   *  `importTranslateGlobalProvider`/`importTranslateGlobalModelId`, then the
+   *  summarization lane, then project/global default. */
+  importTranslateProvider?: string;
+  /** Project AI model ID for import auto-translation.
+   *  Must be set together with `importTranslateProvider`. */
+  importTranslateModelId?: string;
+  /** Optional project translate-lane thinking override. Inherits through global translate thinking then default thinking when unset. */
+  importTranslateThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Auto-translation is OFF by default. This reverses the original opt-in-only stance (PR #2128) at operator request: import panels routinely list issues in languages the operator cannot read, so translation may now run automatically — but only when explicitly enabled, so import provenance stays faithful for operators who never opt in.
+  */
+  /** When true, the import panel automatically translates foreign-language issue
+   *  title+body into `importTranslateTargetLocale` and shows the translation by
+   *  default. Default: false (opt-in). */
+  githubImportAutoTranslate?: boolean;
+  /** Target language for import auto-translation. When unset, follows the
+   *  operator's active dashboard locale. */
+  importTranslateTargetLocale?: Locale;
   /** Fallback model provider for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */
@@ -4865,6 +4446,13 @@ export interface ProjectSettings {
   reviewHandoffPolicy?: "disabled" | "comment-triggered" | "always";
   /** Quick Chat launcher placement. "floating" shows the draggable FAB, "footer" shows a footer button, "off" hides both. */
   quickChatButtonMode?: "floating" | "footer" | "off";
+  /*
+   * FNXC:Navigation 2026-07-17-00:00:
+   * Ordered quick-action ids shown before the always-present mobile More tab. Only command-center,
+   * tasks, agents, missions, chat, mailbox, and planning are eligible; unset falls back to the
+   * default order, invalid/overflow-only ids (including more) are ignored, and omitted ids stay in More.
+   */
+  mobileNavPrimaryItems?: string[];
   /**
    * FNXC:ChatModal 2026-06-28-00:00:
    * Outside-click dismissal of Quick Chat is now user-configurable; default true preserves the prior always-on behavior from FN-7152.
@@ -5208,6 +4796,8 @@ export interface ArchivedTaskEntry {
   executionMode?: ExecutionMode;
   /** Per-task override of the workflow-native planner oversight level at time of archival. */
   plannerOversightLevel?: PlannerOversightLevel;
+  /** Per-task session advisor override at time of archival. */
+  sessionAdvisorEnabled?: boolean;
   prInfo?: PrInfo;
   prInfos?: PrInfo[];
   issueInfo?: IssueInfo;
@@ -5262,6 +4852,9 @@ export interface ArchivedTaskEntry {
   /** Optional: planning model override for triage agent */
   planningModelProvider?: string;
   planningModelId?: string;
+  mergerModelProvider?: string;
+  mergerModelId?: string;
+  mergerThinkingLevel?: ThinkingLevel;
   /** Per-task token/cost accounting (input/output/cache) preserved across archival. */
   tokenUsage?: TaskTokenUsage;
   /** Optional: other metadata to preserve */
@@ -5304,18 +4897,6 @@ export interface ArchivedTaskEntry {
 
 /** Type of planning question presented to the user */
 export type PlanningQuestionType = "text" | "single_select" | "multi_select" | "confirm";
-
-/** Exact Planning Mode checkpoint prompt shown before a final summary can be displayed. */
-export const PLANNING_DEEPEN_CHECKPOINT_QUESTION = "Would you like to go deeper?";
-
-/** Reserved question id for the server-owned Planning Mode deepening checkpoint. */
-export const PLANNING_DEEPEN_CHECKPOINT_ID = "__planning_deepen_checkpoint__";
-
-/** Reserved checkbox option id that lets the user accept the pending final summary. */
-export const PLANNING_DEEPEN_PROCEED_OPTION_ID = "__planning_deepen_proceed_to_final__";
-
-/** Reserved response key accepted as an explicit proceed signal for the deepening checkpoint. */
-export const PLANNING_DEEPEN_PROCEED_RESPONSE_KEY = "__planning_deepen_proceed__";
 
 /** Isolation mode for project execution */
 export type IsolationMode = "in-process" | "child-process";
@@ -5559,12 +5140,13 @@ export interface MeshDegradedReadState {
 export interface SharedMeshStatePayload {
   /*
   FNXC:PostgresCutover 2026-07-12:
-  Task/state mesh replication is REMOVED — replication is handled at the
-  PostgreSQL level (nodes share the database). Only the settings-adjacent
-  domains remain on the wire: projectSettings (legacy sqlite settings sync)
-  and authMaterial (per-machine auth.json). Receivers ignore any other
-  domain a legacy peer may still send.
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Task/state mesh replication is REMOVED — shared PostgreSQL is the SoT.
+  projectSettings is deprecated on the wire (ignored by receivers; settings
+  live in the shared DB). authMaterial remains (per-machine auth.json).
+  Receivers ignore any other domain a legacy peer may still send.
   */
+  /** @deprecated Ignored under shared Postgres; kept for wire compatibility with old peers. */
   projectSettings?: SnapshotBase & { payload: { global: GlobalSettings; projects?: Record<string, ProjectSettings> } };
   authMaterial?: SnapshotBase & { payload: { providerAuth?: Record<string, ProviderAuthEntry> } };
 }
@@ -5677,6 +5259,70 @@ export interface SettingsSyncResult {
   error?: string;
 }
 
+
+import type {
+  DockerNodeConfig,
+  DockerNodeVolumeMount,
+  DockerNodeContainerResourceConfig,
+  DockerNodeHostConfig,
+  DockerNodePersistenceConfig,
+  NodeVersionInfo,
+  NodeVersionInfoInput,
+  DockerNodeStatus,
+  DockerHostConfig,
+  DockerResourceSizing,
+  DockerVolumeMount,
+  DockerExtraCli,
+  ManagedDockerNode,
+  ManagedDockerNodeInput,
+  ManagedDockerNodeUpdate,
+  MeshConfigGeneratorInput,
+  FullProvisioningInput,
+  MeshConnectionConfig,
+  DockerContextInfo,
+  DockerConnectivityResult,
+  DockerContainerInspectResult,
+  DockerNodeImageConfig,
+  DockerNodeResourceConfig,
+  DockerProvisionInput,
+  DockerProvisionResult,
+} from "./types/docker-nodes.js";
+export type {
+  DockerNodeConfig,
+  DockerNodeVolumeMount,
+  DockerNodeContainerResourceConfig,
+  DockerNodeHostConfig,
+  DockerNodePersistenceConfig,
+  NodeVersionInfo,
+  NodeVersionInfoInput,
+  DockerNodeStatus,
+  DockerHostConfig,
+  DockerResourceSizing,
+  DockerVolumeMount,
+  DockerExtraCli,
+  ManagedDockerNode,
+  ManagedDockerNodeInput,
+  ManagedDockerNodeUpdate,
+  MeshConfigGeneratorInput,
+  FullProvisioningInput,
+  MeshConnectionConfig,
+  DockerContextInfo,
+  DockerConnectivityResult,
+  DockerContainerInspectResult,
+  DockerNodeImageConfig,
+  DockerNodeResourceConfig,
+  DockerProvisionInput,
+  DockerProvisionResult,
+};
+import {
+  validateDockerNodeConfig,
+  sanitizeDockerNodeConfigForResponse
+} from "./types/docker-nodes.js";
+export {
+  validateDockerNodeConfig,
+  sanitizeDockerNodeConfigForResponse,
+};
+
 /** A runtime node that can host project execution (local machine or remote host) */
 export interface NodeConfig {
   /** Unique node ID (e.g., "node_abc123") */
@@ -5711,355 +5357,8 @@ export interface NodeConfig {
   updatedAt: string;
 }
 
-/** Persisted configuration for a Docker-managed Fusion node. */
-export interface DockerNodeConfig {
-  /** Docker image name (e.g., "runfusion/fusion:latest") */
-  image: string;
-  /** Container name (defaults to "fusion-{nodeId}") */
-  containerName?: string;
-  /** Volume mount definitions */
-  volumeMounts: DockerNodeVolumeMount[];
-  /** Environment variable overrides (key-value pairs) */
-  environment: Record<string, string>;
-  /** Resource limits */
-  resources?: DockerNodeContainerResourceConfig;
-  /** Docker host connection settings */
-  host?: DockerNodeHostConfig;
-  /** Optional CLI tools to include in the container */
-  extraClis?: string[];
-  /** Persistent storage configuration */
-  persistence?: DockerNodePersistenceConfig;
-  /** Config version counter — starts at 1, auto-incremented on every update */
-  configVersion: number;
-  /** ISO timestamp of last config change (auto-set on update) */
-  lastUpdated?: string;
-}
 
-export interface DockerNodeVolumeMount {
-  /** Host path or named volume */
-  hostPath: string;
-  /** Container mount path */
-  containerPath: string;
-  /** "rw" (default) or "ro" */
-  mode?: "rw" | "ro";
-  /** "volume" (default) for named volumes, "bind" for host bind mounts */
-  type?: "volume" | "bind";
-}
 
-export interface DockerNodeContainerResourceConfig {
-  /** Memory limit in bytes (e.g., 2147483648 for 2GB) */
-  memoryBytes?: number;
-  /** CPU count limit (e.g., 2.0 for two cores) */
-  cpuCount?: number;
-  /** PIDs limit */
-  pidsLimit?: number;
-}
-
-export interface DockerNodeHostConfig {
-  /** Docker context name (for named Docker context selection) */
-  contextName?: string;
-  /** Explicit Docker host URL (e.g., "tcp://192.168.1.100:2376") */
-  dockerHost?: string;
-  /** Path to TLS CA cert */
-  tlsCaCert?: string;
-  /** Path to TLS client cert */
-  tlsCert?: string;
-  /** Path to TLS client key */
-  tlsKey?: string;
-  /** Whether to verify TLS (default: true) */
-  tlsVerify?: boolean;
-}
-
-export interface DockerNodePersistenceConfig {
-  /** Named Docker volume for Fusion data */
-  volumeName?: string;
-  /** Whether to retain the volume when the node is deleted (default: false) */
-  retainOnDelete?: boolean;
-}
-
-export function validateDockerNodeConfig(config: unknown): {
-  valid: boolean;
-  config?: DockerNodeConfig;
-  errors?: string[];
-} {
-  const errors: string[] = [];
-
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return { valid: false, errors: ["config must be an object"] };
-  }
-
-  const candidate = config as Record<string, unknown>;
-
-  if (typeof candidate.image !== "string" || !candidate.image.trim()) {
-    errors.push("image must be a non-empty string");
-  }
-
-  if (!Array.isArray(candidate.volumeMounts)) {
-    errors.push("volumeMounts must be an array");
-  } else {
-    candidate.volumeMounts.forEach((mount, index) => {
-      if (!mount || typeof mount !== "object" || Array.isArray(mount)) {
-        errors.push(`volumeMounts[${index}] must be an object`);
-        return;
-      }
-      const mountCandidate = mount as Record<string, unknown>;
-      if (typeof mountCandidate.hostPath !== "string") {
-        errors.push(`volumeMounts[${index}].hostPath must be a string`);
-      }
-      if (typeof mountCandidate.containerPath !== "string") {
-        errors.push(`volumeMounts[${index}].containerPath must be a string`);
-      }
-      if (mountCandidate.mode !== undefined && mountCandidate.mode !== "rw" && mountCandidate.mode !== "ro") {
-        errors.push(`volumeMounts[${index}].mode must be "rw" or "ro"`);
-      }
-      if (mountCandidate.type !== undefined && mountCandidate.type !== "volume" && mountCandidate.type !== "bind") {
-        errors.push(`volumeMounts[${index}].type must be "volume" or "bind"`);
-      }
-    });
-  }
-
-  if (!candidate.environment || typeof candidate.environment !== "object" || Array.isArray(candidate.environment)) {
-    errors.push("environment must be an object");
-  } else {
-    for (const [key, value] of Object.entries(candidate.environment)) {
-      if (typeof key !== "string" || typeof value !== "string") {
-        errors.push(`environment.${key} must be a string value`);
-      }
-    }
-  }
-
-  if (typeof candidate.configVersion !== "number" || !Number.isFinite(candidate.configVersion) || candidate.configVersion < 1) {
-    errors.push("configVersion must be a number >= 1");
-  }
-
-  const validateOptionalObject = (
-    fieldName: string,
-    value: unknown,
-    validators: Array<[string, (value: unknown) => boolean, string]>,
-  ) => {
-    if (value === undefined) return;
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      errors.push(`${fieldName} must be an object`);
-      return;
-    }
-    const typed = value as Record<string, unknown>;
-    for (const [prop, test, message] of validators) {
-      if (typed[prop] !== undefined && !test(typed[prop])) {
-        errors.push(`${fieldName}.${prop} ${message}`);
-      }
-    }
-  };
-
-  validateOptionalObject("resources", candidate.resources, [
-    ["memoryBytes", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
-    ["cpuCount", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
-    ["pidsLimit", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
-  ]);
-
-  validateOptionalObject("host", candidate.host, [
-    ["contextName", (value) => typeof value === "string", "must be a string"],
-    ["dockerHost", (value) => typeof value === "string", "must be a string"],
-    ["tlsCaCert", (value) => typeof value === "string", "must be a string"],
-    ["tlsCert", (value) => typeof value === "string", "must be a string"],
-    ["tlsKey", (value) => typeof value === "string", "must be a string"],
-    ["tlsVerify", (value) => typeof value === "boolean", "must be a boolean"],
-  ]);
-
-  validateOptionalObject("persistence", candidate.persistence, [
-    ["volumeName", (value) => typeof value === "string", "must be a string"],
-    ["retainOnDelete", (value) => typeof value === "boolean", "must be a boolean"],
-  ]);
-
-  if (candidate.extraClis !== undefined) {
-    if (!Array.isArray(candidate.extraClis) || candidate.extraClis.some((item) => typeof item !== "string")) {
-      errors.push("extraClis must be an array of strings");
-    }
-  }
-
-  if (candidate.containerName !== undefined && typeof candidate.containerName !== "string") {
-    errors.push("containerName must be a string");
-  }
-
-  if (candidate.lastUpdated !== undefined && typeof candidate.lastUpdated !== "string") {
-    errors.push("lastUpdated must be a string");
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
-  return { valid: true, config: candidate as unknown as DockerNodeConfig };
-}
-
-export function sanitizeDockerNodeConfigForResponse(config: DockerNodeConfig): DockerNodeConfig {
-  const clone = structuredClone(config);
-  const sensitivePattern = /API_KEY|SECRET|TOKEN|PASSWORD/i;
-
-  for (const [key, value] of Object.entries(clone.environment)) {
-    if (sensitivePattern.test(key) && typeof value === "string") {
-      clone.environment[key] = "***";
-    }
-  }
-
-  if (clone.host?.tlsKey) {
-    clone.host.tlsKey = "***";
-  }
-
-  return clone;
-}
-
-/** Version information tracked per node for plugin synchronization */
-export interface NodeVersionInfo {
-  /** Core Fusion application version (semver string, e.g., "0.1.0") */
-  appVersion: string;
-  /** Map of plugin-id → semver version string for all installed plugins */
-  pluginVersions: Record<string, string>;
-  /** ISO-8601 timestamp of the last sync operation */
-  lastSyncedAt: string;
-}
-
-/** Input for updating node version info. appVersion is optional and will be auto-filled if not provided. */
-export type NodeVersionInfoInput = Omit<NodeVersionInfo, "appVersion"> & {
-  /** Core Fusion application version. If not provided, will be auto-filled with the current app version. */
-  appVersion?: string;
-};
-
-/** Lifecycle status of a managed Docker node. */
-export type DockerNodeStatus = "creating" | "running" | "stopped" | "error" | "recreating" | "deleting";
-
-/** Docker daemon connection settings for provisioning a managed node container. */
-export interface DockerHostConfig {
-  /** Docker host URI (for example: tcp://192.168.1.50:2376 or unix:///var/run/docker.sock). */
-  host?: string;
-  /** Named Docker context to target. */
-  context?: string;
-  /** Whether to verify Docker daemon TLS certificates. */
-  tlsVerify?: boolean;
-  /** Path to Docker daemon CA certificate. */
-  tlsCaPath?: string;
-  /** Path to Docker client certificate. */
-  tlsCertPath?: string;
-  /** Path to Docker client private key. */
-  tlsKeyPath?: string;
-}
-
-/** Container CPU and memory limit settings for managed Docker nodes. */
-export interface DockerResourceSizing {
-  /** Memory limit in MB (for example: 4096). */
-  memoryMB?: number;
-  /** CPU limit (for example: 2.0). */
-  cpus?: number;
-  /** Swap limit in MB (0 = unlimited swap, Docker default behavior). */
-  memorySwapMB?: number;
-}
-
-/** A single bind mount definition for a managed Docker node container. */
-export interface DockerVolumeMount {
-  /** Absolute path on the host machine. */
-  hostPath: string;
-  /** Path inside the container. */
-  containerPath: string;
-  /** Mount mode. Defaults to read/write when omitted. */
-  mode?: "ro" | "rw";
-}
-
-/** Optional additional CLI tools installed in the managed Docker node image. */
-export type DockerExtraCli = "claude-cli" | "droid-cli";
-
-/** Persisted definition and lifecycle metadata for a managed Docker node. */
-export interface ManagedDockerNode {
-  /** Unique managed Docker node ID (for example: dn_abc123). */
-  id: string;
-  /** Linked mesh node ID after registration, or null while provisioning. */
-  nodeId: string | null;
-  /** Display name (unique across managed Docker nodes). */
-  name: string;
-  /** Docker image repository/name (for example: runfusion/fusion). */
-  imageName: string;
-  /** Docker image tag (for example: latest or 0.2.0). */
-  imageTag: string;
-  /** Provisioned container ID, or null before container creation. */
-  containerId: string | null;
-  /** Current managed Docker lifecycle status. */
-  status: DockerNodeStatus;
-  /** Docker daemon host/context configuration used for operations. */
-  hostConfig: DockerHostConfig;
-  /** Environment variables injected into the container. */
-  envVars: Record<string, string>;
-  /** Bind mounts configured for this container. */
-  volumeMounts: DockerVolumeMount[];
-  /** Resource limits for this container. */
-  resourceSizing: DockerResourceSizing;
-  /** Optional extra CLI tools included in provisioning. */
-  extraClis: DockerExtraCli[];
-  /** Whether storage volumes persist across container recreation. */
-  persistentStorage: boolean;
-  /** Reachable URL for mesh/node registration once running. */
-  reachableUrl: string | null;
-  /** API key for the managed node, auto-generated or user-provided. */
-  apiKey: string | null;
-  /** Last provisioning/runtime error message when status is error. */
-  errorMessage: string | null;
-  /** ISO-8601 creation timestamp. */
-  createdAt: string;
-  /** ISO-8601 last update timestamp. */
-  updatedAt: string;
-}
-
-/** Input for creating a managed Docker node record. */
-export type ManagedDockerNodeInput = Omit<
-  ManagedDockerNode,
-  "id" | "containerId" | "status" | "createdAt" | "updatedAt" | "errorMessage"
->;
-
-/** Partial update payload for managed Docker nodes. */
-export type ManagedDockerNodeUpdate = Partial<
-  Omit<ManagedDockerNode, "id" | "createdAt">
->;
-
-/** Input to the mesh configuration generation process. */
-export interface MeshConfigGeneratorInput {
-  /** The managed Docker node record (from FN-3107). */
-  managedNode: ManagedDockerNode;
-  /** The orchestrating node's URL (e.g., "http://192.168.1.10:4040"). */
-  orchestratorUrl: string;
-  /** The orchestrating node's API key for authentication. */
-  orchestratorApiKey: string;
-  /** Optional user-provided API key. If omitted, one is auto-generated. */
-  nodeApiKey?: string;
-  /** Optional container port override. If omitted, defaults to 4041. */
-  containerPort?: number;
-}
-
-/** Input to the end-to-end provision-and-register flow. */
-export interface FullProvisioningInput {
-  /** The managed Docker node to configure and register. */
-  managedNode: ManagedDockerNode;
-  /** The orchestrating node's URL. */
-  orchestratorUrl: string;
-  /** The orchestrating node's API key. */
-  orchestratorApiKey: string;
-  /** Optional user-provided API key for the new node. */
-  nodeApiKey?: string;
-  /** Optional container port override. */
-  containerPort?: number;
-}
-
-/** Configuration bundle needed for a new node to join the mesh. */
-export interface MeshConnectionConfig {
-  /** API key for authenticating to this node. Auto-generated if not provided by user. */
-  nodeApiKey: string;
-  /** The URL the orchestrating node uses to reach the new container. */
-  reachableUrl: string;
-  /** Orchestrating node's URL, pushed to the container so it knows its mesh parent. */
-  orchestratorUrl: string;
-  /** Orchestrating node's API key for inbound settings sync authentication. */
-  orchestratorApiKey: string;
-  /** Port the container's Fusion server will listen on. */
-  containerPort: number;
-  /** Environment variables assembled from the above for injection into the container. */
-  envVars: Record<string, string>;
-}
 
 /** Result of applying mesh config to a provisioned node. */
 export interface MeshConfigResult {
@@ -6075,144 +5374,6 @@ export interface MeshConfigResult {
   error?: string;
 }
 
-/** Information about a discovered Docker context */
-export interface DockerContextInfo {
-  /** Context name (e.g., "default", "my-remote") */
-  name: string;
-  /** Human-readable description */
-  description?: string;
-  /** Docker host URI for this context (e.g., "tcp://192.168.1.50:2376") */
-  dockerHost?: string;
-  /** Whether this is the currently active context */
-  isCurrentContext: boolean;
-  /** Whether this context has a connection error */
-  isError?: boolean;
-  /** Error message if the context is unreachable */
-  errorMessage?: string;
-}
-
-/** Result of testing Docker daemon connectivity */
-export interface DockerConnectivityResult {
-  /** Whether the connection succeeded */
-  success: boolean;
-  /** Docker Engine version string */
-  dockerVersion?: string;
-  /** Docker API version string */
-  apiVersion?: string;
-  /** Docker Engine OS/arch info */
-  operatingSystem?: string;
-  /** Error message if connection failed */
-  error?: string;
-  /** Whether the target is the local Docker daemon */
-  isLocalDaemon: boolean;
-}
-
-/** Minimal container inspection result from Docker */
-export interface DockerContainerInspectResult {
-  /** Container ID */
-  id: string;
-  /** Container name (with leading / stripped) */
-  name: string;
-  /** Container status string (e.g., "running", "exited") */
-  status: string;
-  /** Image name/tag */
-  image: string;
-  /** Creation timestamp (Unix epoch) */
-  created: number;
-  /** Detailed container state */
-  state: {
-    running: boolean;
-    paused: boolean;
-    restarting: boolean;
-    dead: boolean;
-    error?: string;
-    exitCode?: number;
-    startedAt?: string;
-    finishedAt?: string;
-  };
-  /** Optional exposed ports summary */
-  ports?: Record<string, string>;
-}
-
-/** Configuration for the Fusion Docker image to use for provisioning */
-export interface DockerNodeImageConfig {
-  /** Image name (e.g., "runfusion/fusion" or "ghcr.io/runfusion/fusion") */
-  image: string;
-  /** Image tag (e.g., "latest", "0.14.1") */
-  tag: string;
-  /** Whether to pull the image before creating the container */
-  pullImage: boolean;
-  /** Optional registry authentication — username */
-  registryUsername?: string;
-  /** Optional registry authentication — password/token */
-  registryPassword?: string;
-}
-
-/** Resource constraints for a provisioned Docker container */
-export interface DockerNodeResourceConfig {
-  /** CPU limit in cores (e.g., 2 = 2 CPUs). Undefined = unlimited */
-  cpuLimit?: number;
-  /** Memory limit in megabytes. Undefined = unlimited */
-  memoryLimitMb?: number;
-  /** Memory swap limit in megabytes. -1 = unlimited swap. Undefined = default */
-  memorySwapMb?: number;
-}
-
-/** Input for provisioning a new Docker-based Fusion node */
-export interface DockerProvisionInput {
-  /** Display name for the node (must be unique) */
-  nodeName: string;
-  /** Docker host configuration — where to create the container */
-  hostConfig: DockerHostConfig;
-  /** Image configuration — which Fusion image to use */
-  imageConfig: DockerNodeImageConfig;
-  /** Resource constraints for the container */
-  resourceConfig?: DockerNodeResourceConfig;
-  /** Environment variables to set in the container (KEY=VALUE strings) */
-  environment?: string[];
-  /** Volume mount specifications (e.g., ["fusion-data:/data", "/host/path:/container/path"]) */
-  volumeMounts?: string[];
-  /** Named volume for persistent Fusion data storage. If provided, mounted at /data */
-  persistentVolume?: string;
-  /** Optional extra CLI tools to include in the container (e.g., ["claude", "droid"]) */
-  extraClis?: string[];
-  /** The URL/hostname where this node will be reachable by other nodes */
-  reachableUrl?: string;
-  /** Whether to auto-generate an API key for this node */
-  autoGenerateApiKey: boolean;
-  /** Explicit API key to use (if autoGenerateApiKey is false) */
-  apiKey?: string;
-  /** Maximum concurrent tasks for this node (default: 2) */
-  maxConcurrent?: number;
-  /** Optional Docker network to attach the container to */
-  network?: string;
-  /** Optional container labels (key-value pairs) */
-  labels?: Record<string, string>;
-}
-
-/** Result of a Docker node provisioning operation */
-export interface DockerProvisionResult {
-  /** Whether provisioning succeeded */
-  success: boolean;
-  /** The container ID created by Docker */
-  containerId?: string;
-  /** The container name (generated or specified) */
-  containerName?: string;
-  /** The registered node ID in CentralCore */
-  nodeId?: string;
-  /** The API key generated or assigned for this node */
-  apiKey?: string;
-  /** The port mapping (if applicable) */
-  portMapping?: string;
-  /** Error message if provisioning failed */
-  error?: string;
-  /** The stage at which failure occurred (for error reporting) */
-  failedStage?: "image-pull" | "container-create" | "container-start" | "node-register" | "config-apply";
-  /** Duration of the provisioning operation in ms */
-  durationMs?: number;
-}
-
-/** A single plugin's version information for sync comparison */
 export interface PluginVersionEntry {
   /** Plugin ID (matches PluginManifest.id) */
   pluginId: string;
@@ -6400,7 +5561,7 @@ export interface PlanningQuestion {
   type: PlanningQuestionType;
   question: string;
   description?: string;
-  options?: Array<{ id: string; label: string; description?: string }>;
+  options?: Array<{ id: string; label: string; description?: string; pros?: string[]; cons?: string[]; isOther?: boolean; customText?: string }>;
 }
 
 /** The final summary generated after planning conversation completes */
@@ -6411,17 +5572,6 @@ export interface PlanningSummary {
   priority?: TaskPriority;
   suggestedDependencies: string[];
   keyDeliverables: string[];
-  /**
-   * FNXC:PlanningMode 2026-07-05-00:00:
-   * The planning AI proposes plan-specific deepening topics (instead of the
-   * fixed, regex-derived generic buckets) so the "Would you like to go
-   * deeper?" checkpoint surfaces suggestions aligned with the user's actual
-   * plan — including angles they had not anticipated. Optional so existing
-   * persisted rows/payloads without it remain valid; the dashboard falls
-   * back to the generic theme candidates when absent or empty
-   * (FN-7616 / issue #1912).
-   */
-  deepeningThemes?: Array<{ id?: string; label: string; description?: string }>;
 }
 
 /** Response from planning endpoints - either a question or the final summary */
@@ -6437,6 +5587,8 @@ export interface PlanningSession {
   history: Array<{ question: PlanningQuestion; response: unknown }>;
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
+  /** User explicitly validated the continuously maintained running plan. */
+  validated?: boolean;
   /**
    * Optional per-session auto-merge override for tasks planned in this session.
    * Not separately persisted; durable form is a branch_groups row keyed by session id.
@@ -6448,90 +5600,21 @@ export interface PlanningSession {
 
 // ── Agent Types ────────────────────────────────────────────────────────────
 
-/** Agent lifecycle states */
-export const AGENT_STATES = ["idle", "active", "running", "paused", "error"] as const;
-export type AgentState = (typeof AGENT_STATES)[number];
 
-/** Valid state transitions for agents */
-export const AGENT_VALID_TRANSITIONS: Record<AgentState, AgentState[]> = {
-  idle: ["active"],
-  active: ["idle", "running", "paused", "error"],
-  running: ["idle", "active", "paused", "error"],
-  paused: ["idle", "active"],
-  error: ["idle", "active", "paused"],
+import {
+  AGENT_STATES,
+  AGENT_VALID_TRANSITIONS,
+  isEphemeralAgent,
+  hasAgentIdentity,
+} from "./types/agent-state.js";
+import type { AgentState } from "./types/agent-state.js";
+export {
+  AGENT_STATES,
+  AGENT_VALID_TRANSITIONS,
+  isEphemeralAgent,
+  hasAgentIdentity,
 };
-
-/**
- * Detect if an agent is a runtime-created ephemeral/internal agent.
- * These agents are created by the engine for task execution/system workflows and should
- * typically be hidden from the default agents page listing.
- *
- * Detection heuristics (returns true if ANY match):
- * - `agent.metadata?.agentKind === "task-worker"` — task-worker agents from InProcessRuntime
- * - `agent.metadata?.taskWorker === true` — legacy task-worker marker
- * - `agent.metadata?.managedBy === "task-executor"` — executor-managed agents
- * - `agent.metadata?.type === "spawned"` — spawned child agents from TaskExecutor
- * - `agent.metadata?.internal === true` — explicitly internal/system agent marker
- * - Legacy fallback: executor role with name starting with "executor-" and no reportsTo
- * - Legacy fallback: executor role named "verification-agent" with no reportsTo
- *
- * @param agent - Agent object (partial shape accepted)
- * @returns true if the agent is an ephemeral/runtime-created/internal system agent
- */
-export function isEphemeralAgent(
-  agent: { metadata?: Record<string, unknown> | null; name?: string; role?: string; reportsTo?: string | null },
-): boolean {
-  const metadata = agent.metadata ?? {};
-
-  // Check explicit metadata markers first
-  if (metadata.agentKind === "task-worker") return true;
-  if (metadata.taskWorker === true) return true;
-  if (metadata.managedBy === "task-executor") return true;
-  if (metadata.type === "spawned") return true;
-  if (metadata.internal === true) return true;
-
-  // Legacy fallback: executor agents with "executor-" prefix and no manager
-  // These are task workers that were created before metadata was standardized
-  if (
-    agent.role === "executor" &&
-    typeof agent.name === "string" &&
-    agent.name.startsWith("executor-") &&
-    agent.reportsTo == null
-  ) {
-    return true;
-  }
-
-  // Legacy internal system agent used by older verification flows.
-  if (
-    agent.role === "executor" &&
-    agent.name === "verification-agent" &&
-    agent.reportsTo == null
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Check if an agent has meaningful identity content (soul, instructions, or memory).
- * Agents with identity should run heartbeat sessions even without a task assignment,
- * so they can load their prompts and do useful ambient work.
- *
- * @param agent - Agent object (partial shape accepted, null/undefined returns false)
- * @returns true if the agent has any of: soul, instructionsText, instructionsPath, or memory with non-empty trimmed content
- */
-export function hasAgentIdentity(
-  agent: { soul?: string | null; instructionsText?: string | null; instructionsPath?: string | null; memory?: string | null } | null | undefined,
-): boolean {
-  if (!agent) return false;
-  return !!(
-    agent.soul?.trim() ||
-    agent.instructionsText?.trim() ||
-    agent.instructionsPath?.trim() ||
-    agent.memory?.trim()
-  );
-}
+export type { AgentState };
 
 /** Single heartbeat event recorded for an agent */
 export interface AgentHeartbeatEvent {
@@ -6804,6 +5887,16 @@ export interface PlannerInterventionEntry {
   runId?: string;
   /** Agent ID that produced this intervention, if applicable. */
   agentId?: string;
+  /*
+  FNXC:PlannerOversight 2026-07-13-22:45:
+  Session-advisor parity: optional severity (nit/concern/blocker) and provenance
+  source so the intervention timeline distinguishes lifecycle canned guidance
+  from live session-advisor notes and manual operator nudges. Absent on
+  pre-existing rows — parsers must tolerate missing fields.
+  */
+  severity?: "nit" | "concern" | "blocker";
+  source?: "lifecycle" | "session-advisor" | "manual";
+  advisorSlug?: string;
 }
 
 /** Canonical run-audit mutation type used to persist planner-intervention entries. Single writer: `recordPlannerIntervention` (see `packages/core/src/planner-intervention.ts`); FN-7520 reuses this helper rather than emitting `overseer:intervention` events directly. */
@@ -6900,6 +5993,7 @@ export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
     "fn_spawn_agent",
     "fn_update_agent_config",
     "fn_task_update",
+    "fn_task_assign",
     "fn_workflow_create",
     "fn_workflow_update",
     "fn_workflow_delete",
@@ -6919,6 +6013,7 @@ export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [
   "fn_post_room_message",
   "fn_read_messages",
   "fn_task_log",
+  "fn_task_logs_read",
   "fn_task_done",
   "fn_heartbeat_done",
   "fn_task_document_write",
@@ -7541,6 +6636,42 @@ export interface RevisionFieldDiff {
   newValue: unknown;
 }
 
+/*
+FNXC:ConfigVersioning 2026-07-18-00:00:
+FN-8282 requires every durable configuration mutation to retain an immutable
+before/after snapshot. Targets stay structured JSON; target keys are derived
+from canonical JSON rather than delimiter-concatenated identifiers.
+
+FNXC:ConfigVersioning 2026-07-18-10:30:
+Every provenance variant carries a stable ID. This makes agent and authenticated
+human writes auditable and makes intentional internal writes explicit as the
+system actor instead of allowing anonymous history rows.
+*/
+export type ConfigKind = "project-settings" | "global-settings" | "workflow-settings" | "routine" | "automation";
+export type ConfigChangedBy =
+  | { kind: "human"; id: string }
+  | { kind: "agent"; id: string }
+  | { kind: "system"; id: string }
+  | { kind: "rollback"; id: string };
+export type ConfigurationOwnerScope = "project" | "global";
+export type ConfigurationTarget = Readonly<Record<string, string>>;
+export interface ConfigurationRevision {
+  id: string;
+  projectId: string;
+  ownerScope: ConfigurationOwnerScope;
+  configKind: ConfigKind;
+  configTarget: ConfigurationTarget;
+  /** Canonical JSON representation used only for exact target indexing. */
+  configTargetKey: string;
+  before: unknown;
+  after: unknown;
+  diffs: RevisionFieldDiff[];
+  changedBy: ConfigChangedBy;
+  createdAt: string;
+  source: "mutation" | "rollback";
+  rollbackToRevisionId?: string;
+}
+
 /** A revision entry recording a configuration change to an agent */
 export interface AgentConfigRevision {
   /** Unique revision identifier */
@@ -7904,104 +7035,43 @@ export interface MigrationResult {
 }
 
 // ── Messaging Types ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-18-00:35: Keep stable re-exports after main
+// landed task-proposal metadata + ephemeral policy on the mailbox contract.
 
-/** Participant types for message routing */
-export type ParticipantType = "agent" | "user" | "system";
-
-/** Canonical recipient ID for dashboard user mailbox routing. */
-export const DASHBOARD_USER_ID = "dashboard";
-
-const DASHBOARD_USER_ALIASES = new Set([DASHBOARD_USER_ID, "user", "user:dashboard", "User: user:dashboard"]);
-
-/** Normalize participant identity for durable mailbox routing. */
-export function normalizeMessageParticipant(id: string, type: ParticipantType): { id: string; type: ParticipantType } {
-  if (type !== "user") {
-    return { id, type };
-  }
-
-  if (DASHBOARD_USER_ALIASES.has(id)) {
-    return { id: DASHBOARD_USER_ID, type };
-  }
-
-  return { id, type };
-}
-
-/** Message types/categories */
-export type MessageType = "agent-to-agent" | "agent-to-user" | "user-to-agent" | "system";
-
-/** Stable metadata contract for linking a reply to an earlier message. */
-export interface MessageReplyReference {
-  /** ID of the message this one is replying to. */
-  messageId: string;
-}
-
-/** Optional metadata attached to mailbox messages. */
-export interface MessageMetadata extends Record<string, unknown> {
-  /** Optional link to the original message when this message is a reply. */
-  replyTo?: MessageReplyReference;
-  /**
-   * If true, the recipient agent is woken immediately on receipt regardless
-   * of their own `messageResponseMode` setting. Sender-initiated override —
-   * use sparingly for urgent messages. Ignored when recipient is a user.
-   */
-  wakeRecipient?: boolean;
-}
-
-/** Message record stored in the system */
-export interface Message {
-  /** Unique identifier */
-  id: string;
-  /** Sender identifier */
-  fromId: string;
-  /** Sender type */
-  fromType: ParticipantType;
-  /** Recipient identifier */
-  toId: string;
-  /** Recipient type */
-  toType: ParticipantType;
-  /** Message body */
-  content: string;
-  /** Message category */
-  type: MessageType;
-  /** Whether the recipient has read this message */
-  read: boolean;
-  /** Optional extra data */
-  metadata?: MessageMetadata;
-  /** ISO-8601 timestamp of creation */
-  createdAt: string;
-  /** ISO-8601 timestamp of last update */
-  updatedAt: string;
-}
-
-/** Input for creating a new message */
-export interface MessageCreateInput {
-  /** Sender identifier (auto-filled by the transport layer if omitted) */
-  fromId?: string;
-  /** Sender type (auto-filled by the transport layer if omitted) */
-  fromType?: ParticipantType;
-  /** Recipient identifier */
-  toId: string;
-  /** Recipient type */
-  toType: ParticipantType;
-  /** Message body */
-  content: string;
-  /** Message category */
-  type: MessageType;
-  /** Optional extra data */
-  metadata?: MessageMetadata;
-}
-
-/** Filter options for querying messages */
-export interface MessageFilter {
-  /** Filter by message type */
-  type?: MessageType;
-  /** Filter by read status */
-  read?: boolean;
-  /** Maximum number of messages to return */
-  limit?: number;
-  /** Number of messages to skip (for pagination) */
-  offset?: number;
-}
+import {
+  DASHBOARD_USER_ID,
+  normalizeMessageParticipant,
+  resolveEphemeralTaskCreationPolicy,
+} from "./types/messages.js";
+export {
+  DASHBOARD_USER_ID,
+  normalizeMessageParticipant,
+  resolveEphemeralTaskCreationPolicy,
+};
+import type {
+  ParticipantType,
+  MessageType,
+  MessageReplyReference,
+  EphemeralTaskCreationPolicy,
+  ProposedTaskMetadata,
+  NativeStructureEmbed,
+  MessageMetadata,
+  Message,
+  MessageCreateInput,
+  MessageFilter,
+} from "./types/messages.js";
+export type {
+  ParticipantType,
+  MessageType,
+  MessageReplyReference,
+  EphemeralTaskCreationPolicy,
+  ProposedTaskMetadata,
+  NativeStructureEmbed,
+  MessageMetadata,
+  Message,
+  MessageCreateInput,
+  MessageFilter,
+};
 
 /** Validate mailbox metadata, including reply-link contract when present. */
 export function validateMessageMetadata(metadata: MessageMetadata | undefined): void {
@@ -8021,6 +7091,49 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
 
   if (metadata.wakeRecipient !== undefined && typeof metadata.wakeRecipient !== "boolean") {
     throw new Error("metadata.wakeRecipient must be a boolean");
+  }
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-20-12:00:
+  Mail accepts only the shared five-kind NativeStructureRef union. Reject unsupported future
+  kinds at the persistence boundary so every stored attachment remains renderable by the shared
+  preview component; labels are optional attach-time fallbacks, not serialized preview snapshots.
+  */
+  if (metadata.nativeStructures !== undefined) {
+    if (!Array.isArray(metadata.nativeStructures)) {
+      throw new Error("metadata.nativeStructures must be an array");
+    }
+    const supportedKinds: NativeStructureRef["kind"][] = ["mission", "milestone", "research-finding", "eval-result", "goal"];
+    for (const embed of metadata.nativeStructures) {
+      if (typeof embed !== "object" || embed === null || Array.isArray(embed)) {
+        throw new Error("metadata.nativeStructures entries must be objects");
+      }
+      if (!supportedKinds.includes(embed.kind)) {
+        throw new Error("metadata.nativeStructures.kind is invalid");
+      }
+      if (typeof embed.id !== "string" || embed.id.trim().length === 0) {
+        throw new Error("metadata.nativeStructures.id must be a non-empty string");
+      }
+      if (embed.projectId !== undefined && (typeof embed.projectId !== "string" || embed.projectId.trim().length === 0)) {
+        throw new Error("metadata.nativeStructures.projectId must be a non-empty string");
+      }
+      if (embed.label !== undefined && typeof embed.label !== "string") {
+        throw new Error("metadata.nativeStructures.label must be a string");
+      }
+    }
+  }
+
+  const proposalFieldsPresent = metadata.proposalStatus !== undefined || metadata.createdTaskId !== undefined || metadata.proposalIdempotencyKey !== undefined || metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined;
+  if (metadata.kind === "task-proposal" || proposalFieldsPresent || metadata.proposedTask !== undefined) {
+    if (metadata.kind !== "task-proposal" || !metadata.proposedTask) throw new Error("task proposal metadata requires kind and proposedTask");
+    const proposal = metadata.proposedTask;
+    if (typeof proposal.title !== "string" || !proposal.title.trim() || typeof proposal.description !== "string" || !proposal.description.trim()) throw new Error("metadata.proposedTask requires non-empty title and description");
+    if (proposal.dependencies !== undefined && (!Array.isArray(proposal.dependencies) || proposal.dependencies.some((id) => typeof id !== "string"))) throw new Error("metadata.proposedTask.dependencies must be string[]");
+    if (proposal.priority !== undefined && !["low", "normal", "high", "urgent"].includes(proposal.priority)) throw new Error("metadata.proposedTask.priority is invalid");
+    if (metadata.proposalStatus !== undefined && !["pending", "creating", "created", "dismissed"].includes(metadata.proposalStatus)) throw new Error("metadata.proposalStatus is invalid");
+    if (typeof metadata.proposalIdempotencyKey !== "string" || !metadata.proposalIdempotencyKey.trim()) throw new Error("task proposal requires proposalIdempotencyKey");
+    if (metadata.claimStartedAt !== undefined && (typeof metadata.claimStartedAt !== "string" || Number.isNaN(Date.parse(metadata.claimStartedAt)))) throw new Error("metadata.claimStartedAt must be an ISO timestamp");
+    if (metadata.proposalStatus === "pending" && (metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined)) throw new Error("pending proposal cannot have a creation lease");
   }
 }
 
@@ -8048,6 +7161,7 @@ export {
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
+  resolveTaskMergerModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,
@@ -8055,6 +7169,7 @@ export {
 } from "./model-resolution.js";
 export type { ResolvedModelSelection } from "./model-resolution.js";
 export { resolveResearchSettings } from "./research-settings.js";
+export { resolveResearchFindingId } from "./research-types.js";
 export type { ResolvedResearchSettings } from "./research-settings.js";
 
 /*

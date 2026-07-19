@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
 import { BUG_URL_MAX_ENCODED } from "../areas/SystemControlsArea";
@@ -14,8 +14,10 @@ const mockFetchSystemLogs = vi.fn();
 const mockFetchNodeSystemStats = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockFetchNodes = vi.fn();
+const subscribeSseMock = vi.fn(() => () => undefined);
 
 vi.mock("../../../api/legacy", () => ({
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
   withProjectId: (path: string, projectId?: string) =>
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
@@ -33,7 +35,26 @@ vi.mock("../../../api/legacy", () => ({
   requestSystemRestart: vi.fn().mockResolvedValue({ ok: true }),
   restartAllSystemAgents: vi.fn().mockResolvedValue({ ok: true }),
   restartSystemEngines: vi.fn().mockResolvedValue({ ok: true }),
-  startSystemRebuild: vi.fn().mockResolvedValue({ id: "job-1", status: "running", lines: [] }),
+  startSystemRebuild: vi.fn().mockResolvedValue({ id: "job-1", status: "running", kind: "rebuild", scope: "app", lines: [] }),
+  startFnBinaryLinkLocal: vi.fn().mockResolvedValue({
+    id: "job-fn-local",
+    status: "running",
+    kind: "fn-binary",
+    scope: "link-local",
+    lines: [],
+  }),
+  startFnBinaryUseGlobal: vi.fn().mockResolvedValue({
+    id: "job-fn-global",
+    status: "running",
+    kind: "fn-binary",
+    scope: "use-global",
+    lines: [],
+  }),
+  refreshUpdateCheck: vi.fn().mockResolvedValue({
+    currentVersion: "0.60.0",
+    latestVersion: "0.60.0",
+    updateAvailable: false,
+  }),
 }));
 
 vi.mock("../../../api", () => ({
@@ -46,7 +67,7 @@ vi.mock("../../../api", () => ({
 }));
 
 vi.mock("../../../sse-bus", () => ({
-  subscribeSse: vi.fn(() => () => undefined),
+  subscribeSse: (...args: unknown[]) => subscribeSseMock(...args),
 }));
 
 vi.mock("../../../hooks/useAppSettings", () => ({
@@ -70,7 +91,7 @@ function emptyOverviewResponse(path: string) {
   return {};
 }
 
-function systemInfoFixture() {
+function systemInfoFixture(overrides: Record<string, unknown> = {}) {
   return {
     pid: 12345,
     nodeVersion: "v22.0.0",
@@ -78,11 +99,17 @@ function systemInfoFixture() {
     arch: "arm64",
     sourceCheckout: true,
     supervised: true,
+    restartSupported: true,
+    rebuildSupported: true,
+    fnBinaryLinkLocalSupported: true,
+    fnBinaryUseGlobalSupported: true,
+    engineAvailable: true,
     engineRestartSupported: true,
     agentRestartSupported: true,
     pluginReloadSupported: true,
     logsSupported: true,
     activeRebuild: null,
+    ...overrides,
   };
 }
 
@@ -144,6 +171,7 @@ describe("SystemControlsArea layout integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    subscribeSseMock.mockImplementation(() => () => undefined);
     apiMock.mockImplementation((path: string) => Promise.resolve(emptyOverviewResponse(path)));
     mockFetchSystemInfo.mockResolvedValue(systemInfoFixture());
     mockFetchSystemLogs.mockResolvedValue({
@@ -356,5 +384,131 @@ describe("SystemControlsArea layout integration", () => {
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)\s*{[\s\S]*\.cc-tabpanel\s*{[^}]*padding-bottom:\s*calc\(var\(--space-lg\) \+ env\(safe-area-inset-bottom, 0\) \+ var\(--standalone-bottom-gap\)\);/);
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)\s*{[\s\S]*\.cc-system-tab\s*{[^}]*gap:\s*var\(--space-lg\);/);
     expect(css).not.toMatch(/\.cc-system-tab\s*{[^}]*overflow-y:\s*auto;/s);
+  });
+
+  /*
+  FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+  Source/dev hosts expose build-and-link-local; packaged hosts hide it. Use-global
+  and check-for-updates stay available, and starting a build job surfaces the
+  shared log viewer.
+  */
+  it("shows fn binary and update controls for a source checkout and scrolls job output into view", async () => {
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+
+    const linkLocal = await screen.findByTestId("cc-syscontrol-fn-link-local");
+    const useGlobal = screen.getByTestId("cc-syscontrol-fn-use-global");
+    const checkUpdates = screen.getByTestId("cc-syscontrol-check-updates");
+    expect(linkLocal).toBeInTheDocument();
+    expect(useGlobal).toBeInTheDocument();
+    expect(checkUpdates).toBeInTheDocument();
+
+    fireEvent.click(within(linkLocal).getByRole("button", { name: "Build & link" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cc-system-rebuild-output")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+    });
+
+    Element.prototype.scrollIntoView = original;
+  });
+
+  function installScrollGeometry(element: HTMLElement, scrollHeight = 500, clientHeight = 100) {
+    let scrollTop = 0;
+    Object.defineProperties(element, {
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      clientHeight: { configurable: true, get: () => clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    return {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = value; },
+      setScrollHeight(value: number) { scrollHeight = value; },
+    };
+  }
+
+  function getStreamEvents(path: string) {
+    const call = [...subscribeSseMock.mock.calls].reverse().find(([url]) => url === path);
+    expect(call).toBeDefined();
+    return (call?.[1] as { events: Record<string, (event: MessageEvent) => void> }).events;
+  }
+
+  it("keeps manually scrolled rebuild output in place while SSE lines grow", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const rebuild = await screen.findByTestId("cc-syscontrol-rebuild-app");
+    fireEvent.click(within(rebuild).getByRole("button", { name: "Rebuild" }));
+    const output = (await screen.findByTestId("cc-system-rebuild-output")).querySelector("pre")!;
+    const geometry = installScrollGeometry(output);
+    const events = getStreamEvents("/api/system/jobs/job-1/stream");
+
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 1, stream: "stdout", text: "first" }) })));
+    geometry.scrollTop = 100;
+    fireEvent.scroll(output);
+    geometry.setScrollHeight(600);
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 2, stream: "stdout", text: "second" }) })));
+
+    expect(geometry.scrollTop).toBe(100);
+
+    geometry.scrollTop = 500;
+    fireEvent.scroll(output);
+    geometry.setScrollHeight(700);
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 3, stream: "stdout", text: "third" }) })));
+    expect(geometry.scrollTop).toBe(700);
+  });
+
+  it("keeps manually scrolled live server logs in place while SSE lines grow", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    await screen.findByTestId("cc-system-controls");
+    fireEvent.click(screen.getByTestId("cc-system-logs-toggle"));
+    const output = await screen.findByText("No log entries yet.");
+    const container = output.parentElement!;
+    const geometry = installScrollGeometry(container);
+    const events = getStreamEvents("/api/system/logs/stream");
+
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:00.000Z", level: "info", message: "first" }) })));
+    geometry.scrollTop = 100;
+    fireEvent.scroll(container);
+    geometry.setScrollHeight(600);
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:01.000Z", level: "info", message: "second" }) })));
+
+    expect(geometry.scrollTop).toBe(100);
+
+    geometry.scrollTop = 500;
+    fireEvent.scroll(container);
+    geometry.setScrollHeight(700);
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:02.000Z", level: "info", message: "third" }) })));
+    expect(geometry.scrollTop).toBe(700);
+  });
+
+  it("hides build-and-link-local when the host is not a source checkout", async () => {
+    mockFetchSystemInfo.mockResolvedValue(
+      systemInfoFixture({
+        rebuildSupported: false,
+        fnBinaryLinkLocalSupported: false,
+        sourceWorkspaceRoot: undefined,
+      }),
+    );
+
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+
+    await screen.findByTestId("cc-system-controls");
+    expect(screen.queryByTestId("cc-syscontrol-fn-link-local")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cc-syscontrol-fn-use-global")).toBeInTheDocument();
+    expect(screen.getByTestId("cc-syscontrol-check-updates")).toBeInTheDocument();
   });
 });

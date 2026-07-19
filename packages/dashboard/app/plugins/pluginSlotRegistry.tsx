@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import { lazy, Suspense, createElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { PluginUiSlotEntry } from "../api";
 import { DroidCliProviderCard } from "../components/DroidCliProviderCard";
@@ -9,9 +10,26 @@ export interface PluginSlotHostActions {
   openModelOnboarding?: () => void;
 }
 
-interface PluginSlotComponentProps {
+/*
+FNXC:Quality 2026-07-14-21:50:
+Task-detail plugin tabs need host-injected task context (taskId, worktree, projectId).
+Without this bag Task QA cannot scope runs, preview servers, or suggestions.
+*/
+export interface PluginSlotTaskContext {
+  taskId?: string;
+  worktree?: string;
+  projectId?: string;
+  title?: string;
+  modifiedFiles?: string[];
+}
+
+export interface PluginSlotComponentProps {
   entry: PluginUiSlotEntry;
   actions?: PluginSlotHostActions;
+  context?: PluginSlotTaskContext;
+  taskId?: string;
+  worktree?: string;
+  projectId?: string;
 }
 
 interface PluginSlotRegistration {
@@ -71,7 +89,33 @@ function DroidPostOnboardingRecommendation({ actions }: PluginSlotComponentProps
   );
 }
 
+const LazyQualityQaTab = lazy(async () => {
+  const mod = await import("@fusion-plugin-examples/quality/qa-tab");
+  return { default: mod.QualityQaTabSlot ?? mod.default };
+});
+
+function QualityTaskDetailTab(props: PluginSlotComponentProps): ReactNode {
+  return (
+    <Suspense fallback={null}>
+      {createElement(LazyQualityQaTab, {
+        entry: props.entry,
+        actions: props.actions,
+        context: props.context,
+        taskId: props.taskId ?? props.context?.taskId,
+        worktree: props.worktree ?? props.context?.worktree,
+        projectId: props.projectId ?? props.context?.projectId,
+      })}
+    </Suspense>
+  );
+}
+
 const REGISTRY: PluginSlotRegistration[] = [
+  {
+    pluginId: "fusion-plugin-quality",
+    slotId: "task-detail-tab",
+    componentPath: "./qa-tab",
+    component: QualityTaskDetailTab,
+  },
   {
     pluginId: "fusion-plugin-droid-runtime",
     slotId: "settings-provider-card",

@@ -48,6 +48,25 @@ interface DropdownPosition {
   maxHeight: number;
 }
 
+const COLLAPSED_PROVIDERS_STORAGE_KEY = "fusion-dashboard-model-dropdown-collapsed-providers";
+
+/**
+ * FNXC:ModelDropdown 2026-07-15-00:00:
+ * Provider-group collapse is dashboard-local preference state, not a server setting. Read defensively so SSR, unavailable storage, and malformed legacy data keep every provider expanded instead of breaking a model picker.
+ */
+function loadCollapsedProviders(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_PROVIDERS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((provider): provider is string => typeof provider === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * CustomModelDropdown - A dropdown component combining selection with icon-enhanced provider groups.
  *
@@ -91,6 +110,7 @@ export function CustomModelDropdown({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(loadCollapsedProviders);
   const generatedThinkingId = useId();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -101,6 +121,7 @@ export function CustomModelDropdown({
 
   // Filter models based on local filter text
   const filteredModels = useMemo(() => filterModels(models, localFilter), [models, localFilter]);
+  const hasFilter = localFilter.length > 0;
 
   // Group filtered models by provider and sort by favorites
   const modelsByProvider = useMemo(() => {
@@ -149,6 +170,21 @@ export function CustomModelDropdown({
       return a.localeCompare(b);
     });
   }, [modelsByProvider, favoriteProviders]);
+
+  /*
+  FNXC:ModelDropdown 2026-07-15-00:00:
+  Collapsed provider rows are omitted from both the DOM and keyboard option list. An active filter temporarily expands every matching group so search never hides a matching model; the saved collapsed preference resumes after clearing the filter.
+  */
+  const visibleProviderEntries = useMemo(() => sortedProviderEntries.flatMap(([provider, providerModels]) => {
+    const nonFavoritedModels = providerModels.filter((model) => !favoriteModels.includes(`${model.provider}/${model.id}`));
+    if (nonFavoritedModels.length === 0) return [];
+
+    return [{
+      provider,
+      models: nonFavoritedModels,
+      isCollapsed: !hasFilter && collapsedProviders.has(provider),
+    }];
+  }), [collapsedProviders, favoriteModels, hasFilter, sortedProviderEntries]);
 
   const hasNoChangeOption = typeof noChangeValue === "string" && noChangeValue.length > 0;
   const shouldShowThinking = showThinkingLevel ?? Boolean(onThinkingLevelChange);
@@ -208,20 +244,21 @@ export function CustomModelDropdown({
       });
     }
 
-    sortedProviderEntries.forEach(([provider, providerModels]) => {
+    visibleProviderEntries.forEach(({ provider, models: providerModels, isCollapsed }) => {
       options.push({ type: "provider", value: `__group_${provider}`, label: provider, provider });
-      providerModels.forEach((m) => {
+      if (isCollapsed) return;
+      providerModels.forEach((model) => {
         options.push({
           type: "model",
-          value: `${m.provider}/${m.id}`,
-          label: m.name,
-          provider: m.provider,
+          value: `${model.provider}/${model.id}`,
+          label: model.name,
+          provider: model.provider,
         });
       });
     });
 
     return options;
-  }, [favoritedModelEntries, sortedProviderEntries, specialOptions]);
+  }, [favoritedModelEntries, specialOptions, visibleProviderEntries]);
 
   // Get current selection display text
   const selectedDisplayText = useMemo(() => {
@@ -509,6 +546,28 @@ export function CustomModelDropdown({
     searchInputRef.current?.focus();
   }, []);
 
+  const handleToggleCollapsedProvider = useCallback((provider: string) => {
+    setCollapsedProviders((previous) => {
+      const next = new Set(previous);
+      if (next.has(provider)) {
+        next.delete(provider);
+      } else {
+        next.add(provider);
+      }
+
+      try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(COLLAPSED_PROVIDERS_STORAGE_KEY, JSON.stringify([...next].sort()));
+        }
+      } catch {
+        // Storage failures must not prevent the in-memory affordance from working.
+      }
+
+      return next;
+    });
+    setHighlightedIndex(0);
+  }, []);
+
   const handleTriggerClick = useCallback(() => {
     if (!disabled) {
       setIsOpen((prev) => !prev);
@@ -524,8 +583,6 @@ export function CustomModelDropdown({
       }
     }
   }, [highlightedIndex, isOpen]);
-
-  const hasFilter = localFilter.length > 0;
 
   const dropdownContent = isOpen && dropdownPosition ? (
     <div
@@ -653,18 +710,10 @@ export function CustomModelDropdown({
           </>
         )}
 
-        {sortedProviderEntries.map(([provider, providerModels]) => {
+        {visibleProviderEntries.map(({ provider, models: providerModels, isCollapsed }) => {
           const groupStartIndex = optionsList.findIndex((opt) => opt.value === `__group_${provider}`);
           const isFavorite = favoriteProviders.includes(provider);
-          
-          // Filter out favorited models - they already appear in the favorites section
-          const nonFavoritedModels = providerModels.filter((m) => {
-            const optionValue = `${m.provider}/${m.id}`;
-            return !favoriteModels.includes(optionValue);
-          });
-          
-          // Skip provider group if all models are favorited
-          if (nonFavoritedModels.length === 0) return null;
+          const isExpanded = !isCollapsed;
 
           return (
             <div key={provider} className="model-combobox-group">
@@ -685,9 +734,24 @@ export function CustomModelDropdown({
                     ★
                   </button>
                 )}
+                <button
+                  type="button"
+                  className={`model-combobox-optgroup-toggle ${isExpanded ? "model-combobox-optgroup-toggle--expanded" : ""}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleToggleCollapsedProvider(provider);
+                  }}
+                  aria-label={isExpanded
+                    ? t("models.collapseProvider", "Collapse {{provider}}", { provider })
+                    : t("models.expandProvider", "Expand {{provider}}", { provider })}
+                  aria-expanded={isExpanded}
+                  data-testid={`model-combobox-provider-toggle-${provider}`}
+                >
+                  ▼
+                </button>
               </div>
-              {nonFavoritedModels.map((m) => {
-                const optionValue = `${m.provider}/${m.id}`;
+              {!isCollapsed && providerModels.map((model) => {
+                const optionValue = `${model.provider}/${model.id}`;
                 const optionIndex = optionsList.findIndex((opt) => opt.value === optionValue);
                 const isHighlighted = highlightedIndex === optionIndex;
                 const isSelected = value === optionValue;
@@ -703,8 +767,8 @@ export function CustomModelDropdown({
                     role="option"
                     aria-selected={isSelected}
                   >
-                    <span className="model-combobox-option-text">{m.name}</span>
-                    <span className="model-combobox-option-id">{m.id}</span>
+                    <span className="model-combobox-option-text">{model.name}</span>
+                    <span className="model-combobox-option-id">{model.id}</span>
                     {onToggleModelFavorite && (
                       <button
                         type="button"
@@ -714,7 +778,7 @@ export function CustomModelDropdown({
                           onToggleModelFavorite(optionValue);
                         }}
                         title={isFavorited ? t("models.removeFromFavorites", "Remove from favorites") : t("models.addToFavorites", "Add to favorites")}
-                        aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: m.name }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: m.name })}
+                        aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: model.name })}
                       >
                         {isFavorited ? "★" : "☆"}
                       </button>

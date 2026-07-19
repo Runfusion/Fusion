@@ -1,11 +1,20 @@
 /* SettingsSection (U8 / KTD-10) — titled grouping for settings rows. */
 
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Section chrome names the same `--font-size-*` rungs as the rows it wraps, replacing the pre-migration mix of raw values across the modal (headings at 14px, descriptions at 13px, and this primitive's own untokenized 0.9rem/0.75rem).
+Hierarchy is title = base / desc = xs / row label = sm, so a section title outranks the labels beneath it by size and weight together rather than by weight alone — at the old 0.9rem the title and a 0.875rem label were within half a pixel of each other and the grouping read flat.
+The title is deliberately not `md`: that rung is the modal-level heading, and a section is subordinate to it.
+`scroll-margin-block` matches the row primitive so search results that target a section land clear of the section chrome.
+*/
+
 .settings-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   padding: var(--space-md) 0;
   border-bottom: 1px solid var(--border);
+  scroll-margin-block: var(--space-xl);
 }
 
 .settings-section:last-child {
@@ -20,14 +29,19 @@
 
 .settings-section-title {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--font-size-base);
   font-weight: 600;
+  line-height: var(--line-height-tight);
   color: var(--text);
 }
 
+/* FNXC:SettingsStyling 2026-07-15-17:35: Section descriptions keep the 78ch measure and `pretty` wrapping used for row help text, so both bodies of explanatory copy hold one column width. */
 .settings-section-desc {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  max-width: 78ch;
+  text-wrap: pretty;
   color: var(--text-muted);
 }
 

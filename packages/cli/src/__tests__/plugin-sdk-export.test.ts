@@ -43,6 +43,18 @@ describe("plugin-sdk export surface", () => {
     expect(tsupRaw).toContain("/^@fusion\\//");
   });
 
+  it("uses a runtime-only core shim that bundles schema source and Quality supervision without core dist", () => {
+    const tsupPath = join(workspaceRoot, "packages", "cli", "tsup.config.ts");
+    const tsupRaw = readFileSync(tsupPath, "utf-8");
+    const shimPath = join(workspaceRoot, "packages", "cli", "src", "plugin-sdk-core-runtime-shim.mjs");
+    const shimRaw = readFileSync(shimPath, "utf-8");
+
+    expect(tsupRaw).toContain('"plugin-sdk-core-runtime-shim.mjs"');
+    expect(shimRaw).toContain('from "../../core/src/postgres/schema/index.js"');
+    expect(shimRaw).toContain("export function superviseSpawn");
+    expect(shimRaw).not.toContain("../../core/dist/");
+  });
+
   it("has no @fusion runtime specifiers in built plugin-sdk artifact when present", () => {
     const distPath = join(workspaceRoot, "packages", "cli", "dist", "plugin-sdk", "index.js");
     if (!existsSync(distPath)) {

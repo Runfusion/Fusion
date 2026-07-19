@@ -1,0 +1,290 @@
+/*
+FNXC:Quality 2026-07-15-23:30:
+Quality hub must match native main-content views (Insights, Goals, Compound Engineering):
+shared ViewHeader on top, flex column root, body inset with --space-xl horizontal padding
+aligned under the header, card-based content, tokenized gaps/typography — no ad-hoc padding:16
+or bare h2/table inline styles.
+*/
+
+.quality-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.quality-view-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-xl) var(--space-xl) var(--space-xl);
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.quality-view-lede {
+  margin: 0;
+  max-width: 40rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.quality-view-error {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--error, #c00) 35%, var(--border));
+  background: color-mix(in srgb, var(--error, #c00) 8%, var(--surface));
+  color: var(--error, #c00);
+  font-size: 0.85rem;
+}
+
+.quality-view-empty-project {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.quality-runs-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.quality-runs-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.quality-runs-card__header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.quality-runs-card__count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.quality-runs-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.quality-runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.quality-runs-table th,
+.quality-runs-table td {
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.quality-runs-table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.quality-runs-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.quality-runs-table__command {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.quality-runs-table__empty {
+  padding: var(--space-lg) var(--space-md) !important;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.quality-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
+.quality-status--passed,
+.quality-status--running {
+  background: color-mix(in srgb, var(--success, #2a9d6e) 16%, transparent);
+  color: var(--success, #2a9d6e);
+}
+
+.quality-status--failed,
+.quality-status--error,
+.quality-status--timed_out {
+  background: color-mix(in srgb, var(--error, #c00) 14%, transparent);
+  color: var(--error, #c00);
+}
+
+.quality-status--cancelled,
+.quality-status--queued {
+  background: color-mix(in srgb, var(--warning, #c90) 16%, transparent);
+  color: var(--warning, #b8860b);
+}
+
+.quality-header-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.quality-header-actions {
+  display: contents;
+}
+
+.quality-verification-videos-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.quality-verification-videos-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.quality-verification-videos-card__header h3,
+.quality-verification-video-row__details h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.quality-verification-videos-card__header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.quality-verification-videos-card__count,
+.quality-verification-videos-card__empty,
+.quality-verification-videos-disabled {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.quality-verification-videos-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.quality-verification-video-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.quality-verification-video-row__media {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.quality-verification-video-row__details {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.quality-verification-video-row__details h4 {
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/*
+FNXC:Quality 2026-07-16-12:45:
+FN-8131: On mobile, Quality's wide preset and refresh action cluster must give the title its own full-width row and wrap below it instead of shrinking the title to a `Q…` ellipsis or clipping buttons. This mirrors InsightsView FN-7830 while preserving the shared desktop header clamp.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .quality-view .view-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+  }
+
+  .quality-view .view-header__title {
+    flex: 1 0 100%;
+    min-width: 100%;
+  }
+
+  .quality-view .view-header__title span {
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .quality-view .view-header__actions {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+  }
+
+  .quality-verification-videos-card,
+  .quality-verification-video-row,
+  .quality-verification-video-row__media {
+    max-width: 100%;
+  }
+
+  .quality-verification-video-row__details {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

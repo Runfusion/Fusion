@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { afterAll, vi } from "vitest";
 import { applySchemaBaseline, createAsyncDataLayer, createConnectionSetFromUrl, type AsyncDataLayer, type ResolvedBackend } from "@fusion/core";
-import { PG_AVAILABLE, pgDescribe } from "@fusion/test-utils/pg-test-harness";
+import { PG_AVAILABLE, PG_TEST_URL_BASE, pgDescribe } from "@fusion/test-utils/pg-test-harness";
 export { PG_AVAILABLE, pgDescribe };
 import type {
   CreateInteractiveAiSessionFactory,
@@ -24,14 +24,20 @@ export interface TestHarness {
 const dbName = `ce_harness_${process.pid}_${process.env.VITEST_POOL_ID ?? "0"}_${Math.random().toString(36).slice(2, 8)}`.replace(/[^a-zA-Z0-9_]/g, "_");
 let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
 let setupPromise: Promise<void> | null = null;
-// FNXC:PgTestAuthFix 2026-07-14-07:40:
-// The inline admin used process.env.USER for the psql -U flag, which is 'runner' on
-// GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead.
-function admin(statement: string): void { execSync(`psql "${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" }); }
+/*
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
+*/
+function admin(statement: string): void {
+  execSync(`psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" });
+}
 async function setupPostgres(): Promise<void> {
   if (connections) return;
   admin(`DROP DATABASE IF EXISTS ${dbName}`); admin(`CREATE DATABASE ${dbName}`);
-  const url = `${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/${dbName}`;
+  const url = `${PG_TEST_URL_BASE}/${dbName}`;
   const backend: ResolvedBackend = { mode: "external", runtimeUrl: url, migrationUrl: url, migrationUrlOverridden: false };
   const schema = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
   await applySchemaBaseline(schema.migration); await schema.close();

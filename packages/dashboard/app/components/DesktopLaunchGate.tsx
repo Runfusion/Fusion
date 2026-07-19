@@ -6,7 +6,7 @@ import "./DesktopLaunchGate.css";
 type Phase =
   | { kind: "loading" }
   | { kind: "chooser"; state: ShellConnectionState }
-  | { kind: "starting-local"; message: string }
+  | { kind: "starting-local"; message: string; detail?: string }
   | { kind: "local-error"; message: string }
   | { kind: "ready"; serverBaseUrl?: string }
   | { kind: "bypass" };
@@ -28,11 +28,27 @@ function needsChooser(state: ShellConnectionState): boolean {
   return !state.desktopMode;
 }
 
+/*
+FNXC:MigrationHoldingPage 2026-07-17-13:30:
+While the first-boot SQLite→PostgreSQL migration runs inside the embedded
+runtime start, `localRuntime.migration` carries live progress. Two duties here:
+(1) report each new progress label so the gate can replace the static
+"Starting…" copy with real migration status, and (2) push the startup deadline
+out while progress advances — large databases legitimately exceed the 30s
+default and must not surface the "did not become ready in time" error screen
+mid-migration. The extension keys on the LABEL CHANGING (not merely
+migration.active) so a genuinely hung migration still times out, after
+MIGRATION_STALL_TIMEOUT_MS of no new progress.
+*/
+const MIGRATION_STALL_TIMEOUT_MS = 120_000;
+
 async function waitForLocalRuntime(
   shell: NonNullable<ReturnType<typeof getFusionShell>>,
-  timeoutMs = 30_000,
+  options: { timeoutMs?: number; onMigrationProgress?: (label: string) => void } = {},
 ): Promise<{ baseUrl: string }> {
-  const deadline = Date.now() + timeoutMs;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  let deadline = Date.now() + timeoutMs;
+  let lastMigrationLabel: string | null = null;
   // The runtime is started by main when setDesktopMode("local") fires; just
   // poll shell:getState until localRuntime reports running.
   while (Date.now() < deadline) {
@@ -44,6 +60,12 @@ async function waitForLocalRuntime(
     }
     if (rt?.state === "error") {
       throw new Error(rt.error ?? "Local runtime failed to start");
+    }
+    const migrationLabel = rt?.migration?.active ? rt.migration.label ?? null : null;
+    if (migrationLabel && migrationLabel !== lastMigrationLabel) {
+      lastMigrationLabel = migrationLabel;
+      deadline = Math.max(deadline, Date.now() + MIGRATION_STALL_TIMEOUT_MS);
+      options.onMigrationProgress?.(migrationLabel);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -144,7 +166,17 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             }
             if (cancelled) return;
           }
-          const { baseUrl } = await waitForLocalRuntime(shell);
+          const { baseUrl } = await waitForLocalRuntime(shell, {
+            /* FNXC:MigrationHoldingPage 2026-07-17-13:30: swap the static "Starting…" copy for live migration progress while the first-boot database migration runs. */
+            onMigrationProgress: (label) => {
+              if (cancelled) return;
+              setPhase({
+                kind: "starting-local",
+                message: t("desktop.migrationInProgress", "Database migration in progress — this can take a few minutes."),
+                detail: label,
+              });
+            },
+          });
           if (cancelled) return;
           navigateToLocalRuntimeOrigin(baseUrl);
           return;
@@ -188,10 +220,12 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
 
   if (phase.kind === "loading" || phase.kind === "starting-local") {
     const message = phase.kind === "loading" ? t("desktop.loading", "Loading Fusion…") : phase.message;
+    const detail = phase.kind === "starting-local" ? phase.detail : undefined;
     return (
       <div className="desktop-launch-gate" role="status" aria-live="polite">
         <div className="desktop-launch-gate__panel">
           <p>{message}</p>
+          {detail ? <p className="desktop-launch-gate__detail">{detail}</p> : null}
         </div>
       </div>
     );
@@ -230,7 +264,15 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
           try {
             await shell.setDesktopMode(mode);
             if (mode === "local") {
-              const { baseUrl } = await waitForLocalRuntime(shell);
+              const { baseUrl } = await waitForLocalRuntime(shell, {
+                /* FNXC:MigrationHoldingPage 2026-07-17-13:30: first "Run Fusion Locally" pick is exactly when the one-time database migration runs — show its progress. */
+                onMigrationProgress: (label) =>
+                  setPhase({
+                    kind: "starting-local",
+                    message: t("desktop.migrationInProgress", "Database migration in progress — this can take a few minutes."),
+                    detail: label,
+                  }),
+              });
               navigateToLocalRuntimeOrigin(baseUrl);
               return;
             }

@@ -303,6 +303,42 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "rate limited provider", feedback: "429 Too Many Requests", failureValue: undefined },
+    { label: "model fallback exhaustion", feedback: "Unable to select a usable model after 2 attempts", failureValue: undefined },
+    { label: "operator-actionable model access", feedback: "403 forbidden: insufficient permissions for this model", failureValue: undefined },
+    { label: "network transport", feedback: "ECONNRESET while contacting reviewer", failureValue: undefined },
+    { label: "websocket transport", feedback: "WebSocket closed 1006", failureValue: undefined },
+    { label: "abort diagnostic", feedback: "request was aborted", failureValue: undefined },
+    { label: "raw exception", feedback: "(no feedback captured)", failureValue: "exception" },
+    { label: "raw abort", feedback: "(no feedback captured)", failureValue: "aborted" },
+  ])("keeps a $label Plan Review failure in place without replanning", async ({ feedback, failureValue }) => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-progress", status: null });
+    store.getTask.mockResolvedValue(liveTask);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      stepName: "Plan Review",
+      feedback,
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      verdict: undefined,
+      failureValue,
+      nodeId: "plan-review",
+    });
+
+    expect(scheduled).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), undefined);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      liveTask.id,
+      "Plan Review provider failure — task kept in place",
+      expect.stringContaining(liveTask.column),
+      undefined,
+    );
+  });
+
   it("clears stale pause-abort provenance silently before a fresh unpaused execution dispatch", async () => {
     const store = createMockStore();
     const liveTask = task({ column: "todo", paused: false, userPaused: false });

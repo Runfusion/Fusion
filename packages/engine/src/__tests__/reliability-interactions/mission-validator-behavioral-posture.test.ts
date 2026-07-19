@@ -258,6 +258,34 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     vi.restoreAllMocks();
   });
 
+  /*
+  FNXC:EngineTests 2026-07-18-04:40:
+  Behavioral validation now requires a proven landed merge SHA
+  (task.mergeDetails.commitSha) and a non-stale inspection root before FAIL can
+  mint Fix Features. Stub the workspace-staleness probe so unit tests do not
+  depend on a real git repo under rootDir=/tmp.
+  */
+  function proveLandedInspection() {
+    vi.spyOn(MissionExecutionLoop.prototype as any, "isValidationWorkspaceStale").mockImplementation(
+      async (landedSha: string | undefined) => {
+        if (!landedSha) {
+          return { workspaceStale: false, inspectionUnavailableReason: "landed merge SHA is unavailable" };
+        }
+        return { workspaceStale: false };
+      },
+    );
+  }
+
+  function landedTask(id: string, title: string, extra: Record<string, unknown> = {}) {
+    return {
+      id,
+      title,
+      log: [],
+      mergeDetails: { commitSha: "sha123" },
+      ...extra,
+    };
+  }
+
   function judgePass(assertionIds: string[]) {
     mockSessionHolder.session.state.messages = [
       {
@@ -272,10 +300,11 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   }
 
   it("AE2: behavioral assertion the judge calls pass → fails with no verification capability", async () => {
+    proveLandedInspection();
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-B", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-B", title: "behavioral", log: [] });
+    taskStore._setTask(landedTask("FN-B", "behavioral"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
@@ -324,11 +353,12 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("behavioral assertion confirmed by an injected verification capability → passes", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "pass", assertionId: req.assertionId, reason: "confirmed" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-BV", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-BV", title: "behavioral verified", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-BV", "behavioral verified"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -342,11 +372,12 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("behavioral assertion verification inconclusive → blocked, NO fix feature", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "inconclusive", assertionId: req.assertionId, reason: "no isolating sandbox backend" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-INC", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-INC", title: "inconclusive", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-INC", "inconclusive"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -359,6 +390,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("mixed set: static passes via judge, behavioral confirmed via verification → overall pass", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "pass", assertionId: req.assertionId, reason: "confirmed" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-MIX", status: "in-progress" });
     missionStore._setFeature(feature);
@@ -366,7 +398,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
       assertionRow({ id: "CA-static", type: "static" }),
       assertionRow({ id: "CA-behav", type: "behavioral" }),
     ]);
-    taskStore._setTask({ id: "FN-MIX", title: "mixed", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-MIX", "mixed"));
     judgePass(["CA-static", "CA-behav"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -381,6 +413,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("mixed set: behavioral observed wrong → overall fail even though static passes", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "fail", assertionId: req.assertionId, reason: "defect still reproduces" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-MIX2", status: "in-progress" });
     missionStore._setFeature(feature);
@@ -388,7 +421,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
       assertionRow({ id: "CA-static", type: "static" }),
       assertionRow({ id: "CA-behav", type: "behavioral" }),
     ]);
-    taskStore._setTask({ id: "FN-MIX2", title: "mixed fail", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-MIX2", "mixed fail"));
     judgePass(["CA-static", "CA-behav"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -401,6 +434,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("U6/R6: failed verification passes the observed-vs-expected reason to the Fix Feature", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({
       verdict: "fail",
       assertionId: req.assertionId,
@@ -410,7 +444,7 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-R6", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-R6", title: "reason", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-R6", "reason"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -427,11 +461,12 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("U6/R16: a verification FAILURE emits a persisted mission event with outcome=fail", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "fail", assertionId: req.assertionId, reason: "defect still reproduces" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-EVT-F", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-EVT-F", title: "evt fail", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-EVT-F", "evt fail"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -447,11 +482,12 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("U6/R16+R21: an INCONCLUSIVE verdict emits a distinguishable infra-failure event and no Fix Feature", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "inconclusive", assertionId: req.assertionId, reason: "no isolating sandbox backend" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-EVT-INC", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-EVT-INC", title: "evt inconclusive", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-EVT-INC", "evt inconclusive"));
     judgePass(["CA-1"]);
 
     loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp", verificationCapability: { verifyBehavioralAssertion: verify } });
@@ -478,11 +514,12 @@ describe("Validator behavioral posture (U2 + U3)", () => {
   });
 
   it("U6/R16: a swallowed Fix-Feature triage error is durably recorded, not silent", async () => {
+    proveLandedInspection();
     const verify = vi.fn(async (req): Promise<VerificationOutcome> => ({ verdict: "fail", assertionId: req.assertionId, reason: "defect still reproduces" }));
     const feature = createMockFeature({ loopState: "implementing", taskId: "FN-TRIAGE", status: "in-progress" });
     missionStore._setFeature(feature);
     missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
-    taskStore._setTask({ id: "FN-TRIAGE", title: "triage fail", integrationSha: "sha123", log: [] });
+    taskStore._setTask(landedTask("FN-TRIAGE", "triage fail"));
     judgePass(["CA-1"]);
     // Make triage throw so the swallow path is exercised.
     missionStore.triageFeature = vi.fn(async () => { throw new Error("triage boom"); }) as any;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsModal, SettingsView } from "../SettingsModal";
@@ -114,6 +114,8 @@ vi.mock("../../api", () => ({
   fetchDashboardHealth: vi.fn(() => Promise.resolve({ status: "ok", version: "1.2.3", uptime: 120 })),
   checkForUpdates: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updateAvailable: true })),
   installUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true })),
+  fetchSystemInfo: vi.fn(() => Promise.resolve({ supervised: true, restartSupported: true })),
+  requestSystemRestart: vi.fn(() => Promise.resolve({ scheduled: true })),
   fetchGlobalSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
   // SettingsModal renders ProjectDefaultWorkflowField → WorkflowSelector, which loads these on mount.
   fetchWorkflows: vi.fn(() => Promise.resolve([])),
@@ -152,6 +154,11 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
 }));
 
 import { fetchDashboardHealth, fetchSettings, updateSettings } from "../../api";
+
+function setDocumentHidden(hidden: boolean): void {
+  Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: hidden ? "hidden" : "visible" });
+}
 
 function mockSettingsViewport(matches: boolean): void {
   Object.defineProperty(window, "matchMedia", {
@@ -221,10 +228,15 @@ function expectBaseRule(css: string, selector: string, declaration: string): voi
 describe("SettingsModal mobile adaptations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setDocumentHidden(false);
     localStorage.removeItem("fusion_github_star_count");
     localStorage.removeItem("fusion:github-star-clicked");
     localStorage.setItem("fusion:settings:show-advanced", "true");
     mockSettingsViewport(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders mobile-targeted settings layout classes", async () => {
@@ -392,6 +404,34 @@ describe("SettingsModal mobile adaptations", () => {
     expect(queryByText("Settings Section", { selector: "label" })).toBeNull();
   });
 
+  /*
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  FN-8130 requires the mobile section picker and rendered content to start on Appearance when no explicit initialSection is supplied. Appearance is global and not Advanced-gated, so it remains selectable in the default visibility state.
+  */
+  it("defaults the mobile section picker to Appearance", async () => {
+    mockSettingsViewport(true);
+    const { getByLabelText, getByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(getByLabelText("Settings Section")).toHaveValue("appearance");
+    expect(getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
+
+  it("keeps CLI Binary reachable from the Basic-mode mobile picker", async () => {
+    localStorage.removeItem("fusion:settings:show-advanced");
+    mockSettingsViewport(true);
+    const user = userEvent.setup();
+    const { container, getByLabelText, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const picker = getByLabelText("Settings Section") as HTMLSelectElement;
+    expect(Array.from(picker.options).map((option) => option.value)).toContain("cli-binary");
+
+    await user.selectOptions(picker, "cli-binary");
+    expect(await findByText(/Installing the global CLI lets you run fn and fusion/)).toBeTruthy();
+    expect(container.querySelector(".cli-binary-panel")).toBeTruthy();
+  });
+
   it("excludes research sections from mobile picker when researchView is disabled", async () => {
     mockSettingsViewport(true);
     const user = userEvent.setup();
@@ -435,7 +475,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     const picker = getByLabelText("Settings Section") as HTMLSelectElement;
     const labels = Array.from(picker.options).map((opt) => opt.textContent);
-    expect(labels).toEqual(["Global — MCP Servers", "Project — MCP Servers"]);
+    expect(labels).toEqual(["MCP Servers · Global", "MCP Servers · Project"]);
     expect(Array.from(picker.options).map((opt) => opt.value)).toEqual(["global-mcp", "mcp"]);
 
     await user.clear(search);
@@ -445,10 +485,17 @@ describe("SettingsModal mobile adaptations", () => {
     expect(getByText("No sections match this search.")).toBeTruthy();
   });
 
-  // FN-7552: the Authentication section is storage-less (scope: undefined) but belongs to the
-  // Global group in SETTINGS_SECTIONS, so its mobile picker option must still carry the
-  // "Global — " prefix like its Global-group siblings, without changing scoped sibling labels.
-  it("prefixes the storage-less Authentication section with 'Global —' in the mobile picker", async () => {
+  /*
+  FN-7552: the Authentication section is storage-less (scope: undefined) but is global in effect —
+  it holds credentials shared across every project — so its mobile picker option must still read as
+  Global, without changing scoped sibling labels.
+  FNXC:SettingsNavigation 2026-07-15-17:35: the requirement is unchanged; only the notation moved
+  from a "Global — " prefix to a " · Global" suffix, matching the nav labels now that the nav is
+  grouped by topic. FN-7552 originally derived this from Authentication sitting under a group header
+  literally labelled "Global"; no such group exists any more, so SettingsModal names the exception
+  explicitly via STORAGE_LESS_GLOBAL_SECTION_IDS.
+  */
+  it("marks the storage-less Authentication section as Global in the mobile picker", async () => {
     mockSettingsViewport(true);
     const { getByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
@@ -456,9 +503,9 @@ describe("SettingsModal mobile adaptations", () => {
     const picker = getByLabelText("Settings Section") as HTMLSelectElement;
     const optionByValue = (value: string) => Array.from(picker.options).find((opt) => opt.value === value);
 
-    expect(optionByValue("authentication")?.textContent).toBe("Global — Authentication");
-    expect(optionByValue("global-mcp")?.textContent).toBe("Global — MCP Servers");
-    expect(optionByValue("mcp")?.textContent).toBe("Project — MCP Servers");
+    expect(optionByValue("authentication")?.textContent).toBe("Authentication · Global");
+    expect(optionByValue("global-mcp")?.textContent).toBe("MCP Servers · Global");
+    expect(optionByValue("mcp")?.textContent).toBe("MCP Servers · Project");
   });
 
   it("can open memory settings from the mobile section picker", async () => {
@@ -556,38 +603,45 @@ describe("SettingsModal mobile adaptations", () => {
     const { container, findAllByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Authentication is first by default, so click General to see form controls
-    const generalTabs = await findAllByText("General");
+    /*
+    FNXC:SettingsNavigation 2026-07-16-01:10:
+    Authentication was the previous default and renders provider cards rather than form controls. FN-8130 defaults Settings to Appearance, but this test deliberately navigates to a section with generic form controls.
+
+    FNXC:SettingsNavigation 2026-07-16-13:40:
+    The nav label is "General · Project" now that the Global/Project pair is disambiguated — plain "General" no longer matches any element.
+    */
+    const generalTabs = await findAllByText("General · Project");
     await user.click(generalTabs[0]);
 
     const controls = container.querySelectorAll(".settings-content input, .settings-content select, .settings-content textarea");
     expect(controls.length).toBeGreaterThan(0);
   });
 
-  it("shows scope indicators and updates scope banner across sections", async () => {
+  /*
+  FNXC:SettingsScope 2026-07-15-18:52:
+  Scope is communicated per ROW, not by a section banner. The banner claimed one scope for a whole section, which was frequently false — Appearance is a "global" nav entry whose task-presentation toggles are all project-scoped — so it is removed and each row states its own scope.
+  This test kept the surviving requirement (an operator can tell what a setting's scope is) and re-pointed it at the mechanism that now carries it: the nav scope icons plus the per-row badges. The old assertions on `.settings-scope-project` / `.settings-scope-global` banner elements went with the banner.
+  */
+  it("shows scope on nav items and per-row badges rather than a section banner", async () => {
     const user = userEvent.setup();
-    const { container, getByText, getAllByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const { container, getByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Authentication is first with no scope banner by default - click the Project-scoped General section
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
-    await user.click(getByText("Project General"));
 
-    // Verify project scope banner contains icon elements (SVG from Lucide, not emoji)
-    const projectBanner = container.querySelector(".settings-scope-project");
-    expect(projectBanner).toBeTruthy();
-    const projectBannerIcon = projectBanner!.querySelector(".settings-scope-icon svg");
-    expect(projectBannerIcon).toBeTruthy();
-    expect(getByText("These settings only affect this project.")).toBeTruthy();
+    await user.click(getByRole("button", { name: /Appearance$/ }));
 
-    await user.click(getByText("Appearance"));
+    // The banner is gone for good — it asserted a single scope for a section
+    // that genuinely mixes them.
+    expect(container.querySelector(".settings-scope-banner")).toBeNull();
+    expect(container.querySelector(".settings-scope-project")).toBeNull();
+    expect(container.querySelector(".settings-scope-global")).toBeNull();
 
-    // Verify global scope banner contains icon elements (SVG from Lucide, not emoji)
-    const globalBanner = container.querySelector(".settings-scope-global");
-    expect(globalBanner).toBeTruthy();
-    const globalBannerIcon = globalBanner!.querySelector(".settings-scope-icon svg");
-    expect(globalBannerIcon).toBeTruthy();
-    expect(getByText("These settings are shared across all your Fusion projects.")).toBeTruthy();
+    // Appearance is exactly the mixed case: global theme controls above,
+    // project-scoped task-presentation toggles below, each badged for itself.
+    const badges = container.querySelectorAll('[data-testid="settings-field-row-scope"]');
+    expect(badges.length).toBeGreaterThan(0);
+    expect(Array.from(badges).map((b) => b.textContent)).toContain("project");
   });
 
   it("renders separate Anthropic Authentication controls on mobile", async () => {
@@ -646,6 +700,53 @@ describe("SettingsModal mobile adaptations", () => {
     localStorage.removeItem("fusion_github_star_count");
   });
 
+  it.each([
+    ["modal", (props: { onClose: () => void; addToast: () => void }) => <SettingsModal {...props} />],
+    ["embedded", (props: { onClose: () => void; addToast: () => void }) => <SettingsView {...props} />],
+  ])("refreshes a stale GitHub star count in the %s Settings surface", async (_surface, Surface) => {
+    localStorage.setItem("fusion_github_star_count", JSON.stringify({ count: 999, fetchedAt: Date.now() - (16 * 60 * 1000) }));
+    let resolveGitHubFetch: ((value: Response) => void) | undefined;
+    const githubFetch = vi.fn(() => new Promise<Response>((resolve) => { resolveGitHubFetch = resolve; }));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => (
+      String(input).includes("api.github.com/repos/Runfusion/Fusion")
+        ? githubFetch()
+        : Promise.resolve({ ok: true, json: async () => ({}) } as Response)
+    )));
+
+    const renderResult = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(githubFetch).toHaveBeenCalledTimes(1));
+    expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("999");
+
+    resolveGitHubFetch?.({ ok: true, json: async () => ({ stargazers_count: 123 }) } as Response);
+    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("123"));
+    renderResult.unmount();
+  });
+
+  it.each([
+    ["modal", (props: { onClose: () => void; addToast: () => void }) => <SettingsModal {...props} />],
+    ["embedded", (props: { onClose: () => void; addToast: () => void }) => <SettingsView {...props} />],
+  ])("refreshes stale GitHub stars when the hidden %s Settings surface returns", async (_surface, Surface) => {
+    localStorage.setItem("fusion_github_star_count", JSON.stringify({ count: 999, fetchedAt: Date.now() - (16 * 60 * 1000) }));
+    setDocumentHidden(true);
+    const githubFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ stargazers_count: 456 }) } as Response);
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => (
+      String(input).includes("api.github.com/repos/Runfusion/Fusion")
+        ? githubFetch()
+        : Promise.resolve({ ok: true, json: async () => ({}) } as Response)
+    )));
+
+    const renderResult = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    expect(githubFetch).not.toHaveBeenCalled();
+
+    setDocumentHidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("456"));
+    expect(githubFetch).toHaveBeenCalledTimes(1);
+    renderResult.unmount();
+  });
+
   it("contains required mobile settings CSS overrides", () => {
     const css = loadAllAppCss();
 
@@ -668,8 +769,6 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-section-heading", "padding: var(--space-md) 0 var(--space-sm);");
     expectMobileRule(css, ".settings-section-heading", "margin: 0 0 var(--space-sm);");
     expectMobileRule(css, ".settings-scope-icon", "margin-right: 0;");
-    expectMobileRule(css, ".settings-scope-banner", "margin: 0 var(--space-sm) var(--space-xs);");
-    expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-xs) var(--space-sm);");
     expectMobileRule(css, ".settings-empty-state", "padding: var(--space-sm);");
     expectMobileRule(css, ".settings-description", "padding: 0 var(--space-sm);");
     expectMobileRule(css, ".theme-selector", "padding: 0 var(--space-sm) var(--space-sm);");
@@ -691,7 +790,7 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "flex: 0 0 auto;");
     expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "min-width: max-content;");
     expectMobileRule(css, ".settings-modal .settings-update-check", "align-items: center;");
-    expectMobileRule(css, ".settings-modal .settings-update-check", "flex-wrap: nowrap;");
+    expectMobileRule(css, ".settings-modal .settings-update-check", "flex-wrap: wrap;");
     expectMobileRule(css, ".settings-modal .settings-version-check-btn", "line-height: 1;");
     expectMobileRule(css, ".settings-modal .settings-version-check-btn", "white-space: nowrap;");
     expectMobileRule(css, ".settings-modal .settings-modal-version", "display: inline-flex;");
@@ -699,9 +798,12 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-modal .settings-modal-version", "white-space: nowrap;");
     expect(css).toContain(".settings-modal .modal-header {\n    padding-block: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-row", "padding: var(--space-sm);");
-    expectMobileRule(css, ".auth-section-hint", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".auth-panel-body", "padding-inline: 0;");
+    expectMobileRule(css, ".auth-panel-body .auth-section-hint", "margin: 0 0 var(--space-sm);");
     expectMobileRule(css, ".auth-section-hint", "padding: var(--space-sm);");
-    expectMobileRule(css, ".auth-group-label", "padding: 0 var(--space-sm);");
+    expectMobileRule(css, ".auth-panel-body .auth-group-label", "padding: 0;");
+    expectMobileRule(css, ".auth-panel-body .auth-provider-card", "margin: 0 0 var(--space-sm);");
+    // Custom Provider cards render outside .auth-panel-body and retain their mobile gutter.
     expectMobileRule(css, ".auth-provider-card", "margin: 0 var(--space-sm) var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header", "padding: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section)", "margin-left: auto;");
@@ -867,6 +969,86 @@ describe("SettingsModal mobile adaptations", () => {
       expectMobileRule(css, ".settings-search-toggle", "display: inline-flex;");
       expectMobileRule(css, ".settings-search-toggle", "flex-shrink: 0;");
       expectBaseRule(css, ".settings-search-toggle", "display: none;");
+    });
+  });
+
+  describe("mobile section picker groups (FN-8236)", () => {
+    it("mirrors desktop groups, omits advanced-only entries until enabled, and keeps scoped pairs global first", async () => {
+      mockSettingsViewport(true);
+      localStorage.setItem("fusion:settings:show-advanced", "false");
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      const { getByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      const select = getByLabelText("Settings Section") as HTMLSelectElement;
+      const groupLabels = Array.from(select.querySelectorAll("optgroup")).map((group) => group.label);
+      expect(groupLabels).toEqual(["Preferences", "Project", "AI & Models", "Automation", "Integrations", "Infrastructure"]);
+      expect(Array.from(select.querySelectorAll("optgroup")).every((group) => group.querySelectorAll("option").length > 0)).toBe(true);
+      expect(Array.from(select.options).map((option) => option.text)).not.toContain("MCP Servers · Global");
+
+      const scopedPairs = [
+        ["global-models", "project-models"],
+        ["research-global", "research-project"],
+        ["scheduling-global", "scheduling"],
+        ["source-control-global", "source-control"],
+        ["backups-global", "backups"],
+      ];
+      const optionIds = Array.from(select.options).map((option) => option.value);
+      const visibleScopedPairs = scopedPairs.filter(([globalId, projectId]) => optionIds.includes(globalId) && optionIds.includes(projectId));
+      expect(visibleScopedPairs).toEqual(expect.arrayContaining([
+        ["global-models", "project-models"],
+        ["scheduling-global", "scheduling"],
+        ["source-control-global", "source-control"],
+      ]));
+      for (const [globalId, projectId] of visibleScopedPairs) {
+        expect(optionIds.indexOf(globalId)).toBe(optionIds.indexOf(projectId) - 1);
+      }
+
+      await user.click(getByLabelText("Advanced settings"));
+      await waitFor(() => expect(Array.from(select.options).map((option) => option.text)).toContain("MCP Servers · Global"));
+      const advancedGroups = Array.from(select.querySelectorAll("optgroup")).map((group) => group.label);
+      expect(advancedGroups).toContain("Advanced");
+
+      const advancedOptionIds = Array.from(select.options).map((option) => option.value);
+      for (const [globalId, projectId] of [
+        ["global-mcp", "mcp"],
+        ["research-global", "research-project"],
+      ]) {
+        const globalIndex = advancedOptionIds.indexOf(globalId);
+        const projectIndex = advancedOptionIds.indexOf(projectId);
+        if (globalIndex >= 0 && projectIndex >= 0) {
+          expect(globalIndex).toBe(projectIndex - 1);
+        }
+      }
+    });
+
+    it("keeps only matching non-empty groups during search and replaces the picker with the empty hint for no matches", async () => {
+      mockSettingsViewport(true);
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      const { container, getByLabelText, getByTestId, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      await user.click(getByLabelText("Show search"));
+      await user.type(getByTestId("settings-search-input"), "mcp");
+
+      const select = getByLabelText("Settings Section") as HTMLSelectElement;
+      expect(Array.from(select.querySelectorAll("optgroup")).map((group) => group.label)).toEqual(["Integrations"]);
+      expect(Array.from(select.options).map((option) => option.text)).toEqual(["MCP Servers · Global", "MCP Servers · Project"]);
+
+      await user.clear(getByTestId("settings-search-input"));
+      await user.type(getByTestId("settings-search-input"), "zzzzzz-no-match");
+      await findByText("No sections match this search.");
+      expect(container.querySelector("#settings-mobile-section")).toBeNull();
+      expect(container.querySelector(".settings-mobile-section-picker optgroup")).toBeNull();
+    });
+
+    it("leaves desktop navigation as the sidebar without a mobile picker", async () => {
+      mockSettingsViewport(false);
+      const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      expect(container.querySelector(".settings-sidebar")).toBeTruthy();
+      expect(container.querySelector(".settings-mobile-section-picker")).toBeNull();
     });
   });
 });

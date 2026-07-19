@@ -52,6 +52,7 @@ const FN_7111_GOVERNED_TOOLS = [
   ["fn_workflow_delete", "task_agent_mutation"],
   ["fn_workflow_settings", "task_agent_mutation"],
   ["fn_task_update", "task_agent_mutation"],
+  ["fn_task_assign", "task_agent_mutation"],
   ["fn_task_promote", "task_agent_mutation"],
   ["fn_task_refine", "task_agent_mutation"],
   ["fn_run_verification", "command_execution"],
@@ -109,8 +110,11 @@ describe("permanent-agent-gating", () => {
     expect(classifyPermanentAgentToolCall("fn_research_cancel").category).toBe("network_api");
     expect(classifyPermanentAgentToolCall("worktrunk_install").category).toBe("network_api");
     expect(classifyPermanentAgentToolCall("fn_task_update").category).toBe("task_agent_mutation");
+    expect(classifyPermanentAgentToolCall("fn_task_assign").category).toBe("task_agent_mutation");
     expect(classifyPermanentAgentToolCall("fn_task_show").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_get").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_ideation_list")).toEqual({ category: "none", recognized: true });
+    expect(classifyPermanentAgentToolCall("fn_ideation_converge")).toEqual({ category: "task_agent_mutation", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_heartbeat_done")).toEqual({ category: "none", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_ask_question")).toEqual({ category: "none", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_send_message")).toEqual({ category: "none", recognized: true });

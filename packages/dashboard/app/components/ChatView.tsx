@@ -18,13 +18,16 @@ import {
   Minimize2,
   X,
   Hash,
+  Pin,
+  PinOff,
+  MoreHorizontal,
 } from "lucide-react";
 import { FN_AGENT_ID, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
 import { fetchSettings, updateGlobalSettings, type DiscoveredSkill } from "../api";
-import { THINKING_LEVELS, type Agent, type Settings, type ThinkingLevel } from "@fusion/core";
+import { type Agent, type Settings } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { AgentMentionPopup } from "./AgentMentionPopup";
@@ -96,12 +99,41 @@ export interface ChatViewProps {
   onMaximize?: () => void;
   onMinimize?: () => void;
   onClose?: () => void;
+  /** Optional external composer seed; paired with a nonce so repeated opens reseed intentionally. */
+  initialComposerDraft?: string;
+  initialComposerDraftNonce?: number;
 }
 
 // Keep a generous cap so pasted multi-paragraph text stays visible while
 // still preventing the composer from overtaking the message pane on short viewports.
 const CHAT_INPUT_MAX_HEIGHT_PX = 640;
 const TABLET_INPUT_MAX_HEIGHT_PX = 200;
+const CHAT_CONTEXT_MENU_FALLBACK_WIDTH_PX = 200;
+const CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
+
+/** Returns an issue or pull-request URL as a standalone composer line. */
+export function buildIssueChatPrefill(url: string): string {
+  const trimmedUrl = url.trim();
+  return trimmedUrl ? `${trimmedUrl}\n\n` : "";
+}
+
+export function resolveChatContextMenuPosition(
+  anchorX: number,
+  anchorY: number,
+  anchorRight: boolean,
+  menuWidth: number,
+  menuHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const maximumLeft = Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, viewportWidth - menuWidth - CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX);
+  const maximumTop = Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, viewportHeight - menuHeight - CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX);
+  const proposedLeft = anchorRight ? anchorX - menuWidth : anchorX;
+  return {
+    x: Math.min(Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, proposedLeft), maximumLeft),
+    y: Math.min(Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, anchorY), maximumTop),
+  };
+}
 /** Canonical definition lives in packages/dashboard/src/chat.ts (ROOM_SKIP_SENTINEL). */
 const ROOM_SKIP_SENTINEL = "__SKIP__";
 let chatViewWasPreviouslyInactive = false;
@@ -498,7 +530,7 @@ interface RoomContext {
   memberIds: ReadonlySet<string>;
 }
 
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
     recordResumeEvent({
@@ -580,6 +612,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     createSession,
     archiveSession,
     renameSession,
+    pinSession,
+    pinnedCount,
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,
@@ -622,7 +656,52 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     );
     return getPersistedChatDraft(initialDraftKey);
   });
-  const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ sessionId: string; anchorX: number; anchorY: number; anchorRight: boolean; x: number; y: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  /*
+  FNXC:ChatSidebar 2026-07-17-00:12:
+  FN-8191 positions each conversation-row action menu from its rendered dimensions, rather than a width derived from the default theme. This keeps the trigger edge aligned under alternate spacing themes and clamps all four actions inside both viewport axes.
+  */
+  const openSessionMenu = (
+    sessionId: string,
+    anchorX: number,
+    anchorY: number,
+    options?: { anchorRight?: boolean },
+  ) => {
+    if (typeof window === "undefined") return;
+
+    setContextMenu({
+      sessionId,
+      anchorX,
+      anchorY,
+      anchorRight: options?.anchorRight ?? false,
+      x: anchorX,
+      y: anchorY,
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current || typeof window === "undefined") return;
+
+    const menu = contextMenuRef.current;
+    const bounds = menu.getBoundingClientRect();
+    /* FNXC:ChatSidebar 2026-07-17-00:12: JSDOM has no layout, so its non-visual test fallback preserves the default-theme menu width while browsers always use rendered dimensions. */
+    const width = bounds.width || menu.offsetWidth || CHAT_CONTEXT_MENU_FALLBACK_WIDTH_PX;
+    const height = bounds.height || menu.offsetHeight;
+    const position = resolveChatContextMenuPosition(
+      contextMenu.anchorX,
+      contextMenu.anchorY,
+      contextMenu.anchorRight,
+      width,
+      height,
+      window.innerWidth,
+      window.innerHeight,
+    );
+
+    if (position.x !== contextMenu.x || position.y !== contextMenu.y) {
+      setContextMenu({ ...contextMenu, ...position });
+    }
+  }, [contextMenu]);
   const [renameDialog, setRenameDialog] = useState<{ sessionId: string; title: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -714,6 +793,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // quick re-tap never scrolls the document while iOS is raising the keyboard.
   const blurScrollResetTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const appliedComposerDraftNonceRef = useRef<number | undefined>(undefined);
+  const focusComposerAfterPrefillRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const mentionCursorPosRef = useRef(0);
@@ -833,6 +914,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     chatScope === "rooms" ? rooms.activeRoom?.id : activeSession?.id,
   );
   const lastDraftKeyRef = useRef<string | null>(activeDraftKey);
+  const skipNextDraftRestoreRef = useRef(false);
 
   useEffect(() => {
     if (activeDraftKey === lastDraftKeyRef.current) {
@@ -840,6 +922,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     lastDraftKeyRef.current = activeDraftKey;
+    if (skipNextDraftRestoreRef.current) {
+      skipNextDraftRestoreRef.current = false;
+      return;
+    }
     setMessageInput(getPersistedChatDraft(activeDraftKey));
   }, [activeDraftKey]);
 
@@ -1234,6 +1320,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     anchorToBottom,
   ]);
 
+  /*
+  FNXC:Chat 2026-07-18-14:09:
+  FN-8339 confirms regular Chat shares the pinned-bottom invariant with task chat and agent logs. `isUserScrollingRef` changes synchronously on a genuine scroll event, so streamed deltas and their settle frames must return without writing while the reader is above the bottom threshold; explicit jump-to-latest resets that ref before anchoring.
+  */
   // Scroll thread container to bottom during streaming only when already pinned.
   useEffect(() => {
     if (!isStreaming || isUserScrollingRef.current) {
@@ -1575,8 +1665,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         setShowNewDialog(false);
         // On mobile, hide sidebar after selecting
         if (isChatMobile) setSidebarVisible(false);
+        return true;
       } catch {
         addToast(t("chat.failedToCreateSession", "Failed to create chat session"), "error");
+        return false;
       }
     },
     [createSession, addToast, isChatMobile, t],
@@ -1623,7 +1715,57 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   useLayoutEffect(() => {
     resizeComposer();
+    if (focusComposerAfterPrefillRef.current) {
+      focusComposerAfterPrefillRef.current = false;
+      inputRef.current?.focus();
+    }
   }, [chatScope, messageInput, activeSession?.id, rooms.activeRoom?.id, resizeComposer]);
+
+  /*
+  FNXC:ChatComposerPrefill 2026-07-30-12:00:
+  The GitHub Import Chat action seeds, but never sends, a selected issue or PR link. A nonce makes
+  repeated opens deliberate reseeds rather than render-time clobbers; each seed returns Chat to
+  direct scope and focuses the composer so the operator can add their question immediately.
+
+  FNXC:ChatComposerPrefill 2026-07-30-12:30:
+  Draft-restore suppression is only armed when the prefill changes draft scope/session. If an
+  always-default session creation fails while already direct, leave other sessions' saved drafts
+  eligible for restoration instead of leaking the imported link into the next selected session.
+  */
+  useEffect(() => {
+    if (
+      initialComposerDraftNonce === undefined ||
+      initialComposerDraftNonce === appliedComposerDraftNonceRef.current ||
+      !initialComposerDraft?.trim()
+    ) {
+      return;
+    }
+
+    appliedComposerDraftNonceRef.current = initialComposerDraftNonce;
+    const seedComposer = (willChangeDraftTarget: boolean) => {
+      if (willChangeDraftTarget) {
+        skipNextDraftRestoreRef.current = true;
+      }
+      setChatScope("direct");
+      focusComposerAfterPrefillRef.current = true;
+      setMessageInput(initialComposerDraft);
+    };
+
+    if (!isStreaming && chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
+      const input = chatDefaultTarget.kind === "agent"
+        ? { agentId: chatDefaultTarget.agentId }
+        : {
+            agentId: FN_AGENT_ID,
+            modelProvider: chatDefaultTarget.modelProvider,
+            modelId: chatDefaultTarget.modelId,
+            thinkingLevel: chatDefaultTarget.thinkingLevel,
+          };
+      void handleCreateSession(input).then((created) => seedComposer(created || chatScope !== "direct"));
+      return;
+    }
+
+    seedComposer(chatScope !== "direct");
+  }, [chatDefaultTarget, chatScope, chatSettings?.chatNewSessionMode, handleCreateSession, initialComposerDraft, initialComposerDraftNonce, isStreaming, resizeComposer]);
 
   const clearComposerState = useCallback(() => {
     setMessageInput("");
@@ -2248,6 +2390,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
   }, [addToast, renameDialog, renameSession, renameTitle, t]);
 
+  const handlePin = useCallback(
+    async (id: string, pinned: boolean) => {
+      setContextMenu(null);
+      setMobileSessionMenuOpen(false);
+      try {
+        await pinSession(id, pinned);
+        addToast(pinned ? t("chat.conversationPinned", "Conversation pinned") : t("chat.conversationUnpinned", "Conversation unpinned"), "success");
+      } catch {
+        // useChat restores optimistic state and reports the server rejection.
+      }
+    },
+    [addToast, pinSession, t],
+  );
+
   // Handle delete
   const handleDelete = useCallback(
     async (id: string) => {
@@ -2809,11 +2965,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           <Paperclip size={16} />
         </button>
         {/*
-        FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
-        FN-7898: change the active session's thinking level mid-conversation from the composer.
-        Model-loop (non-CLI) direct sessions only — CLI-backed sessions broker to a live PTY and
-        never receive defaultThinkingLevel (FN-7775), and chat rooms have no thinkingLevel field
-        at all. Gate with the existing cliChatActive boolean already in scope here.
+        FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
+        FN-8030: direct sessions retain model/agent targeting here, while room composers reuse
+        this control in level-only mode. CLI-backed sessions broker to a live PTY and never receive
+        defaultThinkingLevel (FN-7775), so this direct-chat control stays gated by cliChatActive.
         */}
         {!cliChatActive && (
           <ChatThinkingLevelControl
@@ -2926,6 +3081,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatHeader 2026-06-22-18:44:
   Very narrow chat headers collapse Direct/Rooms to icons while retaining aria-selected tabs and text labels for wider headers. The segmented control must stay height-aligned with the ViewHeader action row, so icon+label markup is stable and CSS hides only the label.
   */
+  const pinnedFilteredSessions = filteredSessions.filter((session) => session.pinnedAt != null);
+  const unpinnedFilteredSessions = filteredSessions.filter((session) => session.pinnedAt == null);
+  const contextMenuSession = contextMenu
+    ? filteredSessions.find((session) => session.id === contextMenu.sessionId) ?? (activeSession?.id === contextMenu.sessionId ? activeSession : undefined)
+    : undefined;
+
   const mobileDirectSessionSwitcher = showMobileSessionSwitcher ? (
     <div className="chat-mobile-session-menu" ref={mobileSessionMenuRef}>
       <button
@@ -2946,7 +3107,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       </button>
       {mobileSessionMenuOpen && (
         <div className="chat-mobile-session-dropdown" role="menu" data-testid="chat-mobile-session-dropdown">
-          {filteredSessions.map((session) => (
+          {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-mobile-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
+          {[...pinnedFilteredSessions, ...unpinnedFilteredSessions].map((session) => (
             <div
               key={session.id}
               className={`chat-mobile-session-option-row${activeSession?.id === session.id ? " chat-mobile-session-option-row--active" : ""}`}
@@ -2959,7 +3121,18 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 data-testid={`chat-mobile-session-option-${session.id}`}
                 onClick={() => handleSessionClick(session.id)}
               >
-                <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}</span>
+                <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}{session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-icon chat-mobile-session-pin"
+                data-testid={`chat-mobile-session-pin-${session.id}`}
+                aria-label={session.pinnedAt ? t("chat.unpinConversationAria", "Unpin conversation {{title}}", { title: session.title || t("chat.untitledSession", "Untitled") }) : t("chat.pinConversationAria", "Pin conversation {{title}}", { title: session.title || t("chat.untitledSession", "Untitled") })}
+                title={!session.pinnedAt && pinnedCount >= 3 ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
+                disabled={!session.pinnedAt && pinnedCount >= 3}
+                onClick={() => handlePin(session.id, !session.pinnedAt)}
+              >
+                {session.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
               </button>
               <button
                 type="button"
@@ -3145,7 +3318,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               ) : filteredSessions.length === 0 ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
-                filteredSessions.map((session) => {
+                <>
+                  {/* FNXC:ChatPinned 2026-07-16-12:00: Direct-session pins are grouped on desktop and mobile; the store caps each scope at three. */}
+                  {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
+                  {filteredSessions.map((session) => {
                   const isActive = activeSession?.id === session.id;
                   const showUnreadDot = !isActive && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3163,42 +3339,36 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       onClick={() => handleSessionClick(session.id)}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY });
+                        openSessionMenu(session.id, e.clientX, e.clientY);
                       }}
                       data-testid={`chat-session-${session.id}`}
                     >
                       {/*
-                      FNXC:ChatSidebar 2026-07-02-00:00:
-                      Direct conversation rows need an always-discoverable rename affordance before delete while preserving row selection. Keep edit/delete as sibling buttons that stop propagation and share the existing rename/delete flows.
+                      FNXC:ChatSidebar 2026-07-16-00:00:
+                      FN-8173 consolidates Pin, Rename, and Delete into this single three-dot trigger so long conversation titles retain usable row width. It opens the existing context-menu state so click and right-click share the same labeled action list and handlers.
                       */}
-                      <div className="chat-session-actions">
-                        <button
-                          type="button"
-                          className="btn-icon chat-session-action-btn chat-session-rename-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openRenameDialog(session.id);
-                          }}
-                          data-testid="chat-session-rename-btn"
-                          aria-label={t("chat.renameConversationAria", "Rename conversation {{title}}", { title: sessionTitle })}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon chat-session-action-btn chat-session-delete-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDelete(session.id);
-                          }}
-                          data-testid="chat-session-delete-btn"
-                          aria-label={t("chat.deleteConversation", "Delete conversation")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="btn-icon chat-session-menu-btn"
+                        data-testid="chat-session-menu-btn"
+                        aria-label={t("chat.conversationActionsAria", "Conversation actions for {{title}}", { title: sessionTitle })}
+                        aria-haspopup="menu"
+                        aria-expanded={contextMenu?.sessionId === session.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (contextMenu?.sessionId === session.id) {
+                            setContextMenu(null);
+                            return;
+                          }
+                          const bounds = e.currentTarget.getBoundingClientRect();
+                          openSessionMenu(session.id, bounds.right, bounds.bottom, { anchorRight: true });
+                        }}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
                       <div className="chat-session-title">
                         {sessionTitle}
+                        {session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}
                         {showUnreadDot ? (
                           <span
                             className="chat-unread-dot"
@@ -3227,7 +3397,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       </div>
                     </div>
                   );
-                })
+                  })}
+                </>
               )}
             </div>
           </>
@@ -3365,9 +3536,23 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       {contextMenu && (
         <div
           className="chat-session-context-menu"
+          ref={contextMenuRef}
+          role="menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            onClick={() => handlePin(
+              contextMenu.sessionId,
+              !contextMenuSession?.pinnedAt,
+            )}
+            data-testid="chat-context-pin"
+            title={pinnedCount >= 3 && !contextMenuSession?.pinnedAt ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
+            disabled={pinnedCount >= 3 && !contextMenuSession?.pinnedAt}
+          >
+            {contextMenuSession?.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
+            {contextMenuSession?.pinnedAt ? t("chat.unpin", "Unpin") : t("chat.pin", "Pin")}
+          </button>
           <button
             onClick={() => openRenameDialog(contextMenu.sessionId)}
             data-testid="chat-context-rename"
@@ -3546,33 +3731,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                     </div>
                   )}
                 </div>
-                <div className="chat-room-thinking-level-field">
-                  {/* FNXC:Chat-ThinkingLevel 2026-07-12-00:00: Room thinking effort is a header-level room setting, not a composer control, because it acts as the default reasoning effort for every responder in the conversation. */}
-                  <label className="sr-only" htmlFor="chat-room-thinking-level">
-                    {t("chat.roomThinkingLevel", "Room thinking effort")}
-                  </label>
-                  <select
-                    id="chat-room-thinking-level"
-                    className="input chat-room-thinking-level-select"
-                    data-testid="chat-room-thinking-level"
-                    aria-label={t("chat.roomThinkingLevel", "Room thinking effort")}
-                    value={rooms.activeRoom.thinkingLevel ?? ""}
-                    onChange={(event) => {
-                      const selectedLevel = event.target.value;
-                      const thinkingLevel = THINKING_LEVELS.includes(selectedLevel as ThinkingLevel) ? selectedLevel : null;
-                      void rooms.updateRoomSettings(rooms.activeRoom!.id, { thinkingLevel }).catch(() => {
-                        addToast(t("chat.failedToUpdateRoomThinkingLevel", "Failed to update room thinking effort"), "error");
-                      });
-                    }}
-                  >
-                    <option value="">{t("models.useDefault", "Use default")}</option>
-                    {THINKING_LEVELS.map((level) => (
-                      <option key={level} value={level}>
-                        {t(`models.options.${level}`, level === "xhigh" ? "Very High" : level.charAt(0).toUpperCase() + level.slice(1))}
-                      </option>
-                    ))}
-                  </select>
-                </div>
                 <div className="chat-room-thread-members">
                   {rooms.activeRoomMembers.map((member) => (
                     <AgentAvatar
@@ -3697,6 +3855,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 >
                   <Paperclip size={16} />
                 </button>
+                {/*
+                FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
+                FN-8030 moves room thinking effort from the crowded thread header to this Brain-icon
+                popover beside attach, matching direct chat while keeping it reachable on narrow layouts.
+                It persists one responder-wide room default and intentionally exposes no model/agent target.
+                */}
+                <ChatThinkingLevelControl
+                  level={rooms.activeRoom.thinkingLevel}
+                  defaultThinkingLevel={resolvedDefaultThinkingLevel}
+                  showTargetSection={false}
+                  onChange={(level) => {
+                    void rooms.updateRoomSettings(rooms.activeRoom!.id, { thinkingLevel: level || null }).catch(() => {
+                      addToast(t("chat.failedToUpdateRoomThinkingLevel", "Failed to update room thinking effort"), "error");
+                    });
+                  }}
+                />
                 <div
                   className={`chat-input-wrapper${isDragOver ? " chat-input-wrapper--dragover" : ""}`}
                   onDragOver={(event) => {

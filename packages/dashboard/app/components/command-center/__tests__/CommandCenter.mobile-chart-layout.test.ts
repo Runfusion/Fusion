@@ -43,6 +43,10 @@ describe("CommandCenter.mobile-chart-layout.css", () => {
     expect(cssContent).toContain(".cc-system-chart-grid");
   });
 
+  it("stacks Overview stat cards without mobile overflow", () => {
+    expect(mobileCss).toMatch(/\.cc-stat-grid\s*\{[^}]*min-inline-size:\s*0;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  });
+
   it("keeps chart primitives and text-bearing children shrink-bounded for real mobile layout", () => {
     expect(cssContent).toMatch(/\.cc-token-series-axis,[\s\S]*\.cc-funnel-stage\s*\{[\s\S]*min-inline-size:\s*0;[\s\S]*max-inline-size:\s*100%/);
     expect(cssContent).toMatch(/\.cc-bar-label\s*\{[^}]*min-inline-size:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis/);

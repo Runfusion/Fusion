@@ -1,4 +1,5 @@
 import type { Task, Column } from "@fusion/core";
+import { isActiveMergeStatus as isMergeActiveStatus } from "../../../core/src/active-merge-status";
 
 export type DoneColumnSortMode = "completion-date-desc" | "task-id-desc";
 
@@ -46,10 +47,6 @@ function getDoneSortTimestamp(task: Task): number {
   const timestamp = task.columnMovedAt ?? task.updatedAt ?? task.createdAt;
   const parsed = Date.parse(timestamp);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isMergeActiveStatus(status: string | null | undefined): boolean {
-  return status === "merging" || status === "merging-pr" || status === "merging-fix";
 }
 
 export function sortTasksForDisplayColumn(

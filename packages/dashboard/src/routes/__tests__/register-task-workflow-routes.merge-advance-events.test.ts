@@ -25,7 +25,9 @@ describe("merge advance events route", () => {
   it("returns empty events when audit store is empty", async () => {
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
-      getRunAuditEvents: vi.fn(() => []),
+      // FNXC:PostgresCutover 2026-07-16-06:30: API routes use the async
+      // run-audit accessor when backed by PostgreSQL, including test doubles.
+      getRunAuditEventsAsync: vi.fn(async () => []),
     } as unknown as TaskStore;
 
     const app = express();
@@ -75,7 +77,7 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
-      getRunAuditEvents,
+      getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) => getRunAuditEvents(filters)),
     } as unknown as TaskStore;
 
     const app = express();
@@ -154,7 +156,7 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
-      getRunAuditEvents: vi.fn((filters?: { mutationType?: string }) => {
+      getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) => {
         if (filters?.mutationType === "merge:integration-ref-advance") return [advance];
         if (filters?.mutationType === "merge:auto-sync") return [clean, conflict, stale];
         return [];
@@ -193,7 +195,7 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
-      getRunAuditEvents: vi.fn((filters?: { mutationType?: string }) =>
+      getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) =>
         filters?.mutationType === "merge:integration-ref-advance" ? [advance] : []),
     } as unknown as TaskStore;
 
@@ -208,7 +210,7 @@ describe("merge advance events route", () => {
   it("defaults limit to 20, clamps max to 100, rejects invalid limit", async () => {
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
-      getRunAuditEvents: vi.fn(() => []),
+      getRunAuditEventsAsync: vi.fn(async () => []),
     } as unknown as TaskStore;
 
     const app = express();
@@ -223,9 +225,9 @@ describe("merge advance events route", () => {
     const badRes = await REQUEST(app, "GET", "/api/tasks/merge-advance-events?limit=abc");
     expect(badRes.status).toBe(400);
 
-    const getRunAuditEvents = store.getRunAuditEvents as unknown as ReturnType<typeof vi.fn>;
-    const firstAdvanceCall = getRunAuditEvents.mock.calls.find((call) => call[0]?.mutationType === "merge:integration-ref-advance");
-    const secondAdvanceCall = [...getRunAuditEvents.mock.calls].reverse().find((call) => call[0]?.mutationType === "merge:integration-ref-advance");
+    const getRunAuditEventsAsync = store.getRunAuditEventsAsync as unknown as ReturnType<typeof vi.fn>;
+    const firstAdvanceCall = getRunAuditEventsAsync.mock.calls.find((call) => call[0]?.mutationType === "merge:integration-ref-advance");
+    const secondAdvanceCall = [...getRunAuditEventsAsync.mock.calls].reverse().find((call) => call[0]?.mutationType === "merge:integration-ref-advance");
     expect(firstAdvanceCall?.[0]?.limit).toBe(20);
     expect(secondAdvanceCall?.[0]?.limit).toBe(100);
   });

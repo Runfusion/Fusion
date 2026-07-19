@@ -28,6 +28,7 @@ vi.mock("@fusion/engine", () => ({
 
 import {
   __resetAgentOnboardingState,
+  agentOnboardingStreamManager,
   cancelAgentOnboardingSession,
   createAgentOnboardingSessionPrompt,
   getAgentOnboardingSession,
@@ -38,6 +39,7 @@ import {
   retryAgentOnboardingSession,
   SessionNotFoundError,
   startAgentOnboardingSession,
+  stopAgentOnboardingGeneration,
 } from "../agent-onboarding.js";
 
 function createMockAgent(responses: string[]) {
@@ -65,6 +67,26 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   }
 }
 
+/*
+FNXC:AgentOnboarding 2026-07-15-14:32:
+Recovery regressions must await the onboarding event seam rather than poll wall-clock session state. Buffered-event replay covers generations that complete before the test subscribes.
+
+FNXC:AgentOnboarding 2026-07-15-16:42:
+Live subscribers receive AgentOnboardingStreamEvent objects keyed by `type`, while SessionEventBuffer replay records are keyed by `event` with JSON-serialized `data`. The test seam must honor both shapes.
+*/
+function waitForOnboardingEvent(sessionId: string, eventTypes: string[]): Promise<void> {
+  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.event))) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const unsubscribe = agentOnboardingStreamManager.subscribe(sessionId, (event) => {
+      if (!eventTypes.includes(event.type)) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 function createSkillPluginRunner(skills: Array<{ name: string; enabled?: boolean }>) {
   return {
     getPluginSkills: () => skills.map((skill) => ({ pluginId: "fusion-plugin-compound-engineering", skill })),
@@ -80,6 +102,7 @@ describe("agent-onboarding", () => {
 
   afterEach(() => {
     __resetAgentOnboardingState();
+    vi.useRealTimers();
   });
 
   it("parses question responses", () => {
@@ -173,6 +196,31 @@ describe("agent-onboarding", () => {
     ).toThrow(/Invalid summary/);
   });
 
+  it("normalizes absent-like optional string hints", () => {
+    const parsed = parseAgentOnboardingResponse(
+      JSON.stringify({
+        type: "complete",
+        data: {
+          name: "Hermes Desktop Tester",
+          role: "executor",
+          instructionsText: "Exercise desktop workflows with Hermes computer-use tools.",
+          thinkingLevel: "medium",
+          maxTurns: 25,
+          heartbeatProcedurePath: "  ",
+          modelHint: "",
+          runtimeHint: null,
+        },
+      }),
+    );
+
+    expect(parsed.type).toBe("complete");
+    if (parsed.type === "complete") {
+      expect(parsed.data.heartbeatProcedurePath).toBeUndefined();
+      expect(parsed.data.modelHint).toBeUndefined();
+      expect(parsed.data.runtimeHint).toBeUndefined();
+    }
+  });
+
   it("rejects malformed rich draft fields", () => {
     expect(() =>
       parseAgentOnboardingResponse(
@@ -184,7 +232,7 @@ describe("agent-onboarding", () => {
             instructionsText: "Valid instructions",
             thinkingLevel: "medium",
             maxTurns: 20,
-            heartbeatProcedurePath: "",
+            heartbeatProcedurePath: 42,
           },
         }),
       ),
@@ -269,6 +317,29 @@ describe("agent-onboarding", () => {
     expect(prompt).toContain("name: Alpha");
     expect(prompt).toContain("instructionsText: Current instructions");
     expect(prompt).toContain("messageResponseMode: immediate");
+  });
+
+  it("asks the onboarding model for runtime hints that can select Hermes", async () => {
+    mockCreateFnAgent.mockResolvedValueOnce(
+      createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: { id: "goal", type: "text", question: "What is the primary goal?" },
+        }),
+      ]),
+    );
+
+    await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "Use the Hermes runtime for computer-use testing", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
+    expect(options.systemPrompt).toContain('"runtimeHint"');
+    expect(options.systemPrompt).toContain("optional draft suggestions");
+    expect(options.systemPrompt).toContain('use the exact runtimeHint "hermes"');
+    expect(options.systemPrompt).not.toContain("Do not include runtimeMode/model/runtimeHint");
   });
 
   it("requests role-fallback and enabled plugin skills for model-only onboarding agents", async () => {
@@ -382,6 +453,224 @@ describe("agent-onboarding", () => {
 
     const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { skillSelection?: { requestedSkillNames?: string[] } };
     expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion"]);
+  });
+
+  it("preserves valid JSON from thinking-only assistant responses", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: "thinking"; thinking: string }>;
+    }> = [];
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      const callbacks = options as { onThinking?: (delta: string) => void };
+      return {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async () => {
+            callbacks.onThinking?.(response);
+            messages.push({ role: "assistant", content: [{ type: "thinking", thinking: response }] });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "thinking-only response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+  });
+
+  it("prefers parseable thinking JSON over non-JSON text in the same assistant response", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: "text"; text: string } | { type: "thinking"; thinking: string }>;
+    }> = [];
+    const prompt = vi.fn(async () => {
+      messages.push({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: response },
+          { type: "text", text: "I worked through the onboarding request." },
+        ],
+      });
+    });
+    mockCreateFnAgent.mockResolvedValueOnce({
+      session: { state: { messages }, prompt, dispose: vi.fn() },
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "mixed thinking and text response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses streamed output when assistant string content is blank", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{ role: string; content: string }> = [];
+    let prompt: ReturnType<typeof vi.fn>;
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      const callbacks = options as { onText?: (delta: string) => void };
+      prompt = vi.fn(async () => {
+        callbacks.onText?.(response);
+        messages.push({ role: "assistant", content: "   " });
+      });
+      return {
+        session: { state: { messages }, prompt, dispose: vi.fn() },
+      };
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "blank assistant content", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(prompt!).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries once when the model response is not valid JSON", async () => {
+    const agent = createMockAgent([
+      "I can help design that agent.",
+      JSON.stringify({
+        type: "question",
+        data: { id: "goal", type: "text", question: "What is the primary goal?" },
+      }),
+    ]);
+    mockCreateFnAgent.mockResolvedValueOnce(agent);
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "recover malformed output", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(agent.session.prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("settles a stalled reformat turn when its timeout expires", async () => {
+    vi.useFakeTimers();
+    const messages: Array<{ role: string; content: string }> = [];
+    let callCount = 0;
+    const prompt = vi.fn(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        messages.push({ role: "assistant", content: "not valid JSON" });
+        return Promise.resolve();
+      }
+      return new Promise<void>(() => {});
+    });
+    const dispose = vi.fn();
+    let expiredOnText: ((delta: string) => void) | undefined;
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      expiredOnText = (options as { onText?: (delta: string) => void }).onText;
+      return {
+        session: { state: { messages }, prompt, dispose },
+      };
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "stalled reformat response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prompt).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    const session = getAgentOnboardingSession(sessionId) as { error?: string; agent?: unknown; thinkingOutput: string } | undefined;
+    expect(session?.error).toBe("AI generation timed out. You can retry.");
+    expect(session?.agent).toBeUndefined();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expiredOnText?.("stale expired output");
+    expect(session?.thinkingOutput).toBe("");
+    expect(agentOnboardingStreamManager.getBufferedEvents(sessionId, 0)).toContainEqual(
+      expect.objectContaining({ event: "error", data: JSON.stringify("AI generation timed out. You can retry.") }),
+    );
+  });
+
+  it("settles a stopped generation without letting late cleanup detach a newer retry", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "stale", type: "text", question: "Stale question?" },
+    });
+    const expiredMessages: Array<{ role: string; content: string }> = [];
+    let resolveExpiredPrompt!: () => void;
+    const expiredPrompt = vi.fn(() => new Promise<void>((resolve) => {
+      resolveExpiredPrompt = () => {
+        expiredMessages.push({ role: "assistant", content: response });
+        resolve();
+      };
+    }));
+    let signalRetryPromptStarted!: () => void;
+    const retryPromptStarted = new Promise<void>((resolve) => {
+      signalRetryPromptStarted = resolve;
+    });
+    const retryPrompt = vi.fn(() => {
+      signalRetryPromptStarted();
+      return new Promise<void>(() => {});
+    });
+    mockCreateFnAgent
+      .mockResolvedValueOnce({ session: { state: { messages: expiredMessages }, prompt: expiredPrompt, dispose: vi.fn() } })
+      .mockResolvedValueOnce({ session: { state: { messages: [] }, prompt: retryPrompt, dispose: vi.fn() } });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "stop and retry", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    expect(expiredPrompt).toHaveBeenCalledTimes(1);
+    expect(stopAgentOnboardingGeneration(sessionId)).toBe(true);
+
+    const retry = retryAgentOnboardingSession(sessionId);
+    await retryPromptStarted;
+    expect(retryPrompt).toHaveBeenCalledTimes(1);
+
+    resolveExpiredPrompt();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getAgentOnboardingSession(sessionId)?.currentQuestion).toBeUndefined();
+    expect(stopAgentOnboardingGeneration(sessionId)).toBe(true);
+    await retry;
+    expect(getAgentOnboardingSession(sessionId)?.error).toBe("Generation stopped by user. You can retry.");
   });
 
   it("progresses through start -> question -> response -> final summary", async () => {
@@ -507,6 +796,75 @@ describe("agent-onboarding", () => {
     await expect(respondToAgentOnboarding(sessionId, { followup: "anything" })).rejects.toBeInstanceOf(
       InvalidSessionStateError,
     );
+  });
+
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Same invariant as Planning Mode's answered-question fix: once an answer is accepted the
+  session is no longer awaiting input. currentQuestion must clear immediately (so the SSE
+  catch-up path cannot re-emit the answered question) and retry after a failed turn must ask
+  the next question instead of re-asking the answered one.
+
+  FNXC:AgentOnboarding 2026-07-14-18:20:
+  Generation failure after an answer must still resolve a successful respond payload (the
+  answered question) instead of throwing — the route used to 400 with "Session did not produce
+  a question", which bounced the client out of SSE-driven retry.
+  */
+  it("clears the answered question during generation and retries with the next-question prompt", async () => {
+    const promptCalls: string[] = [];
+    const messages: Array<{ role: string; content: string }> = [];
+    const answeredQuestion = { id: "goal", type: "text" as const, question: "What is the agent's goal?" };
+    mockCreateFnAgent.mockResolvedValue({
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (message: string) => {
+          promptCalls.push(message);
+          if (promptCalls.length === 1) {
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "question",
+                data: answeredQuestion,
+              }),
+            });
+            return;
+          }
+          if (promptCalls.length === 2) {
+            throw new Error("provider exploded");
+          }
+          messages.push({
+            role: "assistant",
+            content: JSON.stringify({
+              type: "question",
+              data: { id: "scope", type: "text", question: "What is in scope?" },
+            }),
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "answered-question invariant", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    await waitFor(() => Boolean(getAgentOnboardingSession(sessionId)?.currentQuestion));
+
+    const result = await respondToAgentOnboarding(sessionId, { goal: "Keep CI green" });
+
+    // Successful respond contract even on generation failure (Planning Mode parity).
+    expect(result).toEqual({ type: "question", data: answeredQuestion });
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toMatch(/provider exploded/);
+    // Regression: the answered question used to linger here and get re-emitted/re-asked.
+    expect(session?.currentQuestion).toBeUndefined();
+
+    await retryAgentOnboardingSession(sessionId);
+    expect(promptCalls[2]).toContain("ask the next best onboarding question");
+    expect(promptCalls[2]).not.toContain("continue from the last question");
+    expect(getAgentOnboardingSession(sessionId)?.currentQuestion?.id).toBe("scope");
   });
 
   it("cancels session and subsequent access fails", async () => {

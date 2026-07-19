@@ -38,6 +38,16 @@ async function createPluginSkillRoot(skillName: string, body = "# Plugin skill\n
   return { pluginRoot, skillDir };
 }
 
+async function createPluginSkillRootAt(relativePath: string, body = "# Plugin skill\n"): Promise<{ pluginRoot: string; skillDir: string }> {
+  const pluginRoot = await mkdtemp(join(tmpdir(), "session-plugin-skill-"));
+  tempDirs.push(pluginRoot);
+  const skillFile = join(pluginRoot, relativePath);
+  const skillDir = dirname(skillFile);
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(skillFile, body, "utf-8");
+  return { pluginRoot, skillDir };
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -408,6 +418,41 @@ describe("collectPluginSkillNames", () => {
     });
     const pluginRunner = pluginRunnerWithSkills([
       { pluginId: "plugin-a", skill: { name: "alpha", enabled: true } },
+      { pluginId: "plugin-b", skill: { name: "beta" } },
+    ]);
+
+    expect(collectPluginSkillNames(pluginRunner, projectRoot)).toEqual({
+      names: ["beta"],
+      pluginIds: ["plugin-b"],
+      additionalSkillPaths: [],
+    });
+  });
+
+  it("uses package-scoped custom skillFiles paths to enable statically disabled plugin skills", async () => {
+    const relativePath = "skills/data/ef-core/SKILL.md";
+    const { pluginRoot, skillDir } = await createPluginSkillRootAt(relativePath);
+    const projectRoot = await createProjectWithSettings({
+      packages: [{ source: "plugin:plugin-a", skills: [`+${relativePath}`] }],
+    });
+    const pluginRunner = pluginRunnerWithSkills([
+      { pluginId: "plugin-a", pluginRoot, skill: { name: "ef-core", enabled: false, skillFiles: [relativePath] } },
+    ]);
+
+    expect(collectPluginSkillNames(pluginRunner, projectRoot)).toEqual({
+      names: ["ef-core"],
+      pluginIds: ["plugin-a"],
+      additionalSkillPaths: [skillDir, dirname(skillDir)],
+    });
+  });
+
+  it("uses package-scoped custom skillFiles paths to disable statically enabled plugin skills", async () => {
+    const relativePath = "skills/data/ef-core/SKILL.md";
+    const { pluginRoot } = await createPluginSkillRootAt(relativePath);
+    const projectRoot = await createProjectWithSettings({
+      packages: [{ source: "plugin:plugin-a", skills: [`-${relativePath}`] }],
+    });
+    const pluginRunner = pluginRunnerWithSkills([
+      { pluginId: "plugin-a", pluginRoot, skill: { name: "ef-core", enabled: true, skillFiles: [relativePath] } },
       { pluginId: "plugin-b", skill: { name: "beta" } },
     ]);
 

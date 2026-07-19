@@ -5,6 +5,7 @@
 import type { TaskStore, AgentRole } from "@fusion/core";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend, SandboxRunStreamingOptions, SandboxStreamingResult } from "./sandbox/index.js";
+import { withVerificationSlot } from "./verification-concurrency.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -371,6 +372,46 @@ export async function runVerificationCommand(
    * is resolved. Pass this to pin an isolating backend without mutating global
    * state (required for safe concurrent verification — see mission-verification).
    */
+  backend?: SandboxBackend,
+): Promise<VerificationCommandResult> {
+  /*
+  FNXC:VerificationConcurrency 2026-07-15-03:35:
+  Merge/mission verification shares the process-wide verification slot with fn_run_verification so stacked monorepo builds cannot run unbounded across concurrent tasks.
+
+  FNXC:VerificationConcurrency 2026-07-15-08:20:
+  Pass signal into the slot wait so cancelled merge verification leaves the queue.
+  Limit is process-wide from engine settings wiring, not re-set per call.
+  */
+  return withVerificationSlot(
+    () =>
+      runVerificationCommandUnlocked(
+        store,
+        rootDir,
+        taskId,
+        command,
+        type,
+        signal,
+        log,
+        agentLabel,
+        extraEnv,
+        timeoutMsOverride,
+        backend,
+      ),
+    signal,
+  );
+}
+
+async function runVerificationCommandUnlocked(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  command: string,
+  type: "test" | "build",
+  signal: AbortSignal | undefined,
+  log?: { log: (message: string, ...args: unknown[]) => void; error: (message: string, ...args: unknown[]) => void; warn: (message: string, ...args: unknown[]) => void },
+  agentLabel?: string,
+  extraEnv?: NodeJS.ProcessEnv,
+  timeoutMsOverride?: number,
   backend?: SandboxBackend,
 ): Promise<VerificationCommandResult> {
   const logger = log ?? { log: console.log, error: console.error, warn: console.warn };

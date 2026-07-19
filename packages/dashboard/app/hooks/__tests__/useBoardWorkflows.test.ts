@@ -3,6 +3,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useBoardWorkflows } from "../useBoardWorkflows";
 import type { BoardWorkflowsPayload } from "../../api";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../../utils/boardWorkflowSelection";
+import {
+  __test_clearWorkflowSettingValuesRevisions,
+  getWorkflowSettingValuesRevision,
+} from "../../utils/workflowSettingValuesEvents";
 
 function makePayload(overrides: Partial<BoardWorkflowsPayload> = {}): BoardWorkflowsPayload {
   return {
@@ -26,6 +30,7 @@ describe("useBoardWorkflows", () => {
     unsubscribe = vi.fn();
     localStorage.clear();
     sessionStorage.clear();
+    __test_clearWorkflowSettingValuesRevisions();
   });
 
   function makeDeps(fetchImpl: () => Promise<BoardWorkflowsPayload>) {
@@ -152,6 +157,29 @@ describe("useBoardWorkflows", () => {
     await waitFor(() => expect(result.current.workflowOptions.map((workflow) => workflow.id)).toContain("wf-chat"));
     expect(deps.fetchBoardWorkflows).toHaveBeenLastCalledWith("p1", { forceFresh: true });
     expect(deps.writeBoardWorkflowsCache).toHaveBeenLastCalledWith("p1", payload);
+  });
+
+  it("bridges authoritative oversight setting SSE once across duplicate consumers", async () => {
+    const deps = makeDeps(() => Promise.resolve(makePayload()));
+    renderHook(() => useBoardWorkflows({ projectId: "p1", ...deps }));
+    await waitFor(() => expect(deps.fetchBoardWorkflows).toHaveBeenCalledTimes(1));
+
+    const handler = subscribeHandlers["workflow:setting-values-updated"];
+    expect(typeof handler).toBe("function");
+    const event = new MessageEvent("workflow:setting-values-updated", {
+      data: JSON.stringify({
+        workflowId: "wf-a",
+        projectId: "p1",
+        settingIds: ["plannerOversightLevel"],
+        mutationId: "revision-1",
+      }),
+    });
+    act(() => {
+      handler(event);
+      handler(event);
+    });
+
+    expect(getWorkflowSettingValuesRevision("wf-a", "p1")).toBe(1);
   });
 
   it("preserves the Board-only aggregate sentinel while resolving a concrete fallback workflow", async () => {

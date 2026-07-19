@@ -24,6 +24,14 @@ Glass theme surfaces create stronger translucent stacking contexts, so the Comma
   min-inline-size: 0;
 }
 
+/*
+FNXC:DashboardTheming 2026-07-16-15:00:
+FN-8200 gives the Settings-only current-theme selector breathing room before the Font Size section, using the established large spacing token without affecting Command Center's compact dropdown.
+*/
+.theme-dropdown--current-row {
+  margin-bottom: var(--space-lg);
+}
+
 .theme-dropdown-trigger .theme-option-swatch,
 .theme-dropdown-option .theme-option-swatch {
   flex: 0 0 auto;
@@ -35,6 +43,54 @@ Glass theme surfaces create stronger translucent stacking contexts, so the Comma
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.theme-dropdown-trigger--current-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--text);
+  text-align: start;
+}
+
+.theme-dropdown-current-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: calc(var(--space-2xl) + var(--space-md));
+  block-size: calc(var(--space-2xl) + var(--space-md));
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--todo);
+}
+
+.theme-dropdown-current-row-info {
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+}
+
+.theme-dropdown-current-row-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.theme-dropdown-current-row-value {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-dropdown-trigger--current-row:hover,
+.theme-dropdown-trigger--current-row:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--card) 90%, var(--accent));
 }
 
 .theme-dropdown-modes {
@@ -108,5 +164,9 @@ Glass theme surfaces create stronger translucent stacking contexts, so the Comma
 
   .theme-dropdown-list {
     max-block-size: min(50vh, calc(var(--space-2xl) * 10));
+  }
+
+  .theme-dropdown-trigger--current-row {
+    padding: var(--space-md);
   }
 }

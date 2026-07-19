@@ -7,6 +7,7 @@ import { TaskDetailModal } from "../TaskDetailModal";
 const mockAddToast = vi.fn();
 
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: mockAddToast,
     removeToast: vi.fn(),
@@ -21,8 +22,6 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
     useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
   };
 });
-import { useSessionLock } from "../../hooks/useSessionLock";
-import { getSessionTabId } from "../../utils/getSessionTabId";
 import type { MergeResult } from "@fusion/core";
 import {
   mockStartPlanning,
@@ -35,6 +34,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -78,6 +78,7 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
@@ -96,6 +97,26 @@ vi.mock("../../api", () => ({
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),
   refineTask: (...args: any[]) => mockRefineTask(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  /*
+  FNXC:PlanningModeSettings 2026-07-18-10:50:
+  Sync-settle clarification settings so Start Planning is not racey under full-suite load.
+  */
+  fetchGlobalSettings: vi.fn(() => {
+    const settled = {
+      then(onFulfilled: (settings: { agentClarificationEnabled: boolean }) => unknown) {
+        onFulfilled({ agentClarificationEnabled: false });
+        return settled;
+      },
+      catch() {
+        return settled;
+      },
+      finally(onFinally: () => unknown) {
+        onFinally();
+        return settled;
+      },
+    };
+    return settled;
+  }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
@@ -111,6 +132,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   useViewportMode: () => mockUseViewportMode(),
@@ -144,6 +167,7 @@ describe("PlanningModeModal", () => {
     // realistically in tests.
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);
@@ -286,14 +310,187 @@ describe("PlanningModeModal", () => {
 
         await waitFor(() => {
           expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from handoff", undefined, undefined, {
-            planningDepth: "medium",
-            customQuestionCount: undefined,
+            clarificationEnabled: false,
           }, undefined);
         });
 
         expect(focusSpy).not.toHaveBeenCalled();
       } finally {
         focusSpy.mockRestore();
+      }
+    });
+
+    it("focuses the initial textarea when New session is clicked while already composing", () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(document.activeElement).not.toBe(textarea);
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        expect(rafSpy).toHaveBeenCalled();
+        expect(document.activeElement).toBe(textarea);
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("resets a selected desktop session to compose view and focuses New session", async () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+      mockFetchAiSessions.mockResolvedValue([
+        {
+          id: "session-existing",
+          type: "planning",
+          status: "complete",
+          title: "Existing session",
+          preview: "An existing planning session",
+          projectId: null,
+          lockedByTab: null,
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        },
+      ]);
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-existing",
+        type: "planning",
+        status: "complete",
+        title: "Existing session",
+        inputPayload: JSON.stringify({ initialPlan: "Existing selected plan" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        error: null,
+      });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        fireEvent.click(await screen.findByText("Existing session"));
+
+        await waitFor(() => {
+          expect(mockFetchAiSession).toHaveBeenCalledWith("session-existing");
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(textarea.value).toBe("");
+        expect(document.activeElement).toBe(textarea);
+        expect(screen.getByRole("button", { name: /Start Planning/ })).toBeDisabled();
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("shows the mobile detail pane and focuses compose when New session is clicked from the list", async () => {
+      mockViewport("mobile");
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+      mockFetchAiSessions.mockResolvedValue([
+        {
+          id: "session-mobile",
+          type: "planning",
+          status: "complete",
+          title: "Mobile session",
+          preview: "A mobile planning session",
+          projectId: null,
+          lockedByTab: null,
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        },
+      ]);
+
+      try {
+        const { container } = render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        await screen.findByText("Mobile session");
+        const body = container.querySelector(".planning-modal-body");
+        await waitFor(() => {
+          expect(body?.classList.contains("planning-modal-body--show-list")).toBe(true);
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(body?.classList.contains("planning-modal-body--show-detail")).toBe(true);
+        expect(document.activeElement).toBe(textarea);
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("preserves existing compose draft text and moves the caret to the end on New session focus", () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: "Keep this restored draft" } });
+        textarea.setSelectionRange(0, 0);
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        expect(textarea.value).toBe("Keep this restored draft");
+        expect(document.activeElement).toBe(textarea);
+        expect(textarea.selectionStart).toBe(textarea.value.length);
+        expect(textarea.selectionEnd).toBe(textarea.value.length);
+      } finally {
+        rafSpy.mockRestore();
       }
     });
 
@@ -347,7 +544,7 @@ describe("PlanningModeModal", () => {
       expect(screen.queryByLabelText("Send to background")).toBeNull();
     });
 
-    it("enables start button when text is entered", () => {
+    it("enables start button when text is entered", async () => {
       render(
         <PlanningModeModal
           isOpen={true}
@@ -361,7 +558,9 @@ describe("PlanningModeModal", () => {
       const startButton = screen.getByText("Start Planning");
       expect(startButton.closest("button")?.hasAttribute("disabled")).toBe(true);
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Test plan" } });
 
       expect(startButton.closest("button")?.hasAttribute("disabled")).toBe(false);
@@ -457,8 +656,7 @@ describe("PlanningModeModal", () => {
           planningModelProvider: "anthropic",
           planningModelId: "claude-sonnet-4-5",
         }, {
-          planningDepth: "medium",
-          customQuestionCount: undefined,
+          clarificationEnabled: false,
         }, undefined);
       });
     });
@@ -493,38 +691,7 @@ describe("PlanningModeModal", () => {
         expect(disclosureScope.getByText("openai/gpt-4o")).toBeDefined();
       });
       expect(disclosureScope.getByText(/Selects which model runs the planning interview/)).toBeDefined();
-      expect(disclosureScope.getByText(/Plan size sets default interview depth/)).toBeDefined();
-      expect(disclosureScope.getByRole("button", { name: "Small" })).toBeDefined();
-      expect(disclosureScope.getByRole("button", { name: "Medium" }).getAttribute("aria-pressed")).toBe("true");
-      expect(disclosureScope.getByRole("button", { name: "Large" })).toBeDefined();
-      expect(disclosureScope.getByLabelText("Questions")).toBeDefined();
-    });
-
-    it("updates selected depth and sends custom question count", async () => {
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          onTasksCreated={vi.fn()}
-          tasks={mockTasks}
-        />
-      );
-
-      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
-      fireEvent.click(screen.getByRole("button", { name: "Large" }));
-      fireEvent.change(screen.getByLabelText("Questions"), { target: { value: "7" } });
-      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
-        target: { value: "Build auth system" },
-      });
-      fireEvent.click(screen.getByText("Start Planning"));
-
-      await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
-          planningDepth: "large",
-          customQuestionCount: 7,
-        }, undefined);
-      });
+      expect(disclosureScope.getByLabelText("Allow follow-up clarification questions")).toBeDefined();
     });
 
     it("calls startPlanningStreaming without model override when none selected", async () => {
@@ -538,14 +705,15 @@ describe("PlanningModeModal", () => {
         />
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Build auth system" } });
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
-          planningDepth: "medium",
-          customQuestionCount: undefined,
+          clarificationEnabled: false,
         }, undefined);
       });
     });
@@ -600,8 +768,7 @@ describe("PlanningModeModal", () => {
         undefined,
         undefined,
         {
-          planningDepth: "medium",
-          customQuestionCount: undefined,
+          clarificationEnabled: false,
         },
         "draft-123",
       );
@@ -686,8 +853,7 @@ describe("PlanningModeModal", () => {
       // Wait for startPlanningStreaming to be called (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
-          planningDepth: "medium",
-          customQuestionCount: undefined,
+          clarificationEnabled: false,
         }, undefined);
       }, { timeout: 2000 });
 
@@ -712,8 +878,7 @@ describe("PlanningModeModal", () => {
       // The auto-start should happen with the initial plan (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
-          planningDepth: "medium",
-          customQuestionCount: undefined,
+          clarificationEnabled: false,
         }, undefined);
       }, { timeout: 2000 });
     });
@@ -740,6 +905,8 @@ describe("PlanningModeModal", () => {
         />,
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
         target: { value: "Draft a migration plan" },
       });

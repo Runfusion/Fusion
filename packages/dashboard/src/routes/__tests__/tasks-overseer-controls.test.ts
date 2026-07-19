@@ -10,36 +10,35 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../../core/src/__test-utils__/pg-test-harness.js";
 import type { ProjectEngine } from "@fusion/engine";
 import { createApiRoutes } from "../../routes.js";
 import { request as REQUEST } from "../../test-request.js";
 
-describe("task-detail planner-overseer control routes", () => {
+pgDescribe("task-detail planner-overseer control routes", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
-  let rootDir: string;
-  let globalDir: string;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "overseer-controls-root-"));
-    globalDir = mkdtempSync(join(tmpdir(), "overseer-controls-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    // FNXC:PostgresCutover 2026-07-16-06:30: planner-overseer route coverage
+    // uses an isolated real backend rather than the retired in-memory SQLite mode.
+    harness = await createTaskStoreForTest();
+    store = harness.store;
   });
 
-  afterEach(() => {
-    store.close();
-    rmSync(rootDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await harness.teardown();
   });
 
   function buildApp(engine: Partial<ProjectEngine> | undefined): express.Express {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store, engine ? { engine: engine as unknown as ProjectEngine } : undefined));
+    app.use("/api", createApiRoutes(store, engine ? {
+      // FNXC:PostgresCutover 2026-07-16-06:30: project-aware routes resolve
+      // engine services only when the test double advertises its project id.
+      engine: { getProjectId: () => "test-project", ...engine } as unknown as ProjectEngine,
+    } : undefined));
     return app;
   }
 

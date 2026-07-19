@@ -70,6 +70,8 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     const missionStore = {
       getFeatureByTaskId: vi.fn(() => feature),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       updateFeatureStatus: vi.fn(),
       getSlice: vi.fn(() => ({ id: "SL-001", milestoneId: "MS-001", status: "active" })),
       getMilestone: vi.fn(() => ({ id: "MS-001", missionId: "M-001" })),
@@ -103,6 +105,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -136,6 +139,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -173,6 +177,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -230,6 +235,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       setFeatureCurrentTaskRunId: vi.fn(),
       getFailuresForRun: vi.fn(() => []),
     };
@@ -244,7 +250,11 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       taskStore: taskStore as any,
       rootDir: process.cwd(),
     });
-    vi.spyOn(loop as any, "runValidation").mockResolvedValue({ status: "pass", summary: "ok" });
+    // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
+    vi.spyOn(loop as any, "runValidation").mockResolvedValue({
+      result: { status: "pass", summary: "ok" },
+      inspection: { rootDir: process.cwd() },
+    });
     loop.start();
 
     const periodicMaintenancePass = async () => loop.recoverActiveMissions();
@@ -252,7 +262,8 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     await periodicMaintenancePass();
 
     expect(missionStore.ensureFeatureAssertionLinked).toHaveBeenCalledWith("F-001");
-    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    // FNXC:EngineTests 2026-07-17-11:45: startValidatorRun now threads the completing task id.
+    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     const noAssertionEvents = missionStore.logMissionEvent.mock.calls.filter(
       ([, type, , payload]) => type === "warning" && payload?.code === "validation_auto_passed_no_assertions",
     );
@@ -299,6 +310,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       setFeatureCurrentTaskRunId: vi.fn(),
       getFailuresForRun: vi.fn(() => []),
     };
@@ -309,13 +321,18 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     };
 
     const loop = new MissionExecutionLoop({ missionStore: missionStore as any, taskStore: taskStore as any, rootDir: process.cwd() });
-    vi.spyOn(loop as any, "runValidation").mockResolvedValue({ status: "pass", summary: "ok" });
+    // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
+    vi.spyOn(loop as any, "runValidation").mockResolvedValue({
+      result: { status: "pass", summary: "ok" },
+      inspection: { rootDir: process.cwd() },
+    });
     loop.start();
 
     await loop.recoverActiveMissions();
 
     expect(missionStore.ensureFeatureAssertionLinked).toHaveBeenCalledWith("F-001");
-    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    // FNXC:EngineTests 2026-07-17-11:45: startValidatorRun now threads the completing task id.
+    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     const noAssertionEvents = missionStore.logMissionEvent.mock.calls.filter(
       ([, type, , payload]) => type === "warning" && payload?.code === "validation_auto_passed_no_assertions",
     );

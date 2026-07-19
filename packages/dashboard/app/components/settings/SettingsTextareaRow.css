@@ -1,5 +1,6 @@
 /* SettingsTextareaRow (U8 / KTD-10) — multi-line text input control slot. */
 
+/* FNXC:SettingsStyling 2026-07-15-18:52: Pairs `.input` (the dashboard-wide control appearance) with this modifier — see SettingsTextRow.css. `font-family: inherit` stays: `.input` sets --font-primary, and a textarea would otherwise fall back to a monospace UA default. */
 .settings-textarea {
   width: 100%;
   resize: vertical;

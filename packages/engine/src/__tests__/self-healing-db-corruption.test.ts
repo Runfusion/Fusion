@@ -52,6 +52,7 @@ const BATCH2_METHODS = [
   "recoverStaleIncompleteReviewTasks",
   "recoverReviewTasksWithFailedPreMergeSteps",
   "recoverInterruptedMergingTasks",
+  "recoverWedgedActiveMerge",
   "recoverDoneTaskMergeMetadata",
   "recoverStaleMergingStatus",
   "finalizeNoOpReviewTasks",

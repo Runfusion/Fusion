@@ -1,4 +1,4 @@
-import { DisconnectReason, makeWASocket, type ConnectionState, type WAMessage, type WAMessageContent, type WASocket } from "@whiskeysockets/baileys";
+import { DisconnectReason, fetchLatestBaileysVersion, makeWASocket, type ConnectionState, type WAMessage, type WAMessageContent, type WASocket } from "@whiskeysockets/baileys";
 import type { PluginContext } from "@fusion/plugin-sdk";
 import pino from "pino";
 import qrcode from "qrcode";
@@ -156,7 +156,13 @@ export class WhatsAppConnection {
     if (!this.authState) this.authState = await createPersistenceAuthState(this.persistence);
 
     this.status = { state: "starting" };
+    /**
+     * FNXC:WhatsAppProtocolVersion 2026-07-17-09:15:
+     * WhatsApp rejects handshakes that advertise a stale WA Web protocol version with a 405 "Connection Failure" close, which left the plugin stuck cycling starting→disconnected and no QR was ever issued. Fetch the current version before each socket build; fetchLatestBaileysVersion falls back to the library's baked-in version on network failure, so this never blocks connecting.
+     */
+    const { version } = await fetchLatestBaileysVersion();
     const socket = makeWASocket({
+      version,
       auth: this.authState.state,
       printQRInTerminal: false,
       browser: ["Fusion", "Chrome", this.fusionVersion],

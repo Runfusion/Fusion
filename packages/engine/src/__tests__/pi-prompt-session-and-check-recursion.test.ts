@@ -57,6 +57,21 @@ describe("promptSessionAndCheck recursion guard (FN-4930)", () => {
     expect(warnMock).not.toHaveBeenCalledWith(expect.stringContaining("failed to inspect transcript"));
   });
 
+  it("treats Kimi's finish_reason repeat as a soft stop", async () => {
+    const { promptSessionAndCheck } = await import("../pi.js");
+    const state = { errorMessage: "", messages: [] };
+    const session = {
+      model: { provider: "kimi-coding", id: "k3" },
+      prompt: vi.fn(async () => {
+        state.errorMessage = "Provider finish_reason: repeat";
+      }),
+      state,
+    } as any;
+
+    await expect(promptSessionAndCheck(session, "hello")).resolves.toBeUndefined();
+    expect(state.errorMessage).toBeUndefined();
+  });
+
   it("annotates model-auth-tier incompatibility errors with model identity and actionable hint", async () => {
     const { promptSessionAndCheck } = await import("../pi.js");
 

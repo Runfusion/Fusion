@@ -264,7 +264,15 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions.push({ id: "refine", label: t("taskDetail.refine.btn", "Refine"), onSelect: options.onOpenRefine });
   }
 
-  actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
+  /*
+  FNXC:TaskContextMenu 2026-07-16-12:00:
+  Archived is an unsupported Respecify source: the rebuild route rejects it rather than
+  resurrecting intentionally archived work into a planner lane. Check both the semantic
+  workflow trait and legacy id so every menu host omits this dead affordance.
+  */
+  if (task.column !== "archived" && currentColumnFlags?.archived !== true) {
+    actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
+  }
 
   if (canRetryTask && hasRetryHandler) {
     actions.push({ id: "retry", label: t("taskDetail.retry.btn", "Retry"), onSelect: options.onRetry });
@@ -403,10 +411,17 @@ export function TaskContextMenu({
     selectAction(action);
   }, [selectAction]);
 
+  /*
+  FNXC:TaskContextMenu 2026-07-16-20:50 (FN-8178):
+  Menus are portaled while their TaskCard/ListView hosts close on capture-phase board scroll. Focusing
+  the first action must not scroll a board ancestor, because that focus-created scroll is not an
+  explicit dismissal and previously closed the menu immediately. Preserve keyboard focus while
+  `preventScroll` leaves real user scrolling available to close the menu.
+  */
   useEffect(() => {
     if (!autoFocusFirstItem) return;
     const firstItem = menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
-    firstItem?.focus();
+    firstItem?.focus({ preventScroll: true });
   }, [actions, autoFocusFirstItem]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

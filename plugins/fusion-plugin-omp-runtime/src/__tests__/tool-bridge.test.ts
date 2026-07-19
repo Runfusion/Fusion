@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   FUSION_OMP_TOOL_BRIDGE_URL,
+  fusionToolsMcpServerPath,
   startFusionToolBridge,
   toolsToMcpToolDefs,
 } from "../tool-bridge.js";
@@ -83,12 +85,23 @@ describe("tool-bridge", () => {
     expect(showBody.isError).toBe(false);
     expect(showBody.content?.[0]?.text).toContain("FN-2");
 
+    const schemaPath = "args" in bridge!.mcpServer ? bridge!.mcpServer.args[1] : undefined;
+    expect(schemaPath).toBeTruthy();
+    expect(existsSync(schemaPath!)).toBe(true);
+
     await bridge!.dispose();
+    expect(existsSync(schemaPath!)).toBe(false);
   });
 
   it("returns null when there are no custom tools", async () => {
     expect(await startFusionToolBridge([])).toBeNull();
     expect(await startFusionToolBridge(undefined)).toBeNull();
+  });
+
+  it("resolves mcp-schema-server.cjs next to the plugin package", () => {
+    const path = fusionToolsMcpServerPath();
+    expect(path).toBeTruthy();
+    expect(existsSync(path!)).toBe(true);
   });
 
   it("describes fusion tools in system rules", () => {

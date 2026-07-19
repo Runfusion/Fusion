@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
 import { makeEntry, getScrollContainer } from "./AgentLogViewer.test-helpers";
 import "../../styles.css";
@@ -201,6 +201,7 @@ describe("AgentLogViewer", () => {
       });
 
       viewer.scrollTop = 220;
+      fireEvent.scroll(viewer);
       rerender(<AgentLogViewer entries={[...initialEntries]} loading={false} />);
 
       scrollHeight = 1120;
@@ -290,6 +291,61 @@ describe("AgentLogViewer", () => {
 
       expect(viewer.scrollTop).toBe(1000);
       expect(screen.queryByTestId("agent-log-return-to-live")).toBeNull();
+    });
+
+    it("FN-8339: does not let observers override a user who scrolls up during streamed growth", async () => {
+      const resizeCallbacks: Array<() => void> = [];
+      const originalResizeObserver = globalThis.ResizeObserver;
+
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(() => callback([], this as unknown as ResizeObserver));
+        }
+
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+
+      Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: ResizeObserverMock });
+      try {
+        const streamingEntry = makeEntry({ text: "streaming output" });
+        const { container, rerender } = render(<AgentLogViewer entries={[streamingEntry]} loading={false} />);
+        const viewer = getScrollContainer(container);
+        let scrollHeight = 1000;
+        Object.defineProperty(viewer, "scrollHeight", { configurable: true, get: () => scrollHeight });
+        Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
+
+        viewer.scrollTop = 300;
+        fireEvent.scroll(viewer);
+        scrollHeight = 1400;
+        resizeCallbacks.forEach((callback) => callback());
+        rerender(<AgentLogViewer entries={[{ ...streamingEntry, text: "streaming output grows in place" }]} loading={false} />);
+
+        await waitFor(() => expect(viewer.scrollTop).toBe(300));
+      } finally {
+        if (originalResizeObserver) {
+          Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: originalResizeObserver });
+        } else {
+          delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+        }
+      }
+    });
+
+    it("FN-8339: follows in-place streamed growth while pinned", async () => {
+      const streamingEntry = makeEntry({ text: "streaming output" });
+      const { container, rerender } = render(<AgentLogViewer entries={[streamingEntry]} loading={false} />);
+      const viewer = getScrollContainer(container);
+      let scrollHeight = 1000;
+      Object.defineProperty(viewer, "scrollHeight", { configurable: true, get: () => scrollHeight });
+      Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
+
+      viewer.scrollTop = 800;
+      fireEvent.scroll(viewer);
+      scrollHeight = 1400;
+      rerender(<AgentLogViewer entries={[{ ...streamingEntry, text: "streaming output grows in place" }]} loading={false} />);
+
+      await waitFor(() => expect(viewer.scrollTop).toBe(1400));
     });
 
     it("re-pins to bottom on resize while following", () => {

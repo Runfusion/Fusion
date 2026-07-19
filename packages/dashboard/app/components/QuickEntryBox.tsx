@@ -8,7 +8,7 @@ import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, Thinki
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, Eye, EyeOff } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -17,6 +17,7 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
+import { PendingImagePreviews } from "./PendingImagePreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -171,19 +172,27 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
+  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | "merger" | null>(null);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [mergerProvider, setMergerProvider] = useState<string | undefined>(undefined);
+  const [mergerModelId, setMergerModelId] = useState<string | undefined>(undefined);
   /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: inline quick-entry bar carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  const [validatorThinkingLevel, setValidatorThinkingLevel] = useState<string>("");
+  const [planningThinkingLevel, setPlanningThinkingLevel] = useState<string>("");
+  const [mergerThinkingLevel, setMergerThinkingLevel] = useState<string>("");
+  /* FNXC:QuickAddModels 2026-07-16-12:00: Quick Add reuses CustomModelDropdown for merger and each lane's independent thinking override. */
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerPortalRef = useRef<HTMLDivElement>(null);
+  /** Bumps on open/close so a late fetchAgents resolution cannot re-open a dismissed picker. */
+  const agentPickerOpenTokenRef = useRef(0);
   const nodePickerRef = useRef<HTMLDivElement>(null);
   const nodePickerPortalRef = useRef<HTMLDivElement>(null);
   const priorityPickerRef = useRef<HTMLDivElement>(null);
@@ -228,6 +237,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isFastModeRef.current = isFastMode;
   }, [isFastMode]);
   const [githubTrackingOverride, setGithubTrackingOverride] = useState<boolean | null>(null);
+  // FNXC:PlannerOversight 2026-07-14-18:11: null = follow project sessionAdvisorEnabledByDefault.
+  const [sessionAdvisorOverride, setSessionAdvisorOverride] = useState<boolean | null>(null);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
@@ -412,11 +423,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
   const planningSelectionValue = getModelSelectionValue(planningProvider, planningModelId);
+  const mergerSelectionValue = getModelSelectionValue(mergerProvider, mergerModelId);
 
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const hasPlanningOverride = Boolean(planningProvider && planningModelId);
-  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride);
+  const hasMergerOverride = Boolean(mergerProvider && mergerModelId);
+  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride) + Number(hasMergerOverride);
   const modelMenuLabel = selectedPresetId
     ? settings?.modelPresets?.find((p) => p.id === selectedPresetId)?.name ?? t("tasks.models", "Models")
     : selectedModelCount > 0
@@ -543,17 +556,25 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   useEffect(() => {
     if (!showAgentPicker) return;
 
+    /*
+    FNXC:QuickEntry 2026-07-18-08:45:
+    Listen in the capture phase so outside mousedown closes the agent portal even
+    when a nested control calls preventDefault/stopPropagation on bubble. Full-
+    suite + local tests observed the bubble-only listener leaving "Select agent"
+    mounted after a true outside click.
+    */
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
       // Check both the trigger button and the portaled dropdown
       if (agentPickerRef.current?.contains(target)) return;
       if (agentPickerPortalRef.current?.contains(target)) return;
+      agentPickerOpenTokenRef.current += 1;
       setShowAgentPicker(false);
       setAgentPickerPosition(null);
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside, true);
+    return () => document.removeEventListener("mousedown", handleClickOutside, true);
   }, [showAgentPicker]);
 
   useEffect(() => {
@@ -610,11 +631,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setValidatorModelId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setMergerProvider(undefined);
+    setMergerModelId(undefined);
     setThinkingLevel("");
+    setValidatorThinkingLevel("");
+    setPlanningThinkingLevel("");
+    setMergerThinkingLevel("");
     setSelectedPresetId(undefined);
     setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
     setIsFastMode(false);
     setGithubTrackingOverride(null);
+    setSessionAdvisorOverride(null);
     setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setShowDeps(false);
@@ -735,6 +762,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        mergerModelProvider: hasMergerOverride ? mergerProvider : undefined,
+        mergerModelId: hasMergerOverride ? mergerModelId : undefined,
+        validatorThinkingLevel: validatorThinkingLevel !== "" ? (validatorThinkingLevel as ThinkingLevel) : undefined,
+        planningThinkingLevel: planningThinkingLevel !== "" ? (planningThinkingLevel as ThinkingLevel) : undefined,
+        mergerThinkingLevel: mergerThinkingLevel !== "" ? (mergerThinkingLevel as ThinkingLevel) : undefined,
         thinkingLevel: thinkingLevel !== "" ? (thinkingLevel as ThinkingLevel) : undefined,
         /*
         FNXC:QuickAddWorkflowSteps 2026-06-29-01:31:
@@ -743,6 +775,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         enabledWorkflowSteps: isFastMode || optionalSteps.length > 0 ? enabledOptionalStepIds : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
+        // FNXC:PlannerOversight 2026-07-14-18:11: only send when user toggled away from project default.
+        sessionAdvisorEnabled: sessionAdvisorOverride !== null ? sessionAdvisorOverride : undefined,
         priority,
         nodeId: effectiveNodeId,
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
@@ -790,6 +824,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isFastMode,
     settings,
     githubTrackingOverride,
+    sessionAdvisorOverride,
     priority,
     effectiveNodeId,
     pendingImages,
@@ -1503,8 +1538,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setValidatorModelId(next.modelId);
   }, []);
 
-  const handleThinkingLevelChange = useCallback((value: string) => {
-    setThinkingLevel(value);
+  const handleThinkingLevelChange = useCallback((value: string) => setThinkingLevel(value), []);
+  const handleMergerModelChange = useCallback((value: string) => {
+    const next = parseModelSelection(value);
+    setMergerProvider(next.provider);
+    setMergerModelId(next.modelId);
   }, []);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
@@ -1609,24 +1647,38 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   const loadAgents = useCallback(async () => {
     if (agents.length > 0 && agentsProjectId === projectId) {
+      agentPickerOpenTokenRef.current += 1;
       setShowAgentPicker(true);
       updateAgentPickerPosition();
       return;
     }
 
+    /*
+    FNXC:QuickEntry 2026-07-18-08:45:
+    Open the picker immediately (with loading) so outside-click listeners arm
+    before fetchAgents resolves. Bump a token on open/close so a late fetch
+    does not re-open the portal after the operator dismissed it.
+    */
+    const openToken = ++agentPickerOpenTokenRef.current;
     setAgentsLoading(true);
+    setShowAgentPicker(true);
+    updateAgentPickerPosition();
     try {
       const result = await fetchAgents(undefined, projectId);
+      if (openToken !== agentPickerOpenTokenRef.current) return;
       setAgents(result);
       setAgentsProjectId(projectId);
       setShowAgentPicker(true);
       updateAgentPickerPosition();
     } catch (err) {
+      if (openToken !== agentPickerOpenTokenRef.current) return;
       const msg = getErrorMessage(err);
       addToast(msg ? t("tasks.loadAgentsFailed", "Failed to load agents: {{msg}}", { msg }) : t("tasks.loadAgentsFailedGeneric", "Failed to load agents"), "error");
       setShowAgentPicker(false);
     } finally {
-      setAgentsLoading(false);
+      if (openToken === agentPickerOpenTokenRef.current) {
+        setAgentsLoading(false);
+      }
     }
   }, [agents.length, agentsProjectId, projectId, addToast, updateAgentPickerPosition]);
 
@@ -1637,6 +1689,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const githubToggleLabel = effectiveGithubTracking
     ? t("tasks.githubTrackingOn", "GitHub tracking ON for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") })
     : t("tasks.githubTrackingOff", "GitHub tracking OFF for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") });
+  /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Quick Add eye toggle for session advisor. null override follows project default;
+  toggle flips effective on/off and stores an explicit override for the next create.
+  */
+  const projectSessionAdvisorDefault = settings?.sessionAdvisorEnabledByDefault === true;
+  const effectiveSessionAdvisor = sessionAdvisorOverride ?? projectSessionAdvisorDefault;
+  const sessionAdvisorToggleLabel = effectiveSessionAdvisor
+    ? t("tasks.sessionAdvisorOn", "Session advisor ON for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") })
+    : t("tasks.sessionAdvisorOff", "Session advisor OFF for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") });
   const PriorityIcon = getPriorityIcon(priority);
   const priorityLabel = getPriorityLabel(priority);
   const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
@@ -2165,6 +2227,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             FNXC:QuickAddAttachments 2026-06-30-00:00 (relocated 2026-07-10): the attachment affordance
             stays adjacent to Save (now immediately to its LEFT) preserving the icon-only label, hidden
             file input trigger, and pending-count badge.
+
+            FNXC:QuickAddActionRow 2026-07-15-00:00:
+            Attach, GitHub, session advisor, Priority, and Fast are one icon-only cluster. Every control
+            uses `btn-icon` so its SVG resolves to the shared `--icon-size-sm` token; do not fork
+            ProviderIcon's shared size map to size this one GitHub use case.
             */}
             <div className="quick-entry-primary-group" data-testid="quick-entry-primary-group">
               <button
@@ -2184,7 +2251,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
               <button
                 type="button"
-                className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
+                className={`btn btn-icon btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
                 onClick={() => {
                   setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
                 }}
@@ -2197,11 +2264,40 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 <ProviderIcon provider="github" size="sm" />
               </button>
 
+              {/*
+              FNXC:PlannerOversight 2026-07-14-18:11:
+              Compact eye toggle next to GitHub for session advisor (overseer agent).
+              Default follows project setting; press stores an explicit per-create override.
+
+              FNXC:PlannerOversight 2026-07-14-19:34:
+              CodeRabbit: when the flipped effective value matches the project default,
+              clear override to null (inherit) — same as TaskDetailModal — instead of
+              permanently hardcoding true/false after a double-click.
+              */}
+              <button
+                type="button"
+                className={`btn btn-icon btn-sm ${effectiveSessionAdvisor ? "btn-primary" : ""}`}
+                onClick={() => {
+                  setSessionAdvisorOverride((prev) => {
+                    const currentEffective = prev ?? projectSessionAdvisorDefault;
+                    const nextEnabled = !currentEffective;
+                    return nextEnabled === projectSessionAdvisorDefault ? null : nextEnabled;
+                  });
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={effectiveSessionAdvisor}
+                data-testid="quick-entry-session-advisor-toggle"
+                title={sessionAdvisorToggleLabel}
+                aria-label={sessionAdvisorToggleLabel}
+              >
+                {effectiveSessionAdvisor ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
+              </button>
+
               <div className="priority-trigger-wrap" ref={priorityPickerRef}>
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
-                  className="btn btn-sm dep-trigger"
+                  className="btn btn-icon btn-sm dep-trigger"
                   data-testid="quick-entry-priority-button"
                   title={priorityButtonLabel}
                   aria-label={priorityButtonLabel}
@@ -2226,7 +2322,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   }}
                 >
                   {/* FNXC:PriorityColorCoding 2026-07-11-00:00: The quick-add icon-only priority trigger must preview urgency color from priorityIndicator without changing its label, test id, or picker behavior. */}
-                  <PriorityIcon size={12} aria-hidden="true" style={{ color: getPriorityColorVar(priority) }} />
+                  <PriorityIcon size={14} aria-hidden="true" style={{ color: getPriorityColorVar(priority) }} />
                 </button>
               </div>
 
@@ -2271,7 +2367,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
               <button
                 type="button"
-                className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
+                className={`btn btn-icon btn-sm ${isFastMode ? "btn-primary" : ""}`}
                 onClick={toggleFastMode}
                 onMouseDown={(e) => e.preventDefault()}
                 aria-pressed={isFastMode}
@@ -2279,7 +2375,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 title={fastToggleLabel}
                 aria-label={fastToggleLabel}
               >
-                <Zap size={12} aria-hidden="true" />
+                <Zap size={14} aria-hidden="true" />
               </button>
 
               <button
@@ -2298,25 +2394,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           </div>
         )}
 
-        {pendingImages.length > 0 && (
-          <div className="inline-create-previews">
-            {pendingImages.map((img, index) => (
-              <div key={img.previewUrl} className="inline-create-preview">
-                <img src={img.previewUrl} alt={img.file.name} />
-                <button
-                  type="button"
-                  className="inline-create-preview-remove"
-                  onClick={() => removeImage(index)}
-                  disabled={isSubmitting}
-                  title={t("tasks.removeImage", "Remove image")}
-                  data-testid={`quick-entry-preview-remove-${index}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <PendingImagePreviews
+          images={pendingImages}
+          onRemove={removeImage}
+          disabled={isSubmitting}
+          removeLabel={t("tasks.removeImage", "Remove image")}
+          testIdPrefix="quick-entry-preview"
+        />
         {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
             <div
               ref={modelMenuPortalRef}
@@ -2386,6 +2470,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
                   </button>
+                  <button type="button" className={`model-menu-item ${hasMergerOverride ? "model-menu-item--active" : ""}`} onClick={() => setActiveModelSubmenu("merger")} data-testid="model-menu-merger">
+                    <span className="model-menu-item-label"><Brain size={12} /> {t("tasks.mergerModel", "Merger Model")}</span>
+                    <span className="model-menu-item-value">{hasMergerOverride ? getModelBadgeLabel(mergerProvider, mergerModelId) : t("tasks.usingDefault", "Using default")}</span><ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
+                  </button>
                 </div>
               ) : (
                 // Submenu with CustomModelDropdown for the selected target
@@ -2403,6 +2491,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     {activeModelSubmenu === "plan" && t("tasks.planModel", "Plan Model")}
                     {activeModelSubmenu === "executor" && t("tasks.executorModel", "Executor Model")}
                     {activeModelSubmenu === "validator" && t("tasks.reviewerModel", "Reviewer Model")}
+                    {activeModelSubmenu === "merger" && t("tasks.mergerModel", "Merger Model")}
                   </div>
                   <CustomModelDropdown
                     models={loadedModels}
@@ -2411,14 +2500,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                         ? planningSelectionValue
                         : activeModelSubmenu === "executor"
                           ? executorSelectionValue
-                          : validatorSelectionValue
+                          : activeModelSubmenu === "validator" ? validatorSelectionValue : mergerSelectionValue
                     }
                     onChange={
                       activeModelSubmenu === "plan"
                         ? handlePlanningModelChange
                         : activeModelSubmenu === "executor"
                           ? handleExecutorChange
-                          : handleValidatorChange
+                          : activeModelSubmenu === "validator" ? handleValidatorChange : handleMergerModelChange
                     }
                     placeholder={t("tasks.usingDefault", "Using default")}
                     disabled={modelsLoading}
@@ -2428,9 +2517,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     onToggleFavorite={handleToggleFavorite}
                     favoriteModels={effectiveFavoriteModels}
                     onToggleModelFavorite={handleToggleModelFavorite}
-                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : undefined}
-                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : undefined}
-                    defaultThinkingLevel={activeModelSubmenu === "executor" ? settings?.defaultThinkingLevel ?? "off" : undefined}
+                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : activeModelSubmenu === "plan" ? planningThinkingLevel : activeModelSubmenu === "validator" ? validatorThinkingLevel : mergerThinkingLevel}
+                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : activeModelSubmenu === "plan" ? setPlanningThinkingLevel : activeModelSubmenu === "validator" ? setValidatorThinkingLevel : setMergerThinkingLevel}
+                    defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
                   />
                   {modelsError && (
                     <div className="model-submenu-error">

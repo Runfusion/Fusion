@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "获取项目失败"
     },
-    "testMode": "测试模式 — 无实际 AI 调用"
+    "testMode": "测试模式 — 无实际 AI 调用",
+    "migrationInProgress": "数据库迁移进行中 — 完成后仪表盘将自动重新连接。"
   },
   "appName": "",
   "approval": {
@@ -1165,32 +1166,6 @@
     "manageConnection": "管理连接",
     "retryConnection": "重新连接",
     "retrying": "重试中…"
-  },
-  "backgroundTasks": {
-    "confirmMessage": "此会话在另一个标签页中处于活跃状态。仍然打开?",
-    "confirmTitle": "打开活跃会话",
-    "dismissButton": "关闭",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "后台任务",
-    "status": {
-      "activeElsewhere": "在另一个标签页中活跃",
-      "failed": "失败",
-      "generating": "生成中...",
-      "needsInput": "需要输入"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "里程碑采访",
-      "missionInterview": "任务采访",
-      "planning": "规划",
-      "sliceInterview": "切片采访",
-      "subtask": "子任务分解"
-    }
   },
   "board": {
     "archived": "已归档",
@@ -1417,13 +1392,6 @@
     "versionMismatchPrefix": "你安装的",
     "versionMismatchSuffix": "更新以保持同步。"
   },
-  "storageMigrationNotice": {
-    "body": "",
-    "dismissLabel": "",
-    "getHelp": "",
-    "getHelpLabel": "",
-    "title": ""
-  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "检查中…",
@@ -1611,6 +1579,43 @@
         "title": ""
       },
       "title": ""
+    },
+    "portability": {
+      "title": "组织导出 / 导入",
+      "description": "下载或预览已清除机密的组织配置包。",
+      "export": {
+        "action": "导出组织包",
+        "working": "正在导出…",
+        "success": "导出就绪",
+        "error": "导出失败"
+      },
+      "import": {
+        "label": "组织包 JSON",
+        "placeholder": "粘贴已清除机密的组织包",
+        "preview": "预览导入",
+        "previewing": "正在预览…",
+        "previewReady": "预览就绪。确认后应用此包。",
+        "apply": "应用导入",
+        "importing": "正在导入…",
+        "invalid": "请粘贴有效的组织包 JSON 文档",
+        "error": "无法预览或导入包",
+        "confirmTitle": "导入组织包？",
+        "confirmMessage": "这会将预览的配置应用到此项目。",
+        "confirmApply": "导入包"
+      },
+      "versions": {
+        "title": "配置版本",
+        "description": "恢复任意已记录的项目配置版本。",
+        "loading": "正在加载版本…",
+        "empty": "尚无配置版本。",
+        "loadError": "无法加载配置版本",
+        "rollback": "回滚",
+        "rollingBack": "正在回滚…",
+        "rollbackError": "无法回滚配置",
+        "confirmTitle": "回滚配置？",
+        "confirmMessage": "恢复此版本？回滚会记录为新版本。",
+        "confirmRollback": "回滚"
+      }
     },
     "ecosystem": {
       "breadthTitle": "",
@@ -1802,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "评审产物"
     },
     "team": {
       "agent": "",
@@ -1880,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "评审产物",
+      "empty": "尚无评审产物。"
     }
   },
   "comments": {
@@ -2017,6 +2027,7 @@
     "connectRemoteButton": "连接到远程 Fusion",
     "couldNotStart": "无法启动本地 Fusion",
     "loading": "正在加载 Fusion…",
+    "migrationInProgress": "数据库迁移进行中 — 可能需要几分钟。",
     "opening": "正在打开…",
     "retry": "重试",
     "runLocalButton": "本地运行 Fusion",
@@ -2477,6 +2488,11 @@
     "taskMatches": "匹配的任务"
   },
   "git": {
+    "addComment": "Add comment",
+    "addCommentPlaceholder": "Write a comment…",
+    "commentAuthorYou": "You",
+    "commentPosted": "Comment posted",
+    "failedToPostComment": "Failed to post comment",
     "add": "添加",
     "addRemote": "添加远程",
     "advancesHelpFix": "<strong>修复：</strong>Fusion 仅在至少有一个确实为 <code>pending</code> 的推进且 HEAD 未与集成提示对齐时才显示<em>同步工作树</em>。如果条目已被处理（subsumed/orphaned/reachable/superseded），则不提供同步操作。",
@@ -2865,7 +2881,17 @@
     "worktreesInUse_one": "",
     "worktreesInUse_other": "",
     "worktreesTotal_one": "",
-    "worktreesTotal_other": ""
+    "worktreesTotal_other": "",
+    "translateAction": "",
+    "translateDismiss": "",
+    "translateOffer": "",
+    "translateRegionAriaLabel": "",
+    "translateShowingOriginal": "",
+    "translateShowingTranslated": "",
+    "translateShowOriginal": "",
+    "translateShowTranslated": "",
+    "translateUnknownLanguage": "",
+    "translateWorking": ""
   },
   "githubStarPrompt": {
     "body": "",
@@ -3190,7 +3216,6 @@
     "refinedScope": "精炼范围",
     "refineScope": "用AI精炼{{label}}范围",
     "sendToBackground": "发送到后台",
-    "sessionActiveAnotherTab": "会话在另一个标签页中处于活跃状态。",
     "showThinking": "显示思考",
     "startInterview": "开始面试",
     "targetLabel": {
@@ -3318,7 +3343,8 @@
     "unpauseUnavailable": "恢复操作不可用",
     "useProjectDefault": "使用项目默认",
     "viewOptions": "视图选项",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "重新规划"
   },
   "mailbox": {
     "agent": "代理",
@@ -3835,9 +3861,6 @@
     "selectGoal": "",
     "selectMissionToView": "选择一个任务以查看详情",
     "sendToBackground": "发送到后台",
-    "sessionActiveAnother": "会话在另一个标签页中处于活跃状态。",
-    "sessionActiveHeartbeat": "此会话在另一个标签页中处于活跃状态（实时心跳）",
-    "sessionActiveTab": "此会话在另一个标签页中处于活跃状态",
     "showDetails": "显示详情",
     "showMetadata": "显示元数据",
     "showThinking": "显示思考",
@@ -3883,8 +3906,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "结构",
-    "takeControl": "接管",
-    "takingControl": "正在接管...",
     "targetBranch": "目标分支",
     "targetBranchPlaceholder": "例如 main",
     "taskIdPlaceholder": "任务 ID（例如 FN-001）",
@@ -4613,7 +4634,6 @@
     "plain": "纯文本",
     "planningComplete": "规划完成！",
     "planningCompleteSubheading": "在创建任务之前，请审查并完善您的任务。",
-    "planningDepth": "规划深度",
     "planningModel": "规划模型",
     "planningModelBlurb": "选择运行规划访谈并撰写最终草稿的模型。",
     "planningSessions": "规划会话",
@@ -4635,8 +4655,6 @@
     "remove": "移除",
     "retryFailed": "重试失败，请再试一次。",
     "retrying": "重试中…",
-    "sessionActiveOtherTab": "此会话在另一个标签页中处于活动状态",
-    "sessionActiveOtherTabLive": "此会话在另一个标签页中处于活动状态（实时心跳）",
     "sessionFailed": "联系 AI 时会话失败。",
     "sessionFailed2": "会话失败",
     "showArchived": "显示已归档",
@@ -4659,8 +4677,6 @@
     "subtaskTitle": "标题",
     "suggestedDependencies": "建议依赖项",
     "suggestedSize": "建议规模",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制…",
     "thinkingElapsed": "思考中…（{{seconds}} 秒）",
     "title": "规划模式",
     "tryAnExample": "试试示例：",
@@ -4670,7 +4686,8 @@
     "untitledSession": "无标题会话",
     "usingDefault": "使用默认",
     "whatToBuild": "您想构建什么？",
-    "whatToBuildPlaceholder": "例如，构建一个包含登录、注册和密码重置的用户认证系统..."
+    "whatToBuildPlaceholder": "例如，构建一个包含登录、注册和密码重置的用户认证系统...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "添加项目",
@@ -5660,7 +5677,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "需要输入或已失败的 AI 会话",
     "resume": "继续",
-    "retry": "重试"
+    "retry": "重试",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5901,7 +5922,34 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": "",
+      "mobileNavPrimaryItems": "移动端底部快捷操作",
+      "mobileNavPrimaryItemsHint": "默认：仪表盘、任务、代理、任务组、聊天、邮箱。可添加符合条件的目标；未选中的目标仍在“更多”中。",
+      "addNavItem": "添加快捷操作",
+      "selectNavItem": "选择目标",
+      "removeNavItem": "移除 {{item}}",
+      "moveNavItemEarlier": "将 {{item}} 前移",
+      "moveNavItemLater": "将 {{item}} 后移",
+      "ephemeralAgentTaskCreationPolicy": "临时代理后续任务",
+      "ephemeralAgentTaskCreationPolicyHint": "无默认值 — 未设置时回退为允许。需验证会将提案发送到邮箱供一键批准；拒绝则禁止创建后续任务。",
+      "ephemeralAgentTaskCreationPolicyAllow": "允许",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "需验证",
+      "ephemeralAgentTaskCreationPolicyDeny": "拒绝",
+      "reportModeHelp": "应用内缺陷/反馈/想法/帮助报告的提交方式。默认：draft-review（提交前由操作者审阅草稿）。",
+      "reportModeByActionHelp": "可选的按操作覆盖项目报告模式（缺陷、反馈、想法或帮助）。无默认值 — 未设置的操作继承 reportMode。",
+      "reviewArtifacts": "评审产物",
+      "reviewArtifactsHint": "控制符合条件的未来任务是否生成评审交付物。面向用户的报告与活动捕获保持独立。默认：关闭。",
+      "reportRoadmapDedup": "提交报告前检查路线图",
+      "reportRoadmapDedupHelp": "启用后，匹配的路线图功能会以内联方式显示，而不会创建另一个 GitHub Issue 或讨论。默认：关闭。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5937,7 +5985,11 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6262,8 +6314,8 @@
         "global": "在所有项目中共享",
         "project": "特定于此项目"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6344,7 +6396,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6360,6 +6415,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
+      "taskDefinitionInInputLanguage": "",
+      "taskDefinitionInInputLanguageHelp": "",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6631,11 +6688,28 @@
       "ignoreHiddenDotPathsHelp": "",
       "ignoreHiddenDotPathsInOverlapChecks": "",
       "maxConcurrentTasksHint": "",
-      "pollIntervalMsHint": ""
-    },
-    "scope": {
-      "globalBanner": "这些设置在所有 Fusion 项目中共享。",
-      "projectBanner": "这些设置仅影响此项目。"
+      "maxConcurrentVerifications": "",
+      "maxConcurrentVerificationsHint": "",
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "分诊重复项处理",
+      "triageDuplicateResolutionHelp": "将分诊检测到的重复项拦截并要求保留/删除决策（默认），或不拦截而自动保留/删除。",
+      "triageDuplicateResolutionPrompt": "拦截并决策（默认）",
+      "triageDuplicateResolutionKeep": "自动保留",
+      "triageDuplicateResolutionDelete": "自动删除"
     },
     "title": "设置",
     "worktrees": {
@@ -6696,7 +6770,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -6725,17 +6800,27 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
     },
     "modelPricing": {
       "description": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 嵌入式 PostgreSQL 的最大服务器连接数。重启 Fusion 后生效。范围：32–2,000。默认：500。外部 PostgreSQL 使用其提供方的连接限制。",
+      "embeddedConnectionCap": "嵌入式 PostgreSQL 连接上限",
+      "embeddedConnectionCapError": "请输入 32 到 2,000 之间的值。",
+      "advanced": "高级数据库设置"
     }
   },
   "setup": {
@@ -7280,14 +7365,9 @@
     "reviewSubtasksHint": "在一次性创建所有任务之前，编辑标题、描述、大小和依赖关系。",
     "sendToBackgroundAriaLabel": "发送到后台",
     "sendToBackgroundTitle": "发送到后台",
-    "sessionActiveAnotherTab": "会话正在另一个标签页中运行。",
-    "sessionActiveAnotherTabLive": "此会话正在另一个标签页中运行（实时心跳）",
-    "sessionActiveAnotherTabTakeover": "此会话正在另一个标签页中运行",
     "showThinking": "显示思考过程",
     "sizeLabel": "规模",
     "startingBreakdown": "",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制...",
     "titleLabel": "标题",
     "untitled": "无标题",
     "waitingForThinking": ""
@@ -7628,7 +7708,13 @@
       "copy": "此任务看起来是以下任务的近似重复：",
       "headline": "检测到潜在重复",
       "keepBtn": "保留",
-      "kept": "保留了 {{id}} 并关闭了重复警告"
+      "kept": "保留了 {{id}} 并关闭了重复警告",
+      "deleteBtn": "删除",
+      "deleteConfirm": "删除",
+      "deleted": "已删除 {{id}}",
+      "deleteMessage": "将 {{id}} 作为 {{duplicateOf}} 的重复项删除？",
+      "deleteTitle": "删除重复任务",
+      "triageActions": "选择删除以移除此重复项，或选择保留以继续。"
     },
     "nextRecoveryAt": "下次恢复时间：{{time}}",
     "no": "否",
@@ -7664,7 +7750,11 @@
       "rejected": "计划已拒绝 — {{id}} 已返回规划阶段重新规划",
       "rejectMessage": "拒绝此计划？规范将被丢弃并重新生成。",
       "rejectTitle": "拒绝计划",
-      "replanning": "正在为 {{id}} 重新规划…"
+      "replanning": "正在为 {{id}} 重新规划…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "等待 PR 检查",
@@ -8333,11 +8423,17 @@
     "revertNeedsHumanDefault": "",
     "reverted": "",
     "revertTask": "",
+    "revertedBadge": "",
+    "revertedBadgeTitle": "",
     "undoOf": "",
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": "",
+    "statusReplan": "重新规划"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8458,7 +8554,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "在设置中配置身份验证以查看使用数据。",
@@ -9036,5 +9136,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "已在路线图中",
+      "message": "此报告与已经规划的功能相匹配。"
+    }
   }
 }

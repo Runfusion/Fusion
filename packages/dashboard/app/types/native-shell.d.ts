@@ -38,6 +38,18 @@ export interface ShellConnectionState {
     port?: number;
     baseUrl?: string;
     error?: string;
+    /*
+    FNXC:MigrationHoldingPage 2026-07-17-13:30:
+    Live SQLite→PostgreSQL migration progress published by the desktop
+    LocalRuntimeManager while state is "starting" (packages/desktop/src/
+    local-runtime.ts). DesktopLaunchGate renders it and suspends its startup
+    timeout while progress advances.
+    */
+    migration?: {
+      active: boolean;
+      phase?: string;
+      label?: string;
+    };
   };
 }
 

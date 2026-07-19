@@ -159,7 +159,6 @@ describe("planning routes github tracking background dispatch", () => {
       } as never,
       {
         store,
-        checkSessionLock: () => ({ allowed: true }),
         parseLastEventId: () => undefined,
         replayBufferedSSE: () => true,
       },

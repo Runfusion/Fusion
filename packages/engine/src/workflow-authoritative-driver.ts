@@ -23,7 +23,7 @@ export interface WorkflowAuthoritativeDriverStore {
   getTask(taskId: string): Promise<TaskDetail>;
   getTaskWorkflowSelection?(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
   getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
-  getWorkflowParitySummary?(options?: { since?: string; limit?: number }): WorkflowParitySummary;
+  getWorkflowParitySummary?(options?: { since?: string; limit?: number }): WorkflowParitySummary | Promise<WorkflowParitySummary>;
 }
 
 export interface WorkflowAuthoritativeDriverDeps {
@@ -128,7 +128,8 @@ export class WorkflowAuthoritativeDriver {
     let paritySummary: WorkflowParitySummary | undefined;
     try {
       settings = await this.deps.store.getSettings();
-      paritySummary = this.deps.store.getWorkflowParitySummary?.();
+      /* FNXC:WorkflowParityPostgres 2026-07-14-18:12: Readiness must await the PostgreSQL audit aggregation before deciding whether authoritative workflow execution is safe. */
+      paritySummary = await this.deps.store.getWorkflowParitySummary?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       executorLog.warn(`[workflow-authoritative] ${task.id}: readiness probe failed — falling back to legacy (${message})`);

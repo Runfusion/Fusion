@@ -16,122 +16,53 @@
  */
 
 import { isUsageLimitError } from "./usage-limit-detector.js";
+/*
+FNXC:Reliability-ErrorClassification 2026-07-15-18:40:
+The pure predicates (TRANSIENT_ERROR_PATTERNS / isTransientError / isTransientAuthCredentialError)
+now live in the import-free leaf `transient-error-patterns.ts` so the merge classifier can share
+one definition of "transient" without inheriting this module's logger chain (FN-8004).
+Re-exported here so every existing importer of this module keeps working unchanged.
+*/
+import { isTransientAuthCredentialError, isTransientError } from "./transient-error-patterns.js";
+export { TRANSIENT_ERROR_PATTERNS, isTransientAuthCredentialError, isTransientError } from "./transient-error-patterns.js";
 
-/**
- * Patterns that indicate transient network/infrastructure errors.
- * These are checked case-insensitively against error messages.
- *
- * These patterns cover:
- * - Proxy/gateway connection errors (upstream connect, disconnect/reset)
- * - Connection refusal/reset (ECONNREFUSED, connection reset)
- * - Timeouts (ETIMEDOUT, timeout in connection context)
- * - Socket errors (socket hang up)
- * - Transport layer failures
- * - AI provider abort errors (request was aborted — temporary streaming/API cancellations)
- * - OpenAI/Codex infrastructure errors surfaced as structured `server_error` payloads
- */
-export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
-  // Proxy/gateway errors - indicate temporary routing issues
-  /upstream connect error/i,
-  /disconnect\/reset before headers/i,
-  /retried and the latest reset reason/i,
-  /remote connection failure/i,
-  /transport failure reason/i,
-  /delayed connect error/i,
-
-  // Connection establishment failures - usually temporary
-  /Connection refused/i,
-  /connection reset/i,
-  /ECONNREFUSED/i,
-  /ETIMEDOUT/i,
-  /socket hang up/i,
-
-  // Timeout patterns (only when related to connections, not general timeouts)
-  /timeout.*connection/i,
-  /connection.*timeout/i,
-
-  // AI provider abort errors — temporary request cancellations (e.g., Anthropic streaming aborts)
-  // These occur when the provider's infrastructure drops an in-flight request.
-  /request was aborted/i,
-  // DOMException-style AbortError ("This operation was aborted"), emitted by fetch/
-  // AbortController when a provider drops an in-flight operation. Excludes user-
-  // initiated cancellations like "operation was aborted by user" — those are not transient.
-  /operation was aborted(?!\s+by\b)/i,
-
-  // OpenAI/Codex structured infrastructure failures. These arrive as JSON-ish payloads
-  // like {"type":"error","error":{"type":"server_error","code":"server_error",...}}
-  // and are temporary service-side failures rather than task-specific defects.
-  /"type":"server_error"/i,
-  /"code":"server_error"/i,
-  /An error occurred while processing your request\./i,
-
-  // pi-ai openai-codex-responses WebSocket transport errors. The provider holds
-  // a long-lived WebSocket to the Codex backend; transient drops surface as
-  // bare "WebSocket error" / "WebSocket closed <code> <reason>" / a half-open
-  // stream that ended before `response.completed`. All three are network-layer
-  // hiccups, not task defects — retry them.
-  /WebSocket error\b/i,
-  /WebSocket closed\b/i,
-  /WebSocket stream closed before response\.completed/i,
-];
-
-/**
- * Check if an error message indicates a transient network/infrastructure error.
- *
- * Transient errors are temporary conditions that typically resolve after a delay:
- * - Network blips and temporary routing issues
- * - Proxy/gateway hiccups (upstream connect errors)
- * - Connection resets during establishment
- * - Temporary service unavailability (connection refused)
- * - Socket timeouts during connection
- *
- * Returns `true` for transient errors — these should trigger a retry by moving
- * the task back to "todo" rather than marking as "failed".
- *
- * Returns `false` for permanent failures (code errors, test failures) or
- * usage limit errors (rate limits that need global pause).
- *
- * @param errorMessage - The error message to classify
- * @returns true if the error appears transient and retryable
- */
-export function isTransientError(errorMessage: string): boolean {
-  if (!errorMessage || typeof errorMessage !== "string") {
-    return false;
-  }
-  if (isTransientAuthCredentialError(errorMessage)) {
-    return true;
-  }
-  return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(errorMessage));
-}
 
 /*
-FNXC:Reliability-ErrorClassification 2026-07-12-20:10:
-A long-running agent session holds its OAuth access token in memory. Claude Max access tokens rotate mid-run (~8 h lifetime); the in-flight call fails with a 401 {"type":"authentication_error","message":"Invalid authentication credentials"} even though the credentials file has already been refreshed, and the very next call succeeds. These must classify as TRANSIENT (retryable) and NOT operator-actionable, so in-run retry (withRateLimitRetry) and durable-agent heartbeat error recovery (FN-7835/FN-7844/FN-7859) auto-recover instead of parking agents paused with pauseReason "error-unrecoverable". Previously the message matched the operator-actionable /credential/ and /unauthorized/ patterns and defaulted to "permanent", so a routine token rotation parked every durable agent for manual operator repair.
-Genuinely operator-actionable auth failures are excluded first: OAuth scope/permission-grant errors (token valid but lacks grants) and explicit API-key problems (invalid/missing x-api-key) — retrying those only repeats the failing call.
-*/
-const TRANSIENT_AUTH_CREDENTIAL_ROTATION_PATTERN =
-  /"type":\s*"authentication_error"|invalid authentication credentials|token[_\s]?expired/i;
-/*
-FNXC:Reliability-ErrorClassification 2026-07-12-21:05:
-PR #2027 review: the `"type":"authentication_error"` envelope is intentionally broad (providers put rotation failures behind it with varying messages), so the exclusion list must carry the operator-actionable load. Beyond scope grants and invalid/missing API keys, exclude account/credential states no retry can fix: revoked/suspended/disabled/deactivated keys or accounts and inactive subscriptions. A message matching any of these stays permanent/operator-actionable even inside an authentication_error envelope; retries are pointless and would un-park agents a human must repair. Unmatched novel auth messages still classify transient, but the bounded heartbeat error-recovery budget re-parks them as `error-retry-exhausted` after a few attempts, so the failure mode is a handful of visible retries, not an unpark loop.
-*/
-const OPERATOR_ACTIONABLE_AUTH_EXCLUSION_PATTERN =
-  /oauth token does not meet scope|insufficient[_\s-]?scope|invalid[_\s-]?scope|invalid (?:api[_\s-]?key|x-api-key)|missing\s+(?:\S+\s+)?(?:api[_\s-]?)?key|revoked|suspend(?:ed)?|disabled|deactivated|subscription|account (?:is )?(?:locked|closed|inactive)|access denied/i;
+ * FNXC:PlanReviewReplan 2026-07-15-12:00:
+ * FN-7977 / issue #2124: a Plan Review provider, model-selection, or transport
+ * failure is not evidence that the plan needs revision. This extends FN-7561's
+ * advisory-failure guard to hard failures so execution state never regresses to
+ * planning unless a reviewer actually returned REVISE.
+ */
+const MODEL_FALLBACK_EXHAUSTED_PATTERN = /unable to select a usable model after\s+\d+\s+attempt/i;
 
 /**
- * Detect a transient authentication failure caused by credential rotation
- * (e.g. a Claude Max OAuth access token expiring mid-run). Scope-grant and
- * API-key misconfiguration errors are excluded — those need operator action.
+ * Identifies failed Plan Review calls that must stay in place rather than trigger
+ * the plan-revision handoff. The raw node failure value preserves abort/exception
+ * cases when a provider produced no diagnostic message.
  */
-export function isTransientAuthCredentialError(errorMessage: string): boolean {
-  if (!errorMessage || typeof errorMessage !== "string") {
-    return false;
-  }
-  if (OPERATOR_ACTIONABLE_AUTH_EXCLUSION_PATTERN.test(errorMessage)) {
-    return false;
-  }
-  return TRANSIENT_AUTH_CREDENTIAL_ROTATION_PATTERN.test(errorMessage);
+export function isNonPlanDefectPlanReviewFailure(input: {
+  verdict?: string;
+  errorMessage?: string;
+  failureValue?: string;
+}): boolean {
+  if (input.verdict === "REVISE") return false;
+
+  const failureValue = input.failureValue?.trim().toLowerCase();
+  if (failureValue === "exception" || failureValue === "aborted") return true;
+
+  const errorMessage = input.errorMessage?.trim();
+  return Boolean(
+    errorMessage
+    && (
+      isTransientError(errorMessage)
+      || isUsageLimitError(errorMessage)
+      || isOperatorActionableAgentError(errorMessage)
+      || MODEL_FALLBACK_EXHAUSTED_PATTERN.test(errorMessage)
+    )
+  );
 }
+
 
 /**
  * Patterns for transient errors that should be silently retried without
@@ -204,6 +135,41 @@ export function classifyError(errorMessage: string): "transient" | "usage-limit"
 
 const STALE_WORKTREE_MODULE_RESOLUTION_PATTERN = /Cannot find module\s+['"][^'"]*node_modules[^'"]*['"][\s\S]*imported from\s+/i;
 const STALE_WORKTREE_MODULE_PATH_PATTERN = /Cannot find module\s+['"]([^'"]*node_modules[^'"]*)['"]/i;
+
+/*
+FNXC:Reliability-ErrorClassification 2026-07-15-00:00:
+FN-8004 treats only the typed TaskDeletedError message emitted when a heartbeat move races a soft-delete as a benign board miss. This must not classify broader deleted-task failures as harmless because genuine heartbeat failures still require normal recovery or parking.
+*/
+const CONCURRENT_SOFT_DELETE_RACE_PATTERN = /Task\s+([^\s]+)\s+is\s+soft-deleted\s+\(deletedAt=([^)]+)\)\s+and\s+cannot\s+be\s+read\s+or\s+mutated/i;
+const TASK_DELETED_ERROR_TYPE_PATTERN = /(?:\bTaskDeletedError\s*:|["']name["']\s*:\s*["']TaskDeletedError["']|\bname\s*[=:]\s*TaskDeletedError\b)/i;
+const SERIALIZED_TASK_ID_PATTERN = /["']taskId["']\s*:\s*["']([^"']+)["']/i;
+const SERIALIZED_DELETED_AT_PATTERN = /["']deletedAt["']\s*:\s*["']([^"']+)["']/i;
+const TYPED_TASK_ID_PATTERN = /\bTaskDeletedError\s*:\s*(?:task\s+)?([A-Za-z][A-Za-z0-9_-]*)\b/i;
+
+export function isConcurrentSoftDeleteRaceError(errorMessage: string): boolean {
+  if (!errorMessage || typeof errorMessage !== "string") {
+    return false;
+  }
+
+  // A serialized core error can preserve only its canonical name, not Error.message.
+  return CONCURRENT_SOFT_DELETE_RACE_PATTERN.test(errorMessage) || TASK_DELETED_ERROR_TYPE_PATTERN.test(errorMessage);
+}
+
+export function extractConcurrentSoftDeleteRaceDetails(errorMessage: string): { taskId?: string; deletedAt?: string } | null {
+  if (!errorMessage || typeof errorMessage !== "string" || !isConcurrentSoftDeleteRaceError(errorMessage)) {
+    return null;
+  }
+
+  const canonicalMatch = errorMessage.match(CONCURRENT_SOFT_DELETE_RACE_PATTERN);
+  if (canonicalMatch?.[1] && canonicalMatch[2]) {
+    return { taskId: canonicalMatch[1], deletedAt: canonicalMatch[2] };
+  }
+
+  const taskId = errorMessage.match(SERIALIZED_TASK_ID_PATTERN)?.[1]
+    ?? errorMessage.match(TYPED_TASK_ID_PATTERN)?.[1];
+  const deletedAt = errorMessage.match(SERIALIZED_DELETED_AT_PATTERN)?.[1];
+  return taskId || deletedAt ? { taskId, deletedAt } : null;
+}
 
 export function isStaleWorktreeModuleResolutionError(errorMessage: string): boolean {
   if (!errorMessage || typeof errorMessage !== "string") {

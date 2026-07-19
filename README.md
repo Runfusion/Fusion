@@ -131,18 +131,24 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 
 ## What makes it different
 
+<!--
+FNXC:Docs 2026-07-15-00:00:
+README must surface PostgreSQL-default storage and recently shipped operator surfaces so the public front door matches the shipped product. Legacy SQLite is a one-time migration input only; feature claims below remain grounded in release notes and linked product docs rather than new showcase media.
+-->
+
 |  |  |
 |---|---|
 | 🧠 **AI planning** | Describe a task in plain language. Planning agents turn it into a `PROMPT.md` plan with steps, file scope, and acceptance criteria. |
 | 🔁 **Selectable workflows** | Built-ins cover coding, quick fixes, review-heavy work, stepwise execution, plugin-gated Compound Engineering, and PR lifecycle fragments. Pick a workflow per task or author custom ones in the [Workflow Editor](./docs/workflow-editor.md). |
 | 🛡️ **Planner oversight** | Per-task or per-workflow oversight level (`off` / `observe` / `steer` / `autonomous`) governs how closely a planner overseer watches and intervenes — merge/PR and destructive actions always require explicit human confirmation. See [Settings Reference](./docs/settings-reference.md#workflow-settings) and [Dashboard Guide](./docs/dashboard-guide.md). |
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree (`fusion/{task-id}`). Parallel tasks. Zero conflicts. Optional [worktrunk](https://github.com/max-sixty/worktrunk) delegation via [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (see [WorktreeBackend abstraction](./docs/architecture.md#worktreebackend-abstraction)). |
+| 🗄️ **PostgreSQL by default** | Fusion uses zero-config embedded PostgreSQL for local runtime metadata. Legacy SQLite files are one-time migration inputs only; use a shared external database for [multi-project and multi-node](./docs/multi-project.md) setups. ([Storage](./docs/storage.md)) |
 | ⚡ **Smart merge controls** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere, inherit the live global auto-merge default, or set explicit per-task auto/manual overrides. |
 | 🛰️ **Multi-node mesh** | Laptop, Mac mini, Linux server, cloud VM, phone — all synced. Desktop, mobile, web. |
-| 🧩 **Any model** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, local runtimes, and user-defined [custom providers](./docs/dashboard-guide.md#custom-providers). Local and cloud coexist, with workflow model/fallback lanes configurable per project. |
+| 🧩 **Any model** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, Kimi K3, local runtimes, and user-defined [custom providers](./docs/dashboard-guide.md#custom-providers). Local and cloud coexist, with workflow model/fallback lanes configurable per project. |
 | 🏢 **Agent companies** | Import pre-built teams — 440+ agents across 16 companies — and run them autonomously for weeks. |
 | 📬 **Inter-agent messaging** | Built-in mailbox between agents. Delegate, clarify, coordinate; engineer-role agents can opt into backlog auto-claim when you want implementation help beyond executor-only pickup. |
-| 🗨️ **Agent chat** | Direct chat, task chat, attachments, in-chat question cards, resumable streams, and experimental multi-agent Chat Rooms where mentioned members respond directly and ambient members can join up to a cap. ([Chat docs](./docs/dashboard-guide.md#chat-view)) |
+| 🗨️ **Agent chat** | Direct chat, task chat that proactively narrates step progress, failures, and review outcomes, attachments, in-chat question cards, resumable streams, and experimental multi-agent Chat Rooms where mentioned members respond directly and ambient members can join up to a cap. ([Chat docs](./docs/dashboard-guide.md#chat-view)) |
 | 🗺️ **Missions** | Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot and validation contracts. |
 | 🔬 **Research** | Bounded research runs with web search, GitHub, local docs, and LLM synthesis (plus runtime builtin WebSearch/WebFetch support in planning + synthesis flows when available). Turn findings into tasks. ([Docs](./docs/research.md)) |
 | 🧪 **Self-improvement** | Agents reflect on their own output and update their prompts as they learn your codebase. |
@@ -221,7 +227,7 @@ Every tab is a different lens on the same live fleet:
 
 > Tokens · Tools · Activity · Productivity · Team · Ecosystem · GitHub · Signals · System · Reliability · Mission Control — every tab is a different lens on the same live fleet.
 
-**The same fleet, your way** — Command Center (and the whole dashboard) re-skins live across **70+ color themes**. Here it is in Shadcn Light, Shadcn Dark Gray, and Ember:
+**The same fleet, your way** — Command Center (and the whole dashboard) re-skins live across **70+ color themes**, including Cobalt, Clay, and Moss. Here it is in Shadcn Light, Shadcn Dark Gray, and Ember:
 
 <table>
 <tr>
@@ -500,6 +506,7 @@ npx companies.sh add paperclipai/companies/gstack
 | [Plugin Authoring](./docs/PLUGIN_AUTHORING.md) | Building plugins with lifecycle hooks, routes, tools, runtimes, and dashboard surfaces |
 | [Remote Access](./docs/remote-access.md) | Tokenized remote dashboard access, Tailscale/Cloudflare setup, and troubleshooting |
 | [Multi-Project](./docs/multi-project.md) | Central registry, isolation modes, and migration paths |
+| [Storage](./docs/storage.md) | PostgreSQL runtime storage, migration compatibility, and file-backed payloads |
 | [Docker](./docs/docker.md) | Container deployment |
 
 ---
@@ -514,8 +521,8 @@ npx companies.sh add paperclipai/companies/gstack
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational), plus workflow-declared optional steps such as opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
 - **Workflow-native policy** — Fast-mode planning (`leanPlanning` / `autoApproveSpec`), typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings, not hard-coded engine constants ([Settings Reference](./docs/settings-reference.md#workflow-native-triage-policy-settings); [workflow settings](./docs/settings-reference.md#workflow-settings))
 - **Planner oversight** — Workflow-native `plannerOversightLevel` (`off`/`observe`/`steer`/`autonomous`), with an optional per-task override and a separate notification-verbosity setting; merge/PR progression and destructive actions always require explicit human confirmation, even at `autonomous` ([overview](#planner-oversight); [Settings Reference](./docs/settings-reference.md#workflow-settings))
-- **GitHub + PR lifecycle** — Import issues, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
-- **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, mission planner, chat, workflow editor, custom provider setup, and one-click update action
+- **GitHub + PR lifecycle** — Import issues with optional translation and screenshot attachments, skip previously imported issues even after edits or repository casing changes, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
+- **Dashboard** — Real-time kanban/list/graph views, a project Overview with local codebase token estimate and on-disk size, agent management, terminal, git manager, mission planner, chat, workflow editor, custom provider setup, and one-click update action
 - **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked-handoff semantics
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Custom Providers** — Add OpenAI-compatible, OpenAI Responses, Anthropic-compatible, or Google Generative AI providers; saved models appear in Project Models and workflow model dropdowns ([Dashboard Guide](./docs/dashboard-guide.md#custom-providers); [settings shape](./docs/settings-reference.md#customproviders))
@@ -549,7 +556,7 @@ Fusion uses a dual-scope model hierarchy with independent lanes. Global settings
 
 **Workflow lanes:** The default workflow exposes Plan/Triage, Executor, Reviewer, and fallback model lanes in **Settings → Project Models**, and advanced workflow settings can declare additional typed model/policy values ([Settings Reference](./docs/settings-reference.md#workflow-settings)).
 
-**Per-Task Overrides:** Tasks can override the executor, validator, and planning lanes with per-task model fields (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`).
+**Per-Task Overrides:** Quick Add and Inline Create let tasks override the planning, executor, validator, and merger lanes; planning, validator, and merger selections also support task-specific thinking levels. (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`, and merger model/thinking overrides.)
 
 **Precedence:** Per-task → Project override → Global lane → `defaultProvider`/`defaultModelId` → Automatic resolution.
 
@@ -642,7 +649,7 @@ fn skills install firebase/agent-skills               # Install agent skills
 
 | Package | Description |
 |---------|-------------|
-| `@fusion/core` | Domain model — tasks, board columns, SQLite store |
+| `@fusion/core` | Domain model — tasks, board columns, PostgreSQL stores |
 | `@fusion/dashboard` | Web UI — Express server + kanban board with SSE |
 | `@fusion/engine` | AI engine — planning, execution, scheduling, workflow steps |
 | `@runfusion/fusion` | CLI + extension — published to npm |

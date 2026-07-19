@@ -1,0 +1,42 @@
+/*
+FNXC:CommandCenterConfig 2026-07-18-12:00:
+The portability card remains in the existing control grid on desktop and
+collapses to one column at the Command Center mobile breakpoint. Shared buttons
+retain the established token-based touch target instead of adding a parallel
+control variant.
+*/
+.cc-portability-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+
+.cc-portability-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cc-portability-import-label {
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+
+.cc-portability-import-input {
+  min-block-size: calc(var(--space-2xl) * 3);
+  resize: vertical;
+}
+
+
+@media (max-width: 768px) {
+  .cc-portability-actions {
+    flex-direction: column;
+  }
+
+  .cc-portability-actions .cc-controls-action {
+    inline-size: 100%;
+    justify-content: center;
+  }
+
+}

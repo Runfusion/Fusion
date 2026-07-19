@@ -39,11 +39,13 @@ import {
   HEARTBEAT_ERROR_RECOVERY_METADATA_KEY,
   HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
   HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
+  HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
   incrementHeartbeatErrorRecoveryMetadata,
   isErrorRecoveryEligible,
   isHeartbeatErrorRecoverable,
+  isModelUnavailableParkRecoveryEligible,
   readHeartbeatErrorRetryCount,
   resetHeartbeatErrorRecoveryMetadata,
   resolveErrorRecoveryLimit,
@@ -186,6 +188,25 @@ describe("heartbeat error-recovery primitives", () => {
     expect(isErrorRecoveryEligible(baseAgent({ lastError: '401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token does not meet scope requirements"}}' }), 5)).toBe(false);
     expect(isHeartbeatErrorRecoverable({ lastError: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/deleted/node_modules/@runfusion/fusion/dist/bin.js' imported from /tmp/deleted/packages/engine/src/pi.ts" })).toBe(false);
   });
+
+  it("admits under-budget heartbeat-model-unavailable parks for auto-recovery even when lastError is operator-actionable", () => {
+    const parked = baseAgent({
+      state: "paused",
+      pauseReason: HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+      lastError: 'No API key for provider: anthropic. Configure credentials for provider "anthropic" in settings, then resume the agent.',
+    });
+    expect(isModelUnavailableParkRecoveryEligible(parked, 5)).toBe(true);
+    expect(isErrorRecoveryEligible(parked, 5)).toBe(true);
+    expect(isHeartbeatErrorRecoverable(parked)).toBe(false);
+    expect(isErrorRecoveryEligible({
+      ...parked,
+      metadata: buildHeartbeatErrorRecoveryMetadata(parked, 5),
+    }, 5)).toBe(false);
+    expect(isErrorRecoveryEligible({
+      ...parked,
+      pauseReason: "manual",
+    }, 5)).toBe(false);
+  });
 });
 
 describe("HeartbeatMonitor error-state recovery", () => {
@@ -216,6 +237,121 @@ describe("HeartbeatMonitor error-state recovery", () => {
       mutationType: "agent:auto-recover-error-state",
       target: store.agent.id,
       metadata: expect.objectContaining({ attempt: 1, limit: 5 }),
+    }));
+  });
+
+  it("keeps an agent active when a heartbeat move races a soft-delete", async () => {
+    const deletedAt = "2026-07-13T10:18:51.000Z";
+    const raceMessage = `Task FN-8004 is soft-deleted (deletedAt=${deletedAt}) and cannot be read or mutated`;
+    const store = createAgentStore(baseAgent({
+      state: "active",
+      lastError: "previous failure",
+      metadata: buildHeartbeatErrorRecoveryMetadata(baseAgent(), 3),
+    }));
+    const taskStore = createNoTaskStore();
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+    const run = await monitor.startRun(store.agent.id, { source: "timer" });
+
+    await monitor.completeRun(store.agent.id, run.id, { status: "failed", errorMessage: raceMessage });
+
+    expect(store.agent.state).toBe("active");
+    expect(store.agent.lastError).toBeUndefined();
+    expect(readHeartbeatErrorRetryCount(store.agent)).toBe(0);
+    expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "agent:heartbeat-move-skipped-soft-delete",
+      target: store.agent.id,
+      metadata: expect.objectContaining({
+        agentId: store.agent.id,
+        taskId: "FN-8004",
+        deletedAt,
+        moveAttemptedAt: expect.any(String),
+        source: "timer",
+      }),
+    }));
+    expect(store.updateAgentState).not.toHaveBeenCalledWith(store.agent.id, "error");
+    expect(store.updateAgentState).not.toHaveBeenCalledWith(store.agent.id, "paused");
+  });
+
+  it("recognizes a soft-delete race from stderrExcerpt without making empty failures benign", async () => {
+    const raceMessage = "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be read or mutated";
+    const raceStore = createAgentStore(baseAgent({ state: "active" }));
+    const raceMonitor = new HeartbeatMonitor({ store: raceStore, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const raceRun = await raceMonitor.startRun(raceStore.agent.id, { source: "timer" });
+
+    await raceMonitor.completeRun(raceStore.agent.id, raceRun.id, { status: "failed", stderrExcerpt: raceMessage });
+
+    expect(raceStore.agent.state).toBe("active");
+    expect(raceStore.agent.lastError).toBeUndefined();
+
+    const emptyStore = createAgentStore(baseAgent({ state: "active" }));
+    const emptyMonitor = new HeartbeatMonitor({ store: emptyStore, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const emptyRun = await emptyMonitor.startRun(emptyStore.agent.id, { source: "timer" });
+    await emptyMonitor.completeRun(emptyStore.agent.id, emptyRun.id, { status: "failed" });
+
+    expect(emptyStore.agent.state).toBe("error");
+    expect(emptyStore.agent.lastError).toBe("Run failed");
+  });
+
+  it("keeps genuine failed heartbeat runs on the existing error path", async () => {
+    const store = createAgentStore(baseAgent({ state: "active" }));
+    const monitor = new HeartbeatMonitor({ store, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const run = await monitor.startRun(store.agent.id, { source: "timer" });
+
+    await monitor.completeRun(store.agent.id, run.id, { status: "failed", errorMessage: "socket hang up" });
+
+    expect(store.agent.state).toBe("error");
+    expect(store.agent.lastError).toBe("socket hang up");
+  });
+
+  it("auto-retries a false heartbeat-model-unavailable park on the next heartbeat without operator Retry", async () => {
+    const session = createSession(async () => undefined);
+    mockedCreateFnAgent.mockResolvedValueOnce(session as never);
+    const store = createAgentStore(baseAgent({
+      state: "paused",
+      pauseReason: HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+      lastError: 'No API key for provider: anthropic. Configure credentials for provider "anthropic" in settings, then resume the agent.',
+    }));
+    const taskStore = createNoTaskStore();
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+
+    await monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(store.agent.state).toBe("active");
+    expect(store.agent.lastError).toBeUndefined();
+    expect(store.agent.pauseReason).toBeUndefined();
+    expect(readHeartbeatErrorRetryCount(store.agent)).toBe(0);
+    expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "agent:auto-recover-error-state",
+      target: store.agent.id,
+      metadata: expect.objectContaining({ attempt: 1, limit: 5, source: "timer" }),
+    }));
+  });
+
+  it("keeps an exhausted heartbeat-model-unavailable park parked with the same pause reason", async () => {
+    const store = createAgentStore(baseAgent({
+      state: "paused",
+      pauseReason: HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+      lastError: 'No API key for provider: anthropic. Configure credentials for provider "anthropic" in settings, then resume the agent.',
+      metadata: buildHeartbeatErrorRecoveryMetadata(baseAgent(), 5),
+    }));
+    const taskStore = createNoTaskStore();
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+
+    const result = await monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+
+    expect(result.status).toBe("completed");
+    expect(result.resultJson).toMatchObject({
+      reason: HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+      attempts: 5,
+      limit: 5,
+    });
+    expect(store.agent.state).toBe("paused");
+    expect(store.agent.pauseReason).toBe(HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON);
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "agent:error-retry-exhausted",
+      target: store.agent.id,
     }));
   });
 
@@ -319,9 +455,12 @@ describe("HeartbeatMonitor error-state recovery", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
+      let resolveFirstPrompt!: () => void;
+      const firstPromptStarted = new Promise<void>((resolve) => { resolveFirstPrompt = resolve; });
       const session = createSession(async () => {
         calls += 1;
         if (calls === 1) {
+          resolveFirstPrompt();
           throw new Error('Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}');
         }
       });
@@ -330,12 +469,13 @@ describe("HeartbeatMonitor error-state recovery", () => {
       const taskStore = createNoTaskStore();
       const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
 
-      let settled = false;
-      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
-      // Flat transient-auth retry delay is ~5s ±10% jitter; advance fake time until the run settles.
-      for (let i = 0; i < 30 && !settled; i++) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+      await firstPromptStarted;
+      /*
+      FNXC:EngineTests 2026-07-18-07:25:
+      FN-8271 replaces thirty one-second fake-timer polls with an explicit first-prompt synchronization followed by one deterministic timer drain. Waiting for the initial mocked prompt guarantees the transient-auth retry timer exists before `runAllTimersAsync`, avoiding thirty real async yields under shard load.
+      */
+      await vi.runAllTimersAsync();
       await heartbeat;
 
       expect(session.prompt).toHaveBeenCalledTimes(2);
@@ -353,17 +493,20 @@ describe("HeartbeatMonitor error-state recovery", () => {
     vi.useFakeTimers();
     try {
       const rotation401 = 'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}';
-      mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => { throw new Error(rotation401); }) as never);
+      let resolveFirstPrompt!: () => void;
+      const firstPromptStarted = new Promise<void>((resolve) => { resolveFirstPrompt = resolve; });
+      mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => {
+        resolveFirstPrompt();
+        throw new Error(rotation401);
+      }) as never);
       const store = createAgentStore(baseAgent({ state: "active", lastError: undefined }));
       const taskStore = createNoTaskStore();
       const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
 
-      let settled = false;
-      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
-      // Exhaust the in-run transient-auth retry budget (2 retries × ~5s) on fake time.
-      for (let i = 0; i < 30 && !settled; i++) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+      await firstPromptStarted;
+      // Exhaust the known two-retry transient-auth budget in one deterministic fake-time drain.
+      await vi.runAllTimersAsync();
       await heartbeat;
 
       expect(store.agent.state).toBe("error");

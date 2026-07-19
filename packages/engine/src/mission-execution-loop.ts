@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import type {
   TaskStore,
   MissionStore,
+  AsyncMissionStore,
   MissionContractAssertion,
   MissionFeature,
   MissionValidatorRun,
@@ -24,7 +25,7 @@ import type {
   Mission,
 } from "@fusion/core";
 import { normalizeMissionAssertionType } from "@fusion/core";
-import type { VerificationOutcome } from "./mission-verification.js";
+import { GitCheckoutMaterializer, type CheckoutMaterializer, type VerificationOutcome } from "./mission-verification.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import {
@@ -59,6 +60,25 @@ const VALIDATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
  * The agent evaluates each linked assertion and returns pass/fail/blocked
  * per assertion plus an overall status.
  */
+interface ValidationInspection {
+  inspectionRoot: string;
+  landedSha: string | undefined;
+  fallbackUsed: boolean;
+  workspaceStale: boolean;
+  /** Why the inspected tree could not be proven to contain landed code. */
+  inspectionUnavailableReason?: string;
+}
+
+interface ValidationWorkspaceStaleness {
+  workspaceStale: boolean;
+  inspectionUnavailableReason?: string;
+}
+
+interface ValidationExecution {
+  result: ValidationResult;
+  inspection: ValidationInspection;
+}
+
 export interface ValidationResult {
   /**
    * Overall validation status.
@@ -88,7 +108,7 @@ export interface MissionExecutionLoopOptions {
   /** Task store for accessing task data */
   taskStore: TaskStore;
   /** Mission store for accessing mission/feature data */
-  missionStore: MissionStore;
+  missionStore: MissionStore | AsyncMissionStore;
   /** Optional MissionAutopilot for notifying on loop state changes */
   missionAutopilot?: {
     notifyValidationComplete?: (featureId: string, status: "passed" | "failed" | "blocked" | "error") => void | Promise<void>;
@@ -109,18 +129,21 @@ export interface MissionExecutionLoopOptions {
    * preserving the behavior of existing construction sites that inject nothing.
    */
   verificationCapability?: import("./mission-verification.js").VerificationCapability;
+  /** Injectable disposable-checkout seam for validator inspection tests. */
+  checkoutMaterializer?: CheckoutMaterializer;
 }
 
 export class MissionExecutionLoop extends EventEmitter {
   private running = false;
   private taskStore: TaskStore;
-  private missionStore: MissionStore;
+  private missionStore: MissionStore | AsyncMissionStore;
   private rootDir: string;
   private maxRetryBudget: number;
   private missionAutopilot?: MissionExecutionLoopOptions["missionAutopilot"];
   private pluginRunner?: MissionExecutionLoopOptions["pluginRunner"];
   private agentStore?: MissionExecutionLoopOptions["agentStore"];
   private verificationCapability?: MissionExecutionLoopOptions["verificationCapability"];
+  private checkoutMaterializer: CheckoutMaterializer;
   private activeValidations = new Set<string>(); // feature IDs currently being validated
 
   constructor(options: MissionExecutionLoopOptions) {
@@ -133,6 +156,7 @@ export class MissionExecutionLoop extends EventEmitter {
     this.pluginRunner = options.pluginRunner;
     this.agentStore = options.agentStore;
     this.verificationCapability = options.verificationCapability;
+    this.checkoutMaterializer = options.checkoutMaterializer ?? new GitCheckoutMaterializer();
     loopLog.log("MissionExecutionLoop created");
   }
 
@@ -176,7 +200,7 @@ export class MissionExecutionLoop extends EventEmitter {
    * terminated by maintenance while their session is still in-flight.
    */
   async reapStaleValidatorRuns(maxAgeMs: number): Promise<{ reapedCount: number }> {
-    const staleRuns = this.missionStore.listStaleRunningValidatorRuns(maxAgeMs);
+    const staleRuns = await this.missionStore.listStaleRunningValidatorRuns(maxAgeMs);
     let reapedCount = 0;
 
     for (const run of staleRuns) {
@@ -185,15 +209,15 @@ export class MissionExecutionLoop extends EventEmitter {
       }
 
       try {
-        const reapedRun = this.missionStore.reapValidatorRun(
+        const reapedRun = await this.missionStore.reapValidatorRun(
           run.id,
           `Validator run reaped after exceeding stale threshold (${maxAgeMs}ms) without a live owner.`,
         );
         reapedCount += 1;
 
         try {
-          const milestone = this.missionStore.getMilestone(reapedRun.milestoneId);
-          const missionId = milestone ? this.missionStore.getMission(milestone.missionId)?.id : undefined;
+          const milestone = await this.missionStore.getMilestone(reapedRun.milestoneId);
+          const missionId = milestone ? (await this.missionStore.getMission(milestone.missionId))?.id : undefined;
           const elapsedMs = Math.max(0, Date.now() - new Date(run.startedAt).getTime());
           void this.taskStore.recordRunAuditEvent({
             agentId: "store",
@@ -238,7 +262,7 @@ export class MissionExecutionLoop extends EventEmitter {
     }
 
     try {
-      const missions = this.missionStore.listMissions();
+      const missions = await this.missionStore.listMissions();
       let recoveredCount = 0;
 
       for (const mission of missions) {
@@ -246,7 +270,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
         let hierarchy;
         try {
-          hierarchy = this.missionStore.getMissionWithHierarchy(mission.id);
+          hierarchy = await this.missionStore.getMissionWithHierarchy(mission.id);
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           loopLog.warn(`getMissionWithHierarchy failed for mission ${mission.id}: ${errorMessage} — skipping`);
@@ -260,7 +284,7 @@ export class MissionExecutionLoop extends EventEmitter {
           for (const slice of milestone.slices) {
             if (slice.status !== "active") continue;
 
-            const supersededFixes = this.missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
+            const supersededFixes = await this.missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
             const supersededFeatureIds = new Set(supersededFixes.featureIds);
             if (supersededFixes.supersededCount > 0) {
               loopLog.warn(
@@ -270,7 +294,13 @@ export class MissionExecutionLoop extends EventEmitter {
               recoveredCount += supersededFixes.supersededCount;
             }
 
-            for (const feature of slice.features) {
+            /*
+            FNXC:PostgresMissionRecoveryPerformance 2026-07-14-17:55:
+            Superseded-fix reconciliation can change multiple feature states. Refresh the slice once and reuse that coherent snapshot throughout recovery instead of issuing getFeature for every implementing or stranded feature.
+            */
+            const refreshedFeatures = await this.missionStore.listFeatures(slice.id);
+            const refreshedById = new Map(refreshedFeatures.map((feature) => [feature.id, feature]));
+            for (const feature of refreshedFeatures) {
               if (supersededFeatureIds.has(feature.id)) {
                 continue;
               }
@@ -316,7 +346,7 @@ export class MissionExecutionLoop extends EventEmitter {
               // Features that remained implementing while their linked task already finished
               // can be stranded after restart; recover by re-triggering task outcome.
               if (feature.loopState === "implementing" && feature.taskId) {
-                const currentFeature = this.missionStore.getFeature(feature.id) ?? feature;
+                const currentFeature = refreshedById.get(feature.id) ?? feature;
                 if (
                   this.activeValidations.has(feature.id)
                   || currentFeature.loopState === "passed"
@@ -386,7 +416,7 @@ export class MissionExecutionLoop extends EventEmitter {
                 && feature.lastValidatorStatus !== "passed"
                 && !this.activeValidations.has(feature.id)
               ) {
-                const currentFeature = this.missionStore.getFeature(feature.id) ?? feature;
+                const currentFeature = refreshedById.get(feature.id) ?? feature;
                 if (
                   currentFeature.loopState === "passed"
                   || currentFeature.lastValidatorStatus === "passed"
@@ -437,7 +467,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
     try {
       // Find the feature linked to this task
-      const feature = this.missionStore.getFeatureByTaskId(taskId);
+      const feature = await this.missionStore.getFeatureByTaskId(taskId);
       if (!feature) {
         loopLog.log(`Task ${taskId} has no linked feature; skipping validation`);
         return;
@@ -447,10 +477,10 @@ export class MissionExecutionLoop extends EventEmitter {
       // recoverActiveMissions guard. A parked/blocked/completed mission must
       // not keep minting validations (and Fix features) for completed tasks.
       // Features that don't resolve to a mission keep the current behavior.
-      const mission = this.resolveFeatureMission(feature);
+      const mission = await this.resolveFeatureMission(feature);
       if (mission && mission.status !== "active") {
         loopLog.log(`Feature ${feature.id} belongs to mission ${mission.id} with status "${mission.status}"; skipping validation`);
-        this.logFeatureWarningEvent(feature.id, "validation_skipped_mission_inactive", `Validation skipped: mission ${mission.id} status is "${mission.status}" (expected "active").`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_skipped_mission_inactive", `Validation skipped: mission ${mission.id} status is "${mission.status}" (expected "active").`, {
           taskId,
           missionId: mission.id,
           missionStatus: mission.status,
@@ -459,14 +489,14 @@ export class MissionExecutionLoop extends EventEmitter {
       }
 
       if (feature.loopState === "needs_fix") {
-        this.missionStore.transitionLoopState(feature.id, "implementing");
+        await this.missionStore.transitionLoopState(feature.id, "implementing");
         feature.loopState = "implementing";
       }
 
       // Only validate features in "implementing" state
       if (feature.loopState !== "implementing") {
         loopLog.log(`Feature ${feature.id} loopState is "${feature.loopState}"; skipping validation`);
-        this.logFeatureWarningEvent(feature.id, "validation_skipped_loop_state", `Validation skipped: feature ${feature.id} is in loopState "${feature.loopState}" (expected "implementing").`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_skipped_loop_state", `Validation skipped: feature ${feature.id} is in loopState "${feature.loopState}" (expected "implementing").`, {
           taskId,
           loopState: feature.loopState,
         });
@@ -475,7 +505,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
       if (this.activeValidations.has(feature.id)) {
         loopLog.log(`Feature ${feature.id} already has an active validation; skipping duplicate trigger`);
-        this.logFeatureWarningEvent(feature.id, "validation_deduplicated", `Validation already running for feature ${feature.id}; duplicate trigger ignored.`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_deduplicated", `Validation already running for feature ${feature.id}; duplicate trigger ignored.`, {
           taskId,
         });
         return;
@@ -498,26 +528,38 @@ export class MissionExecutionLoop extends EventEmitter {
    * dispatch of the validation result.
    */
   private async runFeatureValidation(feature: MissionFeature): Promise<void> {
-    // Lazily guarantee a linked assertion before validation so every feature
-    // is evaluated by the validator even when legacy data is missing links.
-    let assertions = this.missionStore.listAssertionsForFeature(feature.id);
-    if (assertions.length === 0) {
-      loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
-      assertions = this.missionStore.ensureFeatureAssertionLinked(feature.id);
-    }
-
-    // Mark feature as being validated
+    /*
+    FNXC:MissionValidation 2026-07-17-16:40:
+    Claim validation before any asynchronous assertion lookup. Concurrent task
+    completion events must share one validator run, including the lazy-link path.
+    */
     this.activeValidations.add(feature.id);
 
     try {
+      // Lazily guarantee a linked assertion before validation so every feature
+      // is evaluated by the validator even when legacy data is missing links.
+      let assertions = await this.missionStore.listAssertionsForFeature(feature.id);
+      if (assertions.length === 0) {
+        loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
+        assertions = await this.missionStore.ensureFeatureAssertionLinked(feature.id);
+      }
+      if (assertions.length === 0) {
+        // FNXC:MissionValidation 2026-07-17-16:45: no-assertion features remain a valid completion path when linkage cannot derive an assertion.
+        await this.handleValidationPass(feature.id, undefined, "No assertions linked to feature");
+        return;
+      }
+
       loopLog.log(`Running internal validation for feature ${feature.id} — no board task created (policy: docs/missions.md)`);
 
-      // Start the validator run (no board task per docs/missions.md)
-      const run = this.missionStore.startValidatorRun(feature.id, "task_completion");
+      // FNXC:MissionValidation 2026-07-16-12:00:
+      // Validator runs retain task linkage, while routing consumes inspection
+      // provenance calculated in the exact root the judge read.
+      const run = feature.taskId
+        ? await this.missionStore.startValidatorRun(feature.id, "task_completion", feature.taskId)
+        : await this.missionStore.startValidatorRun(feature.id, "task_completion");
       loopLog.log(`Started validator run ${run.id} for feature ${feature.id}`);
 
-      // Run the validation
-      const result = await this.runValidation(feature, assertions, run);
+      const { result, inspection } = await this.runValidation(feature, assertions, run);
 
       // Handle the result
       if (result.status === "pass") {
@@ -537,18 +579,16 @@ export class MissionExecutionLoop extends EventEmitter {
             run.id,
             `linked task ${feature.taskId} is still "${premergeColumn}" (code not merged yet) — validation deferred`,
           );
-        } else if (await this.isValidationWorkspaceStale(feature)) {
-          // Even when the task column shows "done", the judge session ran in
-          // this.rootDir — if that working copy never fetched/reset to the
-          // merged commit (merge landed on remote or another worktree), the
-          // validator read PRE-merge files → a spurious fail. Defer instead of
-          // minting a bogus Fix Feature; a later validation judges the merged
-          // code. Only affirmative staleness evidence defers (fail-open).
-          await this.handleValidationInconclusive(
-            feature.id,
-            run.id,
-            `validation workspace predates the merged code for ${feature.taskId} — validation deferred`,
-          );
+        } else if (inspection.workspaceStale || inspection.inspectionUnavailableReason) {
+          // FNXC:MissionValidation 2026-07-16-14:00:
+          // A FAIL can create a Fix Feature only after the judge's inspection
+          // root is proven to contain the landed code. A stale root, unresolved
+          // merge SHA, or unavailable ancestry result is inconclusive instead;
+          // this prevents a wrong checkout from restarting implementation.
+          const reason = inspection.workspaceStale
+            ? `validation workspace predates the merged code for ${feature.taskId} — validation deferred`
+            : `validation could not prove the inspected workspace contains merged code (${inspection.inspectionUnavailableReason}) — validation deferred`;
+          await this.handleValidationInconclusive(feature.id, run.id, reason);
         } else {
           await this.handleValidationFail(feature.id, run.id, result);
         }
@@ -585,26 +625,29 @@ export class MissionExecutionLoop extends EventEmitter {
   }
 
   /**
-   * Affirmative-evidence check that the judged checkout (this.rootDir HEAD)
-   * predates the linked task's merged code. True ONLY when the integration SHA
-   * is resolvable AND is NOT an ancestor of rootDir HEAD. Fails open (returns
-   * false = trust the fail) on unresolvable SHA / unknown object / any git
-   * error — the guard may only ever defer a fail, never suppress one.
+   * Determine whether the exact inspection root proves it contains landed code.
+   * Exit 1 means the root is stale; missing SHA, bad objects, and other git
+   * failures are unproven inspections and must defer a FAIL rather than mint a
+   * remediation task from an unverifiable checkout.
    */
-  private async isValidationWorkspaceStale(feature: MissionFeature): Promise<boolean> {
-    const integrationSha = await this.resolveIntegrationSha(feature);
-    if (!integrationSha) return false; // no evidence → trust the fail
+  private async isValidationWorkspaceStale(
+    landedSha: string | undefined,
+    inspectionRoot: string,
+  ): Promise<ValidationWorkspaceStaleness> {
+    if (!landedSha) {
+      return { workspaceStale: false, inspectionUnavailableReason: "landed merge SHA is unavailable" };
+    }
     try {
-      await execAsync(`git merge-base --is-ancestor ${quoteShellArg(integrationSha)} HEAD`, {
-        cwd: this.rootDir,
+      await execAsync(`git merge-base --is-ancestor ${quoteShellArg(landedSha)} HEAD`, {
+        cwd: inspectionRoot,
         timeout: 30_000,
       });
-      return false; // exit 0 → ancestor → workspace is fresh
+      return { workspaceStale: false }; // exit 0 → ancestor → workspace is fresh
     } catch (err) {
-      // `--is-ancestor` exits 1 = NOT an ancestor (affirmatively stale); exit
-      // 128 = bad object / not a repo (unknown → fail-open). execAsync's thrown
-      // error carries `.code` = process exit code. ONLY code === 1 defers.
-      return (err as { code?: number })?.code === 1;
+      // `--is-ancestor` exits 1 = NOT an ancestor (affirmatively stale). A bad
+      // object/non-repo (usually 128) cannot prove the judge saw delivered code.
+      if ((err as { code?: number })?.code === 1) return { workspaceStale: true };
+      return { workspaceStale: false, inspectionUnavailableReason: "landed merge ancestry is unavailable" };
     }
   }
 
@@ -619,10 +662,10 @@ export class MissionExecutionLoop extends EventEmitter {
     feature: MissionFeature,
     assertions: MissionContractAssertion[],
     _run: MissionValidatorRun,
-  ): Promise<ValidationResult> {
+  ): Promise<ValidationExecution> {
     loopLog.log(`Running validation for feature ${feature.id} with ${assertions.length} assertions`);
 
-    const milestone = this.resolveFeatureMilestone(feature);
+    const milestone = await this.resolveFeatureMilestone(feature);
 
     // Build the validation prompt
     const prompt = this.buildValidationPrompt(feature, assertions, milestone);
@@ -649,6 +692,25 @@ export class MissionExecutionLoop extends EventEmitter {
     );
 
     let session: AgentResult | null = null;
+    let checkout: Awaited<ReturnType<CheckoutMaterializer["materialize"]>> | undefined;
+    const landedSha = await this.resolveIntegrationSha(feature);
+    let inspectionRoot = this.rootDir;
+    let fallbackUsed = !landedSha;
+
+    // FNXC:MissionValidation 2026-07-16-12:00:
+    // Issue #2168 requires the read-only judge to inspect the landed merge
+    // checkout, not ambient rootDir whose branch can diverge. If checkout
+    // materialization fails, retain rootDir behavior and evaluate staleness in
+    // that exact fallback root before the disposable checkout is disposed.
+    if (landedSha) {
+      try {
+        checkout = await this.checkoutMaterializer.materialize(this.rootDir, landedSha);
+        inspectionRoot = checkout.dir;
+        fallbackUsed = false;
+      } catch (err) {
+        loopLog.warn(`Unable to materialize validation checkout for ${feature.id}; using rootDir fallback:`, err);
+      }
+    }
 
     try {
       // Create validation agent session
@@ -663,7 +725,7 @@ export class MissionExecutionLoop extends EventEmitter {
         sessionPurpose: "validation",
         runtimeHint: validationRuntimeHint,
         pluginRunner: this.pluginRunner,
-        cwd: this.rootDir,
+        cwd: inspectionRoot,
         systemPrompt: this.buildValidationSystemPrompt(feature, assertions, taskContext, milestone),
         tools: "readonly",
         defaultProvider: validationSessionModel.provider,
@@ -716,21 +778,28 @@ export class MissionExecutionLoop extends EventEmitter {
       // (or refuted) by a non-mutating verification run instead.
       const result = await this.applyBehavioralPosture(feature, assertions, judgeResult);
 
+      const workspace = await this.isValidationWorkspaceStale(landedSha, inspectionRoot);
       loopLog.log(`Validation completed for feature ${feature.id}: ${result.status}`);
-      return result;
+      return {
+        result,
+        inspection: { inspectionRoot, landedSha, fallbackUsed, ...workspace },
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       loopLog.error(`Validation error for feature ${feature.id}:`, message);
 
       // Return an error result - the loop will handle it
       return {
-        status: "error",
-        assertions: assertions.map((a) => ({
-          assertionId: a.id,
-          passed: false,
-          message: `Validation error: ${message}`,
-        })),
-        summary: `Validation failed due to error: ${message}`,
+        result: {
+          status: "error",
+          assertions: assertions.map((a) => ({
+            assertionId: a.id,
+            passed: false,
+            message: `Validation error: ${message}`,
+          })),
+          summary: `Validation failed due to error: ${message}`,
+        },
+        inspection: { inspectionRoot, landedSha, fallbackUsed, workspaceStale: false },
       };
     } finally {
       // Always dispose the session
@@ -740,6 +809,13 @@ export class MissionExecutionLoop extends EventEmitter {
           loopLog.log(`Validation session disposed for feature ${feature.id}`);
         } catch (disposeErr) {
           loopLog.warn(`Error disposing validation session for ${feature.id}:`, disposeErr);
+        }
+      }
+      if (checkout) {
+        try {
+          await checkout.dispose();
+        } catch (disposeErr) {
+          loopLog.warn(`Error disposing validation checkout for ${feature.id}:`, disposeErr);
         }
       }
     }
@@ -881,20 +957,20 @@ export class MissionExecutionLoop extends EventEmitter {
   }
 
   /**
-   * Resolve the trusted revision (integration SHA) whose disposable checkout the
-   * verification run executes against. The live task worktree is pruned before
-   * the done-transition that triggers validation, so it cannot be used.
+   * Resolve the verified landed merge revision for a feature's linked task.
    *
-   * In this unit we read it from the linked task when available; callers that do
-   * not supply a resolvable SHA cause the verification run to resolve to
-   * inconclusive (fail-closed). A richer derivation is owned by a later unit.
+   * FNXC:MissionValidation 2026-07-16-12:00:
+   * `mergeDetails.commitSha` is the only delivered-code revision: it is the
+   * landed merge tip. `baseCommitSha` is the task worktree fork point and must
+   * never be inspected as delivered code; Task has no `integrationSha` or
+   * `baseCommit` fields. Inspection-root pinning, stale checking, and
+   * behavioral verification all consume this same revision.
    */
   private async resolveIntegrationSha(feature: MissionFeature): Promise<string | undefined> {
     if (!feature.taskId) return undefined;
     try {
       const task = await this.taskStore.getTask(feature.taskId);
-      const candidate = (task as { integrationSha?: string; baseCommit?: string } | undefined);
-      return candidate?.integrationSha ?? candidate?.baseCommit ?? undefined;
+      return task?.mergeDetails?.commitSha;
     } catch {
       return undefined;
     }
@@ -1288,8 +1364,8 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return lines.join("\n");
   }
 
-  private resolveFeatureMilestone(feature: MissionFeature): Milestone | undefined {
-    const slice = this.missionStore.getSlice(feature.sliceId);
+  private async resolveFeatureMilestone(feature: MissionFeature): Promise<Milestone | undefined> {
+    const slice = await this.missionStore.getSlice(feature.sliceId);
     if (!slice) {
       return undefined;
     }
@@ -1297,8 +1373,8 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return this.missionStore.getMilestone(slice.milestoneId);
   }
 
-  private resolveFeatureMission(feature: MissionFeature): Mission | undefined {
-    const milestone = this.resolveFeatureMilestone(feature);
+  private async resolveFeatureMission(feature: MissionFeature): Promise<Mission | undefined> {
+    const milestone = await this.resolveFeatureMilestone(feature);
     if (!milestone) {
       return undefined;
     }
@@ -1306,27 +1382,27 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return this.missionStore.getMission(milestone.missionId);
   }
 
-  private completeValidatorRunIfStillRunning(
+  private async completeValidatorRunIfStillRunning(
     runId: string | undefined,
     status: "passed" | "failed" | "blocked" | "error",
     summaryOrReason?: string,
-  ): boolean {
+  ): Promise<boolean> {
     if (!runId) {
       return false;
     }
 
     if (typeof this.missionStore.getValidatorRun !== "function") {
-      this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
+      await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
       return true;
     }
 
-    const run = this.missionStore.getValidatorRun(runId);
+    const run = await this.missionStore.getValidatorRun(runId);
     if (!run || run.status !== "running") {
       loopLog.warn(`Validator run ${runId} is no longer running; skipping ${status} completion.`);
       return false;
     }
 
-    this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
+    await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
     return true;
   }
 
@@ -1339,11 +1415,11 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     summary: string,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "passed", summary);
+      await this.completeValidatorRunIfStillRunning(runId, "passed", summary);
 
-      const feature = this.missionStore.getFeature(featureId);
+      const feature = await this.missionStore.getFeature(featureId);
       if (feature && feature.status !== "done") {
-        this.missionStore.updateFeatureStatus(featureId, "done");
+        await this.missionStore.updateFeatureStatus(featureId, "done");
       }
 
       loopLog.log(`Feature ${featureId} passed validation`);
@@ -1383,15 +1459,13 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           actual: a.actual,
         }));
 
-      const canCompleteRun = runId
-        ? typeof this.missionStore.getValidatorRun !== "function" || this.missionStore.getValidatorRun(runId)?.status === "running"
-        : false;
+      const canCompleteRun = runId ? (await this.missionStore.getValidatorRun(runId))?.status === "running" : false;
 
       if (runId && failures.length > 0 && canCompleteRun) {
-        this.missionStore.recordValidatorFailures(runId, failures);
+        await this.missionStore.recordValidatorFailures(runId, failures);
       }
 
-      this.completeValidatorRunIfStillRunning(runId, "failed", result.summary);
+      await this.completeValidatorRunIfStillRunning(runId, "failed", result.summary);
 
       loopLog.log(`Feature ${featureId} failed validation with ${failures.length} failures`);
 
@@ -1401,7 +1475,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
 
       // R16 — durable observability: a verification/validation failure is a
       // persisted mission event, not just a log line.
-      this.logFeatureMissionEvent(featureId, "error", "validation_failed", `Validation failed for feature ${featureId}: ${result.summary}`, {
+      await this.logFeatureMissionEvent(featureId, "error", "validation_failed", `Validation failed for feature ${featureId}: ${result.summary}`, {
         runId: runId ?? null,
         failedAssertionIds: failures.map((f) => f.assertionId),
         reason: failureReason,
@@ -1410,7 +1484,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
 
       // Create fix feature
       try {
-        const fixFeature = this.missionStore.createGeneratedFixFeature(
+        const fixFeature = await this.missionStore.createGeneratedFixFeature(
           featureId,
           runId || "unknown",
           failures.map((f) => f.assertionId),
@@ -1429,7 +1503,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           // logged. The branch-group-collision learning: silent triage stalls
           // are invisible mission deadlocks. The Fix Feature was created and can
           // be triaged manually, so we continue, but the failure is persisted.
-          this.logFeatureMissionEvent(featureId, "error", "fix_feature_triage_failed", `Auto-triage of fix feature ${fixFeature.id} failed: ${triageMessage}`, {
+          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_triage_failed", `Auto-triage of fix feature ${fixFeature.id} failed: ${triageMessage}`, {
             runId: runId ?? null,
             fixFeatureId: fixFeature.id,
             error: triageMessage,
@@ -1448,14 +1522,14 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           loopLog.warn(`Feature ${featureId} retry budget exhausted; marking as blocked`);
           // completeValidatorRun already handles the blocked transition when budget is exhausted
           terminalStatus = "blocked";
-          this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
+          await this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
             runId: runId ?? null,
           });
           this.emit("validation:budget_exhausted", { featureId, runId });
         } else {
           loopLog.error(`Error creating fix feature for ${featureId}:`, message);
           // R16 — a swallowed Fix-Feature creation error is durably recorded.
-          this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_failed", `Failed to create fix feature for ${featureId}: ${message}`, {
+          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_failed", `Failed to create fix feature for ${featureId}: ${message}`, {
             runId: runId ?? null,
             error: message,
           });
@@ -1517,13 +1591,13 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     reason: string | undefined,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "blocked", reason);
+      await this.completeValidatorRunIfStillRunning(runId, "blocked", reason);
       loopLog.warn(`Feature ${featureId} verification inconclusive: ${reason ?? "no reason provided"}`);
 
       // R16/R21 — durable, distinguishable infra-failure event. The `outcome`
       // marker separates infra-driven non-passes from real behavioral fails so
       // the infra-failure rate can be tracked without conflating the two.
-      this.logFeatureMissionEvent(featureId, "warning", "verification_inconclusive", `Verification inconclusive for feature ${featureId}: ${reason ?? "verification could not conclude"}`, {
+      await this.logFeatureMissionEvent(featureId, "warning", "verification_inconclusive", `Verification inconclusive for feature ${featureId}: ${reason ?? "verification could not conclude"}`, {
         runId: runId ?? null,
         reason: reason ?? null,
         outcome: "inconclusive",
@@ -1552,9 +1626,9 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     blockedReason: string | undefined,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "blocked", blockedReason);
+      await this.completeValidatorRunIfStillRunning(runId, "blocked", blockedReason);
       loopLog.log(`Feature ${featureId} blocked: ${blockedReason}`);
-      this.logFeatureErrorEvent(featureId, "validation_blocked", `Validation blocked for feature ${featureId}: ${blockedReason ?? "no reason provided"}`, {
+      await this.logFeatureErrorEvent(featureId, "validation_blocked", `Validation blocked for feature ${featureId}: ${blockedReason ?? "no reason provided"}`, {
         runId,
         blockedReason: blockedReason ?? null,
       });
@@ -1579,9 +1653,9 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     error: string,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "error", error);
+      await this.completeValidatorRunIfStillRunning(runId, "error", error);
       loopLog.error(`Feature ${featureId} validation error: ${error}`);
-      this.logFeatureErrorEvent(featureId, "validation_error", `Validation error for feature ${featureId}: ${error}`, {
+      await this.logFeatureErrorEvent(featureId, "validation_error", `Validation error for feature ${featureId}: ${error}`, {
         runId,
         error,
       });
@@ -1597,40 +1671,39 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     }
   }
 
-  private logFeatureWarningEvent(
+  private async logFeatureWarningEvent(
     featureId: string,
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    this.logFeatureMissionEvent(featureId, "warning", code, description, metadata);
+  ): Promise<void> {
+    await this.logFeatureMissionEvent(featureId, "warning", code, description, metadata);
   }
 
-  private logFeatureErrorEvent(
+  private async logFeatureErrorEvent(
     featureId: string,
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    this.logFeatureMissionEvent(featureId, "error", code, description, metadata);
+  ): Promise<void> {
+    await this.logFeatureMissionEvent(featureId, "error", code, description, metadata);
   }
 
-  private logFeatureMissionEvent(
+  private async logFeatureMissionEvent(
     featureId: string,
     eventType: "warning" | "error",
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    const feature = this.missionStore.getFeature(featureId);
-    if (!feature) return;
-    const slice = this.missionStore.getSlice(feature.sliceId);
-    if (!slice) return;
-    const milestone = this.missionStore.getMilestone(slice.milestoneId);
-    if (!milestone) return;
-
+  ): Promise<void> {
     try {
-      this.missionStore.logMissionEvent?.(milestone.missionId, eventType, description, {
+      const feature = await this.missionStore.getFeature(featureId);
+      if (!feature) return;
+      const slice = await this.missionStore.getSlice(feature.sliceId);
+      if (!slice) return;
+      const milestone = await this.missionStore.getMilestone(slice.milestoneId);
+      if (!milestone) return;
+      await this.missionStore.logMissionEvent?.(milestone.missionId, eventType, description, {
         code,
         featureId,
         sliceId: slice.id,

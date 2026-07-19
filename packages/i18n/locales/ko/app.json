@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "프로젝트를 불러오지 못했습니다"
     },
-    "testMode": "테스트 모드 — 실제 AI 호출 없음"
+    "testMode": "테스트 모드 — 실제 AI 호출 없음",
+    "migrationInProgress": "데이터베이스 마이그레이션 진행 중 — 완료되면 대시보드가 다시 연결됩니다."
   },
   "appName": "",
   "approval": {
@@ -1165,32 +1166,6 @@
     "manageConnection": "연결 관리",
     "retryConnection": "연결 재시도",
     "retrying": "재시도 중…"
-  },
-  "backgroundTasks": {
-    "confirmMessage": "이 세션은 다른 탭에서 활성화되어 있습니다. 그래도 여시겠습니까?",
-    "confirmTitle": "활성 세션 열기",
-    "dismissButton": "닫기",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "백그라운드 작업",
-    "status": {
-      "activeElsewhere": "다른 탭에서 활성화됨",
-      "failed": "실패",
-      "generating": "생성 중...",
-      "needsInput": "입력 필요"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "마일스톤 인터뷰",
-      "missionInterview": "미션 인터뷰",
-      "planning": "계획",
-      "sliceInterview": "슬라이스 인터뷰",
-      "subtask": "하위 작업 분류"
-    }
   },
   "board": {
     "archived": "보관됨",
@@ -1417,13 +1392,6 @@
     "versionMismatchPrefix": "설치된",
     "versionMismatchSuffix": "최신 버전으로 업데이트하여 동기화를 유지하세요."
   },
-  "storageMigrationNotice": {
-    "body": "",
-    "dismissLabel": "",
-    "getHelp": "",
-    "getHelpLabel": "",
-    "title": ""
-  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "확인 중…",
@@ -1611,6 +1579,43 @@
         "title": ""
       },
       "title": ""
+    },
+    "portability": {
+      "title": "조직 내보내기 / 가져오기",
+      "description": "비밀이 제거된 조직 번들을 다운로드하거나 미리 봅니다.",
+      "export": {
+        "action": "조직 번들 내보내기",
+        "working": "내보내는 중…",
+        "success": "내보내기 준비됨",
+        "error": "내보내기 실패"
+      },
+      "import": {
+        "label": "조직 번들 JSON",
+        "placeholder": "비밀이 제거된 조직 번들을 붙여넣으세요",
+        "preview": "가져오기 미리보기",
+        "previewing": "미리보는 중…",
+        "previewReady": "미리보기가 준비되었습니다. 이 번들을 적용하려면 확인하세요.",
+        "apply": "가져오기 적용",
+        "importing": "가져오는 중…",
+        "invalid": "유효한 조직 번들 JSON 문서를 붙여넣으세요",
+        "error": "번들을 미리보거나 가져올 수 없습니다",
+        "confirmTitle": "조직 번들을 가져올까요?",
+        "confirmMessage": "미리본 구성을 이 프로젝트에 적용합니다.",
+        "confirmApply": "번들 가져오기"
+      },
+      "versions": {
+        "title": "구성 버전",
+        "description": "기록된 프로젝트 구성 버전을 복원합니다.",
+        "loading": "버전 불러오는 중…",
+        "empty": "아직 구성 버전이 없습니다.",
+        "loadError": "구성 버전을 불러올 수 없습니다",
+        "rollback": "롤백",
+        "rollingBack": "롤백 중…",
+        "rollbackError": "구성을 롤백할 수 없습니다",
+        "confirmTitle": "구성을 롤백할까요?",
+        "confirmMessage": "이 버전을 복원할까요? 롤백은 새 버전으로 기록됩니다.",
+        "confirmRollback": "롤백"
+      }
     },
     "ecosystem": {
       "breadthTitle": "",
@@ -1802,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "리뷰 산출물"
     },
     "team": {
       "agent": "",
@@ -1880,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "리뷰 산출물",
+      "empty": "아직 사용 가능한 리뷰 산출물이 없습니다."
     }
   },
   "comments": {
@@ -2017,6 +2027,7 @@
     "connectRemoteButton": "원격 Fusion에 연결",
     "couldNotStart": "로컬 Fusion을 시작할 수 없습니다",
     "loading": "Fusion 로드 중…",
+    "migrationInProgress": "데이터베이스 마이그레이션 진행 중 — 몇 분 정도 걸릴 수 있습니다.",
     "opening": "열고 있는 중…",
     "retry": "다시 시도",
     "runLocalButton": "로컬에서 Fusion 실행",
@@ -2477,6 +2488,11 @@
     "taskMatches": "작업 검색 결과"
   },
   "git": {
+    "addComment": "Add comment",
+    "addCommentPlaceholder": "Write a comment…",
+    "commentAuthorYou": "You",
+    "commentPosted": "Comment posted",
+    "failedToPostComment": "Failed to post comment",
     "add": "추가",
     "addRemote": "원격 추가",
     "advancesHelpFix": "<strong>해결 방법:</strong> Fusion은 적어도 하나의 진행 항목이 진정으로 <code>pending</code> 상태이고 HEAD가 통합 끝점과 일치하지 않을 때만 <em>작업 트리 동기화</em>를 표시합니다. 항목이 이미 처리된 경우(subsumed/orphaned/reachable/superseded), 동기화 작업이 제공되지 않습니다.",
@@ -2865,7 +2881,17 @@
     "worktreesInUse_one": "",
     "worktreesInUse_other": "",
     "worktreesTotal_one": "",
-    "worktreesTotal_other": ""
+    "worktreesTotal_other": "",
+    "translateAction": "",
+    "translateDismiss": "",
+    "translateOffer": "",
+    "translateRegionAriaLabel": "",
+    "translateShowingOriginal": "",
+    "translateShowingTranslated": "",
+    "translateShowOriginal": "",
+    "translateShowTranslated": "",
+    "translateUnknownLanguage": "",
+    "translateWorking": ""
   },
   "githubStarPrompt": {
     "body": "",
@@ -3190,7 +3216,6 @@
     "refinedScope": "정제된 범위",
     "refineScope": "AI로 {{label}} 범위 정제",
     "sendToBackground": "백그라운드로 보내기",
-    "sessionActiveAnotherTab": "다른 탭에서 세션이 활성화되어 있습니다.",
     "showThinking": "생각 표시",
     "startInterview": "인터뷰 시작",
     "targetLabel": {
@@ -3318,7 +3343,8 @@
     "unpauseUnavailable": "재개 작업을 사용할 수 없습니다",
     "useProjectDefault": "프로젝트 기본값 사용",
     "viewOptions": "보기 옵션",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "재계획"
   },
   "mailbox": {
     "agent": "에이전트",
@@ -3835,9 +3861,6 @@
     "selectGoal": "",
     "selectMissionToView": "세부 정보를 보려면 미션을 선택하세요",
     "sendToBackground": "백그라운드로 보내기",
-    "sessionActiveAnother": "세션이 다른 탭에서 활성화되어 있습니다.",
-    "sessionActiveHeartbeat": "이 세션은 다른 탭에서 활성화되어 있습니다 (실시간 하트비트)",
-    "sessionActiveTab": "이 세션은 다른 탭에서 활성화되어 있습니다",
     "showDetails": "세부 정보 표시",
     "showMetadata": "메타데이터 표시",
     "showThinking": "사고 과정 표시",
@@ -3883,8 +3906,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "구조",
-    "takeControl": "제어권 가져오기",
-    "takingControl": "제어권 가져오는 중...",
     "targetBranch": "대상 브랜치",
     "targetBranchPlaceholder": "예: main",
     "taskIdPlaceholder": "작업 ID (예: FN-001)",
@@ -4613,7 +4634,6 @@
     "plain": "일반",
     "planningComplete": "계획 완료!",
     "planningCompleteSubheading": "작업을 생성하기 전에 검토하고 다듬으세요.",
-    "planningDepth": "계획 깊이",
     "planningModel": "계획 모델",
     "planningModelBlurb": "계획 인터뷰를 실행하고 최종 초안을 작성할 모델을 선택합니다.",
     "planningSessions": "계획 세션",
@@ -4635,8 +4655,6 @@
     "remove": "제거",
     "retryFailed": "재시도 실패. 다시 시도해 주세요.",
     "retrying": "재시도 중...",
-    "sessionActiveOtherTab": "이 세션은 다른 탭에서 활성화되어 있습니다",
-    "sessionActiveOtherTabLive": "이 세션은 다른 탭에서 활성화되어 있습니다 (실시간 하트비트)",
     "sessionFailed": "AI 연결 중 세션이 실패했습니다.",
     "sessionFailed2": "세션 실패",
     "showArchived": "보관 항목 표시",
@@ -4659,8 +4677,6 @@
     "subtaskTitle": "제목",
     "suggestedDependencies": "제안된 의존성",
     "suggestedSize": "제안된 크기",
-    "takeControl": "제어권 가져오기",
-    "takingControl": "제어권 가져오는 중...",
     "thinkingElapsed": "사고 중… ({{seconds}}초)",
     "title": "계획 모드",
     "tryAnExample": "예시를 시도해 보세요:",
@@ -4670,7 +4686,8 @@
     "untitledSession": "제목 없는 세션",
     "usingDefault": "기본값 사용",
     "whatToBuild": "무엇을 만들고 싶으신가요?",
-    "whatToBuildPlaceholder": "예: 로그인, 회원가입, 비밀번호 재설정이 포함된 사용자 인증 시스템 구축..."
+    "whatToBuildPlaceholder": "예: 로그인, 회원가입, 비밀번호 재설정이 포함된 사용자 인증 시스템 구축...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "항목 추가",
@@ -5660,7 +5677,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "입력 대기 중이거나 실패한 AI 세션",
     "resume": "재개",
-    "retry": "재시도"
+    "retry": "재시도",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5901,7 +5922,34 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": "",
+      "mobileNavPrimaryItems": "모바일 하단 빠른 작업",
+      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 가능한 대상을 추가하세요. 선택하지 않은 항목은 더보기에 유지됩니다.",
+      "addNavItem": "빠른 작업 추가",
+      "selectNavItem": "대상 선택",
+      "removeNavItem": "{{item}} 제거",
+      "moveNavItemEarlier": "{{item}} 앞으로 이동",
+      "moveNavItemLater": "{{item}} 뒤로 이동",
+      "ephemeralAgentTaskCreationPolicy": "임시 에이전트 후속 작업",
+      "ephemeralAgentTaskCreationPolicyHint": "기본값 없음 — 미설정 시 허용으로 폴백합니다. 검증 후는 받은편지함으로 제안을 보내 원클릭 승인합니다. 거부는 후속 작업 생성을 거부합니다.",
+      "ephemeralAgentTaskCreationPolicyAllow": "허용",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "검증 후",
+      "ephemeralAgentTaskCreationPolicyDeny": "거부",
+      "reportModeHelp": "인앱 버그/피드백/아이디어/도움말 리포트 제출 방식. 기본값: draft-review(제출 전 운영자가 초안 검토).",
+      "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다.",
+      "reviewArtifacts": "리뷰 산출물",
+      "reviewArtifactsHint": "적격한 향후 작업이 리뷰 산출물을 생성할지 제어합니다. 사용자 보고와 활동 캡처는 별도로 유지됩니다. 기본값: 꺼짐.",
+      "reportRoadmapDedup": "보고서를 제출하기 전에 로드맵 확인",
+      "reportRoadmapDedupHelp": "활성화하면 일치하는 로드맵 기능이 다른 GitHub 이슈나 토론을 만들지 않고 인라인으로 표시됩니다. 기본값: 꺼짐."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5937,7 +5985,11 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6262,8 +6314,8 @@
         "global": "모든 프로젝트에서 공유됨",
         "project": "이 프로젝트에만 적용됨"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6344,7 +6396,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6360,6 +6415,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
+      "taskDefinitionInInputLanguage": "",
+      "taskDefinitionInInputLanguageHelp": "",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6631,11 +6688,28 @@
       "ignoreHiddenDotPathsHelp": "",
       "ignoreHiddenDotPathsInOverlapChecks": "",
       "maxConcurrentTasksHint": "",
-      "pollIntervalMsHint": ""
-    },
-    "scope": {
-      "globalBanner": "이 설정은 모든 Fusion 프로젝트에서 공유됩니다.",
-      "projectBanner": "이 설정은 현재 프로젝트에만 적용됩니다."
+      "maxConcurrentVerifications": "",
+      "maxConcurrentVerificationsHint": "",
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "트리아지 중복 해결",
+      "triageDuplicateResolutionHelp": "트리아지에서 감지된 중복을 유지/삭제 결정으로 차단(기본)하거나, 차단 없이 자동 유지/삭제합니다.",
+      "triageDuplicateResolutionPrompt": "결정 대기(기본)",
+      "triageDuplicateResolutionKeep": "자동 유지",
+      "triageDuplicateResolutionDelete": "자동 삭제"
     },
     "title": "설정",
     "worktrees": {
@@ -6696,7 +6770,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -6713,11 +6788,15 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -6736,6 +6815,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 내장 PostgreSQL의 최대 서버 연결 수. Fusion 재시작 후 적용. 범위: 32–2,000. 기본값: 500. 외부 PostgreSQL은 제공자 연결 한도를 사용합니다.",
+      "embeddedConnectionCap": "내장 PostgreSQL 연결 상한",
+      "embeddedConnectionCapError": "32에서 2,000 사이의 값을 입력하세요.",
+      "advanced": "고급 데이터베이스 설정"
     }
   },
   "setup": {
@@ -7280,14 +7365,9 @@
     "reviewSubtasksHint": "모든 작업을 한 번에 생성하기 전에 제목, 설명, 크기, 의존성을 편집하세요.",
     "sendToBackgroundAriaLabel": "백그라운드로 보내기",
     "sendToBackgroundTitle": "백그라운드로 보내기",
-    "sessionActiveAnotherTab": "다른 탭에서 세션이 활성 상태입니다.",
-    "sessionActiveAnotherTabLive": "이 세션은 다른 탭에서 활성 상태입니다 (실시간 하트비트)",
-    "sessionActiveAnotherTabTakeover": "이 세션은 다른 탭에서 활성 상태입니다",
     "showThinking": "사고 과정 보기",
     "sizeLabel": "크기",
     "startingBreakdown": "",
-    "takeControl": "제어 가져오기",
-    "takingControl": "제어 가져오는 중...",
     "titleLabel": "제목",
     "untitled": "제목 없음",
     "waitingForThinking": ""
@@ -7628,7 +7708,13 @@
       "copy": "이 작업은 다음의 근사 중복으로 보입니다",
       "headline": "잠재적 중복 감지됨",
       "keepBtn": "유지",
-      "kept": "{{id}} 유지 및 중복 경고 무시됨"
+      "kept": "{{id}} 유지 및 중복 경고 무시됨",
+      "deleteBtn": "삭제",
+      "deleteConfirm": "삭제",
+      "deleted": "{{id}} 삭제됨",
+      "deleteMessage": "{{duplicateOf}}의 중복으로 {{id}}를 삭제할까요?",
+      "deleteTitle": "중복 작업 삭제",
+      "triageActions": "이 중복을 제거하려면 삭제를, 계속하려면 유지를 선택하세요."
     },
     "nextRecoveryAt": "다음 복구 시각: {{time}}",
     "no": "아니요",
@@ -7664,7 +7750,11 @@
       "rejected": "계획 거부됨 — {{id}}이(가) 재계획을 위해 Planning으로 반환됨",
       "rejectMessage": "이 계획을 거부하시겠습니까? 명세가 삭제되고 재생성됩니다.",
       "rejectTitle": "계획 거부",
-      "replanning": "{{id}} 재계획 중…"
+      "replanning": "{{id}} 재계획 중…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "PR 검사 대기 중",
@@ -8333,11 +8423,17 @@
     "revertNeedsHumanDefault": "",
     "reverted": "",
     "revertTask": "",
+    "revertedBadge": "",
+    "revertedBadgeTitle": "",
     "undoOf": "",
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": "",
+    "statusReplan": "재계획"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8458,7 +8554,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "사용량 데이터를 보려면 설정에서 인증을 구성하세요.",
@@ -9036,5 +9136,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "이미 로드맵에 있습니다",
+      "message": "이 보고서는 이미 계획된 기능과 일치합니다."
+    }
   }
 }

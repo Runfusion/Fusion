@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { Settings } from "@fusion/core";
 import { GENERATED_PATTERNS, LOCKFILE_PATTERNS, matchGlob } from "./merger.js";
 
 const execFileAsync = promisify(execFile);
@@ -101,3 +102,32 @@ export async function checkDiffVolume({
     throw new DiffVolumeRegressionError(findings);
   }
 }
+
+export interface DiffVolumeGateSettings {
+  minLines: number;
+  threshold: number;
+  allowlistGlobs: string[];
+}
+
+/*
+ * FNXC:CodeOrganization 2026-07-17-12:00:
+ * Diff-volume settings normalization and finding formatting peeled from merger.ts.
+ */
+export function resolveDiffVolumeGateSettings(settings?: Settings): DiffVolumeGateSettings {
+  const minLinesRaw = settings?.mergeDiffVolumeMinLines ?? 20;
+  const thresholdRaw = settings?.mergeDiffVolumeThreshold ?? 0.2;
+  return {
+    minLines: Math.max(1, Math.trunc(Number.isFinite(minLinesRaw) ? minLinesRaw : 20)),
+    threshold: Math.min(1, Math.max(0, Number.isFinite(thresholdRaw) ? thresholdRaw : 0.2)),
+    allowlistGlobs: Array.isArray(settings?.mergeDiffVolumeAllowlist)
+      ? settings.mergeDiffVolumeAllowlist.filter((glob): glob is string => typeof glob === "string" && glob.trim().length > 0)
+      : [],
+  };
+}
+
+export function formatDiffVolumeFindings(findings: ReadonlyArray<{ file: string; branchNet: number; staged: number; ratio: number }>): string {
+  return findings
+    .map((finding) => `${finding.file} (branchNet=${finding.branchNet}, staged=${finding.staged}, ratio=${finding.ratio.toFixed(3)})`)
+    .join("\n");
+}
+

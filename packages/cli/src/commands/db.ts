@@ -250,7 +250,8 @@ export async function runDbMigrate(
   if (!registeredProjectId) {
     const centralSource = presentSources.find((source) => source.pgSchema === "central");
     if (centralSource) {
-      const legacyCentral = new DatabaseSync(centralSource.sqlitePath);
+      // FNXC:LegacySqliteBoundary 2026-07-14-18:42: project ownership discovery reads the operator-selected migration source without modifying it.
+      const legacyCentral = new DatabaseSync(centralSource.sqlitePath, { readOnly: true });
       try {
         registeredProjectId = (legacyCentral
           .prepare("SELECT id FROM projects WHERE path = ? LIMIT 1")
@@ -277,6 +278,7 @@ export async function runDbMigrate(
     report = await migrateSqliteToPostgres(connections.migration, presentSources, {
       dryRun,
       projectId: registeredProjectId,
+      projectPath: projectRoot,
       migrationKey: `project:${registeredProjectId}`,
       deferCompletion: true,
       onProgress: (event) => {

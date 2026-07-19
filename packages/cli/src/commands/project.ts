@@ -13,8 +13,9 @@
 import {
   CentralCore,
   GlobalSettingsStore,
-  TaskStore,
   createTaskStoreForBackend,
+  hasProjectIdentity,
+  isValidSqliteDatabaseFile,
   ensureMemoryFileWithBackend,
   type RegisteredProject,
   type IsolationMode,
@@ -144,19 +145,11 @@ async function getTaskCounts(projectPath: string): Promise<TaskCountSummary> {
   // the surrounding try/catch swallowed it so project info/list silently showed
   // zero tasks. The boot result's shutdown() releases the connection pool (and
   // any embedded PostgreSQL process) so a one-shot CLI read leaks nothing.
-  let store: TaskStore | undefined;
   let backendShutdown: (() => Promise<void>) | undefined;
   try {
     const boot = await createTaskStoreForBackend({ rootDir: projectPath });
-    if (boot) {
-      store = boot.taskStore;
-      backendShutdown = boot.shutdown;
-    } else {
-      // Legacy SQLite opt-out (FUSION_NO_EMBEDDED_PG=1): byte-identical legacy path.
-      store = new TaskStore(projectPath);
-      await store.init();
-    }
-    const resolvedStore = store;
+    backendShutdown = boot.shutdown;
+    const resolvedStore = boot.taskStore;
     const tasks = await retryOnLock(
       () => resolvedStore.listTasks({ slim: true }),
       { id: projectPath, action: "count tasks" },
@@ -175,11 +168,6 @@ async function getTaskCounts(projectPath: string): Promise<TaskCountSummary> {
     // store, or lock-retry exhaustion — all fail soft here by design).
     return { byColumn: {}, runningAgentCount: 0 };
   } finally {
-    try {
-      await store?.close();
-    } catch {
-      // Best-effort: an already-closed/never-initialized store must not throw.
-    }
     if (backendShutdown) {
       await backendShutdown().catch(() => undefined);
     }
@@ -350,8 +338,9 @@ export async function runProjectAdd(
       }
 
       // Check for .fusion directory
-      const kbDbPath = resolve(absolutePath, ".fusion", "fusion.db");
-      if (!existsSync(kbDbPath) && !options.force) {
+      const fusionDir = resolve(absolutePath, ".fusion");
+      const legacyDbPath = resolve(fusionDir, "fusion.db");
+      if (!hasProjectIdentity(fusionDir) && !isValidSqliteDatabaseFile(legacyDbPath) && !options.force) {
         console.log(`\n  No fn project found at ${formatDisplayPath(absolutePath)}`);
         const init = await rl.question("  Initialize fn here first? [Y/n] ");
         rl.close();
@@ -362,18 +351,12 @@ export async function runProjectAdd(
           // startup factory; bare `new TaskStore` throws in backend mode. The
           // boot shutdown releases the pool for this one-shot init.
           const boot = await createTaskStoreForBackend({ rootDir: absolutePath });
-          const store = boot ? boot.taskStore : new TaskStore(absolutePath);
-          await store.init();
-          // FNXC:CliBoardMutation 2026-07-09-00:00: FN-7740 — this init-only
-          // store was never closed, leaking a handle for the rest of the
-          // process lifetime. Close it right after init; nothing downstream
-          // in this handler uses it.
           try {
-            await store.close();
-          } catch {
-            // Best-effort.
+            await boot.taskStore.init();
+          } finally {
+            /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: The startup factory shutdown is the sole owner for one-shot project initialization. It must run when init rejects and must not be paired with a second direct store.close that races the same pool. */
+            await boot.shutdown().catch(() => undefined);
           }
-          if (boot) await boot.shutdown().catch(() => {});
           console.log(`  ✓ Initialized fn at ${absolutePath}`);
         } else {
           console.log("\n  Cancelled. Run `fn init` to initialize a project first.\n");
@@ -417,8 +400,9 @@ export async function runProjectAdd(
     }
 
     // Check for .fusion directory
-    const kbDbPath = resolve(absolutePath, ".fusion", "fusion.db");
-    if (!existsSync(kbDbPath) && !options.force) {
+    const fusionDir = resolve(absolutePath, ".fusion");
+    const legacyDbPath = resolve(fusionDir, "fusion.db");
+    if (!hasProjectIdentity(fusionDir) && !isValidSqliteDatabaseFile(legacyDbPath) && !options.force) {
       console.error(`\n  ✗ No fn project found at ${formatDisplayPath(absolutePath)}`);
       console.error("  Run `fn init` first to initialize the project.\n");
       process.exit(1);
@@ -439,7 +423,7 @@ export async function runProjectAdd(
       process.exit(1);
     }
 
-    const identity = existsSync(kbDbPath) ? readProjectIdentity(join(absolutePath, ".fusion")) : null;
+    const identity = readProjectIdentity(fusionDir);
     const ensured = await central.ensureProjectForPath({
       path: absolutePath,
       identity: identity ?? undefined,

@@ -147,12 +147,27 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
       FNXC:DirectoryPicker 2026-07-03-00:00:
       Project setup must select the directory returned by createDirectory immediately after folder creation so first-time users do not accidentally register the parent directory.
       Keep this opt-in because DirectoryPicker is shared by non-project surfaces such as plugin installation.
+
+      FNXC:DirectoryPicker 2026-07-18-02:50:
+      Setting the input value alone was not enough: the browse panel stayed on the PARENT directory, and its footer Select button commits browser.currentPath — so the natural next click overwrote the just-created folder with its parent (field report: "creating a new folder doesn't select it").
+      When selectCreatedDirectory is on, navigate the panel INTO the created folder so the input, the panel, and the Select button all agree on the new directory.
       */
       if (selectCreatedDirectory) {
         onChange(result.path);
+        await fetchEntries(result.path, browser.showHidden);
+        /*
+        FNXC:DirectoryPicker 2026-07-18-06:00:
+        Review finding: if listing the just-created folder fails, the panel
+        silently stays on the PARENT while the input shows the child — and the
+        footer Select would re-commit the parent (the exact bug this feature
+        fixed). Close the panel on that error; the input already holds the
+        correct created path.
+        */
+        setBrowser((prev) => (prev.error ? { ...prev, isOpen: false, error: null } : prev));
+      } else {
+        // Refresh entries to show the new folder
+        await fetchEntries(browser.currentPath, browser.showHidden);
       }
-      // Refresh entries to show the new folder
-      await fetchEntries(browser.currentPath, browser.showHidden);
     } catch (err) {
       setBrowser((prev) => ({
         ...prev,

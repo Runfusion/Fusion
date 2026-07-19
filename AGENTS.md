@@ -2,6 +2,28 @@
 
 ## Essential rules
 
+### Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches
+
+Agents may implement and commit **directly on `main`** when the change belongs on main (docs/rules, small fixes the operator wants on main, operator explicitly said so, etc.).
+
+When the work **needs a branch** (feature work, multi-commit efforts, PR-bound changes, parallel experiments, anything that must not land on main yet):
+
+- **Do not** `git checkout` / `git switch` the primary checkout away from `main` to create or use that branch.
+- **Do** create an isolated worktree for the branch and work entirely there, so the primary checkout stays on `main`. Prefer Worktrunk when available:
+
+```bash
+# Preferred (Worktrunk)
+wt switch --create <branch-name>
+
+# Fallback (plain git) — keep the primary checkout on main
+git worktree add -b <branch-name> ../kb-worktrees/<branch-name> main
+cd ../kb-worktrees/<branch-name>
+```
+
+- Do all branch-scoped file edits, tests, and commits **inside that worktree**. Report the worktree path in handoffs.
+- Land branch work via PR, `wt merge`, or an explicit operator request — do not move the primary checkout onto the feature branch as the default workflow.
+- If you need a branch and discover you are about to switch the primary tree off `main`, stop and open a worktree instead.
+
 ### Spec Generation Hygiene
 
 - Do not cite `.fusion/tasks/<id>/<file>` paths in Context/Steps/File Scope unless the file already exists, is explicitly created as a `(new)` Artifact, or is sibling `PROMPT.md`/`task.json`/`attachments/*`.
@@ -142,6 +164,14 @@ pnpm verify:workspace  # deep opt-in verification (lint -> test:full -> build); 
 - Default to a **file-scoped** command targeting only the tests affected by the diff, e.g. `pnpm --filter @fusion/<pkg> exec vitest run src/path/to/changed.test.ts --silent=passed-only --reporter=dot`. The marathon soft-cap exists to push you toward this.
 - `allowFullSuite: true` is justified only for a genuinely full run with no targetable test set (e.g. a cross-cutting infra change) — and then state the reason. The thin merge gate (`pnpm test:gate`) is the cross-cutting safety net, not per-task verification.
 
+### Standing Rule: Reuse Components, Design Tokens, and Systems (No Drift)
+
+- Before adding UI/CSS, reuse existing components and primitives; extend their `:hover`, `:focus-visible`, or `:active` states instead of forking parallel button, form, or card variants.
+- Always use design tokens (`--space-*`, `--radius-*`, `--shadow-*`, `--duration-*`, `--transition-*`, `--font-*`, and color/status/semantic tokens); never hardcode pixels, hex, or `rgba()` in component CSS. Use `color-mix(...)` for translucency.
+- Put new component CSS in `packages/dashboard/app/components/ComponentName.css`, not `styles.css`; the global file is only for tokens, primitives, and cross-component `@media` overrides.
+- Reuse existing systems, helpers, and hooks after searching for an equivalent before adding a new one. If a new primitive is genuinely necessary, justify it in the change and first check documented patterns in `docs/solutions/`.
+- Authoritative references: [Styling Guide — Design tokens and Component classes](docs/dashboard-guide.md#styling-guide), `packages/dashboard/app/styles.css` (token/primitive source of truth), and `docs/solutions/`.
+
 ### Standing Rule: Fix the Invariant, Not the Repro (FN-5893)
 
 - When fixing a bug, the regression test must assert the general invariant across ALL known surfaces — not only the single reported reproduction.
@@ -185,6 +215,7 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 - One commit per step boundary
 - Include task ID prefix
 - Fusion task-worktree commits should carry `Fusion-Task-Id: FN-NNNN` trailers
+- **Branch work uses worktrees:** when a change needs a feature branch, create a worktree (`wt switch --create <branch>` or `git worktree add -b …`) and work there — do not switch the primary checkout off `main`. Direct commits on `main` are fine when the change belongs on main. See **Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches**.
 
 ### Merging Branches Into Main
 
@@ -230,7 +261,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - FN-7802: self-healing emits `task:reconcile-missing-worktree-merge-active` when it proves an `in-review` merge-active task (`merging`/`merging-pr`/`merging-fix`) is stranded by an unusable-worktree session-start failure, clears stale `worktree`/`branch`/`sessionFile`, resets the worktree-session retry budget, increments `recoveryRetryCount` as the bounded stale-metadata clear counter, and requeues to `todo`; it emits `task:reconcile-missing-worktree-merge-active-no-action` when `autoMerge:false`, workspace-task ownership, or triple-proof blocks the backward move.
 - FN-7863: executor emits `task:execution-dispatch-loop-terminalized` when an execute-node self-requeue loop reaches `MAX_EXECUTE_REQUEUE_LOOP_CYCLES` with an unchanged progress signature; metadata stays ids/counts/outcomes-only (`taskId`, `cycleCount`, `maxCycles`, `progressSignature`, `failureValue`) and the task is visibly failed with `EXECUTION_DISPATCH_LOOP_EXHAUSTED:` while preserving worktree/branch/step progress.
 - FN-7926: executor emits `task:completed-blocked-parked` when completed implementation work is held by a live `getTaskCompletionBlocker()` reason instead of re-entering the execute self-requeue loop; self-healing emits `task:completed-blocked-advanced` when the blocker clears and the parked work advances to review. Metadata stays ids/outcomes-only (`taskId`, blocker/source/prior column/status).
-- FN-7011: self-healing emits `task:reconcile-engine-downtime-active-timing` when startup recovery shifts active task segment anchors to exclude proven engine-process downtime, and `task:reconcile-engine-downtime-active-timing-no-action` when no active task qualifies.
+- FN-7011/FN-7975: self-healing emits `task:reconcile-engine-downtime-active-timing` when startup recovery or a full Global/Engine unpause shifts active task segment anchors to exclude proven stopped-engine wall-clock, and `task:reconcile-engine-downtime-active-timing-no-action` when no active task qualifies.
 - FN-5419: git run-audit now includes `pull:fast-forward` and `stash:pop-conflict`; dashboard git surfaces now include the extended `POST /api/git/pull` integration-worktree path plus companion `POST /api/git/stash-resolve`, `POST /api/git/stash-drop`, and `POST /api/git/stash-apply` routes.
 - FN-6292: self-healing emits `task:reconcile-dependency-blocking-lease` when it rebounds an in-progress holder whose stale file-scope lease blocks an unmet dependency, and `task:reconcile-dependency-blocking-lease-no-action` when triple-proof blocks that backward move.
 - FN-6736: self-healing emits `task:reclaim-phantom-executor-binding` when it proves an in-memory executor-active binding is stale, clears the binding, and requeues the in-progress task with worktree/progress preserved.
@@ -242,8 +273,15 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - Workspace (Phase D U1): self-healing emits `task:reconcile-workspace-partial-land` when it re-enqueues a partial/zero-landed workspace task's per-repo land (or parks it `failed` when a sub-repo's `fusion/<id>` branch is gone with no `landedSha`), and `task:reconcile-workspace-partial-land-no-action` when `autoMerge:false`, user-pause, or a live sub-repo worktree (workspace-aware liveness) blocks that backward move.
 - Workspace (Phase D U1): self-healing emits `task:reclaim-phantom-workspace-land-lease` when it clears a leaked `workspace-repo-land` lease whose owning task is terminal/dead and older than the FN-6736 staleness floor (a live merging owner is left untouched).
 - Workspace (Phase D U1): self-healing emits `task:reconcile-orphaned-workspace-worktree` when it removes a done/dead workspace task's recorded per-repo worktree from its stored `worktreePath` (guarded by `isPathActive`; no temp-root walk).
+- FN-8144: archive emits `archive-workspace-worktree-disposer-missing` when a workspace archive has no store-scoped backend disposer; per-repository archive removal is awaited under canonical-path reservations, with failed paths quarantined for successor reconciliation.
 - FN-7514: the planner overseer's per-task oversight loop (`PlannerRecoveryController.tick`) emits `overseer:oversight-withheld-human-control` when the pure `evaluateOverseerHumanControl` guard withholds ALL oversight action (no steering, retry, targeted-fix, or pending confirmation) for a task that is user-paused (`task.userPaused===true`, or `task.paused===true` with no `pausedReason`) or ineligible for auto-merge processing per `allowsAutoMergeProcessing` (`autoMerge:false`/PR-based human-review terminal contract). The guard runs BEFORE FN-7513's confirmation classification, so a withheld task never records a pending confirmation. Metadata: `{ taskId, reason: "user-paused" | "auto-merge-off-human-review", stage, oversightLevel }`; deduped per (taskId, withheld reason) so it is not re-emitted every poll while the reason is unchanged.
 - FN-7720: `TaskStore.bypassFailedPreMergeReviewStep` emits `task:bypass-review` when a privileged operator bypasses the latest failed pre-merge review step of an `in-review` task; metadata includes `workflowStepId`, `workflowStepName`, `bypassedFromStatus`, `bypassedFromVerdict`, and the mandatory `reason`. The bypass rewrites the step's `status` to `"skipped"` with `bypassedBy`/`bypassedAt`/`bypassReason`/`bypassedFromStatus` fields; it never fabricates a reviewer `verdict` and clears only the failed-pre-merge-step `getTaskMergeBlocker` reason. Reachable via `fn_task_bypass_review` (CLI/pi-extension operator tool surface only — not executor/reviewer/triage) and `POST /tasks/:id/bypass-review`.
+- FN-7996: executor emits `task:execution-tool-failure-retry` for a claimed same-model consecutive-tool-failure retry and `task:execution-tool-failure-retry-exhausted` when the matching run budget is spent. Metadata is ids/counts/outcomes-only; the exhausted event is emitted once through a project-scoped compare-and-set while terminal parking remains idempotent.
+- FN-7998: executor emits `task:execution-escalation-retry` when its opt-in, single alternate model/node attempt is persisted after FN-7996 exhaustion, and `task:execution-escalation-exhausted` when that attempt also reaches the terminal park. Metadata remains ids/counts/outcomes-only (`taskId`, graph node id, target booleans, and prior retry count); no model identifiers or prose are persisted in run-audit.
+- FN-8004: `agent:heartbeat-move-skipped-soft-delete` records a heartbeat move that races a soft-deleted task without parking the durable agent. Metadata remains ids/timestamps/source only (`agentId`, optional `taskId`/`deletedAt`, `moveAttemptedAt`, optional `source`); it never stores error prose.
+- FN-8141: the executor's `fn_task_done(outcome="blocked", reason=..., blockedBy?=[...])` honest-blocked exit emits `task:execution-blocked-parked` when an executor parks a genuinely-impossible task `failed` (`error = "BLOCKED: <reason>"`) instead of laundering it to `done` by skipping steps. It bypasses the completion/verdict/bulk-completion gates (blocked is not a completion claim), leaves steps in their true statuses, preserves worktree/branch, records `blockedBy` as real `task.dependencies` edges so the task requeues behind the blocker, and does NOT hand off to review — the parked row is honored by the executor's `status === "failed"` post-loop branch and is not auto-recovered into in-review by `recoverStrandedCompletedTodoTasks` (steps are not all done/skipped and `task.error` is set). Metadata stays ids/outcomes-only (`taskId`, `blockedBy` ids, `hasReason` boolean — never the reason prose).
+- FN-8305: durable symbol-lock operations emit `symbol-lock:acquired`, `symbol-lock:acquire-conflict`, `symbol-lock:renewed`, `symbol-lock:released`, `symbol-lock:reconcile-stale`, and deduplicated `symbol-lock:reconcile-stale-no-action`. Metadata is ids/counts/outcomes-only; normalized opaque symbol keys are permitted IDs, while raw symbol prose is not.
+- FN-8356: self-healing emits `task:reconcile-stale-duplicate-decision` when it clears a triage-marker duplicate-decision pause against a missing, deleted, done, or archived canonical. Metadata is ids/outcomes-only (`taskId`, `canonicalId`, `canonicalColumn`, `canonicalDeleted`, `priorPausedReason`); active canonical decisions and user pauses remain untouched.
 
 
 ## Reference docs (deeper detail)

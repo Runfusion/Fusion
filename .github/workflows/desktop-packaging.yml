@@ -84,3 +84,11 @@ jobs:
       - name: Validate packageable closure (electron-builder --dir)
         if: steps.changes.outputs.relevant == 'true'
         run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --dir --publish never
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-15-10:45:
+      # electron-builder --dir leaves linux-*-unpacked trees; assert embedded Postgres
+      # packaging content (main-bootstrap, natives, omp-runtime) so AppImage regressions
+      # fail on the advisory packaging PR lane, not only at release.
+      - name: Verify Linux AppImage embedded Postgres packaging
+        if: steps.changes.outputs.relevant == 'true'
+        run: node scripts/verify-desktop-linux-pg-packaging.mjs

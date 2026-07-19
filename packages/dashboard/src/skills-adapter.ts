@@ -381,6 +381,7 @@ export function createSkillsAdapter(options: {
             pluginId,
             name,
             skill.enabled,
+            relativePath,
           );
           discoveredSkills.push({
             id,

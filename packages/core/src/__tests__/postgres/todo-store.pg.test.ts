@@ -73,6 +73,19 @@ pgTest("TodoStore (PostgreSQL backend mode)", () => {
     expect(await t.getListsWithItems("P-TODO")).toHaveLength(0);
   });
 
+  it("exposes sync TodoStore read-method parity", async () => {
+    const t = todo();
+    const list = await t.createList("P-TODO-READS", { title: "Read parity" });
+    const first = await t.createItem(list.id, { text: "first" });
+    const second = await t.createItem(list.id, { text: "second" });
+
+    expect(await t.getList(list.id)).toMatchObject({ id: list.id, title: "Read parity" });
+    expect(await t.getItem(first.id)).toMatchObject({ id: first.id, text: "first" });
+    expect((await t.listItems(list.id)).map((item) => item.id)).toEqual([first.id, second.id]);
+    expect(await t.getList("TDL-MISSING")).toBeUndefined();
+    expect(await t.getItem("TDI-MISSING")).toBeUndefined();
+  });
+
   it("createItem rejects a missing list with a clear error (parity with sync store)", async () => {
     await expect(todo().createItem("TDL-DOES-NOT-EXIST", { text: "x" })).rejects.toThrow(/not found/);
   });

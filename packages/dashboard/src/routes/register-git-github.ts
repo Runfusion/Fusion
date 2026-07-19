@@ -37,7 +37,8 @@ import {
   rateLimited,
   unauthorized,
 } from "../api-error.js";
-import { GitHubClient, type PrReviewSnapshot, parseBadgeUrl } from "../github.js";
+import { GitHubClient, buildGitHubIssueSource, isGitHubIssueAlreadyImported, type PrReviewSnapshot, parseBadgeUrl } from "../github.js";
+import { importIssueImageAttachments, githubImagePolicy } from "../issue-image-attachments.js";
 import { GitHubIssueCommentService } from "../github-issue-comment.js";
 import { GitHubTrackingCommentService } from "../github-tracking-comments.js";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
@@ -683,19 +684,18 @@ async function getPatchFingerprint(cwd: string, sha: string): Promise<string | n
 
 export async function collectRecentMergeAdvances(
   scopedStore: TaskStore & {
-    getRunAuditEvents?: (filters: {
+    getRunAuditEventsAsync: (filters: {
       taskId?: string;
       domain?: "database" | "git" | "filesystem" | "sandbox";
       mutationType?: string;
       limit?: number;
-    }) => RunAuditEvent[];
+    }) => Promise<RunAuditEvent[]>;
   },
   worktreePath: string,
   headSha: string | undefined,
   localIntegrationTipSha: string | undefined,
 ): Promise<ExtendedGitStatus["recentMergeAdvances"]> {
-  if (typeof scopedStore.getRunAuditEvents !== "function") return [];
-  const advances = scopedStore.getRunAuditEvents({
+  const advances = await scopedStore.getRunAuditEventsAsync({
     domain: "git",
     mutationType: "merge:integration-ref-advance",
     limit: 10,
@@ -704,7 +704,7 @@ export async function collectRecentMergeAdvances(
   const autoSyncByAdvance = new Map<string, string>();
   const autoSyncByTaskFallback = new Map<string, string>();
   const pairKey = (tid: string, toSha: string) => `${tid}:${toSha}`;
-  for (const ev of scopedStore.getRunAuditEvents({
+  for (const ev of await scopedStore.getRunAuditEventsAsync({
     domain: "git",
     mutationType: "merge:auto-sync",
     limit: 200,
@@ -2090,35 +2090,60 @@ export function createBatchImportRateLimiter(): (req: Request, res: Response, ne
   };
 }
 
-function buildGitHubIssueSource(owner: string, repo: string, issue: { number: number; html_url: string }) {
-  return {
-    sourceIssue: {
-      provider: "github" as const,
-      repository: `${owner}/${repo}`,
-      externalIssueId: String(issue.number),
-      issueNumber: issue.number,
-      url: issue.html_url,
-    },
-    sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
-  };
-}
-
-function isIssueAlreadyImported(
-  task: Pick<Task, "description" | "sourceIssue">,
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Shared by BOTH import surfaces (single import and batch import) so a batch-imported task carries the same translation a singly-imported one does — the requirement is about imported issues, not about which button was pressed.
+Returns null (import the original) whenever auto-translate is off, no target locale resolves, the issue is closed, or nothing is cached for the issue's CURRENT content. Never calls the model: import must not block on, or fail because of, a translation.
+*/
+async function resolveImportedIssueTranslation(
+  req: Request,
+  store: TaskStore,
   owner: string,
   repo: string,
-  issueNumber: number,
-  sourceUrl: string,
-): boolean {
-  const sourceIssue = task.sourceIssue;
-  return task.description.includes(sourceUrl)
-    || (sourceIssue?.provider === "github"
-      && sourceIssue.repository === `${owner}/${repo}`
-      && sourceIssue.issueNumber === issueNumber);
+  issue: { number: number; title: string; body: string | null; state: "open" | "closed" },
+  projectSettings: Awaited<ReturnType<TaskStore["getSettings"]>>,
+): Promise<{ title: string; body: string } | null> {
+  try {
+    /*
+    FNXC:GitHubImportTranslate 2026-07-16-11:22:
+    FN-8115 passes request-scoped project settings from both import routes so translation and tracking share one project-settings read. FN-8112 first made the prior two-read test setup stable; this consolidation preserves its behavior without a second store lookup.
+    */
+    if (projectSettings.githubImportAutoTranslate !== true) return null;
+
+    const { getCachedImportTranslation, resolveTargetLocale } = await import(
+      "../import-translate-service.js"
+    );
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-14:10:
+    The DEFAULT config leaves `importTranslateTargetLocale` unset ("follow the dashboard language"), so resolving from the project setting plus a client-sent locale alone made a default-configured import silently create the task from the ORIGINAL prose even though the panel showed a translation (PR #2141 review, P1).
+    Resolution therefore falls through to the global `language` setting server-side, which also fixes direct API callers and stale clients; the request locale stays as the last tier because `language` is itself unset when a surface browser-detects its locale.
+    */
+    const targetLocale = resolveTargetLocale(
+      projectSettings.importTranslateTargetLocale,
+      // The panel forwards its active locale; a direct API caller may not.
+      (req.body as { targetLocale?: unknown } | undefined)?.targetLocale,
+      projectSettings.language,
+    );
+    if (!targetLocale) return null;
+
+    return await getCachedImportTranslation(
+      { store, provider: "github", repoKey: `${owner}/${repo}`, targetLocale },
+      issue,
+    );
+  } catch {
+    // Translation lookup must never break an import.
+    return null;
+  }
 }
 
-async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ enabled: true } | undefined> {
-  const projectSettings = await store.getSettings();
+async function resolveImportedIssueGithubTracking(
+  store: TaskStore,
+  projectSettings: Awaited<ReturnType<TaskStore["getSettings"]>>,
+): Promise<{ enabled: true } | undefined> {
+  /*
+  FNXC:GithubImportTracking 2026-07-16-11:22:
+  FN-8115 shares the import request's project settings with translation and tracking, removing duplicate project-store reads after FN-8112 stabilized the prior test setup. The global settings read remains distinct because tracking precedence still requires it.
+  */
   if (projectSettings.githubLinkImportedIssuesToTracking === true) {
     /*
     FNXC:GithubImportTracking 2026-07-01-00:00:
@@ -2476,7 +2501,7 @@ export async function refreshIssueInBackground(
 }
 
 export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
-  const { router, getProjectContext, rethrowAsApiError, store } = ctx;
+  const { router, getProjectContext, rethrowAsApiError, store, options } = ctx;
 
   /*
   FNXC:Workspace 2026-06-24-21:00:
@@ -2609,22 +2634,22 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       reconcileSweepInFlightByStore.set(projectStore, true);
 
       try {
+        /*
+        FNXC:GithubTrackingReconcile 2026-07-16-15:40:
+        Delegate to reconciler.runSweep so the three reconcile passes are isolated — a throw in the
+        deleted/archived pass must not starve the done-task tracking + source-issue passes (the ones
+        that actually close linked issues on Done). Previously they shared this try/catch and the
+        silent swallow below meant a single early throw disabled the entire reconcile backstop, every
+        sweep, with no diagnostic.
+        */
         const offset = options?.startup ? 0 : reconcileSweepOffsetByStore.get(projectStore) ?? 0;
-        const deletedArchivedResult = await githubTrackingReconciler.reconcileDeletedAndArchived(projectStore, {
-          offset,
-          limit: RECONCILE_SCAN_LIMIT,
-        });
-
-        if (deletedArchivedResult.hasMore) {
-          reconcileSweepOffsetByStore.set(projectStore, offset + RECONCILE_SCAN_LIMIT);
-        } else {
-          reconcileSweepOffsetByStore.set(projectStore, 0);
-        }
-
-        await githubTrackingReconciler.reconcile(projectStore);
-        await githubTrackingReconciler.reconcileSourceIssues(projectStore);
-      } catch {
-        // best-effort sweep
+        const { nextOffset } = await githubTrackingReconciler.runSweep(projectStore, { offset });
+        reconcileSweepOffsetByStore.set(projectStore, nextOffset);
+      } catch (err) {
+        // runSweep isolates per-pass failures internally; this guards only unexpected orchestration errors.
+        console.warn(
+          `[github-tracking-reconcile] sweep orchestration error: ${err instanceof Error ? err.message : String(err)}`,
+        );
       } finally {
         reconcileSweepInFlightByStore.set(projectStore, false);
       }
@@ -4058,19 +4083,33 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false });
       const sourceUrl = issue.html_url;
       for (const existingTask of existingTasks) {
-        if (isIssueAlreadyImported(existingTask, owner, repo, issueNumber, sourceUrl)) {
+        if (isGitHubIssueAlreadyImported(existingTask, { owner, repo, issueNumber, sourceUrl })) {
           throw new ApiError(409, `Issue #${issueNumber} already imported as ${existingTask.id}`, {
             existingTaskId: existingTask.id,
           });
         }
       }
 
-      // Create the task
-      const title = issue.title.slice(0, 200);
-      const body = issue.body?.trim() || "(no description)";
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      An imported issue carries the TRANSLATED prose when a translation exists, so the task an operator creates reads the same as the preview they approved.
+      Cache-read only: a miss imports the original rather than blocking the import on a fresh model call, because import must stay fast and must never fail because translation failed.
+      The `Source: <url>` suffix is appended AFTER translation so the URL is never rewritten by the model.
+      */
+      const projectSettings = await scopedStore.getSettings();
+      const translatedIssue = await resolveImportedIssueTranslation(
+        req,
+        scopedStore,
+        owner,
+        repo,
+        issue,
+        projectSettings,
+      );
+      const title = (translatedIssue?.title || issue.title).slice(0, 200);
+      const body = (translatedIssue?.body ?? issue.body)?.trim() || "(no description)";
       const description = `${body}\n\nSource: ${sourceUrl}`;
 
-      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore);
+      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore, projectSettings);
       const source = buildGitHubIssueSource(owner, repo, issue);
       /*
       FNXC:Workflows 2026-07-05-00:00:
@@ -4094,11 +4133,154 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       // Log the import action
       await scopedStore.logEntry(task.id, "Imported from GitHub", sourceUrl);
 
-      res.status(201).json(task);
+      /*
+      FNXC:IssueImportAttachments 2026-07-15-11:20:
+      Screenshots embedded in the issue are downloaded into the task's attachments so the agent can actually SEE them: the executor lists `.fusion/tasks/<id>/attachments/` in its `## Attachments` section and triage inlines images as vision blocks. Left as bare markdown URLs they are unreachable — `user-attachments` assets need repo credentials, which only exist here at import time.
+      Extract from the ORIGINAL body, never the translated one: the translation model may rewrite or drop image URLs (same reasoning as the `Source:` suffix above).
+      Best-effort and post-createTask: a screenshot that fails to download must not fail an import that already produced the task.
+
+      FNXC:IssueImportAttachments 2026-07-15-13:40:
+      Comments are scanned too: "here's the screenshot" is a comment far more often than it is the original body, so a body-only scan misses the common case. Comments are fetched best-effort — the issue itself already imported fine without them, so a comment-fetch failure must not fail the import or lose the body's own images.
+      */
+      const issueImageBodies: Array<string | null | undefined> = [issue.body];
+      try {
+        const detail = await client.getIssueDetail(owner, repo, issueNumber);
+        issueImageBodies.push(...detail.comments.map((comment) => comment.body));
+      } catch (err) {
+        console.warn(
+          `[fusion:github-import] Could not fetch comments for ${owner}/${repo}#${issueNumber}; importing body images only: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      const imageImport = await importIssueImageAttachments(
+        scopedStore,
+        task.id,
+        issueImageBodies,
+        githubImagePolicy(),
+      );
+      if (imageImport.attached > 0) {
+        try {
+          await scopedStore.logEntry(
+            task.id,
+            `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+            sourceUrl,
+          );
+        } catch (error) {
+          // FNXC:IssueImportAttachments 2026-07-15-14:10: Post-create audit
+          // telemetry is best-effort; never turn a stored task into a failed import.
+          console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      const importedTask = (await scopedStore.getTask(task.id)) ?? task;
+      res.status(201).json(importedTask);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Auto-translate endpoint for the Import Tasks list. The panel calls this once per load when `githubImportAutoTranslate` is on; it returns translated title+body for the foreign-language OPEN issues so the list reads in the operator's language rather than one issue at a time.
+  Results are cached durably server-side, so a second load of the same repo costs no model calls, and the import path reads the same cache — which is what makes the imported task carry the translation the operator previewed.
+  Requirement (2026-07-15): translate the 50 most recent OPEN issues; closed issues are never translated and their cached rows are pruned on sight.
+  */
+  /**
+   * POST /api/github/issues/auto-translate
+   * Body: { owner, repo, items: [{number,title,body,state}], targetLocale? }
+   * Returns: { translations: Record<number, {title,body}>, enabled, targetLocale, capped }
+   */
+  router.post("/github/issues/auto-translate", async (req, res) => {
+    try {
+      const { owner, repo, items, targetLocale: requestedLocale } = req.body ?? {};
+      if (!owner || typeof owner !== "string") throw badRequest("owner is required");
+      if (!repo || typeof repo !== "string") throw badRequest("repo is required");
+      if (!Array.isArray(items)) throw badRequest("items must be an array");
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+
+      const {
+        translateImportItems,
+        resolveTargetLocale,
+        selectEligibleItems,
+        partitionImportItemsByCache,
+        isTranslatable,
+      } = await import("../import-translate-service.js");
+      const {
+        checkTranslateRateLimit,
+        getTranslateRateLimitResetTime,
+      } = await import("../ai-translate.js");
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      The setting is enforced server-side, not only by hiding UI: an off setting must mean "no model calls and no billing", even if a stale client or a direct API caller asks for translation.
+      */
+      if (settings.githubImportAutoTranslate !== true) {
+        res.json({ translations: {}, enabled: false, targetLocale: null, capped: false });
+        return;
+      }
+
+      const targetLocale = resolveTargetLocale(
+        settings.importTranslateTargetLocale,
+        requestedLocale,
+        settings.language,
+      );
+      if (!targetLocale) {
+        res.json({ translations: {}, enabled: true, targetLocale: null, capped: false });
+        return;
+      }
+
+      const normalized = items
+        .filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .map((item) => ({
+          number: Number(item.number),
+          title: typeof item.title === "string" ? item.title : "",
+          body: typeof item.body === "string" ? item.body : null,
+          state: item.state === "closed" ? ("closed" as const) : ("open" as const),
+        }))
+        .filter((item) => Number.isInteger(item.number) && item.number > 0);
+
+      const ctx = {
+        store: scopedStore,
+        rootDir: scopedStore.getRootDir(),
+        provider: "github" as const,
+        repoKey: `${owner}/${repo}`,
+        targetLocale,
+      };
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-14:10:
+      Charge the budget for MODEL CALLS ONLY — partition against the durable cache BEFORE reserving.
+      Reserving per foreign issue meant reopening a panel of 50 cached issues burned 50 slots while calling the model zero times, rate-limiting the panel for the rest of the hour despite costing nothing (PR #2141 review, P1).
+      The `capped` flag likewise reflects eligible issues (what the operator sees capped), while `cost` reflects only the uncached ones.
+      */
+      const allEligible = normalized.filter((item) => isTranslatable(item, targetLocale));
+      const eligible = selectEligibleItems(normalized, targetLocale);
+      const capped = allEligible.length > eligible.length;
+      const partition = await partitionImportItemsByCache(ctx, eligible);
+      const cost = partition.uncached.length;
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (cost > 0 && !checkTranslateRateLimit(ip, cost)) {
+        const resetTime = getTranslateRateLimitResetTime(ip);
+        throw rateLimited(
+          `Translation rate limit exceeded. Reset at ${resetTime?.toISOString() || "unknown"}`,
+        );
+      }
+
+      const translated = await translateImportItems(ctx, normalized, partition);
+
+      const translations: Record<number, { title: string; body: string }> = {};
+      for (const [number, value] of translated) {
+        translations[number] = { title: value.title, body: value.body };
+      }
+      res.json({ translations, enabled: true, targetLocale, capped });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });
@@ -4149,7 +4331,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       // Get existing tasks to check for duplicates
       const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false });
-      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore);
+      const projectSettings = await scopedStore.getSettings();
+      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore, projectSettings);
 
       // Process issues sequentially with throttling
       const results: Array<{
@@ -4165,11 +4348,21 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
 
         // Use throttled fetch to avoid rate limits
+        /*
+        FNXC:GitHubImportTranslate 2026-07-15-09:30:
+        `state` is surfaced on the batch fetch so batch import applies the same closed-issue rule as single import: a closed issue never serves a cached translation.
+        */
+        /*
+        FNXC:IssueImportAttachments 2026-07-15-13:40:
+        `comments` (a count, free on the REST issue payload) is surfaced so batch import can skip the comment fetch entirely for issues that have none — a 50-issue batch must not pay 50 extra round trips to discover empty threads.
+        */
         const fetchResult = await githubClient.fetchThrottled<{
           number: number;
           title: string;
           body: string | null;
           html_url: string;
+          state?: "open" | "closed";
+          comments?: number;
           pull_request?: unknown;
         }>(url, {}, { delayMs: delayMs ?? 1000, maxRetries: 3 });
 
@@ -4197,7 +4390,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
         // Check if already imported
         const sourceUrl = issue.html_url;
-        const existingTask = existingTasks.find((t) => isIssueAlreadyImported(t, owner, repo, issueNumber, sourceUrl));
+        const existingTask = existingTasks.find((t) => isGitHubIssueAlreadyImported(t, { owner, repo, issueNumber, sourceUrl }));
         if (existingTask) {
           results.push({
             issueNumber,
@@ -4208,9 +4401,25 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           continue;
         }
 
-        // Create the task
-        const title = issue.title.slice(0, 200);
-        const body = issue.body?.trim() || "(no description)";
+        /*
+        FNXC:GitHubImportTranslate 2026-07-15-09:30:
+        Batch import carries translations exactly like single import (shared helper) — the requirement is about imported issues, not about which import button was used.
+        */
+        const batchTranslation = await resolveImportedIssueTranslation(
+          req,
+          scopedStore,
+          owner,
+          repo,
+          {
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            state: issue.state === "closed" ? "closed" : "open",
+          },
+          projectSettings,
+        );
+        const title = (batchTranslation?.title || issue.title).slice(0, 200);
+        const body = (batchTranslation?.body ?? issue.body)?.trim() || "(no description)";
         const description = `${body}\n\nSource: ${sourceUrl}`;
 
         try {
@@ -4232,6 +4441,45 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
           // Log the import action
           await scopedStore.logEntry(task.id, "Imported from GitHub", sourceUrl);
+
+          /*
+          FNXC:IssueImportAttachments 2026-07-15-11:20:
+          Batch import attaches issue screenshots exactly like single import (shared helper) — the requirement is about imported issues, not about which import button was used.
+          Comments are only fetched when the issue reports a non-zero comment count, so a batch of comment-free issues costs no extra requests.
+          */
+          const batchImageBodies: Array<string | null | undefined> = [issue.body];
+          if ((issue.comments ?? 0) > 0) {
+            try {
+              const detail = await githubClient.getIssueDetail(owner, repo, issueNumber);
+              batchImageBodies.push(...detail.comments.map((comment) => comment.body));
+            } catch (err) {
+              console.warn(
+                `[fusion:github-import] Could not fetch comments for ${owner}/${repo}#${issueNumber}; importing body images only: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+
+          const batchImageImport = await importIssueImageAttachments(
+            scopedStore,
+            task.id,
+            batchImageBodies,
+            githubImagePolicy({ token }),
+          );
+          if (batchImageImport.attached > 0) {
+            /*
+            FNXC:GitHubImportAttachments 2026-07-15-14:18:
+            Attachment audit history is observability, not part of persistence. A failed log must not turn an already-created batch task into a reported failure that retries as a duplicate.
+            */
+            try {
+              await scopedStore.logEntry(
+                task.id,
+                `Imported ${batchImageImport.attached} image attachment${batchImageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+                sourceUrl,
+              );
+            } catch (error) {
+              console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
 
           results.push({
             issueNumber,
@@ -4468,6 +4716,62 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  /*
+  FNXC:GitHubImport 2026-07-17-12:00:
+  POST /api/github/issues/comment posts a new upstream comment from the Import Tasks issue preview.
+  Body: { repo: string ("owner/name"), number: number, body: string }. Returns { ok: true }.
+  */
+  router.post("/github/issues/comment", async (req, res) => {
+    try {
+      const { repo, number, body } = req.body;
+
+      if (!repo || typeof repo !== "string" || !repo.includes("/")) {
+        throw badRequest("repo is required and must be in 'owner/name' form");
+      }
+      if (!number || typeof number !== "number" || number < 1 || !Number.isInteger(number)) {
+        throw badRequest("number is required and must be a positive number");
+      }
+      if (typeof body !== "string" || !body.trim()) {
+        throw badRequest("body is required and must be a non-empty string");
+      }
+
+      const [owner, repoName] = repo.split("/");
+      if (!owner || !repoName || repo.split("/").length !== 2) {
+        throw badRequest("repo must be in 'owner/name' form");
+      }
+
+      const token = process.env.GITHUB_TOKEN?.trim();
+      /*
+      FNXC:GitHubImport 2026-07-17-12:00:
+      Unlike the older close route, token-only hosts are authorized here because isGhAuthenticated
+      checks only `gh auth status`; rejecting before constructing the client would make its REST
+      fallback unreachable for GITHUB_TOKEN deployments.
+      */
+      if (!isGhAuthenticated() && !token) {
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login` or provide GITHUB_TOKEN.");
+      }
+
+      const client = new GitHubClient(token);
+      try {
+        await client.addIssueComment(owner, repoName, number, body.trim());
+        res.json({ ok: true });
+      } catch (err: unknown) {
+        if (err instanceof ApiError) throw err;
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        if (errorMessage.includes("not found") || errorMessage.includes("404")) {
+          throw notFound(`Issue not found: ${repo}#${number}`);
+        }
+        if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login` or provide GITHUB_TOKEN.");
+        }
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   /**
    * POST /api/github/pulls/import
    * Import a specific GitHub pull request as a fn review task.
@@ -4539,10 +4843,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         }
       }
 
-      // Create the task with "Review PR:" prefix
-      const title = `Review PR #${pr.number}: ${pr.title.slice(0, 180)}`;
+      /*
+      FNXC:GitHubImport 2026-07-16-18:00:
+      PR imports are resolve-feedback work, so their executor prompt must explicitly cover reviewer feedback and failed CI while retaining URL, branch, and body provenance for deduplication and auditability.
+      */
+      const title = `Resolve feedback: PR #${pr.number} — ${pr.title.slice(0, 180)}`;
       const body = pr.body?.trim() || "(no description)";
-      const description = `Review and address any issues in this pull request.\n\nPR: ${sourceUrl}\nBranch: ${pr.headBranch} → ${pr.baseBranch}\n\n${body}`;
+      const description = `Resolve the pull request review feedback and address any failed CI checks.\n\nPR: ${sourceUrl}\nBranch: ${pr.headBranch} → ${pr.baseBranch}\n\n${body}`;
 
       // FNXC:Workflows 2026-07-05-00:00: FN-7611 — no workflowId here; let the store
       // resolve the project-default workflow's intake column (byte-identical "triage"
@@ -4569,6 +4876,45 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  /*
+  FNXC:GitHubImport 2026-07-16-18:00:
+  A reviewer or bot comment can become independent resolve-feedback work. Comments expose no stable source ID/URL, so repeated imports intentionally create separate tasks rather than applying PR-style deduplication.
+  */
+  router.post("/github/comments/import", async (req, res) => {
+    try {
+      const { owner, repo, number, type, comment } = req.body ?? {};
+      const author = comment?.author;
+      const body = comment?.body;
+
+      if (!owner || typeof owner !== "string" || !owner.trim()) throw badRequest("owner is required");
+      if (!repo || typeof repo !== "string" || !repo.trim()) throw badRequest("repo is required");
+      if (!Number.isInteger(number) || number < 1) throw badRequest("number is required and must be a positive number");
+      if (type !== "issue" && type !== "pull") throw badRequest("type must be 'issue' or 'pull'");
+      if (!author || typeof author !== "string" || !author.trim()) throw badRequest("comment.author is required");
+      if (!body || typeof body !== "string" || !body.trim()) throw badRequest("comment.body is required");
+      if (comment.createdAt !== undefined && (typeof comment.createdAt !== "string" || !comment.createdAt.trim())) {
+        throw badRequest("comment.createdAt must be a non-empty string when provided");
+      }
+      if (!isGhAuthenticated()) throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const sourceUrl = `https://github.com/${owner.trim()}/${repo.trim()}/${type === "pull" ? "pull" : "issues"}/${number}`;
+      const task = await scopedStore.createTask({
+        title: `Resolve feedback from @${author.trim()} on #${number}`,
+        description: `Resolve or address this feedback comment.\n\n> ${author.trim()}\n> ${body.trim().replace(/\n/g, "\n> ")}\n\nSource: ${sourceUrl}`,
+        dependencies: [],
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: { sourceUrl, number, type, commentAuthor: author.trim(), commentCreatedAt: comment.createdAt },
+        },
+      });
+      await scopedStore.logEntry(task.id, "Imported PR/issue comment from GitHub", sourceUrl);
+      res.status(201).json(task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
 
   /**
    * POST /api/github/webhooks
@@ -5137,7 +5483,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
    */
   router.post("/tasks/:id/pr/resolve-conflicts", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
       if (task.column !== "in-review") {
         throw badRequest("Task must be in 'in-review' column to resolve PR conflicts");
@@ -5165,12 +5511,23 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const head = ensureSafeGitRef(`fusion/${task.id.toLowerCase()}`, "head branch");
       const baseRef = await resolvePrBaseRef(repoRoot, baseBranch).catch(() => baseBranch);
 
+      /*
+      FNXC:GrokCliRouting 2026-07-15-09:58:
+      Create-PR conflict resolution must forward a real PluginRunner (getRuntimeById) so grok-cli/no-key sessions resolve the Grok CLI runtime. Prefer the project engine runner (same pattern as resolveChatManagerPluginRunner); never pass a bare PluginLoader which lacks getRuntimeById. Fall back to options.pluginRunner only when it actually exposes getRuntimeById (UI-only may only have the loader — omit in that case so dual-remediation surfaces cleanly).
+      */
+      const engineRunner = engine?.getPluginRunner?.();
+      const optionsRunner = options?.pluginRunner;
+      const pluginRunner =
+        engineRunner
+        ?? (typeof optionsRunner?.getRuntimeById === "function" ? optionsRunner : undefined);
+
       const result = await resolvePrConflicts({
         taskId: task.id,
         baseRef,
         rootDir: repoRoot,
         store: scopedStore,
         settings: await scopedStore.getSettings(),
+        pluginRunner,
       });
 
       if (!result.resolved) {

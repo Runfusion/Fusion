@@ -101,6 +101,8 @@ describe("ModelSelectorTab", () => {
       validatorModelId: "claude-haiku-5",
       planningModelProvider: "pi-claude-cli",
       planningModelId: "claude-haiku-5",
+      mergerModelProvider: "pi-claude-cli",
+      mergerModelId: "claude-haiku-5",
       thinkingLevel: "minimal",
     });
 
@@ -130,6 +132,11 @@ describe("ModelSelectorTab", () => {
       })
       .mockResolvedValueOnce({
         ...task,
+        mergerModelProvider: "pi-claude-cli",
+        mergerModelId: "claude-sonnet-5",
+      })
+      .mockResolvedValueOnce({
+        ...task,
         thinkingLevel: "high",
       })
       .mockResolvedValueOnce({
@@ -139,6 +146,10 @@ describe("ModelSelectorTab", () => {
       .mockResolvedValueOnce({
         ...task,
         planningThinkingLevel: "high",
+      })
+      .mockResolvedValueOnce({
+        ...task,
+        mergerThinkingLevel: "high",
       });
 
     render(
@@ -176,10 +187,18 @@ describe("ModelSelectorTab", () => {
       }, "project-alpha");
     });
 
+    await selectDropdownOption(user, "Merger Model", "Claude Sonnet 5 (CLI)");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(4, "FN-7398", {
+        mergerModelProvider: "pi-claude-cli",
+        mergerModelId: "claude-sonnet-5",
+      }, "project-alpha");
+    });
+
     await user.click(screen.getByRole("button", { name: /Executor Model/ }));
     await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenNthCalledWith(4, "FN-7398", {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(5, "FN-7398", {
         thinkingLevel: "high",
       }, "project-alpha");
     });
@@ -187,7 +206,7 @@ describe("ModelSelectorTab", () => {
     await user.click(screen.getByRole("button", { name: /Reviewer Model/ }));
     await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenNthCalledWith(5, "FN-7398", {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(6, "FN-7398", {
         validatorThinkingLevel: "high",
       }, "project-alpha");
     });
@@ -195,8 +214,16 @@ describe("ModelSelectorTab", () => {
     await user.click(screen.getByRole("button", { name: /Planning Model/ }));
     await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenNthCalledWith(6, "FN-7398", {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(7, "FN-7398", {
         planningThinkingLevel: "high",
+      }, "project-alpha");
+    });
+
+    await user.click(screen.getByRole("button", { name: /Merger Model/ }));
+    await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(8, "FN-7398", {
+        mergerThinkingLevel: "high",
       }, "project-alpha");
     });
     expect(addToast).toHaveBeenCalledWith(expect.stringContaining("set to"), "success");
@@ -239,6 +266,7 @@ describe("ModelSelectorTab", () => {
       thinkingLevel: "medium",
       validatorThinkingLevel: "high",
       planningThinkingLevel: undefined,
+      mergerThinkingLevel: "low",
     });
 
     render(
@@ -252,10 +280,11 @@ describe("ModelSelectorTab", () => {
     await waitFor(() => expect(screen.getByLabelText("Executor Model")).toBeInTheDocument());
 
     const badges = screen.getAllByTestId("custom-model-dropdown-thinking-badge");
-    expect(badges).toHaveLength(3);
+    expect(badges).toHaveLength(4);
     expect(badges[0]).toHaveTextContent("Medium");
     expect(badges[1]).toHaveTextContent("High");
     expect(badges[2]).toHaveTextContent("Default (low)");
+    expect(badges[3]).toHaveTextContent("Low");
   });
 
   it("updates from a cached empty catalog to populated Claude CLI rows without remounting", async () => {

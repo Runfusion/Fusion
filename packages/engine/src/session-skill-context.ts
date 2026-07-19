@@ -160,7 +160,19 @@ export function collectPluginSkillNames(
   for (const contribution of pluginSkills) {
     const { pluginId, skill } = contribution;
     const name = skill.name.trim();
-    if (!resolvePluginSkillEnabled(settings, pluginId, name, skill.enabled)) {
+    let bodyPath: ReturnType<typeof resolvePluginSkillBodyPath> | undefined;
+
+    if (contribution.pluginRoot) {
+      try {
+        bodyPath = resolvePluginSkillBodyPath(skill, contribution.pluginRoot);
+      } catch (error) {
+        piLog.warn(
+          `[skills] Plugin ${pluginId} skill ${name} body path could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (!resolvePluginSkillEnabled(settings, pluginId, name, skill.enabled, bodyPath?.relativePath)) {
       continue;
     }
 
@@ -172,17 +184,10 @@ export function collectPluginSkillNames(
     pluginIds.add(pluginId);
     names.push(name);
 
-    if (contribution.pluginRoot) {
-      try {
-        const bodyPath = resolvePluginSkillBodyPath(skill, contribution.pluginRoot);
-        const bodyDir = dirname(bodyPath.absolutePath);
-        additionalSkillPathSet.add(bodyDir);
-        additionalSkillPathSet.add(dirname(bodyDir));
-      } catch (error) {
-        piLog.warn(
-          `[skills] Plugin ${pluginId} skill ${name} body path could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+    if (bodyPath) {
+      const bodyDir = dirname(bodyPath.absolutePath);
+      additionalSkillPathSet.add(bodyDir);
+      additionalSkillPathSet.add(dirname(bodyDir));
     }
 
     piLog.log(`[skills] Plugin ${pluginId} contributes skill: ${name}`);

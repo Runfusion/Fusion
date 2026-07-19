@@ -4,6 +4,10 @@ import { join } from "node:path";
 import type { Request, Response } from "express";
 import { superviseSpawn, AgentStore } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
+import {
+  runLinkLocalFnBinary,
+  runUseGlobalFnBinary,
+} from "../fn-binary-local-install.js";
 import { writeSSEEvent } from "../sse-buffer.js";
 import type { ApiRoutesContext } from "./types.js";
 import type { SystemLogEntry } from "../server.js";
@@ -24,10 +28,16 @@ in-dashboard debug/maintenance controls:
   - POST /system/agents/restart-all   pause+resume every active agent (stops active runs)
   - POST /system/plugins/reload-all   hot-reload every started plugin
 
+FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+  - POST /system/fn-binary/link-local build standalone `fn` from source + install as default
+                                      (~/.local/share/fusion + ~/.local/bin shims). Source
+                                      checkout only (same gate as rebuild).
+  - POST /system/fn-binary/use-global remove local shims and `npm install -g runfusion.ai`.
+
 Restart/rebuild only work when the host CLI injected `systemControl`
 (supervised process + source checkout); every route degrades to an explicit
 409 with a reason instead of failing silently, so the UI can disable controls.
-Rebuild jobs are serialized — one at a time — because concurrent workspace
+Rebuild and fn-binary jobs share one active-job slot — concurrent workspace
 builds would corrupt each other's dist output.
 */
 
@@ -86,6 +96,9 @@ function startSseHeartbeat(res: Response): () => void {
 }
 
 type RebuildScope = "app" | "full" | "plugins";
+type FnBinaryScope = "link-local" | "use-global";
+type SystemJobScope = RebuildScope | FnBinaryScope;
+type SystemJobKind = "rebuild" | "fn-binary";
 
 interface SystemJobLine {
   i: number;
@@ -96,8 +109,8 @@ interface SystemJobLine {
 
 interface SystemJob {
   id: string;
-  kind: "rebuild";
-  scope: RebuildScope;
+  kind: SystemJobKind;
+  scope: SystemJobScope;
   restartAfter: boolean;
   status: "running" | "succeeded" | "failed";
   startedAt: number;
@@ -244,10 +257,20 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
 
   /** GET /api/system/info — capability discovery for the System panel. */
   router.get("/system/info", (_req, res) => {
+    const fromSource = Boolean(systemControl?.sourceWorkspaceRoot);
     res.json({
       supervised: systemControl?.supervised ?? false,
       restartSupported: systemControl?.supervised ?? false,
-      rebuildSupported: Boolean(systemControl?.sourceWorkspaceRoot),
+      rebuildSupported: fromSource,
+      /*
+      FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+      Build-and-link-local only makes sense from a Fusion source checkout under
+      a supervised/dev host (`pnpm dev` / `pnpm local` / `fn dashboard` from
+      source). Packaged installs hide that control; use-global remains always
+      available so operators can drop a prior local link without a checkout.
+      */
+      fnBinaryLinkLocalSupported: fromSource,
+      fnBinaryUseGlobalSupported: true,
       sourceWorkspaceRoot: systemControl?.sourceWorkspaceRoot,
       logsSupported: Boolean(systemLogs),
       // Engine restart needs both the manager and CentralCore (see the
@@ -333,85 +356,147 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       if (oldest && oldest !== job.id) jobsById.delete(oldest);
     }
 
-    appendJobLine(job, "system", `Starting ${label} build (${scope})…`);
-    log.info("System rebuild started", { jobId: job.id, scope, restartAfter });
+    const spawnOptions = {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"] as Array<"ignore" | "pipe">,
+      maxLifetimeMs: REBUILD_MAX_LIFETIME_MS,
+      env: { ...process.env, FUSION_SKIP_STARTUP_UPDATE_PREFLIGHT: "1", FORCE_COLOR: "0" },
+    };
 
-    let child: ReturnType<typeof superviseSpawn>;
-    try {
-      child = superviseSpawn(process.execPath, args.map((a, i) => (i === 0 ? scriptPath : a)), {
-        cwd: root,
-        stdio: ["ignore", "pipe", "pipe"],
-        maxLifetimeMs: REBUILD_MAX_LIFETIME_MS,
-        env: { ...process.env, FUSION_SKIP_STARTUP_UPDATE_PREFLIGHT: "1", FORCE_COLOR: "0" },
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      appendJobLine(job, "system", `Failed to spawn build: ${message}`);
-      finishJob(job, "failed", { error: message });
-      rethrowAsApiError(err, "Failed to start rebuild");
-      return; // unreachable — rethrowAsApiError always throws
-    }
-
-    const stdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
-    const stderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
-    child.child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
-
-    void child.waitExit().then(async (exit) => {
-      stdout.flush();
-      stderr.flush();
-      const code = exit.code ?? (exit.signal ? 1 : 0);
-      if (code !== 0) {
-        appendJobLine(job, "system", `Build failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
-        finishJob(job, "failed", { exitCode: exit.code, error: `Build exited with ${exit.code ?? exit.signal}` });
-        log.warn("System rebuild failed", { jobId: job.id, scope, exitCode: exit.code, signal: exit.signal ?? undefined });
-        return;
-      }
-
-      appendJobLine(job, "system", "Build succeeded.");
-
-      if (scope === "plugins") {
-        try {
-          const result = await reloadStartedPlugins();
-          appendJobLine(
-            job,
-            "system",
-            `Reloaded ${result.reloaded.length} plugin(s)${result.failed.length ? `, ${result.failed.length} failed` : ""}.`,
-          );
-          for (const failure of result.failed) {
-            appendJobLine(job, "system", `Plugin reload failed: ${failure.id} — ${failure.error}`);
-          }
-          finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: result.reloaded });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          appendJobLine(job, "system", `Plugin reload unavailable: ${message}`);
-          finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: [] });
-        }
-        return;
-      }
-
-      let restartScheduled = false;
-      if (restartAfter && systemControl) {
-        restartScheduled = systemControl.requestRestart(`rebuild:${scope}`);
-        appendJobLine(
-          job,
-          "system",
-          restartScheduled
-            ? "Restarting server…"
-            : "Restart not available (no supervising parent) — restart manually to pick up the build.",
-        );
-      }
-      finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
-      log.info("System rebuild succeeded", { jobId: job.id, scope, restartScheduled });
-    }).catch((err) => {
+    const failPostProcessing = (err: unknown): void => {
       // Never let an unexpected throw in the completion chain strand activeJob
       // (which would 409 every subsequent rebuild until process restart).
       const message = err instanceof Error ? err.message : String(err);
       appendJobLine(job, "system", `Rebuild post-processing failed: ${message}`);
       finishJob(job, "failed", { error: message });
       log.error("System rebuild post-processing failed", { jobId: job.id, scope, error: message });
-    });
+    };
 
+    const startBuild = (): void => {
+      appendJobLine(job, "system", `Starting ${label} build (${scope})…`);
+      let child: ReturnType<typeof superviseSpawn>;
+      try {
+        child = superviseSpawn(process.execPath, args.map((a, i) => (i === 0 ? scriptPath : a)), spawnOptions);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Failed to spawn build: ${message}`);
+        finishJob(job, "failed", { error: message });
+        return;
+      }
+
+      const stdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
+      const stderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
+      child.child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+
+      void child.waitExit().then(async (exit) => {
+        stdout.flush();
+        stderr.flush();
+        const code = exit.code ?? (exit.signal ? 1 : 0);
+        if (code !== 0) {
+          appendJobLine(job, "system", `Build failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
+          finishJob(job, "failed", { exitCode: exit.code, error: `Build exited with ${exit.code ?? exit.signal}` });
+          log.warn("System rebuild failed", { jobId: job.id, scope, exitCode: exit.code, signal: exit.signal ?? undefined });
+          return;
+        }
+
+        appendJobLine(job, "system", "Build succeeded.");
+
+        if (scope === "plugins") {
+          try {
+            const result = await reloadStartedPlugins();
+            appendJobLine(
+              job,
+              "system",
+              `Reloaded ${result.reloaded.length} plugin(s)${result.failed.length ? `, ${result.failed.length} failed` : ""}.`,
+            );
+            for (const failure of result.failed) {
+              appendJobLine(job, "system", `Plugin reload failed: ${failure.id} — ${failure.error}`);
+            }
+            finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: result.reloaded });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            appendJobLine(job, "system", `Plugin reload unavailable: ${message}`);
+            finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: [] });
+          }
+          return;
+        }
+
+        let restartScheduled = false;
+        if (restartAfter && systemControl) {
+          restartScheduled = systemControl.requestRestart(`rebuild:${scope}`);
+          appendJobLine(
+            job,
+            "system",
+            restartScheduled
+              ? "Restarting server…"
+              : "Restart not available (no supervising parent) — restart manually to pick up the build.",
+          );
+        }
+        finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
+        log.info("System rebuild succeeded", { jobId: job.id, scope, restartScheduled });
+      }).catch(failPostProcessing);
+    };
+
+    /*
+    FNXC:SystemPanel 2026-07-17-12:35:
+    A full rebuild must refresh workspace dependencies before compiling so a changed lockfile or new dependency cannot build against stale node_modules. A failed install aborts both the build and restart. FUSION_SYSTEM_PNPM_BIN and FUSION_SYSTEM_PNPM_ARGS provide a validated test-only command seam; production resolves to `pnpm install`.
+    */
+    if (scope === "full") {
+      const pnpmArgsRaw = process.env.FUSION_SYSTEM_PNPM_ARGS;
+      let pnpmPreArgs: string[] = [];
+      if (pnpmArgsRaw) {
+        try {
+          const parsed: unknown = JSON.parse(pnpmArgsRaw);
+          if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === "string")) {
+            throw new Error("FUSION_SYSTEM_PNPM_ARGS must be a JSON array of strings");
+          }
+          pnpmPreArgs = parsed;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          appendJobLine(job, "system", `Dependency install configuration failed: ${message}`);
+          finishJob(job, "failed", { error: message });
+          res.status(202).json(jobSnapshot(job, false));
+          return;
+        }
+      }
+
+      appendJobLine(job, "system", "Installing workspace dependencies (pnpm install)…");
+      let install: ReturnType<typeof superviseSpawn>;
+      try {
+        install = superviseSpawn(process.env.FUSION_SYSTEM_PNPM_BIN ?? "pnpm", [...pnpmPreArgs, "install"], {
+          ...spawnOptions,
+          shell: process.platform === "win32",
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Failed to spawn dependency install: ${message}`);
+        finishJob(job, "failed", { error: message });
+        res.status(202).json(jobSnapshot(job, false));
+        return;
+      }
+
+      const installStdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
+      const installStderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
+      install.child.stdout?.on("data", (chunk: Buffer) => installStdout.push(chunk));
+      install.child.stderr?.on("data", (chunk: Buffer) => installStderr.push(chunk));
+      void install.waitExit().then((exit) => {
+        installStdout.flush();
+        installStderr.flush();
+        const code = exit.code ?? (exit.signal ? 1 : 0);
+        if (code !== 0) {
+          appendJobLine(job, "system", `Dependency install failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
+          finishJob(job, "failed", { exitCode: exit.code, error: `Dependency install exited with ${exit.code ?? exit.signal}` });
+          return;
+        }
+        appendJobLine(job, "system", "Workspace dependencies installed.");
+        startBuild();
+      }).catch(failPostProcessing);
+    } else {
+      startBuild();
+    }
+
+    log.info("System rebuild started", { jobId: job.id, scope, restartAfter });
     res.status(202).json(jobSnapshot(job, false));
   });
 
@@ -590,5 +675,114 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to reload plugins");
     }
+  });
+
+  /**
+   * Begin a serialized system job. Shares the activeJob slot with rebuild so
+   * concurrent workspace builds can't clobber each other's dist.
+   */
+  function beginSystemJob(kind: SystemJobKind, scope: SystemJobScope, restartAfter = false): SystemJob {
+    if (activeJob) {
+      throw new ApiError(409, `A ${activeJob.kind}/${activeJob.scope} job is already running`);
+    }
+    const job: SystemJob = {
+      id: randomUUID(),
+      kind,
+      scope,
+      restartAfter,
+      status: "running",
+      startedAt: Date.now(),
+      droppedLines: 0,
+      lines: [],
+      subscribers: new Set(),
+    };
+    activeJob = job;
+    jobsById.set(job.id, job);
+    if (jobsById.size > 5) {
+      const oldest = jobsById.keys().next().value;
+      if (oldest && oldest !== job.id) jobsById.delete(oldest);
+    }
+    return job;
+  }
+
+  /*
+  FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+  Build the standalone Bun `fn` binary from this source checkout and install it
+  as the default PATH binary under ~/.local. Gated on sourceWorkspaceRoot so
+  packaged npm/desktop installs never offer a button that cannot succeed.
+  Output streams through the shared /system/jobs/:id/stream SSE used by rebuild.
+  */
+  router.post("/system/fn-binary/link-local", (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
+    const root = systemControl?.sourceWorkspaceRoot;
+    if (!root) {
+      throw new ApiError(
+        409,
+        "Build & link local fn is only available when running from a Fusion source checkout in dev mode",
+      );
+    }
+
+    const job = beginSystemJob("fn-binary", "link-local", false);
+    appendJobLine(job, "system", "Building and linking local fn binary from source…");
+    log.info("System fn-binary link-local started", { jobId: job.id, root });
+
+    void runLinkLocalFnBinary(root, (stream, text) => appendJobLine(job, stream, text))
+      .then((result) => {
+        if (!result.success) {
+          appendJobLine(job, "system", result.error ?? "Link-local failed");
+          finishJob(job, "failed", { exitCode: 1, error: result.error });
+          log.warn("System fn-binary link-local failed", { jobId: job.id, error: result.error });
+          return;
+        }
+        appendJobLine(job, "system", "Link-local completed.");
+        finishJob(job, "succeeded", { exitCode: 0 });
+        log.info("System fn-binary link-local succeeded", { jobId: job.id });
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Link-local failed: ${message}`);
+        finishJob(job, "failed", { error: message });
+        log.error("System fn-binary link-local crashed", { jobId: job.id, error: message });
+      });
+
+    res.status(202).json(jobSnapshot(job, false));
+  });
+
+  /*
+  FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+  Drop ~/.local/bin shims that point at the local Fusion install and reinstall
+  the published `runfusion.ai` package globally so PATH returns to npm.
+  Available outside source checkouts so an operator can undo a prior link-local.
+  */
+  router.post("/system/fn-binary/use-global", (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
+
+    const job = beginSystemJob("fn-binary", "use-global", false);
+    appendJobLine(job, "system", "Switching default fn to the global npm install…");
+    log.info("System fn-binary use-global started", { jobId: job.id });
+
+    void runUseGlobalFnBinary((stream, text) => appendJobLine(job, stream, text))
+      .then((result) => {
+        if (!result.success) {
+          if (result.permissionsHint) {
+            appendJobLine(job, "system", result.permissionsHint);
+          }
+          appendJobLine(job, "system", result.error ?? "Use-global failed");
+          finishJob(job, "failed", { exitCode: 1, error: result.error });
+          log.warn("System fn-binary use-global failed", { jobId: job.id, error: result.error });
+          return;
+        }
+        appendJobLine(job, "system", "Use-global completed.");
+        finishJob(job, "succeeded", { exitCode: 0 });
+        log.info("System fn-binary use-global succeeded", { jobId: job.id });
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Use-global failed: ${message}`);
+        finishJob(job, "failed", { error: message });
+        log.error("System fn-binary use-global crashed", { jobId: job.id, error: message });
+      });
+
+    res.status(202).json(jobSnapshot(job, false));
   });
 }

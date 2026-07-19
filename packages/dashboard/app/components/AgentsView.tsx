@@ -1347,7 +1347,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   // Use centralized health status utility for consistent labels across all views
   const getHealthStatus = (agent: Agent): AgentHealthStatus => {
-    return getAgentHealthStatus(agent);
+    return getAgentHealthStatus(agent, heartbeatMultiplier);
   };
 
   const isPauseAllDisabled = isBulkEligibilityLoading || isBulkActionRunning || bulkPauseEligibleCount === 0;
@@ -1401,7 +1401,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <Network size={16} />
             </button>
           </div>
-          <div className="agents-view-primary-actions">
+          <div className={`agents-view-primary-actions${isControlsPanelOpen ? " agents-view-primary-actions--controls-open" : ""}`}>
             <button
               ref={controlsTriggerRef}
               className={`btn-icon agent-controls-trigger${isControlsPanelOpen ? " agent-controls-trigger--active" : ""}`}

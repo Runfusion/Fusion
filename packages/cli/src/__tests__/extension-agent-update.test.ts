@@ -1,23 +1,22 @@
-import { describe, it, expect, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { beforeAll, beforeEach, afterEach, afterAll, expect, it, vi } from "vitest";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
-import kbExtension, { closeCachedStores } from "../extension.js";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+  registerExtension,
+  requireTool,
+} from "./pg-extension-harness";
 
-function createMockAPI() {
-  const tools = new Map<string, any>();
-  return {
-    registerTool(def: any) {
-      tools.set(def.name, def);
-    },
-    registerCommand() {},
-    registerShortcut() {},
-    registerFlag() {},
-    on() {},
-    tools,
-  } as any;
-}
+/*
+FNXC:PostgresCutover 2026-07-16-08:45:
+Agent-update tool fixtures must seed the exact PG TaskStore injected into the
+extension cache. Bare AgentStore construction selected the removed SQLite path
+and a separate backend would make seeded agents invisible to extension tools.
+*/
+
+const h = createPgExtensionHarness("extension-agent-update");
 
 async function withOrg(
   run: (ctx: {
@@ -35,8 +34,11 @@ async function withOrg(
     };
   }) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "fn-ext-agent-update-"));
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion") });
+  const cwd = h.rootDir();
+  const agentStore = new AgentStore({
+    rootDir: join(cwd, ".fusion"),
+    asyncLayer: h.store().getAsyncLayer()!,
+  });
   try {
     await agentStore.init();
     const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
@@ -66,12 +68,10 @@ async function withOrg(
       metadata: { agentKind: "task-worker" },
     });
 
-    const api = createMockAPI();
-    kbExtension(api);
-    const tool = api.tools.get("fn_agent_update");
-    const setInstructionsTool = api.tools.get("fn_agent_set_instructions");
-    expect(tool).toBeTruthy();
-    expect(setInstructionsTool).toBeTruthy();
+    const api = createMockApi();
+    registerExtension(api);
+    const tool = requireTool(api, "fn_agent_update");
+    const setInstructionsTool = requireTool(api, "fn_agent_set_instructions");
 
     await run({
       cwd,
@@ -88,13 +88,15 @@ async function withOrg(
       },
     });
   } finally {
-    await closeCachedStores();
     agentStore.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 }
 
-describe("fn_agent_update", () => {
+pgDescribe("fn_agent_update", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
   it("allows privileged operator calls to update config fields and preserve runtime keys", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const updateSpy = vi.spyOn(AgentStore.prototype, "updateAgent");

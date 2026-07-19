@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
-import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
+import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent, fetchSettings } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getAgentHealthStatus } from "../utils/agentHealth";
 import { getErrorMessage } from "@fusion/core";
@@ -37,6 +37,7 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
 export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentListModalProps) {
   const { t } = useTranslation("app");
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [heartbeatMultiplier, setHeartbeatMultiplier] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
@@ -55,6 +56,20 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
       return;
     }
     setView("list");
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) setHeartbeatMultiplier(settings.heartbeatMultiplier ?? 1);
+      })
+      .catch(() => {
+        if (!cancelled) setHeartbeatMultiplier(1);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
   // Persist view preference to localStorage
@@ -247,7 +262,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   // Use centralized health status utility for consistent labels across all views
   // This fixes the previous hardcoded 60s timeout that was inconsistent with other views
   const getHealthStatus = (agent: Agent): AgentHealthStatus => {
-    return getAgentHealthStatus(agent);
+    return getAgentHealthStatus(agent, heartbeatMultiplier);
   };
 
   const getHealthTone = (health: AgentHealthStatus): "active" | "paused" | "error" | "muted" => {

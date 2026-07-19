@@ -1,5 +1,6 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agent-logger.js";
 export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent-action-gate.js";
+export type { AgentActionGateContext } from "./agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
 export {
   wrapAuthStorageWithApiKeyProviders,
@@ -25,14 +26,28 @@ export {
   createTaskShowTool,
   createTaskSearchTool,
   createTaskReadTools,
+  createListAgentsTool,
+  createDelegateTaskTool,
+  createTaskAssignTool,
+  createGetAgentConfigTool,
+  createWebFetchTool,
+  createGoalRetrievalTools,
+  createMissionTools,
+  createIdeationTools,
+  createMemoryTools,
+  createResearchTools,
   createArtifactListTool,
   createArtifactRegisterTool,
   createArtifactViewTool,
   createChatArtifactTools,
   createChatTaskDocumentTools,
+  createChatTaskLogsReadTool,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
+  createTaskLogsReadTool,
+  normalizeAgentLogPaging,
+  renderAgentLogEntries,
   createSendMessageTool,
   createReadMessagesTool,
   createAskQuestionTool,
@@ -45,6 +60,7 @@ export {
   createWorkflowSettingsTool,
   createTraitListTool,
   createWorkflowAuthoringTools,
+  createAgentTask,
   taskCreateParams,
   taskListParams,
   taskShowParams,
@@ -56,9 +72,11 @@ export {
   chatArtifactRegisterParams,
   chatTaskDocumentReadParams,
   chatTaskDocumentWriteParams,
+  chatTaskLogsReadParams,
   taskDocumentReadParams,
   taskDocumentWriteParams,
   taskLogParams,
+  taskLogsReadParams,
   askQuestionParams,
   workflowListParams,
   workflowGetParams,
@@ -69,6 +87,41 @@ export {
   workflowDeleteParams,
   workflowSettingsParams,
   traitListParams,
+  listAgentsParams,
+  delegateTaskParams,
+  taskAssignParams,
+  getAgentConfigParams,
+  webFetchParams,
+  memorySearchParams,
+  memoryGetParams,
+  goalListParams,
+  goalShowParams,
+  missionListParams,
+  missionShowParams,
+  missionCreateParams,
+  missionUpdateParams,
+  missionDeleteParams,
+  milestoneAddParams,
+  milestoneUpdateParams,
+  milestoneDeleteParams,
+  sliceAddParams,
+  sliceActivateParams,
+  sliceDeleteParams,
+  featureAddParams,
+  featureUpdateParams,
+  featureDeleteParams,
+  featureLinkTaskParams,
+  researchRunParams,
+  researchListParams,
+  researchGetParams,
+  researchCancelParams,
+  researchRetryParams,
+  /*
+  FNXC:ChatAgentTools 2026-07-15-00:00:
+  Dashboard chat needs these coordination factories re-exported so its shared
+  toolset can match the safe heartbeat productivity surface for pi and Grok
+  plugin runtimes without importing the engine's internal module path.
+  */
   executeApprovedAgentProvisioning,
   createWorkflowValidateTool,
   validateWorkflowIrDryRun,
@@ -416,7 +469,7 @@ export {
   type SquashAuditRecentMainCommit,
 } from "./merger-squash-audit.js";
 export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./reviewer.js";
-export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, type AgentOptions, type AgentResult } from "./pi.js";
+export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, wrapToolsWithActionGate, type AgentOptions, type AgentResult } from "./pi.js";
 export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp-resolution.js";
 export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp-discovery-service.js";
 export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp-runtime-support.js";
@@ -752,6 +805,31 @@ export {
   type OverseerHumanControlTask,
   type OverseerHumanControlSettings,
 } from "./overseer-human-control-policy.js";
+// FNXC:PlannerOversight 2026-07-13-23:05: session-advisor (OMP advisor parity) public surface.
+export {
+  OverseerAdvisorRuntime,
+  type OverseerAdvisorAgent,
+  type OverseerAdvisorRuntimeHost,
+  type OverseerAdvisorRuntimeOptions,
+} from "./overseer-advisor-runtime.js";
+export {
+  OverseerAdvisorService,
+  createParsingOverseerAgent,
+  type OverseerAdvisorServiceOptions,
+  type OverseerAdvisorModelConfig,
+} from "./overseer-advisor-service.js";
+export {
+  OverseerAdviseRecorder,
+  parseAdvisorReplyForAdvice,
+  extractAdvisorAssistantText,
+  OVERSEER_ADVISOR_SYSTEM_PROMPT,
+  OVERSEER_ADVISOR_REPLY_CONTRACT,
+} from "./overseer-advise-tool.js";
+export {
+  discoverOverseerWatchdogFiles,
+  formatOverseerWatchdogPromptBlocks,
+} from "./overseer-watchdog.js";
+export { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "./overseer-session-delta.js";
 export {
   decidePlannerRecovery,
   PLANNER_RECOVERY_MAX_ATTEMPTS,
@@ -801,6 +879,18 @@ export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSessio
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./token-cap-detector.js";
 export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
+/*
+FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
+Exported for the dashboard's manual Retry gate, which must share ONE definition of "orphaned
+merge-active stamp" with SelfHealingManager.recoverStaleMergingStatus. Two copies is how the
+manual path drifted into refusing every merge-active status while the sweep cleared it.
+*/
+export {
+  ACTIVE_MERGE_STATUSES,
+  DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
+  isMergeActiveStatus,
+  isStaleMergeActiveStatus,
+} from "./merge-active-status.js";
 export { PluginRunner, type PluginRunnerOptions } from "./plugin-runner.js";
 export {
   registerPluginTraits,
@@ -1067,6 +1157,8 @@ export {
   genericCliAdapter,
   type CliAdapterDescriptor,
 } from "./cli-agent/adapters/index.js";
+export { installBaselineArchiveWorktreeDisposer } from "./archive-worktree-disposer-install.js";
+
 // CLI Agent Executor — task ↔ session orchestration (U7).
 export {
   CliTaskSession,

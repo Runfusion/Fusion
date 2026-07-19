@@ -25,6 +25,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_update` | Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, priority, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection. |
 | `fn_task_list` | List all tasks on the Fusion board, grouped by column. |
 | `fn_task_show` | Show full details for a task including steps, progress, and log entries. |
+| `fn_task_logs_read` | Read a task's full persisted agent log with pagination and optional type filtering. |
 | `fn_task_attach` | Attach a file to a task. Supports images (png, jpg, gif, webp) and text files (txt, log, json, yaml, yml, toml, csv, xml). |
 | `fn_task_pause` | Pause a task for explicit user-requested manual control — stops all automated agent and scheduler interaction. Agents should not pause tasks to handle failures or blockers; use retry, create/delegate follow-up work, or let the task surface as failed instead. |
 | `fn_task_unpause` | Unpause a task — resumes automated agent and scheduler interaction. |
@@ -47,11 +48,6 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_plan` | Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. |
 | `fn_web_fetch` | Lightweight URL fetch (no JS rendering). Use agent-browser skill for JS-heavy pages. URL to fetch (http/https) Optional extraction hint for downstream summarization Timeout in milliseconds (default: 30000) Max bytes to return (default: 512000) |
 | `fn_secret_get` | Read a secret by key using per-secret access policy. |
-| `fn_research_run` | Cited-research pipeline: create a bounded search/fetch/synthesis run (not an autonomous experiment loop) and optionally wait for completion. |
-| `fn_research_list` | Cited-research pipeline: list recent search/fetch/synthesis runs (not experiment-loop sessions). |
-| `fn_research_get` | Cited-research pipeline: get one run with structured findings and citations (not experiment-loop state). |
-| `fn_research_cancel` | Cited-research pipeline: cancel an in-flight run; terminal runs return INVALID_TRANSITION (does not control experiment loops). |
-| `fn_research_retry` | Cited-research pipeline: retry a failed run when lifecycle marks it retryable (not an autonomous experiment loop retry). |
 | `fn_experiment_finalize` | Group kept experiment runs into reviewable branches and finalize the session. Use dryRun=true to preview the plan without touching git. |
 | `fn_insight_list` | List persisted project insights with optional category/status filters. |
 | `fn_insight_show` | Show a single persisted insight by ID. |
@@ -132,13 +128,15 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 
 ```
 .fusion/
-├── fusion.db                # SQLite database (WAL mode)
+├── project.json             # Canonical local project identity
 └── tasks/
     └── FN-001/
         ├── PROMPT.md        # Task specification
-        ├── agent.log        # Execution logs
+        ├── agent-log.jsonl  # File-backed execution logs
         └── attachments/     # File attachments
 ```
+
+Structured runtime metadata is authoritative in PostgreSQL. A retained `fusion.db` is migration input only.
 
 ## Dashboard Features
 

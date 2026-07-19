@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { resolvePersistAgentThinkingLog } from "@fusion/core";
+import { resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -27,6 +27,7 @@ import {
   promptWithAutoRetry,
   resolveExecutorSessionModel,
   resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
@@ -43,6 +44,7 @@ import { isContextLimitError } from "./context-limit-detector.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import {
   createDelegateTaskTool,
+  createTaskAssignTool,
   createListAgentsTool,
   createMemoryTools,
   createWebFetchTool,
@@ -52,6 +54,7 @@ import {
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
+  createTaskLogsReadTool,
 } from "./agent-tools.js";
 import { RemovalReason, removeWorktree } from "./worktree-backend.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
@@ -129,8 +132,12 @@ export interface StepSessionExecutorOptions {
   additionalSkillPaths?: string[];
   /** Optional agent store for delegation tools. */
   agentStore?: AgentStore;
-  /** Optional message store for messaging tools. */
+  /** Optional message store for messaging tools and validated follow-up proposals. */
   messageStore?: MessageStore;
+  /** Whether this step session is a runtime ephemeral worker subject to task-proposal policy. */
+  callerIsEphemeral?: boolean;
+  sourceTaskId?: string;
+  sourceAgentId?: string;
   /** Optional action-gate context for permanent assigned agents. */
   actionGateContext?: AgentActionGateContext;
   /** Optional permanent-agent action gating context. */
@@ -1298,10 +1305,13 @@ export class StepSessionExecutor {
 
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store
-            ? [createTaskLogTool(this.options.store, taskDetail.id)]
+            ? [
+                createTaskLogTool(this.options.store, taskDetail.id),
+                createTaskLogsReadTool(this.options.store, taskDetail.id),
+              ]
             : [];
           const taskCreateTool = this.options.store
-            ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir })]
+            ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir, callerIsEphemeral: this.options.callerIsEphemeral, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, messageStore: this.options.messageStore })]
             : [];
 
           // Agent delegation tools — discover and delegate work to other agents.
@@ -1309,6 +1319,7 @@ export class StepSessionExecutor {
             ? [
                 createListAgentsTool(this.options.agentStore),
                 createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir }),
+                createTaskAssignTool(this.options.agentStore, this.options.store!),
               ]
             : [];
 
@@ -1316,7 +1327,7 @@ export class StepSessionExecutor {
           const messagingTools =
             this.options.messageStore && taskDetail.assignedAgentId
               ? [
-                  createSendMessageTool(this.options.messageStore, taskDetail.assignedAgentId, { autoRecovery: settings.autoRecovery, taskStore: this.options.store!, settings }),
+                  createSendMessageTool(this.options.messageStore, taskDetail.assignedAgentId, { autoRecovery: settings.autoRecovery, taskStore: this.options.store!, settings, agentStore: this.options.agentStore }),
                   createReadMessagesTool(this.options.messageStore, taskDetail.assignedAgentId),
                 ]
               : [];
@@ -1355,8 +1366,9 @@ Your role:
 Follow instructions precisely and avoid unrelated changes.`,
               defaultProvider: executorProvider,
               defaultModelId: executorModelId,
-              fallbackProvider: settings.fallbackProvider,
-              fallbackModelId: settings.fallbackModelId,
+              fallbackProvider: resolveExecutorFallbackModel(settings).provider,
+              fallbackModelId: resolveExecutorFallbackModel(settings).modelId,
+              fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(taskDetail.thinkingLevel, settings),
               defaultThinkingLevel: effectiveThinkingLevel,
               runAuditor: createRunAuditor(this.store, {
                 runId: generateSyntheticRunId("workflow-step", taskDetail.id),
@@ -1499,7 +1511,7 @@ Follow instructions precisely and avoid unrelated changes.`,
               await this.store.appendAgentLog(
                 taskDetail.id,
                 `[step-exec] Reduced-prompt recovery succeeded for step ${stepIndex}`,
-                "text",
+                "status",
               );
               const result: StepResult = {
                 stepIndex,

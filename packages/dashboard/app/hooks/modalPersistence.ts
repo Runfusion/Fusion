@@ -72,6 +72,11 @@ export interface GitHubImportPersistedState {
   selectedIssueNumber: number | null;
   selectedPullNumber: number | null;
   selectedGitlabKey: string | null;
+  /*
+  FNXC:GitHubImport 2026-07-15-16:30:
+  Hide imported is a per-project view preference: it filters already-imported candidates without persisting fetched data or changing import state.
+  */
+  hideImported?: boolean;
 }
 
 export function saveGitHubImportState(state: GitHubImportPersistedState, projectId?: string): void {
@@ -109,6 +114,7 @@ export function getGitHubImportState(projectId?: string): GitHubImportPersistedS
       selectedIssueNumber: typeof p.selectedIssueNumber === "number" ? p.selectedIssueNumber : null,
       selectedPullNumber: typeof p.selectedPullNumber === "number" ? p.selectedPullNumber : null,
       selectedGitlabKey: typeof p.selectedGitlabKey === "string" ? p.selectedGitlabKey : null,
+      hideImported: typeof p.hideImported === "boolean" ? p.hideImported : undefined,
     };
   } catch {
     return null;

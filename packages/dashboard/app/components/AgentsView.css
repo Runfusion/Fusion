@@ -101,6 +101,14 @@ The former scoped overrides (.agents-view .view-header padding/border/background
   gap: var(--space-sm);
 }
 
+/*
+ FNXC:AgentsControlsOverlay 2026-07-15-00:00:
+ FN-7972 requires the open controls panel to layer above agent cards and Token Usage on desktop and mobile. Elevate only its active anchor so unrelated dashboard overlays keep their existing stacking order.
+*/
+.agents-view-primary-actions--controls-open {
+  z-index: 50;
+}
+
 .agent-controls-trigger {
   white-space: nowrap;
 }

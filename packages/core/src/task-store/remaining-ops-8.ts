@@ -11,7 +11,7 @@ import { TaskStore } from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
+import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
 import { CentralCore } from "../central-core.js";
 import { fromJson } from "../db.js";
 import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../distributed-task-id.js";
@@ -19,18 +19,20 @@ import { ExperimentSessionStore } from "../experiment-session-store.js";
 import { MasterKeyManager } from "../master-key.js";
 import { MissionStore } from "../mission-store.js";
 import { AsyncMissionStore } from "../async-mission-store.js";
+import { AsyncIdeationStore } from "../async-ideation-store.js";
 import { type PluginGateVerdict } from "../plugin-gate-verdict.js";
 import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
+import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
 import { ActivityLogRow } from "./row-types.js";
 import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
@@ -75,7 +77,21 @@ export async function importLegacyAgentLogsOnceImpl(store: TaskStore): Promise<v
     store.db.bumpLastModified();
 }
 
-export function readRawProjectSettingsImpl(store: TaskStore): Record<string, unknown> {
+export async function readRawProjectSettingsImpl(store: TaskStore): Promise<Record<string, unknown>> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: backend mode previously
+    // returned {} from the catch below, hiding raw persisted project settings
+    // on PostgreSQL. Read the config row via the async layer instead.
+    if (store.backendMode) {
+      try {
+        const config = await readProjectConfig(store.asyncLayer!);
+        const settings = config.settings;
+        return settings && typeof settings === "object" && !Array.isArray(settings)
+          ? (settings as Record<string, unknown>)
+          : {};
+      } catch {
+        return {};
+      }
+    }
     try {
       const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
         | { settings: string }
@@ -234,8 +250,14 @@ export async function listWorkflowDefinitionsImpl(store: TaskStore,
     const enabledVisible = options?.includeDisabledBuiltins
       ? all
       : all.filter((wf) => isBuiltinWorkflowEnabled(wf.id, enabledBuiltinWorkflowIds));
+    // FNXC:WorkflowBrainstorming 2026-07-15-15:49:
+    // FN-7970 removes deprecated built-ins only from new-selection listings.
+    // Management listings retain them, and direct id resolution remains unconditional.
+    const selectionVisible = options?.includeDisabledBuiltins
+      ? enabledVisible
+      : enabledVisible.filter((wf) => !isBuiltinWorkflowDeprecated(wf.id));
     const visible = await Promise.all(
-      enabledVisible.map(async (wf) => {
+      selectionVisible.map(async (wf) => {
         const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(wf.id);
         if (!requiredPluginId) return wf;
         return (await store.isPluginInstalled(requiredPluginId)) ? wf : undefined;
@@ -293,23 +315,26 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
     return row ? store.toWorkflowDefinition(row) : undefined;
 }
 
-export function occupantsByColumnForWorkflowImpl(store: TaskStore,
+export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
     workflowId: string,
     includeNullSelection: boolean,
-  ): Map<string, number> {
-    /*
-    FNXC:PostgresCutover 2026-07-04-00:00:
-    Assessed safe-default: the occupied-column guard is skipped in PG mode (empty Map →
-    removed=[] → no OccupiedColumnsError). The async enforcement path in workflow-ops.ts
-    (lines 365-372) does read columns via Drizzle, but it's gated on removed.length > 0
-    which is always false here. Full fix requires async listWorkflowOccupantTaskIds +
-    async occupancy map — a deep refactor of the workflow occupancy system. Low-impact:
-    flag-gated (workflowColumnsFlagOn, off by default), only triggers on workflow IR
-    edits that remove columns. Tasks in removed columns are orphaned but not lost.
-    */
-    if (store.backendMode) return new Map();
+  ): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
-    for (const taskId of store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection)) {
+    const taskIds = await store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection);
+    if (store.backendMode) {
+      if (taskIds.length === 0) return counts;
+      const rows = await store.asyncLayer!.db
+        .select({ column: schema.project.tasks.column })
+        .from(schema.project.tasks)
+        .where(and(
+          inArray(schema.project.tasks.id, taskIds),
+          isNull(schema.project.tasks.deletedAt),
+          taskProjectScope(store.asyncLayer!),
+        ));
+      for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
+      return counts;
+    }
+    for (const taskId of taskIds) {
       const row = store.db.prepare(`SELECT "column" AS column FROM tasks WHERE id = ?`).get(taskId) as
         | { column: string }
         | undefined;
@@ -632,8 +657,26 @@ export async function purgeTaskWorkflowSelectionRowsAsyncImpl(store: TaskStore, 
   store.workflowStepsCache = null;
 }
 
-export function cleanupOrphanedMaterializedStepsImpl(store: TaskStore, stepIds: string[] | undefined): void {
+export async function cleanupOrphanedMaterializedStepsImpl(store: TaskStore, stepIds: string[] | undefined): Promise<void> {
     if (!stepIds || stepIds.length === 0) return;
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Backend mode deletes the orphaned workflow_steps rows via the AsyncDataLayer.
+    The former sync `store.db.prepare(DELETE...)` threw the removed-SQLite stub in
+    backend mode and was swallowed by the best-effort catch, silently leaking every
+    materialized workflow_steps row created before a failed task-create (the callers
+    are the task-creation failure catches). Mirrors removeMaterializedSelectionImpl.
+    */
+    const layer = store.getAsyncLayer();
+    if (layer) {
+      try {
+        await layer.db.delete(schema.project.workflowSteps).where(inArray(schema.project.workflowSteps.id, stepIds));
+      } catch {
+        // Best-effort cleanup.
+      }
+      store.workflowStepsCache = null;
+      return;
+    }
     for (const stepId of stepIds) {
       try {
         store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);
@@ -927,6 +970,19 @@ export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissi
     return store.missionStore;
 }
 
+export function getIdeationStoreImpl(store: TaskStore): AsyncIdeationStore {
+  if (!store.ideationStore) {
+    const layer = store.getAsyncLayer();
+    if (!layer) throw new Error("IdeationStore is only available with the PostgreSQL AsyncDataLayer");
+    const missionStore = store.getMissionStore();
+    if (!(missionStore instanceof AsyncMissionStore)) {
+      throw new Error("IdeationStore requires the PostgreSQL AsyncMissionStore");
+    }
+    store.ideationStore = new AsyncIdeationStore(layer, missionStore);
+  }
+  return store.ideationStore;
+}
+
 export function getPluginStoreImpl(store: TaskStore): PluginStore {
     if (!store.pluginStore) {
       // PluginStore persists install/state rows in central DB, so it must use
@@ -974,13 +1030,33 @@ export function getExperimentSessionStoreImpl(store: TaskStore): ExperimentSessi
     return store.experimentSessionStore;
 }
 
-export function getVerificationCacheHitImpl(store: TaskStore,
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-16-11:40:
+The merger's deterministic-verification cache read at merger.ts ran the sync
+SQLite branch unguarded, so every backend-mode merge with a resolvable tree sha
+threw "SQLite Database is not available". Both cache ops are now async and route
+to the project-schema verification_cache table in backend mode.
+*/
+export async function getVerificationCacheHitImpl(store: TaskStore,
     treeSha: string,
     testCommand: string,
     buildCommand: string,
-  ): { recordedAt: string; taskId: string | null } | null {
+  ): Promise<{ recordedAt: string; taskId: string | null } | null> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
+    if (store.backendMode) {
+      const table = schema.project.verificationCache;
+      const rows = await store.asyncLayer!.db
+        .select({ recordedAt: table.recordedAt, taskId: table.taskId })
+        .from(table)
+        .where(and(
+          eq(table.treeSha, treeSha),
+          eq(table.testCommand, normalizedTest),
+          eq(table.buildCommand, normalizedBuild),
+        ))
+        .limit(1);
+      return rows[0] ?? null;
+    }
     const row = store.db
       .prepare(
         `SELECT recordedAt, taskId FROM verification_cache
@@ -992,19 +1068,179 @@ export function getVerificationCacheHitImpl(store: TaskStore,
     return row ?? null;
 }
 
-export function recordVerificationCachePassImpl(store: TaskStore,
+export async function recordVerificationCachePassImpl(store: TaskStore,
     treeSha: string,
     testCommand: string,
     buildCommand: string,
     taskId: string,
-  ): void {
+  ): Promise<void> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
     const recordedAt = new Date().toISOString();
+    if (store.backendMode) {
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
+      Target the PK by constraint name: migration 0006_project_ownership
+      rebuilds every project-schema PK to lead with project_id, so a
+      column-list ON CONFLICT on the three logical key columns cannot infer
+      the arbiter index (42P10). project_id itself comes from the column's
+      current_setting('fusion.project_id') default under RLS.
+      */
+      await store.asyncLayer!.db.execute(sql`
+        INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
+        VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
+        ON CONFLICT ON CONSTRAINT verification_cache_pkey
+        DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
+      `);
+      return;
+    }
     store.db
       .prepare(
         `INSERT OR REPLACE INTO verification_cache (treeSha, testCommand, buildCommand, recordedAt, taskId)
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
+}
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation persists translations so an issue is translated at most once per target locale — reopening the Import Tasks panel or reloading the dashboard must never re-bill the AI helper.
+These are PostgreSQL-only async ops. Unlike the legacy sync `verification_cache` helpers above (which still use SQLite `db.prepare`), they go through `asyncLayer` and always carry an explicit `project_id` predicate: every project shares one flat `project` schema, so an unscoped read would serve another project's translations.
+*/
+
+export interface ImportTranslationCacheEntry {
+  translatedTitle: string;
+  translatedBody: string;
+  detectedLocale: string | null;
+  recordedAt: string;
+}
+
+export interface ImportTranslationCacheKey {
+  provider: string;
+  repoKey: string;
+  issueNumber: number;
+  targetLocale: string;
+  /** Hash of the ORIGINAL title+body; a mismatch means the issue was edited. */
+  sourceHash: string;
+}
+
+/*
+FNXC:GitHubImportTranslate 2026-07-16-23:30:
+The cache write, read, and prune paths must resolve the identical ownership
+partition. In particular, compatibility layers without a project binding write
+to `__legacy_unscoped__`; querying with an omitted/blank predicate afterwards
+made those durable rows look like cache misses after a restart.
+*/
+function importTranslationScope(store: TaskStore) {
+  return projectScopeFor(
+    schema.project.importTranslationCache.projectId,
+    projectOwnershipPartition(store.asyncLayer?.projectId),
+  );
+}
+
+/**
+ * Read a cached translation. Returns null on miss, and also on a `sourceHash`
+ * mismatch — an edited issue must re-translate rather than serve stale prose.
+ */
+export async function getImportTranslationImpl(
+  store: TaskStore,
+  key: ImportTranslationCacheKey,
+): Promise<ImportTranslationCacheEntry | null> {
+  if (!store.asyncLayer) return null;
+  const table = schema.project.importTranslationCache;
+  const rows = await store.asyncLayer.db
+    .select({
+      translatedTitle: table.translatedTitle,
+      translatedBody: table.translatedBody,
+      detectedLocale: table.detectedLocale,
+      recordedAt: table.recordedAt,
+      sourceHash: table.sourceHash,
+    })
+    .from(table)
+    .where(
+      and(
+        importTranslationScope(store),
+        eq(table.provider, key.provider),
+        eq(table.repoKey, key.repoKey),
+        eq(table.issueNumber, key.issueNumber),
+        eq(table.targetLocale, key.targetLocale),
+      ),
+    )
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+  // Stale-content guard: the issue body changed since we translated it.
+  if (row.sourceHash !== key.sourceHash) return null;
+  return {
+    translatedTitle: row.translatedTitle,
+    translatedBody: row.translatedBody,
+    detectedLocale: row.detectedLocale ?? null,
+    recordedAt: row.recordedAt,
+  };
+}
+
+/**
+ * Upsert a translation. Re-translating the same issue (after an edit) replaces
+ * the row rather than accumulating one row per revision.
+ */
+export async function recordImportTranslationImpl(
+  store: TaskStore,
+  key: ImportTranslationCacheKey,
+  value: { translatedTitle: string; translatedBody: string; detectedLocale?: string | null },
+  recordedAt: string,
+): Promise<void> {
+  if (!store.asyncLayer) return;
+  const table = schema.project.importTranslationCache;
+  const projectId = projectOwnershipPartition(store.asyncLayer.projectId);
+  await store.asyncLayer.db
+    .insert(table)
+    .values({
+      projectId,
+      provider: key.provider,
+      repoKey: key.repoKey,
+      issueNumber: key.issueNumber,
+      targetLocale: key.targetLocale,
+      sourceHash: key.sourceHash,
+      translatedTitle: value.translatedTitle,
+      translatedBody: value.translatedBody,
+      detectedLocale: value.detectedLocale ?? null,
+      recordedAt,
+    })
+    .onConflictDoUpdate({
+      target: [table.projectId, table.provider, table.repoKey, table.issueNumber, table.targetLocale],
+      set: {
+        sourceHash: key.sourceHash,
+        translatedTitle: value.translatedTitle,
+        translatedBody: value.translatedBody,
+        detectedLocale: value.detectedLocale ?? null,
+        recordedAt,
+      },
+    });
+}
+
+/**
+ * Drop cached translations for issues that are no longer open. This is the
+ * requirement's expiry rule — a translation persists "until the issue is
+ * closed". No-ops on an empty list so a fully-open page costs no query.
+ */
+export async function pruneImportTranslationsImpl(
+  store: TaskStore,
+  provider: string,
+  repoKey: string,
+  closedIssueNumbers: number[],
+): Promise<number> {
+  if (!store.asyncLayer || closedIssueNumbers.length === 0) return 0;
+  const table = schema.project.importTranslationCache;
+  await store.asyncLayer.db
+    .delete(table)
+    .where(
+      and(
+        importTranslationScope(store),
+        eq(table.provider, provider),
+        eq(table.repoKey, repoKey),
+        inArray(table.issueNumber, closedIssueNumbers),
+      ),
+    );
+  return closedIssueNumbers.length;
 }

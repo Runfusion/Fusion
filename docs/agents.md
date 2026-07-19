@@ -37,7 +37,8 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
 - Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, so skills such as `ce-debug` are available in chat when the contributing plugin is enabled for the requesting project. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
 - Agent-acting session lanes share the same skill-injection contract as executor sessions: executor, merger, triage, reviewer, heartbeat, step-session, dashboard chat/room responders, CLI agent execution, planning, mission interview, milestone/slice interview, agent-onboarding interview, workflow design, memory dreams/insight extraction, and scheduled cron automation all request agent/fallback skills plus enabled plugin-contributed skills when a plugin runner is available. Utility-only lanes that only summarize/extract/generate JSON (title/PR summaries, memory compaction, subtask breakdown, text refinement, agent generation, PR metadata generation, evaluator/research synthesis, and similar one-shot helpers) intentionally stay exempt to avoid loading skills where no agent-style tool loop can use them.
 - In dashboard model-loop chat (main chat, QuickChat, and room responders), typing `/skill:{name}` requests that skill for the current AI session and strips the slash token from the prompt sent to the model. Slash and catalog-style names such as `/skill:review/pr`, `/skill:review/pr/SKILL.md`, and `source::skills/review/pr/SKILL.md` resolve to the matching discovered bare skill token across chat and agent session lanes. The requested skill is still subject to the normal enabled/disabled execution-skill filters; CLI-agent-backed PTY chat keeps raw terminal input semantics and does not interpret this command.
-- Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write` and `fn_task_document_read`; because neither lane has an ambient task, both tools require an explicit `task_id`.
+- Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write`, `fn_task_document_read`, and `fn_task_logs_read`; because neither lane has an ambient task, each tool requires an explicit `task_id`. `fn_task_logs_read` pages the persisted full agent log for failure analysis.
+- Dashboard chat and room responders share a safe coordination/productivity toolset across pi and Grok CLI runtimes: board reads, task creation, delegation, agent listing/configuration, web fetch, and goal/memory/research retrieval. Destructive agent-lifecycle tools and memory append remain excluded because chat has no action-gate context.
 - Agent workflow-routing tools follow an intent boundary: agents may select or change a task workflow only when the user explicitly requested that workflow or when the agent created the task. Executors must not call `fn_workflow_select` to reroute the task they are executing unless the task instructions or a user steering comment explicitly asks for the workflow change. Lanes without an ambient task, including dashboard chat/planning and published/pi extension calls outside a task, must pass an explicit `task_id`; task-bound executor paths may default to the current task.
 - Executor, heartbeat, and dashboard chat sessions expose artifact registry tools so agents can publish and inspect multi-type deliverables without relying on the dashboard gallery. Planning sessions intentionally exclude artifact tools until they can thread the existing `MessageStore` dependency.
 - Permanent/custom heartbeat agents and the published/pi extension receive the broad coordination and work-discovery tool surface instead of a narrowly curated subset: read-only task discovery (`fn_task_list`, `fn_task_show`, `fn_task_search`) for work discovery and duplicate avoidance, workflow discovery and authoring (`fn_workflow_list`, `fn_workflow_get`, `fn_workflow_validate`, `fn_workflow_create`, `fn_workflow_update`, `fn_workflow_delete`, `fn_workflow_settings`, `fn_trait_list`), governed research (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`), structured clarification (`fn_ask_question`), artifact, memory, messaging, goal, evaluation, identity, and delegation tools. Task-scoped heartbeat sessions also expose current-task workflow selection and promotion (`fn_workflow_select`, `fn_task_promote`); no-task heartbeats omit those because they have no ambient task, while no-task extension/chat/planning lanes expose `fn_workflow_select` but require explicit `task_id`. Workflow creation, updates, settings writes, deletion, and selection remain permission-gated task/agent mutations even when the tools are exposed in the lane. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create`/`fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags. Executor-only worktree/workspace tools such as `fn_run_verification` and `fn_acquire_repo_worktree` remain out of the ambient heartbeat lane until that lane owns the required worktree/workspace context. The task read tools are store-backed, text-only, and action-gate-recognized as read-only; dangerous actions are controlled at invocation time by each agent's `AgentPermissionPolicy` through the action gate (allow / require approval / block), not by withholding governed tools from the session.
@@ -379,7 +380,7 @@ Self-healing intentionally refuses to auto-restart agents when blockers are oper
 - **Timer trigger:** run completes and the durable agent returns to `state="active"` (recoverable soft-fail).
 - **Assignment / on-demand trigger:** run completes with `resultJson.actionRequired = true`, then the durable agent is paused with `pauseReason="heartbeat-model-unavailable"` and `lastError` set to actionable credential guidance (including the missing provider name when detectable).
 
-After credentials are fixed, operators should resume the paused durable agent; subsequent heartbeats proceed normally.
+False-positive `heartbeat-model-unavailable` parks (session/registry/credential-probe blips that a manual Retry would clear without config changes) are admitted to the same bounded `heartbeatErrorRecovery` budget as error-state recovery. The heartbeat timer re-arms while budget remains, the run-entry path clears the park and retries, and the self-healing sweep plus engine-startup reset are backstops. Genuine missing credentials re-park after each failed attempt and stay parked once the budget is exhausted (keeping `pauseReason="heartbeat-model-unavailable"` for operator guidance). Manual resume still works at any time.
 
 ### Assigned-agent identity + planning model precedence for task triage
 
@@ -549,7 +550,7 @@ Expected behavior and boundaries:
 - Durable conclusions should be persisted with `fn_task_document_write` (for example, `key="research"`)
 - Research runs require the project engine to be running for processing; `fn_research_run` creates the run but does not block for completion unless `wait_for_completion` is set
 
-For the full research workflow, builtin-default behavior, optional external provider setup, CLI commands, and API reference, see the [Research guide](./research.md).
+For the full research workflow, builtin-default behavior, optional external provider setup, CLI commands, and API reference, see the [Research guide](./research.md). For the agent/chat capability audit and phased route from research through roadmap, execution, and verification, see [Full-loop agent tool-surface audit](./agent-tool-surface-full-loop.md).
 
 ## Runtime Self-Awareness Preamble
 
@@ -943,7 +944,7 @@ Heartbeat runs are composed from multiple prompt layers so each wake has full id
 2. **Workspace tool mode**
    - Heartbeat sessions are created with coding-capable workspace tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`) inside worktree boundary guards.
    - Heartbeat behavior still stays lightweight: one concrete action per run, then `fn_heartbeat_done`.
-   - Engine-owned heartbeat tools are layered on top for both task-scoped and no-task runs. Permanent/custom agents get the safe coordination/work-discovery surface (task creation/delegation, agent config/provisioning, artifacts, memory, messaging, goals/evaluations/identity/reflection, workflow discovery, bounded research, and `fn_ask_question`), while task-only tools such as `fn_task_log` and task documents stay limited to task-scoped runs.
+   - Engine-owned heartbeat tools are layered on top for both task-scoped and no-task runs. Permanent/custom agents get the safe coordination/work-discovery surface (task creation/delegation, agent config/provisioning, artifacts, memory, messaging, goals/evaluations/identity/reflection, workflow discovery, bounded research, and `fn_ask_question`), while task-only tools such as `fn_task_log`, `fn_task_logs_read`, and task documents stay limited to task-scoped runs.
 2. **Agent identity and instructions bundle**
    - Inline instructions (`instructionsText`)
    - File-backed instructions (`instructionsPath`)
@@ -998,7 +999,7 @@ When the bound task is `executor-class` or `blocked`, the default procedure dire
 
 The manager-facing reports health block in that prompt is populated from `AgentStore.getAgentsByReportsTo(agent.id)`. Engine code must call that store method with its `AgentStore` instance binding intact because some implementations resolve direct reports through `this.listAgents()`. If the section disappears unexpectedly, look for logs like `Failed to load reports ... Cannot read properties of undefined (reading 'listAgents')`, which indicate an unbound method call regressed.
 
-Direct-report staleness in this reports-health block uses each report's configured heartbeat interval, with threshold `max(heartbeatIntervalMs × 1.5, 5 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
+Direct-report staleness in this reports-health block uses each report's effective heartbeat interval (after `heartbeatMultiplier` is applied once), with threshold `max(effectiveHeartbeatIntervalMs × 1.5, 10 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
 
 This behavior is inherited by new non-ephemeral agents because agent creation seeds a per-agent `HEARTBEAT.md` file from the built-in default. If an agent sets `heartbeatProcedurePath`, that markdown file fully replaces the built-in default at runtime for task-scoped heartbeats. No-task heartbeats always fall back to the ambient built-in procedure so the prompt never references task-only tools.
 
@@ -1225,6 +1226,12 @@ Delete a non-ephemeral direct-report agent. Deletion is blocked when the target 
 - `"ERROR: Cannot delete ephemeral/runtime agent {agent_id}"`
 - Underlying store errors (for example, an active checkout lease) are returned as `"ERROR: {message}"`; provide `force: true` to bypass lease-related blocking.
 
+### Engine-session task reassignment
+
+Engine-managed agent sessions (executor, heartbeat, triage, workflow-step, and dashboard chat) expose `fn_task_assign(task_id, agent_id, override?)` to retarget an existing task by ID. It uses the same durable-agent and role/assignment-policy checks as `fn_delegate_task`; ephemeral agents and `assignmentPolicy: "none"` cannot be selected, and `override` only bypasses the role check.
+
+`fn_task_update` in engine sessions remains lifecycle-only. In the CLI/pi extension, use the existing `fn_task_update(id, agentId)` reassignment field instead; there is no redundant CLI `fn_task_assign` alias. If engine `fn_delegate_task` finds a deterministic duplicate, it updates the canonical task's requested owner and column before returning and reports the actual owner rather than promising an incorrect heartbeat pickup.
+
 ### Role-based assignment policy
 
 Implementation-task routing distinguishes explicit specialist assignment from generic backlog pickup:
@@ -1300,8 +1307,8 @@ Repair outcomes:
 - **Repeated non-advancing zombie repair**: after the bounded scheduler threshold, metadata includes the consecutive count/escalation flag and logs `reason=heartbeat-rearm-nonadvancing-escalated` instead of silently churning forever
 
 Stale threshold:
-- Repair staleness defaults to **`2 × heartbeatIntervalMs`**
-- This is intentionally separate from dashboard display staleness (`1.5× heartbeatIntervalMs` with a 5-minute floor)
+- Repair staleness defaults to **`2 × effectiveHeartbeatIntervalMs`** (after `heartbeatMultiplier` is applied once)
+- This is intentionally separate from dashboard display staleness (`1.5× effectiveHeartbeatIntervalMs` with a 10-minute floor)
 
 Dashboard surfacing path:
 - The stale-repair metadata write uses the existing `AgentStore.updateAgent(...)` path
@@ -1359,7 +1366,7 @@ Effects:
 - Safety guards: skip ephemeral/task-worker agents, skip disabled agents, skip non-tickable states, and skip agents with an active heartbeat run
 - Existing timer entries are left untouched (no interval reset/jitter churn)
 - Repair metadata: each audit re-arm writes `metadata.heartbeatTimerRepair` with `repairedAt` and a stale-at-repair indicator when the agent had already missed its expected cadence
-- Stale-at-repair threshold: defaults to `2 × heartbeatIntervalMs`; override with project setting `heartbeatRepairStaleMultiplier` (> 0) when you need a different sensitivity
+- Stale-at-repair threshold: defaults to `2 × effectiveHeartbeatIntervalMs` after one `heartbeatMultiplier` application; override with project setting `heartbeatRepairStaleMultiplier` (> 0) when you need a different sensitivity
 - Stale repairs emit a WARN log entry and still flow through the existing `agent:updated` refresh path for dashboard surfacing
 
 This covers the untracked timer-loss failure mode where no `agent:updated` event fires after a timer entry disappears. Manual stop/start is no longer required to re-arm the timer in that case.

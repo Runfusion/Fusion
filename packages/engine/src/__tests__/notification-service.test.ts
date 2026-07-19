@@ -224,6 +224,161 @@ describe("NotificationService", () => {
     expect(sendNotification).toHaveBeenCalledTimes(2);
   });
 
+  /*
+  FNXC:PlanApprovalMailbox 2026-07-16-19:20:
+  Awaiting-approval fires BOTH channels: the ntfy push AND a durable, task-linked mailbox
+  message (system-typed, idempotent per task). These tests lock the invariant across the
+  manual gate and the plan-review-replan-cap escalation, and prove best-effort isolation.
+  */
+  it("writes a task-linked mailbox message when a plan needs approval", async () => {
+    const store = createStore({
+      ntfyEnabled: true,
+      ntfyTopic: "topic",
+      ntfyDashboardHost: "https://dash.example",
+    });
+    const sendMessageOnce = vi.fn(async (input: any, _key: string) => ({
+      message: { ...input, id: "msg-once-x", read: false, createdAt: "", updatedAt: "" },
+      inserted: true,
+    }));
+    const messageStore = Object.assign(new EventEmitter(), { sendMessageOnce });
+
+    const service = new NotificationService(store as any, {
+      projectId: "p1",
+      messageStore: messageStore as any,
+    });
+    await service.start();
+
+    store.emit("task:updated", task({ status: "awaiting-approval" }));
+    await Promise.resolve();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    const [input, key] = sendMessageOnce.mock.calls[0];
+    expect(key).toBe("plan-approval:FN-1");
+    expect(input.type).toBe("system");
+    expect(input.toId).toBe("dashboard");
+    expect(input.toType).toBe("user");
+    expect(input.metadata).toMatchObject({ taskId: "FN-1", awaitingApprovalReason: "manual" });
+    // Deep link to the task is present in the message body.
+    expect(input.content).toContain("https://dash.example/?project=p1&task=FN-1");
+  });
+
+  it("writes one mailbox message when a triage duplicate needs an operator decision", async () => {
+    const store = createStore({ ntfyEnabled: false });
+    const idempotencyKeys = new Set<string>();
+    let insertedCount = 0;
+    const sendMessageOnce = vi.fn(async (input: any, key: string) => {
+      const inserted = !idempotencyKeys.has(key);
+      idempotencyKeys.add(key);
+      if (inserted) insertedCount += 1;
+      return { message: { ...input, id: "msg-once-duplicate", read: false, createdAt: "", updatedAt: "" }, inserted };
+    });
+    const messageStore = Object.assign(new EventEmitter(), { sendMessageOnce });
+    const service = new NotificationService(store as any, { projectId: "p1", messageStore: messageStore as any });
+    await service.start();
+
+    const duplicate = task({
+      paused: true,
+      pausedReason: "duplicate-decision-required",
+      sourceMetadata: { duplicateSource: "triage-marker", nearDuplicateOf: "FN-7961" },
+    });
+    store.emit("task:updated", duplicate);
+    store.emit("task:updated", duplicate);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    expect(insertedCount).toBe(1);
+
+    for (const [input, key] of sendMessageOnce.mock.calls) {
+      expect(key).toBe("triage-duplicate-decision:FN-1");
+      expect(input).toMatchObject({
+        type: "system",
+        toId: "dashboard",
+        toType: "user",
+        metadata: { taskId: "FN-1", canonicalTaskId: "FN-7961", kind: "triage-duplicate-decision" },
+      });
+      expect(input.content).toContain("flagged as a duplicate of FN-7961");
+    }
+  });
+
+  it("labels the replan-cap escalation reason in the approval mailbox message", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const sendMessageOnce = vi.fn(async (input: any, _key: string) => ({
+      message: { ...input, id: "msg-once-y", read: false, createdAt: "", updatedAt: "" },
+      inserted: true,
+    }));
+    const messageStore = Object.assign(new EventEmitter(), { sendMessageOnce });
+
+    const service = new NotificationService(store as any, { messageStore: messageStore as any });
+    await service.start();
+
+    store.emit(
+      "task:updated",
+      task({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+    );
+    await Promise.resolve();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    const [input] = sendMessageOnce.mock.calls[0];
+    expect(input.metadata).toMatchObject({ awaitingApprovalReason: "plan-review-replan-cap" });
+    expect(input.content).toContain("Plan Review exhausted");
+    // No dashboard host configured -> no absolute link line, but the message still sends.
+    expect(input.content).not.toContain("http");
+  });
+
+  it("does not throw when the message store has no write side", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const messageStore = new EventEmitter(); // no sendMessageOnce
+    const service = new NotificationService(store as any, { messageStore: messageStore as any });
+    await service.start();
+
+    expect(() => store.emit("task:updated", task({ status: "awaiting-approval" }))).not.toThrow();
+  });
+
+  /*
+  FNXC:PlanApprovalMailbox 2026-07-16-19:40:
+  The durable mailbox message is an in-app channel decoupled from the push-enabled gate: a
+  dashboard-only operator with NO ntfy topic and NO webhook (notifications disabled) must still
+  get the awaiting-approval record. Regression guard for the FIX A decoupling.
+  */
+  it("writes the approval mailbox message even when push notifications are disabled", async () => {
+    const store = createStore({ ntfyEnabled: false }); // no ntfy, no webhook -> notifications disabled
+    const sendMessageOnce = vi.fn(async (input: any, _key: string) => ({
+      message: { ...input, id: "msg-once-disabled", read: false, createdAt: "", updatedAt: "" },
+      inserted: true,
+    }));
+    const messageStore = Object.assign(new EventEmitter(), { sendMessageOnce });
+
+    const service = new NotificationService(store as any, { messageStore: messageStore as any });
+    await service.start();
+
+    store.emit("task:updated", task({ status: "awaiting-approval" }));
+    await Promise.resolve();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    const [input, key] = sendMessageOnce.mock.calls[0];
+    expect(key).toBe("plan-approval:FN-1");
+    expect(input.type).toBe("system");
+  });
+
+  it("swallows a sendMessageOnce rejection and logs it without throwing", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const sendMessageOnce = vi.fn(async () => {
+      throw new Error("mailbox boom");
+    });
+    const messageStore = Object.assign(new EventEmitter(), { sendMessageOnce });
+
+    const service = new NotificationService(store as any, { messageStore: messageStore as any });
+    await service.start();
+
+    expect(() => store.emit("task:updated", task({ status: "awaiting-approval" }))).not.toThrow();
+    // Allow the fire-and-forget mailbox write (and its catch) to settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(schedulerLog.log).toHaveBeenCalledWith(
+      expect.stringContaining("awaiting-approval mailbox message failed: mailbox boom"),
+    );
+  });
+
   it("stop unsubscribes listeners", async () => {
     const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
     const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));

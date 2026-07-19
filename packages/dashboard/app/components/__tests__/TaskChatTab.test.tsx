@@ -149,6 +149,14 @@ function mockLogs(
   });
 }
 
+function getRoleGroup(label: "Planner" | "Executor" | "Reviewer" | "Merger"): HTMLElement {
+  return screen.getByRole("region", { name: `${label} messages` });
+}
+
+function expectRoleIcon(label: "Planner" | "Executor" | "Reviewer" | "Merger", testId: string) {
+  expect(within(getRoleGroup(label)).getByTestId(testId)).toBeInTheDocument();
+}
+
 function expectComposerSendableAfterDraft(message = "Please continue") {
   expect(screen.queryByText(/No active steerable agent session/)).not.toBeInTheDocument();
   const input = screen.getByLabelText("Message active agent session");
@@ -387,16 +395,50 @@ describe("TaskChatTab", () => {
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
   });
 
-  it("renders loading state without timestamp shells or invalid-date text", () => {
+  it("renders delayed loading state without timestamp shells or invalid-date text", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
 
     const transcript = screen.getByTestId("task-chat-transcript");
+    expect(within(transcript).queryByText("Loading agent output…")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(150));
     expect(within(transcript).getByText("Loading agent output…")).toBeTruthy();
     expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-block-time")).not.toBeInTheDocument();
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
+  });
+
+  it("FN-8303: does not paint the loading spinner before a fast initial transcript response", () => {
+    vi.useFakeTimers();
+    const loadedEntries = [makeEntry({ agent: "executor", text: "initial loaded output" })];
+    mockedUseAgentLogs
+      .mockReturnValueOnce({ entries: [], loading: true, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: 0, loadingMore: false })
+      .mockReturnValueOnce({ entries: loadedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: 1, loadingMore: false });
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expect(screen.getByText("initial loaded output")).toBeVisible();
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+  });
+
+  it("FN-8303: does not reuse a prior task's slow-request spinner after task selection", () => {
+    vi.useFakeTimers();
+    mockLogs([], true);
+    const { rerender } = render(<TaskChatTab task={makeTask({ id: "FN-8303-first" })} active addToast={vi.fn()} />);
+
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.getByText("Loading agent output…")).toBeVisible();
+
+    rerender(<TaskChatTab task={makeTask({ id: "FN-8303-next" })} active addToast={vi.fn()} />);
+
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.getByText("Loading agent output…")).toBeVisible();
   });
 
   it("renders the collapsed icon-only expand toggle inside the chat view and calls the toggle handler", () => {
@@ -429,13 +471,15 @@ describe("TaskChatTab", () => {
     expect(toggle).not.toHaveTextContent("Expand");
   });
 
-  it("renders the icon-only expand toggle while the transcript is loading", () => {
+  it("renders the icon-only expand toggle while a slow transcript request is loading", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} onToggleExpanded={vi.fn()} />);
 
     const toggle = screen.getByTestId("task-chat-expand-toggle");
     expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
     expect(toggle).not.toHaveTextContent("Expand");
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText("Loading agent output…")).toBeInTheDocument();
   });
 
@@ -503,41 +547,89 @@ describe("TaskChatTab", () => {
       />,
     );
 
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='google']")).toBeTruthy();
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='openai']")).toBeTruthy();
-    expect(document.querySelectorAll(".task-chat-provider-icon [data-provider='anthropic']")).toHaveLength(2);
+    expectRoleIcon("Planner", "gemini-icon");
+    expectRoleIcon("Executor", "openai-icon");
+    expectRoleIcon("Reviewer", "anthropic-icon");
+    expectRoleIcon("Merger", "anthropic-icon");
   });
 
-  it("renders provider icons for task chat roles from legacy and suffixed runtime model markers", () => {
+  it("uses status and text runtime markers before static overrides for reviewer, executor, and planner icons", () => {
     mockLogs([
-      makeEntry({ agent: "triage", text: "Triage using model: google/gemini-pro (thinking effort: low)" }),
-      makeEntry({ agent: "executor", text: "Executor using model: openai/gpt-4o (thinking effort: high)" }),
-      makeEntry({ agent: "reviewer", text: "Reviewer using model: anthropic/claude-sonnet-4-5" }),
-    ]);
-
-    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
-
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='google']")).toBeTruthy();
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='openai']")).toBeTruthy();
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='anthropic']")).toBeTruthy();
-  });
-
-  it("renders provider icons for task chat roles from effective default models", () => {
-    mockLogs([
-      makeEntry({ agent: "executor", text: "executor output without model marker" }),
+      makeEntry({ agent: "triage", type: "text", text: "Triage using model: openai/gpt-4o" }),
+      makeEntry({ agent: "executor", type: "status", text: "Executor using model: openai/gpt-4o" }),
+      makeEntry({ agent: "reviewer", type: "status", text: "Reviewer using model: openai-codex/gpt-5.6-terra" }),
     ]);
 
     render(
       <TaskChatTab
-        task={makeTask()}
+        task={makeTask({
+          planningModelProvider: "grok",
+          modelProvider: "grok",
+          validatorModelProvider: "grok",
+        })}
         active
         addToast={vi.fn()}
-        effectiveModels={{ executor: { provider: "openai-codex", modelId: "gpt-5.5" } }}
       />,
     );
 
-    expect(document.querySelector(".task-chat-provider-icon [data-provider='openai-codex']")).toBeTruthy();
-    expect(screen.queryByLabelText("Executor: model provider unknown")).not.toBeInTheDocument();
+    expectRoleIcon("Planner", "openai-icon");
+    expectRoleIcon("Executor", "openai-icon");
+    const reviewerGroup = getRoleGroup("Reviewer");
+    expect(within(reviewerGroup).getByTestId("openai-icon")).toBeInTheDocument();
+    expect(within(reviewerGroup).queryByTestId("xai-icon")).not.toBeInTheDocument();
+  });
+
+  it("uses a runtime marker when no static override is configured", () => {
+    mockLogs([makeEntry({ agent: "reviewer", type: "status", text: "Reviewer using model: openai-codex/gpt-5.6-terra" })]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expectRoleIcon("Reviewer", "openai-icon");
+  });
+
+  it("uses effective models before static overrides when no runtime marker is available", () => {
+    mockLogs([
+      makeEntry({ agent: "triage", text: "planning output" }),
+      makeEntry({ agent: "executor", text: "executor output" }),
+      makeEntry({ agent: "reviewer", text: "reviewer output" }),
+      makeEntry({ agent: "merger", text: "merger output" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({ planningModelProvider: "grok", modelProvider: "grok", validatorModelProvider: "grok" })}
+        active
+        addToast={vi.fn()}
+        effectiveModels={{
+          triage: { provider: "openai", modelId: "gpt-4o" },
+          executor: { provider: "openai", modelId: "gpt-4o" },
+          reviewer: { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+          merger: { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+        }}
+      />,
+    );
+
+    expectRoleIcon("Planner", "openai-icon");
+    expectRoleIcon("Executor", "openai-icon");
+    expectRoleIcon("Reviewer", "openai-icon");
+    expectRoleIcon("Merger", "openai-icon");
+  });
+
+  it("keeps static overrides as the pre-log fallback and retains the CPU fallback when unresolved", () => {
+    mockLogs([makeEntry({ agent: "reviewer", text: "reviewer output" }), makeEntry({ agent: "merger", text: "merger output" })]);
+    const { rerender } = render(
+      <TaskChatTab
+        task={makeTask({ validatorModelProvider: "grok", validatorModelId: "grok-4" })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+    expectRoleIcon("Reviewer", "xai-icon");
+    expectRoleIcon("Merger", "xai-icon");
+
+    mockLogs([makeEntry({ agent: "executor", text: "executor output" })]);
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(within(getRoleGroup("Executor")).getByLabelText("Executor: model provider unknown")).toBeInTheDocument();
   });
 
   it("keeps List View split chat agent headers before text tool thinking and user output", () => {
@@ -575,8 +667,10 @@ describe("TaskChatTab", () => {
   });
 
   it("keeps List View split chat empty and loading states free of header shells", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     const loading = renderListSplitTaskChat();
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText(/Loading agent output/)).toBeVisible();
     expect(document.querySelector(".task-chat-group-header")).not.toBeInTheDocument();
     expect(document.querySelector(".task-chat-group-bubbles")).not.toBeInTheDocument();
@@ -951,6 +1045,48 @@ describe("TaskChatTab", () => {
     expect(screen.getByLabelText("Tool invocation timestamp")).toBeVisible();
   });
 
+  it.each([
+    ["desktop", false],
+    ["mobile", true],
+  ])("keeps an error detail revealable in the collapsed tool group on %s", async (_viewport, matchesMobile) => {
+    const user = userEvent.setup();
+    mockMatchMedia(matchesMobile);
+    mockLogs([
+      makeEntry({ agent: "executor", type: "tool", text: "edit" }),
+      makeEntry({ agent: "executor", type: "tool_error", text: "edit", detail: "replacement text did not match" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const toolGroup = screen.getByTestId("task-chat-tool-group");
+    expect(toolGroup).not.toHaveAttribute("open");
+    expect(within(toolGroup).getByText("1 error")).toBeVisible();
+    expect(screen.getByText("replacement text did not match")).not.toBeVisible();
+
+    await user.click(within(toolGroup).getByText("1 tool call"));
+
+    const detailBlock = document.querySelector(".task-chat-tool-detail-block");
+    expect(detailBlock).toBeTruthy();
+    expect(within(detailBlock as HTMLElement).getByText("Error")).toBeVisible();
+    expect(within(detailBlock as HTMLElement).getByText("replacement text did not match")).toBeVisible();
+  });
+
+  it("does not render an empty Error detail block when a tool_error has no detail", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "tool", text: "Write" }),
+      makeEntry({ agent: "executor", type: "tool_error", text: "Write", detail: undefined }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await user.click(screen.getByText("1 tool call"));
+
+    expect(screen.getByText("Tool call → error")).toBeVisible();
+    expect(screen.queryByText("Error")).not.toBeInTheDocument();
+    expect(document.querySelector(".task-chat-tool-detail-block")).toBeNull();
+  });
+
   it("renders a single tool entry as one collapsed group and tolerates missing detail", () => {
     mockLogs([
       makeEntry({ agent: "executor", type: "tool", text: "bash", detail: undefined }),
@@ -997,24 +1133,66 @@ describe("TaskChatTab", () => {
     expect(within(standaloneEntry).getByLabelText("Tool entry timestamp")).toHaveTextContent(expectedTime);
   });
 
-  it("renders thinking in an expanded-by-default collapsible block", async () => {
+  it("renders thinking in a collapsed-by-default expandable block for inactive tasks", async () => {
     const user = userEvent.setup();
     mockLogs([
       makeEntry({ agent: "triage", type: "thinking", text: "I am considering options" }),
     ]);
 
-    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    render(<TaskChatTab task={makeTask({ column: "done" })} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
-    expect(thinking).toHaveAttribute("open");
+    expect(thinking).not.toHaveAttribute("open");
     expect(within(thinking).getByText("Thinking")).toBeVisible();
-    expect(screen.getByText("I am considering options")).toBeVisible();
+    expect(screen.getByText("I am considering options")).not.toBeVisible();
     expect(within(thinking).getAllByTestId("task-chat-entry-thinking")).toHaveLength(1);
+
+    await user.click(within(thinking).getByText("Thinking"));
+
+    expect(thinking).toHaveAttribute("open");
+    expect(screen.getByText("I am considering options")).toBeVisible();
 
     await user.click(within(thinking).getByText("Thinking"));
 
     expect(thinking).not.toHaveAttribute("open");
     expect(screen.getByText("I am considering options")).not.toBeVisible();
+  });
+
+  it.each(["in-progress", "in-review"] as const)("defaults thinking blocks open for %s tasks", (column) => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Live reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("task-chat-thinking")).toHaveAttribute("open");
+  });
+
+  it.each(["todo", "done", "triage", "archived"] as const)("keeps thinking blocks collapsed for %s tasks", (column) => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Historical reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("task-chat-thinking")).not.toHaveAttribute("open");
+  });
+
+  it("lets users collapse auto-expanded thinking blocks", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Active reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column: "in-progress" })} active addToast={vi.fn()} />);
+
+    const thinking = screen.getByTestId("task-chat-thinking");
+    expect(thinking).toHaveAttribute("open");
+
+    await user.click(within(thinking).getByText("Thinking"));
+
+    expect(thinking).not.toHaveAttribute("open");
+    expect(screen.getByText("Active reasoning")).not.toBeVisible();
   });
 
   it("renders consecutive thinking entries as one continuous section", () => {
@@ -1044,7 +1222,7 @@ describe("TaskChatTab", () => {
       makeEntry({ agent: "executor", type: "tool_result", text: "second tool", detail: "second detail" }),
     ]);
 
-    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    render(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
 
     const toolGroups = screen.getAllByTestId("task-chat-tool-group");
     expect(toolGroups).toHaveLength(2);
@@ -1055,7 +1233,7 @@ describe("TaskChatTab", () => {
     expect(within(toolGroups[1]).getByLabelText("Tool names")).toHaveTextContent("second tool");
     expect(screen.getAllByTestId("task-chat-entry-text")).toHaveLength(1);
     expect(screen.getByText("plain response")).toBeVisible();
-    expect(screen.getByText("thinking between tools")).toBeVisible();
+    expect(screen.getByText("thinking between tools")).not.toBeVisible();
   });
 
   it("appends newly streamed entries from the hook without auto-opening tool groups", () => {
@@ -1154,6 +1332,40 @@ describe("TaskChatTab", () => {
     expect(raf.flushNext()).toBe(true);
     expect(metrics.scrollTop).toBe(metrics.scrollHeight);
     expect(raf.pendingCount).toBe(0);
+  });
+
+  it("FN-8339: does not let tail growth override manual scrolling during streamed output", async () => {
+    const raf = mockRequestAnimationFrame();
+    const metrics = mockTranscriptMetrics({ scrollHeight: 800, clientHeight: 240, initialScrollTop: 0 });
+    const streamingEntry = makeEntry({ agent: "executor", text: "streaming output" });
+    mockLogs([streamingEntry]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(800);
+
+    metrics.scrollTop = 180;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    metrics.scrollHeight = 1200;
+    expect(raf.flushNext()).toBe(true);
+    mockLogs([{ ...streamingEntry, text: "streaming output grows in place" }]);
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await waitFor(() => expect(metrics.scrollTop).toBe(180));
+  });
+
+  it("FN-8339: follows in-place streamed growth while the task transcript is pinned", async () => {
+    const metrics = mockTranscriptMetrics({ scrollHeight: 800, clientHeight: 240, initialScrollTop: 0 });
+    const streamingEntry = makeEntry({ agent: "executor", text: "streaming output" });
+    mockLogs([streamingEntry]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(800);
+
+    metrics.scrollHeight = 1200;
+    mockLogs([{ ...streamingEntry, text: "streaming output grows in place" }]);
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await waitFor(() => expect(metrics.scrollTop).toBe(1200));
   });
 
   it("FN-6337: bounds and cleans up the settle loop", () => {
@@ -1372,8 +1584,10 @@ describe("TaskChatTab", () => {
   });
 
   it("does not render the jump-to-bottom button for loading or empty transcripts", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     const loading = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText(/Loading agent output/)).toBeVisible();
     expect(screen.queryByTestId("task-chat-jump-to-bottom")).not.toBeInTheDocument();
     loading.unmount();
@@ -2728,14 +2942,15 @@ describe("TaskChatTab", () => {
     const toolSummaryRule = getCssRuleBlock(getCssAfter(css, "FN-7215 aligns task-detail tool-call summaries"), ".task-chat-tool-group-summary");
     const toolEntriesRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap"), ".task-chat-tool-group-entries");
     const toolEntryRule = getCssRuleBlock(css, ".task-chat-tool-entry");
-    const thinkingRule = getCssRuleBlock(css, ".task-chat-thinking");
-    const thinkingBodyRule = getCssRuleBlock(css, ".task-chat-thinking-body");
+    const thinkingBaseRule = getCssRuleBlock(css, ".task-chat-thinking");
+    const compactThinkingCss = getCssAfter(css, "FN-8029 keeps collapsed thinking blocks compact");
+    const thinkingRule = getCssRuleBlock(compactThinkingCss, ".task-chat-thinking");
+    const thinkingSummaryRule = getCssRuleBlock(getCssAfter(css, ".task-chat-thinking {\n  border-color"), ".task-chat-thinking-summary");
+    const thinkingBodyRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap: var(--space-xs);\n  padding: 0 var(--space-xs) var(--space-xs);\n}"), ".task-chat-thinking-body");
     const toolDetailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
     const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
-    const mobileBlockPaddingCss = getCssAfter(mobileCss, ".task-chat-entry,\n  .task-chat-tool-group,\n  .task-chat-thinking");
-    const mobileEntryRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-entry");
-    const mobileToolGroupRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-tool-group");
-    const mobileThinkingRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-thinking");
+    const mobileStandardBlockRule = getCssRuleBlock(mobileCss, ".task-chat-entry,\n  .task-chat-tool-group");
+    const mobileThinkingRule = getCssRuleBlock(getCssAfter(mobileCss, ".task-chat-thinking {\n    padding"), ".task-chat-thinking");
     const mobileToolEntryRule = getCssRuleBlock(mobileCss, ".task-chat-tool-entry");
 
     expect(entryRule).toContain("box-sizing: border-box");
@@ -2743,20 +2958,21 @@ describe("TaskChatTab", () => {
     expect(userRule).not.toContain("padding");
     expect(toolGroupRule).toContain("box-sizing: border-box");
     expect(toolGroupRule).toContain("padding: var(--space-md)");
-    expect(thinkingRule).toContain("box-sizing: border-box");
-    expect(thinkingRule).toContain("padding: var(--space-md)");
+    expect(thinkingBaseRule).toContain("box-sizing: border-box");
+    expect(thinkingRule).toContain("padding: var(--space-sm)");
+    expect(thinkingRule).not.toContain("padding: var(--space-md)");
+    expect(thinkingSummaryRule).toContain("padding: var(--space-xs)");
     expect(toolSummaryRule).toContain("padding: var(--space-xs)");
     expect(toolEntriesRule).toContain("padding: 0 var(--space-xs) var(--space-xs)");
-    expect(thinkingBodyRule).toContain("padding: 0 var(--space-md) var(--space-md)");
+    expect(thinkingBodyRule).toContain("padding: 0 var(--space-sm) var(--space-sm)");
     expect(toolEntryRule).toContain("box-sizing: border-box");
     expect(toolEntryRule).toContain("padding: var(--space-sm)");
     expect(toolDetailRule).toContain("box-sizing: border-box");
     expect(toolDetailRule).toContain("padding: var(--space-xs)");
-    expect(mobileEntryRule).toContain("padding: var(--space-sm)");
-    expect(mobileToolGroupRule).toContain("padding: var(--space-sm)");
-    expect(mobileThinkingRule).toContain("padding: var(--space-sm)");
+    expect(mobileStandardBlockRule).toContain("padding: var(--space-sm)");
+    expect(mobileThinkingRule).toContain("padding: var(--space-xs)");
     expect(mobileToolEntryRule).toContain("padding: var(--space-xs)");
-    for (const rule of [entryRule, toolGroupRule, toolEntryRule, thinkingRule, toolDetailRule, mobileEntryRule]) {
+    for (const rule of [entryRule, toolGroupRule, toolEntryRule, thinkingBaseRule, thinkingRule, thinkingSummaryRule, toolDetailRule, mobileStandardBlockRule, mobileThinkingRule]) {
       expect(rule).not.toContain("px");
       expect(rule).not.toContain("#");
     }
@@ -2887,5 +3103,73 @@ describe("TaskChatTab", () => {
     expect(css).not.toContain(".task-chat-thinking-markdown + .task-chat-thinking-markdown");
     expect(css).toContain(".task-chat-user-group");
     expect(css).toContain(".task-chat-entry--user");
+  });
+});
+
+/*
+FNXC:TaskChat-StatusEntries 2026-07-15-11:20:
+Regression coverage for standalone engine messages rendering as one run-on string.
+
+## Symptom Verification
+Original symptom: a Reviewer card headed "14 entries" rendered as
+"Reviewer using model: umans/umans-kimi-k2.7Reviewer using model: umans/umans-kimi-k2.7..." —
+14 complete messages glued edge-to-edge with no separator.
+Exact reproduction: consecutive same-role standalone engine rows in one group.
+Assertion it is gone: each `status` row renders as its own block, and no rendered block contains
+two concatenated messages.
+
+## Surface Enumeration
+- `status` rows must never be glued to each other (the reported case).
+- `status` rows must never be glued to adjacent `text` rows either.
+- `text` rows MUST still be glued with no separator — they are streamed deltas, and inserting a
+  separator here is the FN-5787/5789/5803 streamed-spacing regression this must not reintroduce.
+- Model resolution reads markers out of the log and must accept `status` AND legacy `text` rows
+  (covered in effective-model-resolution.test.ts).
+*/
+describe("TaskChatTab — standalone status entries are not glued like streamed deltas", () => {
+  const marker = "Reviewer using model: umans/umans-kimi-k2.7";
+
+  it("renders repeated standalone status messages as separate blocks", () => {
+    mockLogs([
+      makeEntry({ agent: "reviewer", type: "status", text: marker }),
+      makeEntry({ agent: "reviewer", type: "status", text: marker }),
+      makeEntry({ agent: "reviewer", type: "status", text: marker }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const blocks = Array.from(document.querySelectorAll(".task-chat-markdown"));
+    const rendered = blocks.map((el) => el.textContent ?? "");
+    // The bug: one block containing the message repeated with no separator.
+    expect(rendered.some((text) => text.includes(`${marker}${marker}`))).toBe(false);
+    expect(rendered.filter((text) => text.trim() === marker)).toHaveLength(3);
+  });
+
+  it("does not glue a status message onto an adjacent streamed text block", () => {
+    mockLogs([
+      makeEntry({ agent: "reviewer", type: "status", text: marker }),
+      makeEntry({ agent: "reviewer", type: "text", text: "Verdict: " }),
+      makeEntry({ agent: "reviewer", type: "text", text: "APPROVE" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const rendered = Array.from(document.querySelectorAll(".task-chat-markdown")).map((el) => el.textContent ?? "");
+    expect(rendered.some((text) => text.includes(`${marker}Verdict`))).toBe(false);
+    // Streamed deltas around it still re-glue with NO separator.
+    expect(rendered.some((text) => text.includes("Verdict: APPROVE"))).toBe(true);
+  });
+
+  it("still joins consecutive streamed text deltas with no separator", () => {
+    mockLogs([
+      makeEntry({ agent: "reviewer", type: "text", text: "review" }),
+      makeEntry({ agent: "reviewer", type: "text", text: "ing the" }),
+      makeEntry({ agent: "reviewer", type: "text", text: " diff" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const rendered = Array.from(document.querySelectorAll(".task-chat-markdown")).map((el) => el.textContent ?? "");
+    expect(rendered.some((text) => text.includes("reviewing the diff"))).toBe(true);
   });
 });

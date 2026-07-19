@@ -171,6 +171,10 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // Additive column not present in the baseline snapshot, so existing embedded-PG
   // databases must self-heal it via ALTER TABLE ADD COLUMN IF NOT EXISTS on boot.
   { table: "tasks", column: "plan_review_replan_count", type: "integer" },
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker. Additive nullable
+  // timestamp column absent from older embedded-PG snapshots, so it must self-heal via
+  // ALTER TABLE ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS never upgrades).
+  { table: "tasks", column: "bulk_completion_refusal_at", type: "text" },
   // distributed_task_id_state
   { table: "distributed_task_id_state", column: "prefix", type: "text" },
   { table: "distributed_task_id_state", column: "next_sequence", type: "integer" },
@@ -193,6 +197,9 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never
   // upgrades an existing table).
   { table: "chat_sessions", column: "thinking_level", type: "text" },
+  // FNXC:ChatPinned 2026-07-16-12:00: CREATE TABLE IF NOT EXISTS cannot add
+  // this nullable persisted Direct-chat pin timestamp to existing embedded DBs.
+  { table: "chat_sessions", column: "pinned_at", type: "text" },
   { table: "chat_sessions", column: "validator_thinking_level", type: "text" },
   { table: "chat_sessions", column: "planning_thinking_level", type: "text" },
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): sqlite v143-145 additive
@@ -200,6 +207,8 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // existing embedded-PG databases self-heal them on boot.
   { table: "tasks", column: "validator_thinking_level", type: "text" },
   { table: "tasks", column: "planning_thinking_level", type: "text" },
+  // FNXC:PlannerOversight 2026-07-14-18:11: per-task session advisor override (null/0/1).
+  { table: "tasks", column: "session_advisor_enabled", type: "integer" },
   { table: "chat_rooms", column: "thinking_level", type: "text" },
 ];
 

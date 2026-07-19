@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 /*
 FNXC:Dependencies 2026-07-01-08:16:
@@ -21,6 +21,15 @@ function createSseResponse(): Response {
 }
 
 
+async function createInMemoryModelRegistry(): Promise<ModelRegistry> {
+  const runtime = await ModelRuntime.create({
+    credentials: { read: async () => undefined, list: async () => [], modify: async (_id, fn) => fn(undefined), delete: async () => undefined },
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+  return new ModelRegistry(runtime);
+}
+
 describe("custom providers openai-completions regression", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -28,8 +37,7 @@ describe("custom providers openai-completions regression", () => {
   });
 
   it("registers under slug key and completes a chat round-trip", async () => {
-    const authStorage = AuthStorage.inMemory();
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const modelRegistry = await createInMemoryModelRegistry();
     const providers: CustomProvider[] = [{
       id: "550e8400-e29b-41d4-a716-446655440000",
       name: "My AI Provider",
@@ -46,7 +54,7 @@ describe("custom providers openai-completions regression", () => {
       apiKey: provider.apiKey,
       models: [{ id: "my-model", name: "My Model", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
     });
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     const registered = modelRegistry.getAll().find((model) => model.id === "my-model");
     expect(registered?.provider).toBe("my-ai-provider");

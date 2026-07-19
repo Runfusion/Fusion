@@ -74,8 +74,8 @@ pgTest("VAL-CROSS-001: End-to-end task lifecycle (PostgreSQL)", () => {
     const archived = await store.archiveTask(task.id, { cleanup: false });
     expect(archived.id).toBe(task.id);
 
-    // Archived task should not appear in default listTasks
-    const live = await store.listTasks();
+    // FNXC:PostgresArchiveReads 2026-07-14-17:10: Active-only callers opt out of cold storage explicitly; listTasks keeps its backward-compatible includeArchived default.
+    const live = await store.listTasks({ includeArchived: false });
     expect(live.find((t) => t.id === task.id)).toBeUndefined();
   });
 

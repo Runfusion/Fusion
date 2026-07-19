@@ -24,6 +24,7 @@ import {
   shouldRunIsolationGuard,
   defaultTestWorkerBudget,
   createIsolatedHomeEnv,
+  createTestProcessEnv,
   cleanupIsolatedHomePath,
   knownIsolatedHomeBasenames,
   __setCleanupRmSyncForTests,
@@ -1069,6 +1070,23 @@ test("createIsolatedHomeEnv: returns temp HOME/USERPROFILE pair without mutating
   assert.match(isolatedHome, /fusion-test-home-root-/);
 
   rmSync(isolatedHome, { recursive: true, force: true });
+});
+
+test("createTestProcessEnv: never forwards production database targets into tests", () => {
+  const input = {
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://operator:secret@production.example/fusion",
+    DATABASE_MIGRATION_URL: "postgresql://operator:secret@production.example/fusion",
+    FUSION_PG_TEST_URL_BASE: "postgresql://localhost:5432",
+  };
+
+  const env = createTestProcessEnv(input);
+
+  assert.equal(env.NODE_ENV, "test");
+  assert.equal(env.DATABASE_URL, undefined);
+  assert.equal(env.DATABASE_MIGRATION_URL, undefined);
+  assert.equal(env.FUSION_PG_TEST_URL_BASE, input.FUSION_PG_TEST_URL_BASE);
+  assert.equal(input.DATABASE_URL, "postgresql://operator:secret@production.example/fusion");
 });
 
 

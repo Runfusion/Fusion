@@ -1,6 +1,12 @@
 import { definePlugin } from "@fusion/plugin-sdk";
 import type { FusionPlugin } from "@fusion/plugin-sdk";
-import { killAllProcesses } from "./acp/index.js";
+/*
+FNXC:ProcessLifecycle 2026-07-16-07:00 / 2026-07-18-07:40:
+Exit-hook ownership lives in ./acp/process-manager (Symbol.for guard + shared
+registry). Import that module from the plugin entry so plugin load still arms
+the process.exit reaper; re-evaluation stays bounded by the Symbol.for guard.
+*/
+import "./acp/process-manager.js";
 import { probeGrokBinary } from "./probe.js";
 import { discoverGrokProviderModels } from "./provider.js";
 import { GrokRuntimeAdapter } from "./runtime-adapter.js";
@@ -24,10 +30,6 @@ ACP client code is copied into this plugin (src/acp/), not imported from
 fusion-plugin-acp-runtime, so bundled Grok does not depend on the experimental
 ACP example plugin package.
 */
-
-// Reap Grok ACP agent subprocesses on hard process exit (registry SIGKILL is
-// authoritative). Scoped to ACP-tracked agent children only — never port 4040.
-process.on("exit", killAllProcesses);
 
 const plugin: FusionPlugin = definePlugin({
   manifest: {

@@ -21,6 +21,7 @@ import type { ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 
 const DEFAULT_PROJECT_ID = "proj-1";
+let mobileTaskPopupEnabled = false;
 
 const defaultSettings: Settings = {
   maxConcurrent: 2,
@@ -45,7 +46,7 @@ vi.mock("../../api", async (importOriginal) => {
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
     fetchTasks: vi.fn(() => Promise.resolve([])),
     fetchConfig: vi.fn(() => Promise.resolve({ maxConcurrent: 2, rootDir: "/workspace/project" })),
-    fetchSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
+    fetchSettings: vi.fn(() => Promise.resolve({ ...defaultSettings, openMobileTasksInPopup: mobileTaskPopupEnabled })),
     updateSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
     fetchGlobalSettings: vi.fn(() => Promise.resolve({})),
     fetchAuthStatus: vi.fn(() => Promise.resolve({ providers: [] })),
@@ -151,7 +152,17 @@ vi.mock("../../components/Board", () => ({
 }));
 
 vi.mock("../../components/ListView", () => ({
-  ListView: ({ tasks, onOpenDetail }: { tasks: Task[]; onOpenDetail: (task: Task, options?: { origin?: "list-mobile" }) => void }) => (
+  ListView: ({
+    tasks,
+    onOpenDetail,
+    onPopOut,
+    openMobileTasksInPopup,
+  }: {
+    tasks: Task[];
+    onOpenDetail: (task: Task, options?: { origin?: "list-mobile" }) => void;
+    onPopOut?: (task: Task) => void;
+    openMobileTasksInPopup?: boolean;
+  }) => (
     <div data-testid="list-view">
       {tasks.map((task) => (
         <button
@@ -159,7 +170,9 @@ vi.mock("../../components/ListView", () => ({
           type="button"
           data-testid={`list-open-${task.id}`}
           onClick={() => {
-            if (mockUseViewportMode() === "mobile") {
+            if (openMobileTasksInPopup && onPopOut) {
+              onPopOut(task);
+            } else if (mockUseViewportMode() === "mobile") {
               onOpenDetail(task, { origin: "list-mobile" });
             }
           }}
@@ -295,6 +308,8 @@ vi.mock("../../hooks/useNodes", () => ({
 const mockUseViewportMode = vi.fn(() => "desktop");
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   useViewportMode: (..._args: unknown[]) => mockUseViewportMode(..._args),
@@ -370,6 +385,7 @@ describe("Task detail mobile swipe-back", () => {
       refreshTasks: vi.fn(),
     }));
     mockUseViewportMode.mockReturnValue("mobile");
+    mobileTaskPopupEnabled = false;
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false,
     });
@@ -527,6 +543,70 @@ describe("Task detail mobile swipe-back", () => {
       expect(screen.queryByTestId("task-detail-modal")).toBeNull();
       expect(screen.getByTestId("list-view")).toBeInTheDocument();
     });
+  });
+
+  it("dismisses a mobile board task popup on browser popstate while keeping the board visible", async () => {
+    mobileTaskPopupEnabled = true;
+    const task = makeTask("FN-1", "Popup Board Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderAppAndWait("board-view");
+    fireEvent.click(screen.getByTestId("open-task-FN-1"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Popup Board Detail" })).toBeInTheDocument();
+      expect(screen.getByTestId("board-view")).toBeInTheDocument();
+    });
+
+    dispatchPopState({ navIndex: 0 });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Popup Board Detail" })).toBeNull();
+      expect(screen.getByTestId("board-view")).toBeInTheDocument();
+    });
+    expect(dispatchNativeAndroidBack()).toBe(false);
+  });
+
+  it("dismisses a mobile list task popup on native Android Back while keeping the list visible", async () => {
+    mobileTaskPopupEnabled = true;
+    const task = makeTask("FN-1", "Popup List Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(),
+      updateTask: vi.fn(), duplicateTask: vi.fn(), archiveTask: vi.fn(), unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(), refreshTasks: vi.fn(),
+    }));
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+    await renderAppAndWait("list-view");
+    fireEvent.click(screen.getByTestId("list-open-FN-1"));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Popup List Detail" })).toBeInTheDocument();
+      expect(screen.getByTestId("list-view")).toBeInTheDocument();
+    });
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    dispatchPopState({ navIndex: 0 });
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Popup List Detail" })).toBeNull();
+      expect(screen.getByTestId("list-view")).toBeInTheDocument();
+    });
+    expect(dispatchNativeAndroidBack()).toBe(false);
   });
 
   it("does not swallow native Android Back when no Fusion nav entry exists", async () => {

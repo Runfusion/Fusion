@@ -1,5 +1,5 @@
 import "./ArtifactsGallery.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -18,9 +18,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ArtifactWithTask } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { artifactMediaUrl, fetchArtifact, updateArtifact } from "../api";
+import { artifactMediaUrl, artifactMediaUrlWithToken, fetchArtifact, updateArtifact } from "../api";
+import { withTokenHeader } from "../auth";
 import { FileEditor } from "./FileEditor";
 import { FloatingWindow } from "./FloatingWindow";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 
 /*
 FNXC:ArtifactRegistry 2026-07-10-15:40:
@@ -97,6 +99,7 @@ interface ViewerState {
 
 export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onOpenTask, onArtifactUpdated }: ArtifactsGalleryProps) {
   const { t } = useTranslation("app");
+  const navigationHistory = useContext(NavigationHistoryContext);
   const [categoryFilter, setCategoryFilter] = useState<ArtifactCategoryFilter>("all");
   const [viewer, setViewer] = useState<ViewerState | null>(null);
   const viewerReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -134,6 +137,22 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
     viewerReturnFocusRef.current?.focus();
     viewerReturnFocusRef.current = null;
   }, []);
+
+  /*
+  FNXC:ArtifactViewerMobileBack 2026-07-16-17:00:
+  A mobile artifact viewer must dismiss before navigation on iOS swipe-back, Android native Back, and browser Back.
+  Register one stable modal closer for every viewer kind; nullable context keeps provider-less gallery renders working.
+  Programmatic close uses removeNav to consume its pushed entry, while popstate invokes closeViewer directly without a double-back.
+  */
+  useEffect(() => {
+    if (!isMobile || !viewer || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: closeViewer });
+  }, [closeViewer, isMobile, navigationHistory, viewer]);
+
+  const dismissViewer = useCallback(() => {
+    navigationHistory?.removeNav(closeViewer);
+    closeViewer();
+  }, [closeViewer, navigationHistory]);
 
   const visibleCategories = ARTIFACT_CATEGORY_ORDER.filter((category) =>
     grouped.has(category) && (categoryFilter === "all" || categoryFilter === category));
@@ -194,10 +213,10 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
       })}
 
       {viewer && viewer.kind === "media" && (
-        <MediaLightbox artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+        <MediaLightbox artifact={viewer.artifact} projectId={projectId} t={t} onClose={dismissViewer} onOpenTask={onOpenTask} />
       )}
       {viewer && viewer.kind === "pdf" && (
-        <PdfViewer artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+        <PdfViewer artifact={viewer.artifact} projectId={projectId} t={t} onClose={dismissViewer} onOpenTask={onOpenTask} />
       )}
       {viewer && viewer.kind === "doc" && (
         <DocViewer
@@ -205,7 +224,7 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
           projectId={projectId}
           t={t}
           addToast={addToast}
-          onClose={closeViewer}
+          onClose={dismissViewer}
           onOpenTask={onOpenTask}
           onArtifactUpdated={onArtifactUpdated}
         />
@@ -270,7 +289,7 @@ interface TileProps {
 
 function VisualTile({ artifact, category, projectId, t, onOpen }: TileProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -379,7 +398,7 @@ function AudioRow({ artifact, projectId, t, onOpenTask }: RowProps) {
         )}
         <span className="artifacts-gallery-row-meta">{formatTimestamp(artifact.createdAt)}</span>
       </div>
-      <audio className="artifacts-gallery-audio" controls src={artifactMediaUrl(artifact.id, projectId)} aria-label={t("documents.artifactAudioLabel", "Audio artifact: {{title}}", { title })} />
+      <audio className="artifacts-gallery-audio" controls src={artifactMediaUrlWithToken(artifact.id, projectId)} aria-label={t("documents.artifactAudioLabel", "Audio artifact: {{title}}", { title })} />
     </article>
   );
 }
@@ -403,7 +422,7 @@ function FileRow({ artifact, projectId, t, onOpenTask }: RowProps) {
       </div>
       <a
         className="btn btn-sm artifacts-gallery-row-download"
-        href={artifactMediaUrl(artifact.id, projectId)}
+        href={artifactMediaUrlWithToken(artifact.id, projectId)}
         target="_blank"
         rel="noreferrer"
         data-testid="artifact-other-link"
@@ -463,6 +482,9 @@ function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, per
       dragHandleSelector=".artifacts-gallery-viewer-header"
       className="artifacts-gallery-window"
       ariaLabel={label}
+      /* FNXC:ModalGeometryPersistence 2026-07-16-00:40: Artifact viewers are full-screen sheets at ≤768px or ≤480px tall, so neither mobile shape may overwrite desktop geometry. */
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
       persistGeometryKey={persistKey}
       defaultSize={wide ? { width: 1024, height: 720 } : { width: 720, height: 640 }}
       minSize={{ width: 320, height: 280 }}
@@ -509,7 +531,7 @@ function ViewerMeta({ artifact, t, onOpenTask }: { artifact: ArtifactWithTask; t
 
 function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -545,7 +567,7 @@ function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayP
 
 function PdfViewer({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -590,6 +612,8 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
   const [detail, setDetail] = useState<Artifact | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [htmlPreviewUrl, setHtmlPreviewUrl] = useState<string | null>(null);
+  const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -620,6 +644,43 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   HTML, and Edit still opens the shared FileEditor.
   */
   const isHtml = (detail?.mimeType ?? artifact.mimeType)?.toLowerCase().split(";", 1)[0] === "text/html";
+
+  useEffect(() => {
+    if (!detail?.uri || !isHtml || !renderMarkdown) {
+      setHtmlPreviewUrl(null);
+      setHtmlPreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    setHtmlPreviewUrl(null);
+    setHtmlPreviewError(null);
+
+    /*
+    FNXC:ArtifactRegistry 2026-07-15-14:45:
+    File-backed HTML previews need authenticated media access, but allow-scripts content can read a tokenized iframe URL and exfiltrate it. Fetch with the Authorization header and hand the sandboxed iframe a revocable blob URL so the bearer token never reaches executable artifact content.
+    */
+    void fetch(artifactMediaUrl(artifact.id, projectId), {
+      headers: withTokenHeader(),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Unable to load HTML preview (${response.status})`);
+        objectUrl = URL.createObjectURL(await response.blob());
+        if (!controller.signal.aborted) setHtmlPreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setHtmlPreviewError(error instanceof Error ? error.message : String(error));
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [artifact.id, detail?.uri, isHtml, projectId, renderMarkdown]);
 
   const startEditing = () => {
     setDraft(content);
@@ -695,16 +756,22 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
             />
           </div>
         ) : isHtml && renderMarkdown ? (
-          <iframe
-            className="artifacts-gallery-viewer-html"
-            sandbox="allow-scripts"
-            title={title}
-            {...(detail.uri ? { src: artifactMediaUrl(artifact.id, projectId) } : { srcDoc: content })}
-          />
+          detail.uri && !htmlPreviewUrl ? (
+            <p className="artifacts-gallery-viewer-loading">
+              {htmlPreviewError ?? t("documents.loadingArtifact", "Loading artifact…")}
+            </p>
+          ) : (
+            <iframe
+              className="artifacts-gallery-viewer-html"
+              sandbox="allow-scripts"
+              title={title}
+              {...(detail.uri ? { src: htmlPreviewUrl! } : { srcDoc: content })}
+            />
+          )
         ) : detail.uri ? (
           <p className="artifacts-gallery-viewer-loading">
             {t("documents.binaryDocArtifact", "This document is stored as a file.")}{" "}
-            <a href={artifactMediaUrl(artifact.id, projectId)} target="_blank" rel="noreferrer">
+            <a href={artifactMediaUrlWithToken(artifact.id, projectId)} target="_blank" rel="noreferrer">
               {t("documents.openArtifactMedia", "Open artifact media")}
             </a>
           </p>

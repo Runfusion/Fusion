@@ -2,7 +2,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, MoreVertical } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, Paperclip, Eye, EyeOff } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -11,7 +11,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipeline";
-import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
@@ -20,15 +20,17 @@ import {
   getErrorMessage,
 } from "@fusion/core";
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflow-settings-resolver";
+import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, api } from "../api";
-import type { RevertTaskOptions, RevertTaskResult } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
 import { TaskFieldsSection } from "./TaskFieldsSection";
+import { TaskVerificationStatus } from "./TaskVerificationStatus";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
@@ -41,7 +43,6 @@ import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
-import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskSummaryTab } from "./TaskSummaryTab";
 import { TaskCostTab } from "./TaskCostTab";
@@ -69,9 +70,12 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
+import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
+import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
@@ -442,7 +446,12 @@ in-flight de-dup exactly (see packages/dashboard/app/components/TaskCard.tsx)
 rather than re-deriving precedence locally — `resolveEffectivePlannerOversightLevel`
 remains the single resolver both surfaces call.
 */
-const modalWorkflowOversightEffectiveCache = new Map<string, PlannerOversightLevel | undefined>();
+interface ModalWorkflowOversightSettings {
+  level: PlannerOversightLevel | undefined;
+  sessionAdvisorEnabled: boolean;
+}
+
+const modalWorkflowOversightEffectiveCache = new Map<string, ModalWorkflowOversightSettings>();
 const modalWorkflowOversightInflight = new Map<string, Promise<void>>();
 
 function getModalWorkflowOversightCacheKey(workflowId: string, projectId?: string): string {
@@ -453,20 +462,23 @@ function isPlannerOversightLevelValue(value: unknown): value is PlannerOversight
   return typeof value === "string" && (PLANNER_OVERSIGHT_LEVELS as readonly string[]).includes(value);
 }
 
-async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<PlannerOversightLevel | undefined> {
+async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, projectId: string | undefined): Promise<ModalWorkflowOversightSettings> {
   const key = getModalWorkflowOversightCacheKey(workflowId, projectId);
   if (modalWorkflowOversightEffectiveCache.has(key)) {
-    return modalWorkflowOversightEffectiveCache.get(key);
+    return modalWorkflowOversightEffectiveCache.get(key) ?? { level: undefined, sessionAdvisorEnabled: false };
   }
   let inflight = modalWorkflowOversightInflight.get(key);
   if (!inflight) {
     inflight = fetchWorkflowSettingValues(workflowId, projectId)
       .then((payload) => {
         const raw = payload.effective?.plannerOversightLevel;
-        modalWorkflowOversightEffectiveCache.set(key, isPlannerOversightLevelValue(raw) ? raw : undefined);
+        modalWorkflowOversightEffectiveCache.set(key, {
+          level: isPlannerOversightLevelValue(raw) ? raw : undefined,
+          sessionAdvisorEnabled: payload.effective?.plannerOverseerAdvisorEnabled === true,
+        });
       })
       .catch(() => {
-        modalWorkflowOversightEffectiveCache.set(key, undefined);
+        modalWorkflowOversightEffectiveCache.set(key, { level: undefined, sessionAdvisorEnabled: false });
       })
       .finally(() => {
         modalWorkflowOversightInflight.delete(key);
@@ -474,7 +486,7 @@ async function loadModalWorkflowOversightEffectiveLevel(workflowId: string, proj
     modalWorkflowOversightInflight.set(key, inflight);
   }
   await inflight;
-  return modalWorkflowOversightEffectiveCache.get(key);
+  return modalWorkflowOversightEffectiveCache.get(key) ?? { level: undefined, sessionAdvisorEnabled: false };
 }
 
 const OVERSIGHT_LEVEL_LABEL: Record<PlannerOversightLevel, string> = {
@@ -608,7 +620,10 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
     case "cli":
       return { label: tr ? tr("taskDetail.provenance.cli", "CLI") : "CLI" };
     case "api":
-      return { label: tr ? tr("taskDetail.provenance.api", "API") : "API" };
+      return {
+        label: tr ? tr("taskDetail.provenance.api", "API") : "API",
+        parentTaskId: task.sourceParentTaskId,
+      };
     case "recovery":
       return { label: tr ? tr("taskDetail.provenance.recovery", "Recovery") : "Recovery" };
     case "unknown":
@@ -676,6 +691,17 @@ export function TaskDetailContent({
   const [detailLoading, setDetailLoading] = useState(() =>
     !("prompt" in task),
   );
+  const [verificationRequest, setVerificationRequest] = useState<TaskVerificationRequest | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void fetchTaskVerificationRequest(task.id, projectId)
+      .then((request) => { if (!cancelled) setVerificationRequest(request); })
+      .catch(() => { if (!cancelled) setVerificationRequest(null); });
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [task.id, projectId]);
 
   useEffect(() => {
     // If the prop already has a prompt field, it's a full TaskDetail
@@ -760,14 +786,8 @@ export function TaskDetailContent({
   const openPromptFile = useCallback(() => {
     fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
   }, [fileBrowser, workingTask.id]);
-  const canRetryTask =
-    task.status === "failed" ||
-    task.status === "stuck-killed" ||
-    task.status === "planning" ||
-    task.status === "needs-replan" ||
-    (task.stuckKillCount ?? 0) > 0 ||
-    (task.recoveryRetryCount ?? 0) > 0 ||
-    Boolean(task.nextRecoveryAt);
+  const hasPendingRecovery = hasPendingAutomaticRecovery(task);
+  const canRetryTask = isTaskManuallyRetryable(task);
   const nearDuplicateOf = isStringValue(workingTask.sourceMetadata?.nearDuplicateOf)
     ? workingTask.sourceMetadata.nearDuplicateOf
     : null;
@@ -779,6 +799,8 @@ export function TaskDetailContent({
    * The Archive/Keep decision banner is actionable only while the referenced canonical exists and is active.
    * Suppress the whole affordance for missing, archived, done, or soft-deleted canonicals so no empty banner shell or stale user-decision buttons remain.
    */
+  // FNXC:DuplicateIntake 2026-07-16-13:00: Issue #2225 reuses this linked banner for triage-marker Keep/Delete decisions.
+  const isTriageMarkerDuplicate = workingTask.sourceMetadata?.duplicateSource === "triage-marker";
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -806,14 +828,28 @@ export function TaskDetailContent({
    */
   const openUndoTask = findOpenUndoTaskForSource(tasks, workingTask.id);
 
-  // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
+  const previousInitialTabRef = useRef<TabId | undefined>(initialTab);
+  const taskColumnRef = useRef(task.column);
+  const taskDetailChatFirstRef = useRef(taskDetailChatFirst);
+  taskColumnRef.current = task.column;
+  taskDetailChatFirstRef.current = taskDetailChatFirst;
+
+  /*
+  FNXC:TaskDetailTabPersistence 2026-07-17-17:46:
+  FN-8256 / issue #2282 requires live column updates to preserve the modal's selected
+  tab, Activity segment, and retry expansion. This sync exists only for caller-driven
+  `initialTab` changes; dedicated guards below own column-invalidated PR and Summary tabs.
+  */
   useEffect(() => {
-    setActiveTab(resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
+    if (initialTab === previousInitialTabRef.current) return;
+
+    previousInitialTabRef.current = initialTab;
+    setActiveTab(resolveDefaultTab(initialTab, taskColumnRef.current, taskDetailChatFirstRef.current));
     setActivitySegment(resolveDefaultActivitySegment(initialTab));
     if (initialTab === "retries") {
       setRetriesExpanded(true);
     }
-  }, [initialTab, task.column, taskDetailChatFirst]);
+  }, [initialTab]);
 
   useEffect(() => {
     if (activeTab === "pr" && task.column !== "in-review") {
@@ -959,22 +995,26 @@ export function TaskDetailContent({
   fetch above); a known per-task override renders synchronously regardless.
   */
   const workflowIdForOversight = taskWorkflowBadge?.id;
-  const [workflowOversightState, setWorkflowOversightState] = useState<{ level: PlannerOversightLevel | undefined; resolved: boolean }>({ level: undefined, resolved: false });
+  const [workflowOversightState, setWorkflowOversightState] = useState<ModalWorkflowOversightSettings & { resolved: boolean }>({
+    level: undefined,
+    sessionAdvisorEnabled: false,
+    resolved: false,
+  });
   useEffect(() => {
     if (!workflowIdForOversight) {
-      setWorkflowOversightState({ level: undefined, resolved: true });
+      setWorkflowOversightState({ level: undefined, sessionAdvisorEnabled: false, resolved: true });
       return;
     }
     const workflowId = workflowIdForOversight;
     const key = getModalWorkflowOversightCacheKey(workflowId, projectId);
     if (modalWorkflowOversightEffectiveCache.has(key)) {
-      setWorkflowOversightState({ level: modalWorkflowOversightEffectiveCache.get(key), resolved: true });
+      setWorkflowOversightState({ ...modalWorkflowOversightEffectiveCache.get(key)!, resolved: true });
       return;
     }
-    setWorkflowOversightState({ level: undefined, resolved: false });
+    setWorkflowOversightState({ level: undefined, sessionAdvisorEnabled: false, resolved: false });
     let cancelled = false;
-    void loadModalWorkflowOversightEffectiveLevel(workflowId, projectId).then((level) => {
-      if (!cancelled) setWorkflowOversightState({ level, resolved: true });
+    void loadModalWorkflowOversightEffectiveLevel(workflowId, projectId).then((settings) => {
+      if (!cancelled) setWorkflowOversightState({ ...settings, resolved: true });
     });
     return () => {
       cancelled = true;
@@ -1030,6 +1070,12 @@ export function TaskDetailContent({
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
+  const [showFailureRetryPicker, setShowFailureRetryPicker] = useState(false);
+  const [failureRetryModels, setFailureRetryModels] = useState<ModelInfo[]>([]);
+  const [failureRetryNodes, setFailureRetryNodes] = useState<NodeInfo[]>([]);
+  const [failureRetryModel, setFailureRetryModel] = useState("");
+  const [failureRetryNodeId, setFailureRetryNodeId] = useState("");
+  const [isFailureRetrySaving, setIsFailureRetrySaving] = useState(false);
 
   useEffect(() => {
     if (activeTab !== "chat" || isEditing) {
@@ -1071,12 +1117,16 @@ export function TaskDetailContent({
   const [isSummarizingTitle, setIsSummarizingTitle] = useState(false);
   const [inlinePriority, setInlinePriority] = useState<TaskPriority>(normalizeTaskPriorityValue(task.priority));
   const [isSavingInlinePriority, setIsSavingInlinePriority] = useState(false);
+  const [showInlinePriorityPicker, setShowInlinePriorityPicker] = useState(false);
+  const inlinePriorityPickerRef = useRef<HTMLDivElement>(null);
   const [inlineExecutionMode, setInlineExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [isSavingInlineExecutionMode, setIsSavingInlineExecutionMode] = useState(false);
   const [inlineNoCommitsExpected, setInlineNoCommitsExpected] = useState<boolean>(task.noCommitsExpected === true);
   const [isSavingInlineNoCommitsExpected, setIsSavingInlineNoCommitsExpected] = useState(false);
   // FNXC:PlannerOversight 2026-07-04-17:00: FN-7517 quick oversight-level-change + nudge/stop/explain control state.
   const [isSavingOversightLevel, setIsSavingOversightLevel] = useState(false);
+  // FNXC:PlannerOversight 2026-07-14-18:11: saving state for per-task session advisor toggle.
+  const [isSavingSessionAdvisor, setIsSavingSessionAdvisor] = useState(false);
   const [isNudgingOverseer, setIsNudgingOverseer] = useState(false);
   const [isStoppingOverseer, setIsStoppingOverseer] = useState(false);
   const [overseerExplainOpen, setOverseerExplainOpen] = useState(false);
@@ -1470,7 +1520,7 @@ export function TaskDetailContent({
 
   // Close task-detail dropdown menus on outside click
   useEffect(() => {
-    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu || showOversightMenu;
+    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu || showOversightMenu || showInlinePriorityPicker;
     if (!hasOpenMenu) return;
 
     const handleClick = (e: MouseEvent) => {
@@ -1479,6 +1529,7 @@ export function TaskDetailContent({
       const inActionsMenu = actionsMenuRef.current?.contains(target);
       const inActivityViewMenu = activityViewMenuRef.current?.contains(target) || activityViewButtonRef.current?.contains(target);
       const inOversightMenu = oversightMenuRef.current?.contains(target) || oversightMenuButtonRef.current?.contains(target);
+      const inInlinePriorityPicker = inlinePriorityPickerRef.current?.contains(target);
 
       if (!inMoveMenu && showMoveMenu) {
         setShowMoveMenu(false);
@@ -1494,15 +1545,18 @@ export function TaskDetailContent({
       if (!inOversightMenu && showOversightMenu) {
         setShowOversightMenu(false);
       }
+      if (!inInlinePriorityPicker && showInlinePriorityPicker) {
+        setShowInlinePriorityPicker(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [showMoveMenu, showActionsMenu, showActivityViewMenu, showOversightMenu]);
+  }, [showMoveMenu, showActionsMenu, showActivityViewMenu, showOversightMenu, showInlinePriorityPicker]);
 
   // Close task-detail dropdown menus on Escape key (before modal Escape handler)
   useEffect(() => {
-    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu || showOversightMenu;
+    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu || showOversightMenu || showInlinePriorityPicker;
     if (!hasOpenMenu) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1518,12 +1572,15 @@ export function TaskDetailContent({
         if (showOversightMenu) {
           setShowOversightMenu(false);
         }
+        if (showInlinePriorityPicker) {
+          setShowInlinePriorityPicker(false);
+        }
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [showMoveMenu, showActionsMenu, showActivityViewMenu, showOversightMenu]);
+  }, [showMoveMenu, showActionsMenu, showActivityViewMenu, showOversightMenu, showInlinePriorityPicker]);
 
   // Reset spec edit state when task changes
   useEffect(() => {
@@ -2055,6 +2112,77 @@ export function TaskDetailContent({
   }, [task.id, projectId, inlineNoCommitsExpected, onTaskUpdated, addToast]);
 
   /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Per-task session advisor (LLM overseer agent). Unset inherits project and
+  workflow settings; explicit boolean forces on/off. Toggle writes an override
+  when it differs from the full inherited state and clears to null only when it
+  matches that same shared resolver result.
+  */
+  const projectSessionAdvisorDefault = settings?.sessionAdvisorEnabledByDefault === true;
+  const hasSessionAdvisorOverride = typeof workingTask.sessionAdvisorEnabled === "boolean";
+  /*
+  FNXC:PlannerOversight 2026-07-18-12:00:
+  FN-8247 requires the task-detail Eye/EyeOff affordances to use the shared
+  session-advisor precedence contract. The workflow legacy setting travels in
+  the existing workflow-settings fetch, so the UI cannot silently omit it or
+  retain a divergent local resolver.
+  */
+  const effectiveSessionAdvisorEnabled = resolveTaskSessionAdvisorEnabled(
+    workingTask,
+    settings,
+    workflowOversightState.sessionAdvisorEnabled,
+  ).enabled;
+
+  const inheritedSessionAdvisorEnabled = resolveTaskSessionAdvisorEnabled(
+    { sessionAdvisorEnabled: undefined },
+    settings,
+    workflowOversightState.sessionAdvisorEnabled,
+  ).enabled;
+
+  const handleSessionAdvisorToggle = useCallback(async () => {
+    setIsSavingSessionAdvisor(true);
+    try {
+      const nextEnabled = !effectiveSessionAdvisorEnabled;
+      const nextValue: boolean | null =
+        nextEnabled === inheritedSessionAdvisorEnabled ? null : nextEnabled;
+      const updatedTask = await updateTask(task.id, { sessionAdvisorEnabled: nextValue }, projectId);
+      onTaskUpdated?.(updatedTask);
+      addToast(
+        nextValue === null
+          ? t("taskDetail.sessionAdvisor.reset", "Session advisor follows inherited defaults ({{default}})", {
+              default: inheritedSessionAdvisorEnabled
+                ? t("tasks.sessionAdvisorDefaultOn", "on")
+                : t("tasks.sessionAdvisorDefaultOff", "off"),
+            })
+          : nextValue
+            ? t("taskDetail.sessionAdvisor.enabled", "Session advisor enabled for this task")
+            : t("taskDetail.sessionAdvisor.disabled", "Session advisor disabled for this task"),
+        "success",
+      );
+    } catch (err) {
+      addToast(
+        t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", {
+          id: task.id,
+          error: getErrorMessage(err),
+        }),
+        "error",
+      );
+    } finally {
+      if (mountedRef.current) {
+        setIsSavingSessionAdvisor(false);
+      }
+    }
+  }, [
+    effectiveSessionAdvisorEnabled,
+    inheritedSessionAdvisorEnabled,
+    task.id,
+    projectId,
+    onTaskUpdated,
+    addToast,
+    t,
+  ]);
+
+  /*
   FNXC:PlannerOversight 2026-07-04-17:00:
   FN-7517 quick oversight-level-change control. Writes the per-task override
   via the SAME `updateTask` scalar-override plumbing FN-7509/FN-7515 already
@@ -2119,11 +2247,15 @@ export function TaskDetailContent({
   FN-7517 stop-oversight control. Disables active oversight for this task
   (per-task override -> "off") — a lightweight `confirm(...)` guards it since
   it's a disabling action, matching the PROMPT's guidance for this control.
+
+  FNXC:PlannerOversight 2026-07-18-12:00:
+  FN-8247 extends Stop to disable the independently-enabled session advisor,
+  so confirmation and success copy must tell operators it stops both systems.
   */
   const handleStopOverseer = useCallback(async () => {
     const shouldStop = await confirm({
       title: t("taskDetail.oversight.stopTitle", "Stop planner oversight?"),
-      message: t("taskDetail.oversight.stopMessage", "This disables active planner oversight for this task (sets oversight level to Off)."),
+      message: t("taskDetail.oversight.stopMessage", "This disables planner oversight and the session advisor for this task."),
     });
     if (!shouldStop) return;
 
@@ -2133,7 +2265,7 @@ export function TaskDetailContent({
       if (result.task) {
         onTaskUpdated?.(result.task);
       }
-      addToast(t("taskDetail.oversight.stopped", "Planner oversight stopped for this task"), "success");
+      addToast(t("taskDetail.oversight.stopped", "Planner oversight and session advisor stopped for this task"), "success");
     } catch (err) {
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
     } finally {
@@ -2249,7 +2381,7 @@ export function TaskDetailContent({
     loadingMore: agentLogLoadingMore,
   } = useAgentLogs(
     task.id,
-    activeTab === "chat" && activitySegment === "raw-logs",
+    task.status === "failed" || (activeTab === "chat" && activitySegment === "raw-logs"),
     projectId,
   );
   useEffect(() => {
@@ -2533,7 +2665,50 @@ export function TaskDetailContent({
       .catch((err) => {
         addToast(getErrorMessage(err), "error");
       });
-  }, [task.id, onRetryTask, requestClose, addToast]);
+  }, [task.id, onRetryTask, requestClose, addToast, t]);
+
+  useEffect(() => {
+    if (!showFailureRetryPicker) return;
+    setFailureRetryModel(task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "");
+    setFailureRetryNodeId(task.nodeId ?? "");
+    void Promise.all([fetchModels(), fetchNodes()])
+      .then(([models, nodes]) => {
+        setFailureRetryModels(models.models);
+        setFailureRetryNodes(nodes);
+      })
+      .catch((err) => addToast(getErrorMessage(err) || t("taskDetail.error.retryOptionsFailed", "Failed to load retry options"), "error"));
+  }, [addToast, showFailureRetryPicker, t, task.id, task.modelId, task.modelProvider, task.nodeId]);
+
+  /*
+  FNXC:TaskFailedBanner 2026-07-15-16:30:
+  The failed-banner picker stages model/node choices and writes one per-task override
+  only when the operator confirms Retry. RoutingTab saves on selection, which would
+  leave an abandoned override when the operator closes this recovery picker.
+  */
+  const handleRetryWithOverride = useCallback(async () => {
+    if (!onRetryTask || isFailureRetrySaving) return;
+    const modelSelection = splitModelSelection(failureRetryModel);
+    const currentModel = task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "";
+    const hasModelChange = failureRetryModel !== currentModel;
+    const hasNodeChange = failureRetryNodeId !== (task.nodeId ?? "");
+    if (!hasModelChange && !hasNodeChange) return;
+
+    setIsFailureRetrySaving(true);
+    try {
+      const updatedTask = await updateTask(task.id, {
+        ...(hasModelChange ? { modelProvider: modelSelection?.provider ?? null, modelId: modelSelection?.modelId ?? null } : {}),
+        ...(hasNodeChange ? { nodeId: failureRetryNodeId || null } : {}),
+      }, projectId);
+      onTaskUpdated?.(updatedTask);
+      await onRetryTask(task.id);
+      addToast(t("taskDetail.retry.retried", "Retried {{id}}", { id: task.id }), "success");
+      requestClose();
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    } finally {
+      if (mountedRef.current) setIsFailureRetrySaving(false);
+    }
+  }, [addToast, failureRetryModel, failureRetryNodeId, isFailureRetrySaving, onRetryTask, onTaskUpdated, projectId, requestClose, t, task.id, task.modelId, task.modelProvider, task.nodeId]);
 
   /*
   FNXC:ReviewLaneBypass 2026-07-09-00:00:
@@ -2560,18 +2735,24 @@ export function TaskDetailContent({
       });
   }, [task.id, onBypassReview, onTaskUpdated, addToast, t]);
 
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
     if (!onResetTask) return;
-    if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
+    const shouldReset = await confirm({
+      title: t("taskDetail.reset.btn", "Reset"),
+      message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
+      confirmLabel: t("taskDetail.reset.btn", "Reset"),
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!shouldReset) return;
     requestClose();
-    onResetTask(task.id)
-      .then(() => {
-        addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
-      })
-      .catch((err) => {
-        addToast(getErrorMessage(err), "error");
-      });
-  }, [task.id, onResetTask, requestClose, addToast]);
+    try {
+      await onResetTask(task.id);
+      addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [task.id, onResetTask, requestClose, addToast, confirm, t]);
 
   const handleDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
@@ -2617,6 +2798,30 @@ export function TaskDetailContent({
       addToast(getErrorMessage(err), "error");
     }
   }, [onArchiveTask, confirm, task.id, nearDuplicateOf, addToast, requestClose]);
+
+  /*
+   * FNXC:DuplicateIntake 2026-07-16-14:00:
+   * Issue #2225 requires triage-marker duplicates to offer a real Keep/Delete decision.
+   * Unlike the ordinary near-duplicate Archive action, Delete calls the existing soft-delete
+   * API and clears incoming lineage references so the confirmed duplicate is actually removed.
+   */
+  const handleDeleteTriageDuplicate = useCallback(async () => {
+    const confirmed = await confirm({
+      title: t("taskDetail.nearDuplicate.deleteTitle", "Delete duplicate task"),
+      message: t("taskDetail.nearDuplicate.deleteMessage", "Delete {{id}} as a duplicate of {{duplicateOf}}?", { id: task.id, duplicateOf: nearDuplicateOf }),
+      confirmLabel: t("taskDetail.nearDuplicate.deleteConfirm", "Delete"),
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await onDeleteTask(task.id, { removeLineageReferences: true });
+      addToast(t("taskDetail.nearDuplicate.deleted", "Deleted {{id}}", { id: task.id }), "success");
+      requestClose();
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [onDeleteTask, confirm, task.id, nearDuplicateOf, addToast, requestClose]);
 
   /*
   FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
@@ -2681,9 +2886,15 @@ export function TaskDetailContent({
   }, [onRevertTask, confirm, task.id, addToast, t]);
 
   const isTaskPaused = task.paused || task.userPaused;
-  // A legacy row carrying awaitingApprovalReason === "release-authorization" is an
-  // ordinary manual plan-approval hold (FN-7732) — no distinct treatment needed.
+  /*
+  FNXC:PlanReviewReplan 2026-07-15-11:09:
+  Plan approval holds always need a clear "why" in the detail surface. Legacy
+  release-authorization rows stay ordinary Approve/Reject (FN-7732). When the reason is
+  plan-review-replan-cap, explain that Plan Review exhausted automatic REVISE replans
+  without converging so the operator is not guessing why the task is parked.
+  */
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 
   const handleTogglePause = useCallback(async () => {
     try {
@@ -3237,6 +3448,27 @@ export function TaskDetailContent({
   const isOverseerHumanReviewTerminal = task.column === "in-review" && !effectiveAutoMerge;
   const overseerHumanControlSuppressed = Boolean(isTaskPaused) || isDoneOrArchivedColumn || isOverseerHumanReviewTerminal;
   const oversightIsOff = effectiveOversightLevel === "off";
+  /*
+  FNXC:PlannerOversight 2026-07-18-14:00:
+  FN-8263 keeps the task-detail eye available for a session advisor independently
+  of lifecycle-oversight resolution. Its applicability uses stable inheritance
+  inputs (or an explicit override), so toggling an enabled advisor off repaints
+  EyeOff instead of unmounting the trigger while a workflow request is pending.
+  */
+  const lifecycleOversightControlsResolved = hasTaskOversightOverride || workflowOversightResolved;
+  const sessionAdvisorMenuApplicable =
+    hasSessionAdvisorOverride ||
+    projectSessionAdvisorDefault ||
+    workflowOversightState.sessionAdvisorEnabled;
+  const showOversightMenuTrigger = lifecycleOversightControlsResolved || sessionAdvisorMenuApplicable;
+  /*
+  FNXC:PlannerOversight 2026-07-18-14:10:
+  FN-8263 suppresses the resolver's autonomous fallback while workflow
+  lifecycle oversight is unresolved. The eye still tracks the shared advisor
+  resolver immediately, rather than falsely staying lit after the advisor turns off.
+  */
+  const overseerTriggerOn =
+    (lifecycleOversightControlsResolved && !oversightIsOff) || effectiveSessionAdvisorEnabled;
   const canNudgeOverseer = overseerActive && !oversightIsOff && !overseerHumanControlSuppressed;
   const canExplainOverseer = overseerActive && !oversightIsOff;
   const showStopOverseer = !oversightIsOff;
@@ -3263,7 +3495,22 @@ export function TaskDetailContent({
   FNXC:TaskDetailPlannerChat 2026-07-01-00:00:
   Maximized Planner Chat reserves vertical room for task identity and the planner conversation, so failed-task chrome is not mounted in that state. Normal detail, Activity expansion, and collapsed Planner Chat still surface task failures immediately.
   */
-  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && task.error && !isPlannerChatExpanded);
+  /*
+  FNXC:TaskFailedBanner 2026-07-15-16:30:
+  Failed tasks must always expose recovery controls, including legacy/errorless failures,
+  without mounting an empty error-message shell. The default banner fetches agent logs
+  independently of the Raw Logs segment because FN-7995 persists bounded `tool_error`
+  detail there; the Raw-Logs-gated display list is not a diagnostic data source.
+  */
+  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && !hasPendingRecovery && !isPlannerChatExpanded);
+  const taskFailureReason = task.error?.trim() || t("taskDetail.error.genericFailureReason", "The task failed before it could complete.");
+  const taskFailureToolDetail = useMemo(() => {
+    const lastToolError = [...agentLogEntries].reverse().find((entry) => entry.type === "tool_error" && entry.detail?.trim());
+    return lastToolError?.detail?.trim().slice(0, 1024);
+  }, [agentLogEntries]);
+  const taskFailureHint = /workflow graph terminated|step-execute|no files? (were )?modified/i.test(`${task.error ?? ""}\n${taskFailureToolDetail ?? ""}`)
+    ? t("taskDetail.error.retryHint", "Consider retrying with a different model or node.")
+    : null;
 
   const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
     task,
@@ -3540,14 +3787,23 @@ export function TaskDetailContent({
     firstMenuItem?.focus();
   }, [showMoveMenu]);
 
-  // FNXC:PlannerOversight 2026-07-04-00:00: FN-7562 — auto-focus the first actionable button menuitem, never the native oversight-level <select>; focusing the <select> surfaced its OS picker as a second menu overlapping the custom oversight popover on mobile.
+  /*
+  FNXC:PlannerOversight 2026-07-17-16:35:
+  FN-8245 schedules oversight-menu autofocus after the opening commit, matching the
+  sibling activity-view menu. The first actionable button (never the native level
+  select) must receive focus at both breakpoints; synchronously focusing in the
+  effect could lose the focus race while concurrent dashboard rendering settled.
+  */
   useEffect(() => {
     if (!showOversightMenu) {
       return;
     }
 
-    const firstMenuItem = oversightMenuRef.current?.querySelector<HTMLButtonElement>("button.detail-oversight-menu-item");
-    firstMenuItem?.focus();
+    const frame = requestAnimationFrame(() => {
+      const firstMenuItem = oversightMenuRef.current?.querySelector<HTMLButtonElement>("button.detail-oversight-menu-item");
+      firstMenuItem?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [showOversightMenu]);
 
   useLayoutEffect(() => {
@@ -3963,55 +4219,102 @@ export function TaskDetailContent({
                     >
                       {nearDuplicateOf}
                     </button>
-                    {". "}{t("taskDetail.nearDuplicate.actions", "Choose Archive to move this task to archived, or Keep to continue with this task.")}
+                    {". "}{isTriageMarkerDuplicate
+                      ? t("taskDetail.nearDuplicate.triageActions", "Choose Delete to remove this duplicate, or Keep to continue anyway.")
+                      : t("taskDetail.nearDuplicate.actions", "Choose Archive to move this task to archived, or Keep to continue with this task.")}
                   </p>
                   <div className="detail-near-duplicate-banner__actions">
-                    {onArchiveTask && (
+                    {isTriageMarkerDuplicate ? (
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteTriageDuplicate()}>
+                        {t("taskDetail.nearDuplicate.deleteBtn", "Delete")}
+                      </button>
+                    ) : onArchiveTask ? (
                       <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleArchiveNearDuplicate()}>
                         {t("taskDetail.nearDuplicate.archiveBtn", "Archive")}
                       </button>
-                    )}
+                    ) : null}
                     <button type="button" className="btn btn-sm" onClick={() => void handleDismissNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.keepBtn", "Keep")}
                     </button>
                   </div>
                 </div>
               )}
+              {/*
+              FNXC:PlanReviewReplan 2026-07-15-11:09:
+              Always explain why this task is parked for plan approval before the operator
+              clicks Approve/Reject. Replan-cap escalations get a stronger, distinct reason;
+              ordinary require-all / workflow manual gates get a clear pre-execution gate note.
+              */}
+              {isAwaitingApproval && (
+                <div
+                  className={`detail-plan-approval-banner${isPlanReviewReplanCapApproval ? " detail-plan-approval-banner--replan-cap" : ""}`}
+                  role="status"
+                  aria-live="polite"
+                  data-testid="detail-plan-approval-banner"
+                  data-awaiting-approval-reason={task.awaitingApprovalReason ?? "manual"}
+                >
+                  <div className="detail-plan-approval-banner__header">
+                    <Info aria-hidden="true" />
+                    <span className="detail-plan-approval-banner__headline">
+                      {isPlanReviewReplanCapApproval
+                        ? t(
+                            "taskDetail.plan.replanCapHeadline",
+                            "Approval needed: Plan Review did not converge",
+                          )
+                        : t(
+                            "taskDetail.plan.approvalHeadline",
+                            "Approval needed before implementation",
+                          )}
+                    </span>
+                  </div>
+                  <p className="detail-plan-approval-banner__copy">
+                    {isPlanReviewReplanCapApproval
+                      ? t(
+                          "taskDetail.plan.replanCapCopy",
+                          "Plan Review requested automatic planning revisions repeatedly without approving a plan. Fusion stopped the replan loop so a human can decide. Approve the current PROMPT.md to move this task to Todo, or Reject Plan to discard it and regenerate.",
+                        )
+                      : t(
+                          "taskDetail.plan.approvalCopy",
+                          "This project's plan-approval settings require a human decision before work starts. Review the plan below, then Approve Plan to continue to Todo or Reject Plan to regenerate it.",
+                        )}
+                  </p>
+                </div>
+              )}
+              <TaskVerificationStatus request={verificationRequest} />
               <div className="detail-meta">
+                {/*
+                FNXC:QuickAddActionRow 2026-07-16-16:00:
+                FN-8194: task-detail metadata mirrors Quick Add's action order:
+                attach, GitHub tracking, Oversight, Priority, then Fast. The compact
+                controls delegate to the existing single file-input upload and
+                GitHub-tracking handlers so this row never forks persistence paths.
+                */}
                 <div className="detail-meta-inline-controls" data-testid="detail-meta-inline-controls">
-                  <label
-                    className={`card-priority-badge card-priority-badge--${inlinePriority} detail-priority-chip ${isSavingInlinePriority ? "detail-priority-chip--saving" : ""}`}
-                  >
-                    <span>{t("taskDetail.priority.label", "Priority:")}</span>
-                    <select
-                      className="detail-priority-select"
-                      value={inlinePriority}
-                      onChange={(event) => {
-                        void handleInlinePriorityChange(event.target.value);
-                      }}
-                      disabled={isSavingInlinePriority}
-                      aria-label={t("taskDetail.priority.ariaLabel", "Task priority")}
-                    >
-                      {TASK_PRIORITIES.map((priorityOption) => (
-                        <option key={priorityOption} value={priorityOption}>
-                          {priorityOption}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                   <button
                     type="button"
-                    className={`btn btn-sm detail-execution-mode-toggle ${inlineExecutionMode === "fast" ? "detail-execution-mode-toggle--fast" : ""} ${isSavingInlineExecutionMode ? "detail-execution-mode-toggle--saving" : ""}`}
-                    onClick={() => {
-                      void handleInlineExecutionModeToggle();
-                    }}
-                    disabled={isSavingInlineExecutionMode}
-                    aria-label={t("taskDetail.executionMode.ariaLabel", "Execution mode: {{mode}}", { mode: inlineExecutionMode })}
-                    aria-pressed={inlineExecutionMode === "fast"}
+                    className="btn btn-icon btn-sm"
+                    data-testid="detail-inline-attach"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    aria-label={t("taskDetail.attachments.attachInline", "Attach file")}
+                    title={t("taskDetail.attachments.attachInline", "Attach file")}
                   >
-                    <Zap aria-hidden="true" />
-                    <span>{inlineExecutionMode === "fast" ? t("taskDetail.executionMode.fast", "Fast") : t("taskDetail.executionMode.standard", "Standard")}</span>
+                    <Paperclip size={12} aria-hidden="true" />
                   </button>
+                  {canEditGithubTracking && !gitlabTrackedItem && (
+                    <button
+                      type="button"
+                      className={`btn btn-icon btn-sm ${githubTrackingEnabled ? "btn-primary" : ""}`}
+                      data-testid="detail-inline-github-toggle"
+                      onClick={() => void handleToggleGithubTracking()}
+                      disabled={isSavingGithubTracking}
+                      aria-pressed={githubTrackingEnabled}
+                      aria-label={t("taskDetail.githubTracking.toggleInline", "Toggle GitHub tracking")}
+                      title={t("taskDetail.githubTracking.toggleInline", "Toggle GitHub tracking")}
+                    >
+                      <ProviderIcon provider="github" size="sm" />
+                    </button>
+                  )}
                   {/*
                   FNXC:PlannerOversight 2026-07-04-17:00:
                   FN-7517 quick oversight-level-change control. Shows the current
@@ -4037,27 +4340,38 @@ export function TaskDetailContent({
                   stop / explain) render ONLY behind the "Oversight" overflow-menu
                   trigger on every surface (desktop and mobile); the former desktop
                   inline cluster was removed for a consistent, simpler control bar.
+
+                  FNXC:PlannerOversight 2026-07-16-16:00:
+                  FN-8194: use Eye for the Oversight overflow trigger so task detail
+                  matches Quick Add's planner-advisor affordance without changing
+                  the labeled menu's accessibility or behavior.
+
+                  FNXC:PlannerOversight 2026-07-17-12:00:
+                  FN-8209: the Oversight trigger is icon-only and uses `btn-icon`,
+                  so its Eye resolves through the shared `--icon-size-sm` sizing on
+                  mobile and stays visually aligned with Quick Add.
                   */}
-                  {(hasTaskOversightOverride || workflowOversightResolved) && (
+                  {showOversightMenuTrigger && (
                       <div className="detail-oversight-menu-dropdown" ref={oversightMenuRef}>
                         <button
                           type="button"
                           ref={oversightMenuButtonRef}
-                          className="btn btn-sm detail-oversight-menu-trigger"
+                          className="btn btn-icon btn-sm detail-oversight-menu-trigger"
                           data-testid="detail-oversight-menu-trigger"
                           onClick={handleOversightMenuButtonClick}
                           onKeyDown={handleOversightMenuButtonKeyDown}
                           aria-haspopup="menu"
                           aria-expanded={showOversightMenu}
                           aria-label={t("taskDetail.oversight.menuAriaLabel", "Oversight actions")}
+                          title={t("taskDetail.oversight.menuAriaLabel", "Oversight actions")}
                         >
-                          <MoreVertical aria-hidden="true" />
-                          <span>{t("taskDetail.oversight.menuLabel", "Oversight")}</span>
+                          {overseerTriggerOn ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
                         </button>
                         {showOversightMenu && (
                           <div className="detail-oversight-menu" role="menu" onKeyDown={handleOversightMenuKeyDown}>
-                            <label className="detail-oversight-menu-item detail-oversight-menu-item--select">
-                              <span>{t("taskDetail.oversight.label", "Oversight:")}</span>
+                            {lifecycleOversightControlsResolved && (
+                              <label className="detail-oversight-menu-item detail-oversight-menu-item--select">
+                                <span>{t("taskDetail.oversight.label", "Oversight:")}</span>
                               <select
                                 className="detail-oversight-select detail-oversight-menu-item"
                                 data-testid="detail-oversight-level-select"
@@ -4076,14 +4390,68 @@ export function TaskDetailContent({
                                     {OVERSIGHT_LEVEL_LABEL[levelOption]}
                                   </option>
                                 ))}
-                              </select>
-                            </label>
-                            {!oversightIsOff && (
+                                </select>
+                              </label>
+                            )}
+                            {/*
+                            FNXC:PlannerOversight 2026-07-14-18:11:
+                            Per-task session advisor toggle inside the Oversight menu.
+                            */}
+                            <button
+                              type="button"
+                              className={`detail-oversight-menu-item ${effectiveSessionAdvisorEnabled ? "detail-oversight-menu-item--active" : ""}`}
+                              role="menuitem"
+                              data-testid="detail-session-advisor-toggle"
+                              onClick={() => {
+                                void handleSessionAdvisorToggle();
+                              }}
+                              onKeyDown={handleOversightMenuKeyDown}
+                              disabled={isSavingSessionAdvisor}
+                              aria-pressed={effectiveSessionAdvisorEnabled}
+                              title={
+                                hasSessionAdvisorOverride
+                                  ? t(
+                                      "taskDetail.sessionAdvisor.overrideTitle",
+                                      "Session advisor {{state}} (task override; project default {{default}})",
+                                      {
+                                        state: effectiveSessionAdvisorEnabled
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                        default: projectSessionAdvisorDefault
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                      },
+                                    )
+                                  : t(
+                                      "taskDetail.sessionAdvisor.inheritTitle",
+                                      "Session advisor {{state}} (follows inherited defaults)",
+                                      {
+                                        state: effectiveSessionAdvisorEnabled
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                      },
+                                    )
+                              }
+                              aria-label={t("taskDetail.sessionAdvisor.ariaLabel", "Toggle session advisor for this task")}
+                            >
+                              {isSavingSessionAdvisor ? <Loader2 className="spin" aria-hidden="true" /> : effectiveSessionAdvisorEnabled ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+                              <span>
+                                {t("taskDetail.sessionAdvisor.label", "Session advisor: {{state}}", {
+                                  state: effectiveSessionAdvisorEnabled
+                                    ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                    : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                })}
+                                {hasSessionAdvisorOverride
+                                  ? ""
+                                  : t("taskDetail.sessionAdvisor.inheritSuffix", " (inherited)")}
+                              </span>
+                            </button>
+                            {lifecycleOversightControlsResolved && !oversightIsOff && (
                               <span className="detail-oversight-controls-label" data-testid="detail-oversight-controls-label">
                                 {t("taskDetail.oversight.controlsLabel", "Overseer controls")}
                               </span>
                             )}
-                            {!oversightIsOff && (
+                            {lifecycleOversightControlsResolved && !oversightIsOff && (
                               <button
                                 type="button"
                                 className={`detail-oversight-menu-item detail-overseer-nudge ${isNudgingOverseer ? "detail-overseer-nudge--saving" : ""}`}
@@ -4102,12 +4470,12 @@ export function TaskDetailContent({
                                 <span>{t("taskDetail.oversight.nudge", "Nudge")}</span>
                               </button>
                             )}
-                            {!oversightIsOff && !canNudgeOverseer && (
+                            {lifecycleOversightControlsResolved && !oversightIsOff && !canNudgeOverseer && (
                               <span className="detail-oversight-controls-helper" data-testid="detail-overseer-nudge-disabled-reason">
                                 {nudgeDisabledReason}
                               </span>
                             )}
-                            {showStopOverseer && (
+                            {lifecycleOversightControlsResolved && showStopOverseer && (
                               <button
                                 type="button"
                                 className={`detail-oversight-menu-item detail-overseer-stop ${isStoppingOverseer ? "detail-overseer-stop--saving" : ""}`}
@@ -4125,7 +4493,7 @@ export function TaskDetailContent({
                                 <span>{t("taskDetail.oversight.stop", "Stop")}</span>
                               </button>
                             )}
-                            {!oversightIsOff && (
+                            {lifecycleOversightControlsResolved && !oversightIsOff && (
                               <button
                                 type="button"
                                 className="detail-oversight-menu-item detail-overseer-explain"
@@ -4148,7 +4516,87 @@ export function TaskDetailContent({
                         )}
                       </div>
                     )}
+                  {(() => {
+                    const PriorityIcon = getPriorityIcon(inlinePriority);
+                    const priorityLabel = t("taskDetail.priority.triggerLabel", "Priority: {{priority}}", {
+                      priority: getPriorityLabel(inlinePriority),
+                    });
+                    return (
+                      <div className="detail-priority-picker" ref={inlinePriorityPickerRef}>
+                        {/*
+                        FNXC:QuickAddActionRow 2026-07-17-12:00:
+                        FN-8209: Task Detail mirrors Quick Add's icon-only flag
+                        priority control and picker, while retaining the existing
+                        `handleInlinePriorityChange` persistence path.
+                        */}
+                        <button
+                          type="button"
+                          className="btn btn-icon btn-sm"
+                          data-testid="detail-priority-trigger"
+                          onClick={() => setShowInlinePriorityPicker((isOpen) => !isOpen)}
+                          disabled={isSavingInlinePriority}
+                          aria-haspopup="menu"
+                          aria-expanded={showInlinePriorityPicker}
+                          aria-label={priorityLabel}
+                          title={priorityLabel}
+                        >
+                          <PriorityIcon size={14} aria-hidden="true" style={{ color: getPriorityColorVar(inlinePriority) }} />
+                        </button>
+                        {showInlinePriorityPicker && (
+                          <div className="detail-priority-picker-dropdown priority-picker-dropdown" role="menu">
+                            <div className="detail-priority-picker-heading">{t("tasks.selectPriority", "Select priority")}</div>
+                            {TASK_PRIORITIES.map((priorityOption) => {
+                              const OptionPriorityIcon = getPriorityIcon(priorityOption);
+                              return (
+                                <button
+                                  key={priorityOption}
+                                  type="button"
+                                  className={`detail-priority-picker-option${inlinePriority === priorityOption ? " selected" : ""}`}
+                                  data-testid={`detail-priority-option-${priorityOption}`}
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setShowInlinePriorityPicker(false);
+                                    void handleInlinePriorityChange(priorityOption);
+                                  }}
+                                  disabled={isSavingInlinePriority}
+                                >
+                                  <OptionPriorityIcon size={12} aria-hidden="true" style={{ color: getPriorityColorVar(priorityOption) }} />
+                                  <span>{getPriorityLabel(priorityOption)}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  <button
+                    type="button"
+                    className={`btn btn-icon btn-sm detail-execution-mode-toggle ${inlineExecutionMode === "fast" ? "btn-primary detail-execution-mode-toggle--fast" : ""} ${isSavingInlineExecutionMode ? "detail-execution-mode-toggle--saving" : ""}`}
+                    onClick={() => {
+                      void handleInlineExecutionModeToggle();
+                    }}
+                    disabled={isSavingInlineExecutionMode}
+                    aria-label={t("taskDetail.executionMode.ariaLabel", "Execution mode: {{mode}}", { mode: inlineExecutionMode })}
+                    title={t("taskDetail.executionMode.ariaLabel", "Execution mode: {{mode}}", { mode: inlineExecutionMode })}
+                    aria-pressed={inlineExecutionMode === "fast"}
+                  >
+                    <Zap size={14} aria-hidden="true" />
+                  </button>
                 </div>
+                {/*
+                FNXC:TaskDetailAttachments 2026-07-17-12:30:
+                FN-8232: keep the hidden file input mounted independently of activeTab.
+                The paperclip renders on every non-editing tab while task details default
+                to Activity or Summary; a Definition-only input made that control a no-op.
+                */}
+                <input
+                  className="detail-hidden-file-input"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUpload}
+                />
                 {overseerExplainOpen && (
                   <div className="detail-overseer-explain-panel" data-testid="detail-overseer-explain-panel" role="region" aria-live="polite">
                     {isLoadingOverseerExplain ? (
@@ -4333,11 +4781,76 @@ export function TaskDetailContent({
             </>
           )}
           {shouldShowTaskFailureAlert && (
-            <div className="detail-error-alert">
+            <div className="detail-error-alert" role="alert">
               <span className="detail-error-icon">⚠</span>
               <div className="detail-error-content">
                 <div className="detail-error-title">{t("taskDetail.error.taskFailed", "Task Failed")}</div>
-                <div className="detail-error-message">{task.error}</div>
+                <div className="detail-error-message">{taskFailureReason}</div>
+                {taskFailureToolDetail ? (
+                  <div className="detail-error-detail">
+                    {taskFailureToolDetail}
+                  </div>
+                ) : null}
+                {taskFailureHint ? <div className="detail-error-hint">{taskFailureHint}</div> : null}
+                {onRetryTask && canRetryTask ? (
+                  <div className="detail-error-actions">
+                    <button type="button" className="btn btn-sm" onClick={handleRetry}>
+                      {t("taskDetail.error.retry", "Retry")}
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
+                      {t("taskDetail.error.retryWithModel", "Retry with a different model/node")}
+                    </button>
+                  </div>
+                ) : null}
+                {showFailureRetryPicker && onRetryTask && canRetryTask ? (
+                  <div className="detail-error-retry-picker">
+                    <label htmlFor={`failure-retry-model-${task.id}`}>
+                      {t("taskDetail.error.retryModelLabel", "Executor model")}
+                    </label>
+                    <select
+                      id={`failure-retry-model-${task.id}`}
+                      className="select"
+                      value={failureRetryModel}
+                      disabled={isFailureRetrySaving}
+                      onChange={(event) => setFailureRetryModel(event.target.value)}
+                    >
+                      <option value="">{t("taskDetail.error.retryModelDefault", "Use project default")}</option>
+                      {failureRetryModels.map((model) => (
+                        <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                          {model.provider}/{model.name || model.id}
+                        </option>
+                      ))}
+                    </select>
+                    <label htmlFor={`failure-retry-node-${task.id}`}>
+                      {t("taskDetail.error.retryNodeLabel", "Execution node")}
+                    </label>
+                    <select
+                      id={`failure-retry-node-${task.id}`}
+                      className="select"
+                      value={failureRetryNodeId}
+                      disabled={isFailureRetrySaving}
+                      onChange={(event) => setFailureRetryNodeId(event.target.value)}
+                    >
+                      <option value="">{t("taskDetail.error.retryNodeDefault", "Use project default")}</option>
+                      {failureRetryNodes.map((node) => (
+                        <option key={node.id} value={node.id}>{node.name} ({node.type})</option>
+                      ))}
+                    </select>
+                    <div className="detail-error-actions">
+                      <button type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
+                        {t("common.cancel", "Cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void handleRetryWithOverride()}
+                        disabled={isFailureRetrySaving || (failureRetryModel === (task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "") && failureRetryNodeId === (task.nodeId ?? ""))}
+                      >
+                        {t("taskDetail.error.confirmRetry", "Apply and retry")}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -4815,10 +5328,24 @@ export function TaskDetailContent({
             />
           ) : activePluginTab ? (
             <div className="detail-section">
+              {/*
+              FNXC:Quality 2026-07-14-21:50:
+              Pass task context into plugin task-detail tabs so Quality QA (and future tabs)
+              can scope worktree runs, preview servers, and suggestions without URL scraping.
+              */}
               <PluginSlot
                 slotId="task-detail-tab"
                 projectId={projectId}
                 pluginIds={[activePluginTab.entry.pluginId]}
+                taskId={task.id}
+                worktree={typeof task.worktree === "string" ? task.worktree : undefined}
+                context={{
+                  taskId: task.id,
+                  projectId,
+                  worktree: typeof task.worktree === "string" ? task.worktree : undefined,
+                  title: task.title,
+                  modifiedFiles: Array.isArray(task.modifiedFiles) ? task.modifiedFiles : undefined,
+                }}
               />
             </div>
           ) : activeTab === "stats" ? (
@@ -4874,8 +5401,7 @@ export function TaskDetailContent({
             </div>
           ) : (
           <>
-          {/* FNXC:TaskDetailSummaryTab 2026-06-27-00:00: The former inline Definition-tab completion summary is intentionally removed to avoid duplicating the new done-only Summary tab; Definition keeps merge/retry/source metadata below. */}
-          <MergeDetails task={task} />
+          {/* FNXC:TaskDetailSummaryTab 2026-07-29-00:00: FN-8197 keeps Definition focused on plan, retry, and source metadata; completed merge metadata renders exclusively in the done-only Summary tab. */}
           {(retrySummary?.total ?? 0) > 0 && (
             <div className="detail-section detail-retries-section">
               <div className="detail-source-header">
@@ -5473,13 +5999,6 @@ export function TaskDetailContent({
             ) : (
               <div className="detail-empty-inline">{t("taskDetail.attachments.none", "(no attachments)")}</div>
             )}
-            <input
-              className="detail-hidden-file-input"
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleUpload}
-            />
             <button
               className="btn btn-sm"
               onClick={() => fileInputRef.current?.click()}

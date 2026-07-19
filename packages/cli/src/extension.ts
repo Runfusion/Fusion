@@ -1,9 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { Type, type TSchema } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import * as fusionCore from "@fusion/core";
 import {
-  TaskStore,
+  type TaskStore,
   createTaskStoreForBackend,
   drizzleSql,
   AgentStore,
@@ -23,13 +24,8 @@ import {
   type InsightStatus,
   type InsightRunStatus,
   type InsightRunTrigger,
-  type ResearchRun,
-  type ResearchRunStatus,
   type AgentCapability,
   type AgentUpdateInput,
-  RESEARCH_RUN_STATUSES,
-  isResearchExperimentalEnabled,
-  resolveResearchSettings,
   getTaskDuplicateLineage,
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
@@ -58,6 +54,7 @@ import {
   type FinalizePlanOverride,
   fetchWebContent,
   assertNoSecretPlaintext,
+  installBaselineArchiveWorktreeDisposer,
   emitGoalRetrievalAudit,
   createWorkflowAuthoringTools,
   workflowListParams,
@@ -70,12 +67,16 @@ import {
   workflowSettingsParams,
   traitListParams,
   isInReviewMissingWorktreeSessionStartFailure,
+  normalizeAgentLogPaging,
+  renderAgentLogEntries,
+  createAgentTask,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -232,25 +233,379 @@ interface CachedStoreEntry {
   readonly external?: boolean;
 }
 
-/** Cache stores per project root to avoid re-booting the backend on every tool call. */
-const storeCache = new Map<string, CachedStoreEntry>();
+/*
+FNXC:ExtensionStoreRegistry 2026-07-16-15:20:
+Agent-read tools loaded through Pi's additionalExtensionPaths can be evaluated as a different ESM module instance from the CLI host that called setHostTaskStore. Keep cache, inflight, and cooldown state in one process registry so fn_list_agents and fn_agent_show reuse the host pool instead of opening a second backend that can wedge on schema/pool contention for 30 seconds.
+*/
+interface ExtensionStoreState {
+  readonly cache: Map<string, CachedStoreEntry>;
+  readonly bootInflight: Map<string, Promise<TaskStore>>;
+  readonly bootFailureCooldown: Map<string, { untilMs: number; error: string }>;
+}
 
-async function getStore(cwd: string): Promise<TaskStore> {
+const extensionStoreStateKey = Symbol.for("@runfusion/fusion/extension-store-state");
+const extensionStoreGlobal = globalThis as typeof globalThis & { [key: symbol]: ExtensionStoreState | undefined };
+const extensionStoreState = extensionStoreGlobal[extensionStoreStateKey] ?? {
+  cache: new Map<string, CachedStoreEntry>(),
+  bootInflight: new Map<string, Promise<TaskStore>>(),
+  bootFailureCooldown: new Map<string, { untilMs: number; error: string }>(),
+};
+extensionStoreGlobal[extensionStoreStateKey] = extensionStoreState;
+
+/** Cache stores per project root to avoid re-booting the backend on every tool call. */
+const storeCache = extensionStoreState.cache;
+/*
+FNXC:MergeQueue 2026-07-15-11:08:
+Concurrent first-call fn_* tools must share one boot promise. Without this, two parallel cache misses each call createTaskStoreForBackend and contend on fusion:schema-applier advisory locks / pool setup — the pattern behind wedged fn_task_show during AI merge.
+*/
+const storeBootInflight = extensionStoreState.bootInflight;
+/*
+FNXC:MergeQueue 2026-07-15-11:20:
+After a hard boot failure, brief cooldown prevents stampede re-boots against a broken backend.
+Timeout alone does not set cooldown — the orphan inflight may still succeed and populate storeCache.
+*/
+const storeBootFailureCooldown = extensionStoreState.bootFailureCooldown;
+const BOOT_FAILURE_COOLDOWN_MS = 5_000;
+/*
+FNXC:MergeQueue 2026-07-15-11:08:
+Propagate the active tool AbortSignal into getStore without rewriting every execute body. registerTool installs the signal here before invoking the real execute.
+*/
+const extensionToolSignal = new AsyncLocalStorage<AbortSignal | undefined>();
+/** Hard ceiling for extension TaskStore boot (second backend open inside a live dashboard/engine process). */
+const EXTENSION_STORE_BOOT_TIMEOUT_MS = 30_000;
+/*
+FNXC:MergeQueue 2026-07-15-11:15:
+Default wall-clock budget for store/CRUD host-extension tools. Long-running tools use resolveExtensionToolTimeoutMs instead of this flat default (research wait, skills install, imports).
+*/
+const EXTENSION_TOOL_TIMEOUT_MS = 60_000;
+const SKILLS_INSTALL_TIMEOUT_MS = 300_000;
+const IMPORT_BROWSE_TIMEOUT_MS = 180_000;
+const WEB_FETCH_TIMEOUT_MS = 90_000;
+const TASK_PLAN_TIMEOUT_MS = 300_000;
+const EXPERIMENT_FINALIZE_TIMEOUT_MS = 180_000;
+const MISSION_BACKFILL_TIMEOUT_MS = 180_000;
+/*
+FNXC:MergeQueue 2026-07-15-11:40:
+Hard ceiling for import/browse batch size so agents cannot request unbounded GitHub/GitLab fan-out under the host extension.
+*/
+export const MAX_IMPORT_BROWSE_ITEMS = 50;
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof Error && error.name === "AbortError") ||
+    (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError")
+  );
+}
+
+/**
+ * FNXC:MergeQueue 2026-07-15-11:20:
+ * Per-tool outer budgets. Store tools stay at 60s; intentional multi-minute tools get higher ceilings.
+ * FNXC:MergeQueue 2026-07-15-11:28:
+ * Host extension no longer registers fn_research_* (engine injects createResearchTools when experimental research is on), so research wait budgets are not needed here.
+ *
+ * @internal Exported for unit tests.
+ */
+export function resolveExtensionToolTimeoutMs(toolName: string, _params?: unknown): number {
+  const name = toolName.trim();
+  if (name === "fn_skills_install") return SKILLS_INSTALL_TIMEOUT_MS;
+  if (name === "fn_task_plan") return TASK_PLAN_TIMEOUT_MS;
+  if (name === "fn_experiment_finalize") return EXPERIMENT_FINALIZE_TIMEOUT_MS;
+  if (name === "fn_mission_backfill_assertions") return MISSION_BACKFILL_TIMEOUT_MS;
+  if (name.startsWith("fn_task_import_") || name.startsWith("fn_task_browse_")) return IMPORT_BROWSE_TIMEOUT_MS;
+  if (name === "fn_web_fetch") return WEB_FETCH_TIMEOUT_MS;
+  return EXTENSION_TOOL_TIMEOUT_MS;
+}
+
+/** Clamp import/browse limits so host tools cannot request unbounded remote fan-out. */
+export function clampImportBrowseLimit(limit: number | undefined, defaultLimit = 30): number {
+  const raw = typeof limit === "number" && Number.isFinite(limit) ? Math.floor(limit) : defaultLimit;
+  return Math.min(MAX_IMPORT_BROWSE_ITEMS, Math.max(1, raw));
+}
+
+/**
+ * Race a promise against a wall-clock timeout and optional AbortSignal.
+ * Does not cancel the underlying work (Node has no structured cancel for store boot),
+ * but unblocks the tool caller so the agent session can fail closed instead of wedging forever.
+ *
+ * @internal Exported for unit tests of the hang-prevention budget.
+ */
+export async function raceWithTimeoutAndAbort<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  label: string,
+): Promise<T> {
+  if (signal?.aborted) {
+    throw new DOMException(`${label} aborted`, "AbortError");
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  let settled = false;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+        fn();
+      };
+      // Late settlement after timeout/abort is no-op'd; the .then handlers keep the promise from becoming unhandledRejection.
+      promise.then(
+        (value) => settle(() => resolve(value)),
+        (error) => settle(() => reject(error)),
+      );
+      if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+        timer = setTimeout(() => {
+          settle(() =>
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          );
+        }, timeoutMs);
+        if (typeof timer === "object" && timer && "unref" in timer && typeof timer.unref === "function") {
+          timer.unref();
+        }
+      }
+      if (signal) {
+        onAbort = () => settle(() => reject(new DOMException(`${label} aborted`, "AbortError")));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * FNXC:MergeQueue 2026-07-15-11:15:
+ * Wrap every extension tool execute with timeout + AbortSignal so a wedged store call cannot park the agent forever (FN-7956 fn_task_show hang).
+ * Errors become isError tool results so the model can continue rather than leaving the turn blocked on an open tool call.
+ * FNXC:MergeQueue 2026-07-15-11:20: Timeout budget is per-tool (resolveExtensionToolTimeoutMs) unless an explicit timeoutMs is passed.
+ * FNXC:MergeQueue 2026-07-15-11:50:
+ * On timeout, abort a linked AbortController so tools that honor signal (e.g. fn_skills_install npx) actually stop work instead of racing forever after the wrap rejects.
+ */
+export function wrapExtensionToolExecute<TArgs extends unknown[], TResult>(
+  toolName: string,
+  execute: (...args: TArgs) => TResult | Promise<TResult>,
+  timeoutMs?: number,
+): (...args: TArgs) => Promise<TResult | {
+  content: Array<{ type: "text"; text: string }>;
+  details: { error: string };
+  isError: true;
+}> {
+  return async (...args: TArgs) => {
+    // ExtensionAPI execute signature: (toolCallId, params, signal?, onUpdate?, ctx?)
+    const parentSignal = (args[2] instanceof AbortSignal ? args[2] : undefined) as AbortSignal | undefined;
+    const params = args[1];
+    const budgetMs =
+      timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : resolveExtensionToolTimeoutMs(toolName, params);
+
+    const controller = new AbortController();
+    const onParentAbort = (): void => {
+      controller.abort();
+    };
+    if (parentSignal?.aborted) {
+      controller.abort();
+    } else {
+      parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+    }
+
+    const invokeArgs = [...args] as unknown as unknown[];
+    while (invokeArgs.length < 2) invokeArgs.push(undefined);
+    if (invokeArgs.length === 2) {
+      invokeArgs.push(controller.signal);
+    } else {
+      invokeArgs[2] = controller.signal;
+    }
+
+    try {
+      return await extensionToolSignal.run(controller.signal, () =>
+        raceWithTimeoutAndAbort(
+          Promise.resolve(execute(...(invokeArgs as TArgs))),
+          budgetMs,
+          controller.signal,
+          toolName,
+        ),
+      );
+    } catch (error) {
+      // Ensure nested work observing the tool signal stops on budget expiry (not only on parent abort).
+      if (!controller.signal.aborted) {
+        controller.abort();
+      }
+      if (isAbortError(error)) {
+        console.warn(`[fusion-extension] ${toolName} aborted`);
+        return {
+          content: [{ type: "text" as const, text: `${toolName} aborted.` }],
+          details: { error: "aborted" },
+          isError: true as const,
+        };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (/timed out after \d+ms/.test(message)) {
+        console.warn(`[fusion-extension] ${toolName}: ${message}`);
+      } else {
+        console.error(`[fusion-extension] ${toolName} failed: ${message}`);
+      }
+      return {
+        content: [{ type: "text" as const, text: `${toolName} failed: ${message}` }],
+        details: { error: message },
+        isError: true as const,
+      };
+    } finally {
+      parentSignal?.removeEventListener("abort", onParentAbort);
+    }
+  };
+}
+
+/*
+FNXC:MergeQueue 2026-07-15-11:40:
+When dashboard/serve/daemon injects the live engine TaskStore via setHostTaskStore, getStore must never call createTaskStoreForBackend for that project root — dual-boot was the FN-7956 hang class (second pool + schema advisory lock). CLI one-shot sessions without a host store still boot a short-lived cache entry.
+*/
+let extensionStoreBootFactory: typeof createTaskStoreForBackend = createTaskStoreForBackend;
+
+async function getStore(
+  cwd: string,
+  signal?: AbortSignal,
+  bootTimeoutMs = EXTENSION_STORE_BOOT_TIMEOUT_MS,
+): Promise<TaskStore> {
   const projectRoot = resolveProjectRoot(cwd);
   const existing = storeCache.get(projectRoot);
   if (existing) return existing.store;
 
-  const boot = await createTaskStoreForBackend({ rootDir: projectRoot });
-  if (boot) {
-    storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
-    return boot.taskStore;
+  const cooldown = storeBootFailureCooldown.get(projectRoot);
+  if (cooldown && Date.now() < cooldown.untilMs) {
+    throw new Error(
+      `fn extension TaskStore boot recently failed (cooldown ${BOOT_FAILURE_COOLDOWN_MS}ms): ${cooldown.error}`,
+    );
   }
-  // Legacy SQLite opt-out (FUSION_NO_EMBEDDED_PG=1). createTaskStoreForBackend
-  // returns null only in that case; the store still needs an explicit init().
-  const store = new TaskStore(projectRoot);
-  await store.init();
-  storeCache.set(projectRoot, { store });
-  return store;
+
+  const effectiveSignal = signal ?? extensionToolSignal.getStore();
+
+  let inflight = storeBootInflight.get(projectRoot);
+  if (!inflight) {
+    /*
+    FNXC:PostgresFinalCutover 2026-07-14-17:20: Agent tools cache only the
+    PostgreSQL factory result; the removed SQLite opt-out is an explicit error.
+
+    FNXC:MergeQueue 2026-07-15-11:08:
+    First extension tool call without a host-injected store boots a TaskStore (CLI path).
+    Bound that boot and coalesce concurrent callers so a wedged boot cannot park every fn_* tool forever.
+
+    FNXC:MergeQueue 2026-07-15-11:20:
+    Boot failure sets a short cooldown to avoid stampede re-boots. Tool timeout does not cancel the orphan boot; on success it still populates storeCache for later calls.
+    */
+    inflight = (async () => {
+      try {
+        const boot = await extensionStoreBootFactory({ rootDir: projectRoot });
+        storeBootFailureCooldown.delete(projectRoot);
+        // Do not overwrite a host-injected external store that landed while we were booting.
+        const raced = storeCache.get(projectRoot);
+        if (raced?.external) {
+          await boot.shutdown().catch(() => undefined);
+          return raced.store;
+        }
+        installBaselineArchiveWorktreeDisposer(boot.taskStore, {rootDir: projectRoot, getSettings: () => boot.taskStore.getSettings()});
+        storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
+        return boot.taskStore;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        storeBootFailureCooldown.set(projectRoot, {
+          untilMs: Date.now() + BOOT_FAILURE_COOLDOWN_MS,
+          error: message,
+        });
+        throw error;
+      } finally {
+        storeBootInflight.delete(projectRoot);
+      }
+    })();
+    // Keep a handler attached so timed-out waiters cannot leave an unhandledRejection when boot fails late.
+    void inflight.catch(() => undefined);
+    storeBootInflight.set(projectRoot, inflight);
+  }
+
+  try {
+    return await raceWithTimeoutAndAbort(
+      inflight,
+      bootTimeoutMs,
+      effectiveSignal,
+      "fn extension TaskStore boot",
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/timed out after \d+ms/.test(message)) {
+      /*
+      FNXC:MergeQueue 2026-07-15-11:20:
+      Timeout unblocks the tool turn only — the orphan createTaskStoreForBackend continues. Log so operators do not assume the dual-store boot stopped.
+      */
+      console.warn(
+        `[fusion-extension] TaskStore boot still running after ${EXTENSION_STORE_BOOT_TIMEOUT_MS}ms ` +
+          `(projectRoot=${projectRoot}); orphan boot continues and may populate the cache later`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * FNXC:MergeQueue 2026-07-15-11:40:
+ * Publish the live engine/dashboard TaskStore into the host extension cache so in-process agent tools share one pool and never dual-boot embedded PostgreSQL.
+ * The entry is external: closeCachedStores / clearHostTaskStores will not shut it down — the host owns lifecycle.
+ */
+export function setHostTaskStore(projectRoot: string, store: TaskStore): void {
+  // FNXC:WorkflowLifecycle 2026-07-16-10:00: Install before caching an injected host store because getStore returns cached stores without a construction pass; this preserves executor-less archive cleanup during host startup.
+  installBaselineArchiveWorktreeDisposer(store, {rootDir: projectRoot, getSettings: () => store.getSettings()});
+  const canonical = resolveProjectRoot(projectRoot);
+  storeCache.set(canonical, { store, external: true });
+  storeBootInflight.delete(canonical);
+  storeBootFailureCooldown.delete(canonical);
+}
+
+/**
+ * Remove host-injected store entries without closing them (host owns lifecycle).
+ * Pass projectRoot to clear one project; omit to clear all external entries.
+ * FNXC:MergeQueue 2026-07-15-11:50: Full clear only drops external entries and their boot metadata — never wipe inflight/cooldown for non-host CLI boots that may still be active in the same process.
+ */
+export function clearHostTaskStores(projectRoot?: string): void {
+  if (projectRoot) {
+    const canonical = resolveProjectRoot(projectRoot);
+    const entry = storeCache.get(canonical);
+    if (entry?.external) storeCache.delete(canonical);
+    storeBootInflight.delete(canonical);
+    storeBootFailureCooldown.delete(canonical);
+    return;
+  }
+  for (const [key, entry] of [...storeCache.entries()]) {
+    if (!entry.external) continue;
+    storeCache.delete(key);
+    storeBootInflight.delete(key);
+    storeBootFailureCooldown.delete(key);
+  }
+}
+
+/** @internal Test seam: read cached store for a project root after host injection / boot. */
+export function __peekCachedStoreForTesting(projectRoot: string): TaskStore | undefined {
+  return storeCache.get(resolveProjectRoot(projectRoot))?.store;
+}
+
+/**
+ * @internal Test-only: clear inflight boot map and failure cooldown without closing cached stores.
+ */
+export function __clearExtensionStoreBootStateForTesting(): void {
+  storeBootInflight.clear();
+  storeBootFailureCooldown.clear();
+  extensionStoreBootFactory = createTaskStoreForBackend;
+}
+
+/** @internal Test-only: control cold-cache boot without starting embedded PostgreSQL. */
+export function __setExtensionStoreBootFactoryForTesting(factory?: typeof createTaskStoreForBackend): void {
+  extensionStoreBootFactory = factory ?? createTaskStoreForBackend;
+}
+
+/** @internal Test-only: exercise the same cache/inflight resolution seam with a bounded test budget. */
+export function __getStoreForTesting(cwd: string, bootTimeoutMs = EXTENSION_STORE_BOOT_TIMEOUT_MS): Promise<TaskStore> {
+  return getStore(cwd, undefined, bootTimeoutMs);
 }
 
 /**
@@ -258,9 +613,15 @@ async function getStore(cwd: string): Promise<TaskStore> {
  * one isolated PostgreSQL database with the agent tools without re-booting the
  * backend per tool call. The entry carries no shutdown hook; tests own the
  * injected store's lifecycle (the shared PG harness tears it down in afterAll).
+ * An optional shutdown owner supports lifecycle tests that must prove the host
+ * awaits an internally-owned factory result.
  */
-export function __setCachedStoreForTesting(projectRoot: string, store: TaskStore): void {
-  storeCache.set(projectRoot, { store, external: true });
+export function __setCachedStoreForTesting(
+  projectRoot: string,
+  store: TaskStore,
+  shutdown?: () => Promise<void>,
+): void {
+  storeCache.set(projectRoot, shutdown ? { store, shutdown } : { store, external: true });
 }
 
 /** @internal Exposed so tests and the extension shutdown hook can close cached stores deterministically; not a public CLI API contract. */
@@ -290,13 +651,18 @@ export async function closeCachedStores(): Promise<void> {
 function getFusionDir(cwd: string): string {
   return join(resolveProjectRoot(cwd), ".fusion");
 }
+function requireProjectLayer(store: TaskStore, consumer: string) {
+  const layer = store.getAsyncLayer();
+  if (!layer) throw new Error(`${consumer} requires the project PostgreSQL AsyncDataLayer`);
+  return layer;
+}
 /*
 FNXC:PostgresCutover 2026-07-04-00:00:
 Agent tools must construct AgentStore in backend mode so agent data lives in PostgreSQL, not the removed SQLite runtime (VAL-REMOVAL-005). The asyncLayer is borrowed from the project's cached TaskStore (same connection pool), mirroring the TaskStore backend injection. The returned store is NOT pre-initialized — callers keep their existing `await agentStore.init()` (idempotent mkdir in backend mode).
 */
 async function getAgentStore(cwd: string): Promise<AgentStore> {
   const projectStore = await getStore(cwd);
-  return new AgentStore({ rootDir: getFusionDir(cwd), asyncLayer: projectStore.getAsyncLayer() ?? undefined });
+  return new AgentStore({ rootDir: getFusionDir(cwd), asyncLayer: requireProjectLayer(projectStore, "CLI AgentStore") });
 }
 
 function emitSecretAudit(
@@ -507,88 +873,6 @@ export function formatTaskLine(t: Task): string {
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
 }
 
-async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean; code?: string; message?: string }> {
-  const settings = await store.getSettings();
-  if (!isResearchExperimentalEnabled(settings)) {
-    return { ok: false, code: "feature-disabled", message: "Research tools are disabled. Enable experimentalFeatures.researchView first." };
-  }
-
-  const resolved = resolveResearchSettings(settings);
-  if (!resolved.enabled) {
-    return { ok: false, code: "feature-disabled", message: "Research is disabled in settings." };
-  }
-
-  const backend = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider ?? "builtin";
-  const configured = backend === "builtin"
-    ? true
-    : backend === "searxng"
-        ? Boolean(settings.researchGlobalSearxngUrl)
-        : backend === "brave"
-          ? Boolean(settings.researchGlobalBraveApiKey)
-          : backend === "google"
-            ? Boolean(settings.researchGlobalGoogleSearchApiKey && settings.researchGlobalGoogleSearchCx)
-            : backend === "tavily"
-              ? Boolean(settings.researchGlobalTavilyApiKey)
-              : false;
-
-  if (!configured) {
-    return { ok: false, code: "missing-credentials", message: `Missing credentials for ${backend}. Add provider keys in Authentication and verify Research defaults.` };
-  }
-
-  return { ok: true };
-}
-
-const RESEARCH_RUN_TERMINAL_STATUSES = new Set<ResearchRunStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-  "retry_exhausted",
-]);
-
-function toResearchRunDetails(run: ResearchRun) {
-  return {
-    runId: run.id,
-    status: run.status,
-    query: run.query,
-    summary: run.results?.summary ?? null,
-    findings: run.results?.findings ?? [],
-    citations: run.results?.citations ?? [],
-    sourceCount: Array.isArray(run.sources) ? run.sources.length : 0,
-    error: run.error ?? null,
-    setup: null,
-  };
-}
-
-function isResearchRunTerminal(status: ResearchRunStatus): boolean {
-  return RESEARCH_RUN_TERMINAL_STATUSES.has(status);
-}
-
-async function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
-  if (ms <= 0) {
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new Error("Operation aborted"));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 interface GitHubIssueApiResult {
   number: number;
   title: string;
@@ -628,19 +912,6 @@ async function fetchGitHubIssuesViaGh(
   }
 }
 
-function buildGitHubIssueSource(owner: string, repo: string, issue: { number: number; html_url: string }) {
-  return {
-    sourceIssue: {
-      provider: "github" as const,
-      repository: `${owner}/${repo}`,
-      externalIssueId: String(issue.number),
-      issueNumber: issue.number,
-      url: issue.html_url,
-    },
-    sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
-  };
-}
-
 async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ enabled: true } | undefined> {
   const projectSettings = await store.getSettings();
   if (projectSettings.githubLinkImportedIssuesToTracking === true) {
@@ -658,20 +929,6 @@ async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ e
     globalSettings,
   );
   return resolvedTracking.enabled ? { enabled: true } : undefined;
-}
-
-function isIssueAlreadyImported(
-  task: Pick<Task, "description" | "sourceIssue">,
-  owner: string,
-  repo: string,
-  issueNumber: number,
-  sourceUrl: string,
-): boolean {
-  const sourceIssue = task.sourceIssue;
-  return task.description.includes(sourceUrl)
-    || (sourceIssue?.provider === "github"
-      && sourceIssue.repository === `${owner}/${repo}`
-      && sourceIssue.issueNumber === issueNumber);
 }
 
 async function fetchGitHubIssueViaGh(
@@ -787,6 +1044,23 @@ const workflowExtensionToolSpecs: Array<{
 // ── Extension entry point ──────────────────────────────────────────
 
 export default function kbExtension(pi: ExtensionAPI) {
+  /*
+  FNXC:MergeQueue 2026-07-15-11:15:
+  Intercept every registerTool so all fn_* executes share one timeout/abort budget.
+  Without this, only hand-wrapped tools fail closed; FN-7956 hung on an unwrapped secondary-store path during merge review.
+  */
+  const rawRegisterTool = pi.registerTool.bind(pi) as ExtensionAPI["registerTool"];
+  pi.registerTool = ((tool: Parameters<ExtensionAPI["registerTool"]>[0]) => {
+    if (!tool || typeof tool !== "object" || typeof (tool as { execute?: unknown }).execute !== "function") {
+      return rawRegisterTool(tool);
+    }
+    const original = tool as { name?: string; execute: (...args: unknown[]) => unknown };
+    return rawRegisterTool({
+      ...tool,
+      execute: wrapExtensionToolExecute(original.name ?? "fn_tool", original.execute as (...args: unknown[]) => unknown),
+    } as Parameters<ExtensionAPI["registerTool"]>[0]);
+  }) as ExtensionAPI["registerTool"];
+
   // Register GitHub tracking hook once per extension lifecycle so that
   // fn_task_create, fn_task_import_github*, fn_delegate_task, etc.
   // trigger tracking issue creation when settings enable it.
@@ -891,19 +1165,30 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
       Gate ephemeral task-worker callers behind the project `ephemeralAgentsCanCreateTasks` toggle (default true). Only runtime-managed agents are affected; humans/CLI/dashboard calls carry no ctx.agentId and pass through.
       */
-      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const fnCtx = ctx as typeof ctx & { agentId?: string; taskId?: string };
       const projectSettingsForGate = await store.getSettings();
-      if (
-        projectSettingsForGate.ephemeralAgentsCanCreateTasks === false &&
-        (await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId))
-      ) {
-        const error =
-          "Ephemeral task-worker agents are not allowed to create tasks (ephemeralAgentsCanCreateTasks is disabled for this project).";
-        return {
-          content: [{ type: "text", text: `ERROR: ${error}` }],
-          isError: true,
-          details: { error, rule: "ephemeral-agents-cannot-create-tasks", callerAgentId: fnCtx.agentId },
-        };
+      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId);
+      if (callerIsEphemeral) {
+        const policy = fusionCore.resolveEphemeralTaskCreationPolicy(projectSettingsForGate);
+        if (policy === "deny") {
+          const error = "Ephemeral task-worker agents are not allowed to create tasks (ephemeral agent task creation is denied for this project).";
+          return { content: [{ type: "text", text: `ERROR: ${error}` }], isError: true, details: { error, rule: "ephemeral-agents-cannot-create-tasks", callerAgentId: fnCtx.agentId } };
+        }
+        if (policy === "upon_validation") {
+          /*
+          FNXC:EphemeralAgentTaskCreation 2026-07-30-19:10:
+          Validation proposals must work for both durable backends. PostgreSQL uses
+          the scoped async layer; legacy SQLite uses the TaskStore database so an
+          ephemeral CLI caller is never denied merely because it is not backend-mode.
+          */
+          const layer = store.getAsyncLayer();
+          const messageStore = layer
+            ? new fusionCore.MessageStore(null, { asyncLayer: layer })
+            : new fusionCore.MessageStore(store.getDatabase());
+          const title = params.description.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) || "Follow-up task";
+          await messageStore.sendMessage({ fromId: fnCtx.agentId ?? "ephemeral-worker", fromType: "agent", toId: fusionCore.DASHBOARD_USER_ID, toType: "user", type: "agent-to-user", content: `Task proposal awaiting validation: ${title}`, metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), proposedTask: { title, description: params.description, priority: params.priority as TaskPriority | undefined, workflowId: params.workflow_id, dependencies: params.depends } } });
+          return { content: [{ type: "text", text: "Task proposal submitted to the operator for validation; no task was created." }], details: { proposed: true } };
+        }
       }
 
       const normalizedAgentId = normalizeNullableStringInput(params.agentId);
@@ -929,13 +1214,13 @@ export default function kbExtension(pi: ExtensionAPI) {
         );
         const workflowId = params.workflow_id?.trim() || undefined;
 
-        const task = await store.createTask({
+        const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description.trim(),
           dependencies: params.depends,
           assignedAgentId: normalizedAgentId === null ? undefined : normalizedAgentId,
           priority: params.priority as TaskPriority | undefined,
           ...(workflowId ? { workflowId } : {}),
-          source: { sourceType: "api" },
+          source: { sourceType: "api", sourceAgentId: fnCtx.agentId, sourceParentTaskId: fnCtx.taskId },
           githubTracking: resolvedTracking.enabled
             ? {
                 enabled: true,
@@ -944,7 +1229,7 @@ export default function kbExtension(pi: ExtensionAPI) {
                   : {}),
               }
             : undefined,
-        });
+        }, { rootDir: ctx.cwd, sourceAgentId: fnCtx.agentId, sourceTaskId: fnCtx.taskId });
 
         const label =
           task.description.length > 80
@@ -964,7 +1249,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             {
               type: "text",
               text:
-                `Created ${task.id}: ${label}${workflowId ? ` (workflow: ${workflowId})` : ""}\n` +
+                `${wasDuplicate ? "Linked existing" : "Created"} ${task.id}: ${label}${workflowId && !wasDuplicate ? ` (workflow: ${workflowId})` : ""}\n` +
                 `Column: ${task.column}\n` +
                 (task.dependencies.length
                   ? `Dependencies: ${task.dependencies.join(", ")}\n`
@@ -978,6 +1263,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           ],
           details: {
             taskId: task.id,
+            wasDuplicate,
             column: task.column,
             dependencies: task.dependencies,
             assignedAgentId: task.assignedAgentId,
@@ -1257,6 +1543,11 @@ export default function kbExtension(pi: ExtensionAPI) {
       id: Type.String({ description: "Task ID (e.g. FN-001)" }),
     }),
 
+    /*
+    FNXC:MergeQueue 2026-07-15-11:15:
+    Timeout/abort come from the extension-wide registerTool wrapper + getStore ALS signal.
+    Keep this body lean; do not re-wrap (double budgets hide the real failure).
+    */
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
       const task = await store.getTask(params.id);
@@ -1329,6 +1620,38 @@ export default function kbExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: lines.join("\n").trimEnd() }],
         details: { task },
+      };
+    },
+  });
+
+  // ── fn_task_logs_read ───────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_task_logs_read",
+    label: "fn: Read Task Logs",
+    description: "Read a task's full persisted agent log with pagination and optional type filtering.",
+    promptSnippet: "Read persisted agent logs for a Fusion task",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+      limit: Type.Optional(Type.Number({ description: "Maximum matching entries to return (default 100)." })),
+      offset: Type.Optional(Type.Number({ description: "Number of matching entries to skip from newest (default 0)." })),
+      type: Type.Optional(Type.Union([
+        Type.Literal("text"), Type.Literal("status"), Type.Literal("tool"),
+        Type.Literal("thinking"), Type.Literal("tool_result"), Type.Literal("tool_error"),
+      ], { description: "Only return entries of this agent-log type." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const { limit, offset } = normalizeAgentLogPaging(params.limit, params.offset);
+      const [entries, total] = await Promise.all([
+        store.getAgentLogs(params.id, { limit, offset, type: params.type }),
+        store.getAgentLogCount(params.id, { type: params.type }),
+      ]);
+      const filter = params.type ? `, type=${params.type}` : "";
+      const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
+      return {
+        content: [{ type: "text", text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }],
+        details: { taskId: params.id, total, limit, offset, type: params.type },
       };
     },
   });
@@ -1870,9 +2193,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Max issues to import (default: 30, max: 100)",
+          description: "Max issues to import (default: 30, max: 50)",
           minimum: 1,
-          maximum: 100,
+          maximum: 50,
         })
       ),
       labels: Type.Optional(
@@ -1884,7 +2207,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const [owner, repo] = params.ownerRepo.split("/");
-      const limit = params.limit ?? 30;
+      const limit = clampImportBrowseLimit(params.limit, 30);
       const labels = params.labels;
 
       const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels, signal });
@@ -1903,7 +2226,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       for (const issue of issues) {
         const sourceUrl = issue.html_url;
-        const alreadyImported = existingTasks.some((task) => isIssueAlreadyImported(task, owner, repo, issue.number, sourceUrl));
+        const alreadyImported = existingTasks.some((task) => dashboard.isGitHubIssueAlreadyImported(task, { owner, repo, issueNumber: issue.number, sourceUrl }));
         if (alreadyImported) {
           continue;
         }
@@ -1912,7 +2235,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const body = issue.body?.trim() || "(no description)";
         const description = `${body}\n\nSource: ${sourceUrl}`;
 
-        const source = buildGitHubIssueSource(owner, repo, issue);
+        const source = dashboard.buildGitHubIssueSource(owner, repo, issue);
         const task = await store.createTask({
           title: title || undefined,
           description,
@@ -1987,7 +2310,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const sourceUrl = issue.html_url;
 
       for (const task of existingTasks) {
-        if (isIssueAlreadyImported(task, owner, repo, issueNumber, sourceUrl)) {
+        if (dashboard.isGitHubIssueAlreadyImported(task, { owner, repo, issueNumber, sourceUrl })) {
           return {
             content: [
               {
@@ -2007,7 +2330,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(store);
 
-      const source = buildGitHubIssueSource(owner, repo, issue);
+      const source = dashboard.buildGitHubIssueSource(owner, repo, issue);
       const task = await store.createTask({
         title: title || undefined,
         description,
@@ -2062,9 +2385,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Max issues to show (default: 30, max: 100)",
+          description: "Max issues to show (default: 30, max: 50)",
           minimum: 1,
-          maximum: 100,
+          maximum: 50,
         })
       ),
       labels: Type.Optional(
@@ -2075,7 +2398,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const { owner, repo, limit = 30, labels } = params;
+      const { owner, repo, labels } = params;
+      const limit = clampImportBrowseLimit(params.limit, 30);
       const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels, signal });
 
       if (issues.length === 0) {
@@ -2157,10 +2481,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Browse GitLab Project Issues",
     description: "List GitLab project issues from the configured GitLab instance.",
     promptSnippet: "Browse GitLab project issues",
-    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const issues = await client.listProjectIssues(params.project, { limit: params.limit, labels: params.labels });
+      const issues = await client.listProjectIssues(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       return { content: [{ type: "text", text: issues.map((issue) => `#${issue.iid}: ${issue.title}\n${issue.webUrl}`).join("\n") || `No GitLab project issues found in ${params.project}.` }], details: { count: issues.length, issues } };
     },
   });
@@ -2170,10 +2494,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Import GitLab Project Issues",
     description: "Import GitLab project issues as Fusion tasks using configured GitLab HTTP API auth.",
     promptSnippet: "Import GitLab project issues",
-    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const issues = await client.listProjectIssues(params.project, { limit: params.limit, labels: params.labels });
+      const issues = await client.listProjectIssues(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "project_issue", params.project, issues);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab project issue tasks.` }], details: { createdTasks } };
     },
@@ -2184,10 +2508,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Browse GitLab Group Issues",
     description: "List GitLab group issues while preserving each issue's originating project identity.",
     promptSnippet: "Browse GitLab group issues",
-    parameters: Type.Object({ group: Type.String({ description: "GitLab group path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ group: Type.String({ description: "GitLab group path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const issues = await client.listGroupIssues(params.group, { limit: params.limit, labels: params.labels });
+      const issues = await client.listGroupIssues(params.group, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       return { content: [{ type: "text", text: issues.map((issue) => `#${issue.iid}: ${issue.projectPath ?? issue.projectId} — ${issue.title}\n${issue.webUrl}`).join("\n") || `No GitLab group issues found in ${params.group}.` }], details: { count: issues.length, issues } };
     },
   });
@@ -2197,10 +2521,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Import GitLab Group Issues",
     description: "Import GitLab group issues as Fusion tasks using each issue's originating project identity.",
     promptSnippet: "Import GitLab group issues",
-    parameters: Type.Object({ group: Type.String({ description: "GitLab group path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ group: Type.String({ description: "GitLab group path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const issues = await client.listGroupIssues(params.group, { limit: params.limit, labels: params.labels });
+      const issues = await client.listGroupIssues(params.group, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "group_issue", params.group, issues);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab group issue tasks.` }], details: { createdTasks } };
     },
@@ -2211,10 +2535,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Browse GitLab Merge Requests",
     description: "List GitLab project merge requests from the configured GitLab instance.",
     promptSnippet: "Browse GitLab merge requests",
-    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const mergeRequests = await client.listMergeRequests(params.project, { limit: params.limit, labels: params.labels });
+      const mergeRequests = await client.listMergeRequests(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       return { content: [{ type: "text", text: mergeRequests.map((mr) => `!${mr.iid}: ${mr.title}\n${mr.webUrl}`).join("\n") || `No GitLab merge requests found in ${params.project}.` }], details: { count: mergeRequests.length, mergeRequests } };
     },
   });
@@ -2224,10 +2548,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Import GitLab Merge Requests",
     description: "Import GitLab project merge requests as Fusion review tasks using configured GitLab HTTP API auth.",
     promptSnippet: "Import GitLab merge requests",
-    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })), labels: Type.Optional(Type.Array(Type.String())) }),
+    parameters: Type.Object({ project: Type.String({ description: "GitLab project path or numeric ID" }), limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })), labels: Type.Optional(Type.Array(Type.String())) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { client } = await createGitLabClient(ctx);
-      const mergeRequests = await client.listMergeRequests(params.project, { limit: params.limit, labels: params.labels });
+      const mergeRequests = await client.listMergeRequests(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "merge_request", params.project, mergeRequests);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab merge request tasks.` }], details: { createdTasks } };
     },
@@ -2397,8 +2721,8 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       if (decision.policy === "prompt") {
         
-        const cliLayer = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer ? null : store.getDatabase(), { asyncLayer: cliLayer });
+        const cliLayer = requireProjectLayer(store, "CLI secret approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
         const existing = await approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
         const request = existing && existing.status === "pending"
@@ -2433,265 +2757,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
-  // ── Research Tools ──────────────────────────────────────────────
-
-  pi.registerTool({
-    name: "fn_research_run",
-    label: "fn: Run Research",
-    description: "Cited-research pipeline: create a bounded search/fetch/synthesis run (not an autonomous experiment loop) and optionally wait for completion.",
-    parameters: Type.Object({
-      query: Type.String({ description: "Research query or question" }),
-      wait_for_completion: Type.Optional(Type.Boolean({ description: "Wait for the run to complete before returning (default: false)" })),
-      max_wait_ms: Type.Optional(Type.Number({ description: "Max wait time when wait_for_completion=true (default: 90000, capped by settings)" })),
-    }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: { runId: null, status: "unavailable", summary: null, findings: [], citations: [], error: availability.message, setup: { code: availability.code, message: availability.message } },
-        };
-      }
-
-      // FNXC:ResearchStore 2026-06-27-12:40:
-      // getResearchStore() returns ResearchStore (SQLite) or AsyncResearchStore (PG backend);
-      // await every call so research-run CRUD works in both backends (await is harmless on
-      // the sync store). AI research EXECUTION still requires starting the engine.
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.createRun({
-        query: params.query,
-        topic: params.query,
-        providerConfig: {},
-      });
-
-      if (!params.wait_for_completion) {
-        return {
-          content: [{ type: "text", text: `Created research run ${run.id}. Start the project engine to process pending runs, then use fn_research_get.` }],
-          details: toResearchRunDetails(run),
-        };
-      }
-
-      const maxWaitMs = Number.isFinite(params.max_wait_ms)
-        ? Math.max(0, params.max_wait_ms ?? 90_000)
-        : 90_000;
-      const pollIntervalMs = 2_000;
-      const deadline = Date.now() + maxWaitMs;
-      let latestRun = run;
-
-      while (Date.now() <= deadline) {
-        const current = await researchStore.getRun(run.id);
-        if (!current) {
-          break;
-        }
-
-        latestRun = current;
-        if (isResearchRunTerminal(current.status)) {
-          return {
-            content: [{ type: "text", text: `Research run ${current.id} is ${current.status}.` }],
-            details: toResearchRunDetails(current),
-          };
-        }
-
-        await sleepWithSignal(pollIntervalMs, signal);
-      }
-
-      return {
-        content: [{ type: "text", text: `Research run ${latestRun.id} is ${latestRun.status}.` }],
-        details: toResearchRunDetails(latestRun),
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_list",
-    label: "fn: List Research Runs",
-    description: "Cited-research pipeline: list recent search/fetch/synthesis runs (not experiment-loop sessions).",
-    parameters: Type.Object({
-      status: Type.Optional(StringEnum([...RESEARCH_RUN_STATUSES], { description: "Filter by run status" }) as unknown as TSchema),
-      limit: Type.Optional(Type.Number({ description: "Max runs to return (default: 10)" })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: { runs: [], setup: { code: availability.code, message: availability.message } },
-        };
-      }
-
-      const runs = await store.getResearchStore().listRuns({ status: params.status as ResearchRunStatus | undefined, limit: params.limit ?? 10 });
-      const text = runs.length ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n") : "No research runs found.";
-      return { content: [{ type: "text", text }], details: { runs: runs.map(toResearchRunDetails) } };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_get",
-    label: "fn: Get Research Run",
-    description: "Cited-research pipeline: get one run with structured findings and citations (not experiment-loop state).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const run = await store.getResearchStore().getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-      return { content: [{ type: "text", text: `Research run ${run.id} is ${run.status}.` }], details: toResearchRunDetails(run) };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_cancel",
-    label: "fn: Cancel Research Run",
-    description: "Cited-research pipeline: cancel an in-flight run; terminal runs return INVALID_TRANSITION (does not control experiment loops).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-
-      if (!["queued", "running", "cancelling", "retry_waiting"].includes(run.status)) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} cannot be cancelled from status ${run.status}.` }],
-          isError: true,
-          details: {
-            ...toResearchRunDetails(run),
-            error: "invalid transition",
-            setup: { code: "INVALID_TRANSITION", message: "Cancel is only available for queued/running/cancelling/retry_waiting runs." },
-          },
-        };
-      }
-
-      const updated = await researchStore.requestCancellation(params.id);
-      return {
-        content: [{ type: "text", text: `Requested cancellation for research run ${params.id} (status: ${updated.status}).` }],
-        details: toResearchRunDetails(updated),
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_retry",
-    label: "fn: Retry Research Run",
-    description: "Cited-research pipeline: retry a failed run when lifecycle marks it retryable (not an autonomous experiment loop retry).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-      const isRetryExhausted = run.status === "retry_exhausted" || run.lifecycle?.errorCode === "RETRY_EXHAUSTED";
-      if ((run.status !== "failed" && run.status !== "timed_out") || run.lifecycle?.retryable === false || isRetryExhausted) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} is not retryable from status ${run.status}.` }],
-          isError: true,
-          details: {
-            ...toResearchRunDetails(run),
-            error: "not retryable",
-            setup: { code: isRetryExhausted ? "RETRY_EXHAUSTED" : "INVALID_TRANSITION", message: "Retry is only available for failed/timed_out retryable runs." },
-          },
-        };
-      }
-
-      const retryRun = await researchStore.createRetryRun(params.id);
-      return {
-        content: [{ type: "text", text: `Created retry run ${retryRun.id} from ${params.id}.` }],
-        details: toResearchRunDetails(retryRun),
-      };
-    },
-  });
+  /*
+  FNXC:MergeQueue 2026-07-15-11:28:
+  Do not register fn_research_* on the host pi extension. These tools dual-boot a second TaskStore via getStore and can wedge agent turns with wait_for_completion polling (same hang class as FN-7956 fn_task_show). Bounded research remains available only when the engine injects createResearchTools into triage/executor/heartbeat sessions with experimentalFeatures.researchView enabled. Operators use `fn research` CLI / dashboard Research view.
+  */
 
   pi.registerTool({
     name: "fn_experiment_finalize",
@@ -3085,22 +3154,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       };
       let drafts: MissionInterviewDraft[] = [];
       if (includeDrafts) {
-        if (store.isBackendMode()) {
-          drafts = await store.getAsyncLayer()!.db.execute<MissionInterviewDraft>(
-            drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
-          );
-        } else {
-          drafts = store.getDatabase()
-            .prepare(
-              `SELECT id, title, status, updatedAt
-               FROM ai_sessions
-               WHERE type = 'mission_interview'
-                 AND status IN ('generating', 'awaiting_input', 'error', 'complete')
-                 AND COALESCE(archived, 0) = 0
-               ORDER BY updatedAt DESC`,
-            )
-            .all() as MissionInterviewDraft[];
-        }
+        drafts = await requireProjectLayer(store, "CLI mission drafts").db.execute<MissionInterviewDraft>(
+          drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
+        );
       }
 
       if (missions.length === 0 && drafts.length === 0) {
@@ -4144,8 +4200,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       try {
+        // FNXC:MissionToolParity 2026-07-29-12:00: linkFeatureToTask owns both feature and project-scoped task linkage; do not duplicate a route/tool-level slice update.
         const updated = await missionStore.linkFeatureToTask(params.featureId, params.taskId);
-        await store.updateTask(params.taskId, { sliceId: feature.sliceId });
 
         return {
           content: [
@@ -4492,8 +4548,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (policy.decision === "require-approval") {
-        const cliLayer2 = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer2 ? null : store.getDatabase(), { asyncLayer: cliLayer2 });
+        const cliLayer2 = requireProjectLayer(store, "CLI agent-create approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer2 });
         const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "create", summary: `Create agent ${params.name} (${params.role})`, resourceType: "agent", resourceId: "", context: { tool: "fn_agent_create", params } },
@@ -4872,8 +4928,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       if (policy.decision === "require-approval") {
-        const cliLayer3 = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer3 ? null : store.getDatabase(), { asyncLayer: cliLayer3 });
+        const cliLayer3 = requireProjectLayer(store, "CLI agent-delete approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer3 });
         const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "delete", summary: `Delete agent ${params.agent_id}`, resourceType: "agent", resourceId: params.agent_id, context: { tool: "fn_agent_delete", params } },
@@ -5395,7 +5451,11 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    /*
+    FNXC:MergeQueue 2026-07-15-11:40:
+    Kill npx on abort/timeout so outer tool budgets cannot leave orphan install processes after the agent turn fails closed.
+    */
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       // Validate source format
       if (!/^[^/]+\/[^/]+$/.test(params.source)) {
         return {
@@ -5420,7 +5480,14 @@ export default function kbExtension(pi: ExtensionAPI) {
       // Non-interactive mode (-y) targeting pi agent (-a pi)
       npxArgs.push("-y", "-a", "pi");
 
-      // Execute via spawn
+      if (signal?.aborted) {
+        return {
+          content: [{ type: "text", text: "fn_skills_install aborted." }],
+          isError: true,
+          details: { error: "aborted" },
+        };
+      }
+
       const child = spawn("npx", npxArgs, {
         cwd: resolveProjectRoot(ctx.cwd),
         stdio: "pipe",
@@ -5428,27 +5495,64 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       let stderr = "";
-
       child.stdout?.on("data", () => {});
-
       child.stderr?.on("data", (data) => {
         stderr += data.toString();
       });
 
-      const exitCode = await new Promise<number>((resolve) => {
-        child.on("exit", (code) => {
-          resolve(code ?? 1);
-        });
-        child.on("error", () => {
-          resolve(1);
-        });
-      });
+      /*
+      FNXC:MergeQueue 2026-07-15-11:50:
+      Prefer SIGTERM first; escalate to SIGKILL after a short grace so npx can flush, while still guaranteeing orphans do not survive tool timeout/abort.
+      */
+      let killEscalation: ReturnType<typeof setTimeout> | undefined;
+      const killChild = (force = false) => {
+        try {
+          child.kill(force ? "SIGKILL" : "SIGTERM");
+        } catch {
+          /* ignore */
+        }
+        if (!force && killEscalation === undefined && child.exitCode === null && child.signalCode === null) {
+          killEscalation = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* ignore */
+            }
+          }, 1_000);
+          if (typeof killEscalation === "object" && killEscalation && "unref" in killEscalation) {
+            killEscalation.unref();
+          }
+        }
+      };
 
+      const onAbort = () => killChild(false);
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      let exitCode: number;
       try {
-        // Always dispose the child process
-        child.kill();
-      } catch {
-        // Ignore errors during cleanup
+        exitCode = await new Promise<number>((resolve) => {
+          child.on("exit", (code) => {
+            resolve(code ?? 1);
+          });
+          child.on("error", () => {
+            resolve(1);
+          });
+        });
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        if (killEscalation !== undefined) clearTimeout(killEscalation);
+        // Process already exited on the success path; kill is a no-op. On hang/abort, ensure cleanup.
+        if (child.exitCode === null && child.signalCode === null) {
+          killChild(true);
+        }
+      }
+
+      if (signal?.aborted) {
+        return {
+          content: [{ type: "text", text: "fn_skills_install aborted." }],
+          isError: true,
+          details: { error: "aborted", stderr },
+        };
       }
 
       if (exitCode !== 0) {
@@ -5574,6 +5678,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       dashboardProcess = null;
       dashboardPort = null;
     }
-    void closeCachedStores();
+    /*
+    FNXC:PostgresCliLifecycle 2026-07-14-22:38:
+    The session shutdown handler's returned promise is the host's teardown barrier. Await cache cleanup so every factory-owned PostgreSQL pool or embedded process is stopped before the host considers the extension session closed.
+    */
+    await closeCachedStores();
   });
 }

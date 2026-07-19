@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskStore, type Task } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { GitLabSourceIssueReconciler } from "../gitlab-source-issue-reconciler.js";
 
 const { mockResolveGitLabClient, mockGetProjectIssue, mockGetMergeRequest } = vi.hoisted(() => ({
@@ -157,13 +154,14 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
     expect(store.logEntry as any).toHaveBeenCalledWith("FN-9", "Skipped GitLab source issue closed-at backfill", "GitLab token missing");
   });
 
-  it("excludes real archived TaskStore rows instead of mutating archiveDb entries", async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "kb-gitlab-backfill-archive-test-"));
-    const globalDir = mkdtempSync(join(tmpdir(), "kb-gitlab-backfill-archive-global-"));
-    const store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+  pgDescribe("archived TaskStore rows", () => {
+    it("excludes real archived TaskStore rows instead of mutating archiveDb entries", async () => {
+      // FNXC:PostgresCutover 2026-07-16-06:50: archived-task reconciliation must
+      // use the production async-store archive path after SQLite removal.
+      const harness = await createTaskStoreForTest();
+      const store = harness.store;
 
-    try {
-      await store.init();
+      try {
       const task = await store.createTask({ description: "Archived GitLab issue", sourceIssue: gitlabTask("template").sourceIssue });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
@@ -178,10 +176,9 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
       expect(result).toEqual({ scanned: 0, filled: 0, skipped: 0, errors: 0, hasMore: false });
       expect(mockGetProjectIssue).not.toHaveBeenCalled();
       expect(restored.sourceIssue?.closedAt).toBeUndefined();
-    } finally {
-      store.close();
-      await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      await rm(globalDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    }
+      } finally {
+        await harness.teardown();
+      }
+    });
   });
 });

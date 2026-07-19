@@ -142,6 +142,8 @@ async function loadCommandHandlers() {
   const { runAgentStop, runAgentStart } = await import("./commands/agent.js");
   const { runAgentImport } = await import("./commands/agent-import.js");
   const { runAgentExport } = await import("./commands/agent-export.js");
+  const { runOrgExport } = await import("./commands/org-export.js");
+  const { runOrgImport } = await import("./commands/org-import.js");
   const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
   const { runChatInteractive } = await import("./commands/chat.js");
   const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup, runPluginAvailable, runPluginSettings, runPluginRescan } = await import("./commands/plugin.js");
@@ -256,6 +258,8 @@ async function loadCommandHandlers() {
     runAgentStart,
     runAgentImport,
     runAgentExport,
+    runOrgExport,
+    runOrgImport,
     runMessageInbox,
     runMessageOutbox,
     runMessageSend,
@@ -407,6 +411,9 @@ PR:
   fn settings set worktrunk.onFailure <fail|fallback-native>
   fn settings export [opts]              Export settings to a JSON file
   fn settings import <file> [opts]       Import settings from a JSON file
+  fn org-export <file> [--project <name>] Export one project plus global settings as a secret-scrubbed org bundle
+  fn org-import <file> [--dry-run] [--collision-mode <skip|suffix>] [--project <name>]
+                                      Import a portable org bundle
   fn mcp list [--project <name>] [--json] List MCP servers by scope and effective resolution
   fn mcp add <name> --scope <global|project> --transport <stdio|sse|http> [opts]
                                       Add an MCP server using secret references for env/header values
@@ -775,6 +782,8 @@ async function main() {
     runAgentStart,
     runAgentImport,
     runAgentExport,
+    runOrgExport,
+    runOrgImport,
     runMessageInbox,
     runMessageOutbox,
     runMessageSend,
@@ -1662,6 +1671,21 @@ async function main() {
         break;
       }
 
+      case "org-export": {
+        const output = args[1];
+        if (!output) { console.error("Usage: fn org-export <file> [--project <name>]"); process.exit(1); }
+        await runOrgExport(output, { project: projectName });
+        break;
+      }
+      case "org-import": {
+        const file = args[1];
+        if (!file) { console.error("Usage: fn org-import <file> [--dry-run] [--collision-mode <skip|suffix>] [--project <name>]"); process.exit(1); }
+        const collisionMode = getFlagValue(args.slice(2), "--collision-mode");
+        if (collisionMode && collisionMode !== "skip" && collisionMode !== "suffix") { console.error("--collision-mode must be skip or suffix"); process.exit(1); }
+        await runOrgImport(file, { project: projectName, dryRun: args.includes("--dry-run"), collisionMode: collisionMode as "skip" | "suffix" | undefined });
+        break;
+      }
+
       case "settings": {
         const subcommand = args[1];
         if (!subcommand || subcommand === "show") {
@@ -2145,7 +2169,7 @@ async function main() {
             await runPluginAvailable();
             break;
           }
-          case "settings": {
+      case "settings": {
             const id = args[2];
             if (!id) { console.error("Usage: fn plugin settings <id> [key] [value]"); process.exit(1); }
             await runPluginSettings(id, args[3], args[4], { projectName });

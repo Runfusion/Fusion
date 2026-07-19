@@ -56,6 +56,39 @@ describe("fast mode workflow/runtime invariants", () => {
     mockedExistsSync.mockReturnValue(true);
   });
 
+  /*
+  FNXC:WorkflowSelection 2026-07-14-17:06:
+  The executor must pass its asynchronously resolved PostgreSQL workflow selection into the graph runner. Re-reading through the synchronous compatibility method would replace a custom graph with builtin:coding.
+  */
+  it("reuses the asynchronous PostgreSQL workflow selection inside the graph runner", async () => {
+    const selected = { workflowId: "WF-async-custom", stepIds: ["review"] };
+    const { store, executor } = makeExecutorForTask(task());
+    store.getTaskWorkflowSelection = vi.fn(() => undefined);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selected);
+    store.getWorkflowDefinition = vi.fn(async () => ({
+      id: selected.workflowId,
+      name: "Async custom",
+      ir: {
+        version: "v1",
+        name: "Async custom",
+        nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    }));
+    const run = vi.spyOn(WorkflowGraphTaskRunner.prototype, "run").mockImplementation(async function () {
+      expect((this as any).deps.store.getTaskWorkflowSelection()).toEqual(selected);
+      await expect((this as any).deps.store.getTaskWorkflowSelectionAsync()).resolves.toEqual(selected);
+      return { disposition: "completed", outcome: "success", visitedNodeIds: ["start"] };
+    });
+
+    await expect((executor as any).maybeExecuteWorkflowGraph(task())).resolves.toBe(true);
+
+    expect(store.getTaskWorkflowSelectionAsync).toHaveBeenCalledWith("FN-6226");
+    expect(store.getTaskWorkflowSelection).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockRestore();
+  });
+
   it("graph executor with a custom workflow skips custom pre-merge prompt/gate nodes in fast mode", async () => {
     const { store, executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });
@@ -376,6 +409,65 @@ describe("fast mode workflow/runtime invariants", () => {
       undefined,
       undefined,
     );
+  });
+
+
+  it("allows noCommitsExpected builtin:coding merge even when parsed implementation steps are empty", async () => {
+    const liveTask = task({
+      id: "FN-1165-NOOP",
+      executionMode: "fast",
+      enabledWorkflowSteps: [],
+      column: "in-progress",
+      steps: [],
+      noCommitsExpected: true,
+      branch: null,
+      worktree: null,
+      prompt: "# Task\n\n## Steps\n\n### Step 1: Decide\n- [ ] Record no-code decision",
+    });
+    const inReviewTask = { ...liveTask, column: "in-review" } as typeof liveTask;
+    const doneTask = {
+      ...liveTask,
+      column: "done",
+      mergeDetails: {
+        mergeConfirmed: true,
+        noOpMerge: true,
+        noOpReason: "no-commits-expected",
+      },
+    } as typeof liveTask;
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(liveTask);
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "builtin:coding", stepIds: [] }));
+    store.getWorkflowDefinition = vi.fn(async (id: string) => getBuiltinWorkflow(id));
+    store.moveTask
+      .mockResolvedValueOnce(inReviewTask)
+      .mockResolvedValueOnce(doneTask);
+    const executor = new TaskExecutor(store, "/tmp/test") as any;
+    const mergeRequester = vi.fn(async () => ({
+      task: inReviewTask,
+      merged: true,
+      noOp: true,
+      mergeConfirmed: true,
+      reason: "no-commits-expected",
+    }));
+    executor.setMergeRequester(mergeRequester);
+
+    const result = await executor.createAuthoritativeWorkflowPrimitives({ autoMerge: true }).requestMerge(
+      {
+        run: { runId: "FN-1165-NOOP:builtin:coding", taskId: "FN-1165-NOOP", workflowId: "builtin-stepwise-final-review-coding" },
+        node: { node: { id: "merge" } },
+      },
+      liveTask,
+    );
+
+    expect(result).toMatchObject({ outcome: "success", value: "merge-noop" });
+    expect(mergeRequester).toHaveBeenCalledWith("FN-1165-NOOP", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-1165-NOOP",
+      expect.stringContaining("implementation did not run"),
+      undefined,
+      undefined,
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
   });
 
   it("fast builtin:coding executes plain Steps-section headings from fast triage specs", async () => {

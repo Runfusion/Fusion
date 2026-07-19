@@ -44,6 +44,36 @@ describe("TaskDetailModal CSS contract", () => {
     expect(planBlock).toContain("max-width: 100%;");
   });
 
+  /*
+  FNXC:TaskDetailActivity 2026-07-18-07:25:
+  FN-8166 zeroed mobile `.detail-activity` padding-inline-end (equal insets from
+  `.detail-body`); overlay clearance lives only on first-row selectors. Keep the
+  contract aligned with TaskDetailModal.css so full-suite does not assert the
+  pre-8166 `var(--space-md)` residual inset.
+  */
+  it("FN-8154 keeps the mobile Feed inset narrow while clearing its overlay toggle from first rows", async () => {
+    const css = await loadAllAppCss();
+    const baseCss = await loadAllAppCssBaseOnly();
+    const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));
+    const firstRowSelectors = [
+      ".detail-activity:not(.detail-activity--interventions) > h4",
+      ".detail-activity:not(.detail-activity--interventions) > .detail-log-truncated",
+      ".detail-activity:not(.detail-activity--interventions) > .detail-log-loading",
+      ".detail-activity:not(.detail-activity--interventions) > .detail-log-empty",
+      ".detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child",
+    ];
+
+    expect(baseCss).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+    expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
+    expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));\n  }");
+    expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end: var(--space-md);\n  }");
+    expect(mobileCss).toContain("  .detail-activity--interventions {\n    padding-inline-end: 0;\n  }");
+    for (const selector of firstRowSelectors) {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(mobileCss, selector).toMatch(new RegExp(`${escapedSelector}(?:\\s*,\\s*[^{}]+)*\\s*\\{[^}]*padding-inline-end: calc\\(var\\(--space-2xl\\) \\+ var\\(--space-sm\\)\\);`));
+    }
+  });
+
   it("FN-7351/FN-7375 keeps the Activity tab dropdown portal-safe on narrow task-detail surfaces", async () => {
     const css = await loadAllAppCssBaseOnly();
     const fullCss = await loadAllAppCss();

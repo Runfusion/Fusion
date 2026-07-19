@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:10:
+VAL-REMOVAL-005 reliability fixtures use PostgreSQL AsyncDataLayer storage. Read
+run audits through getRunAuditEventsAsync so each assertion observes committed
+backend events rather than the removed synchronous SQLite read surface.
+*/
 import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 const canRun = hasGit && hasPg;
@@ -73,7 +78,7 @@ const canRun = hasGit && hasPg;
         [meta4.id]: "archived",
       });
 
-      const runAudits = fixture.store.getRunAuditEvents({ limit: 200 });
+      const runAudits = await fixture.store.getRunAuditEventsAsync({ limit: 200 });
       const decayAudits = runAudits.filter((event) => event.mutationType === "task:auto-rebound-paused-scope-decay");
       const metaResolvedAudits = runAudits.filter((event) => event.mutationType === "task:auto-archived-meta-resolved");
       expect(decayAudits.length).toBeGreaterThanOrEqual(1);

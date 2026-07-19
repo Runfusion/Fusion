@@ -31,14 +31,10 @@ function getArtifactDir(id: string, projectRoot: string): string {
 }
 
 function getStore(ctx: PluginContext) {
-  // FNXC:PostgresCutover 2026-07-04-00:00:
-  // Dual-mode: in backend mode pass the AsyncDataLayer so the store routes to
-  // Drizzle queries against the plugin-owned PG tables; legacy SQLite mode
-  // passes the sync db.
-  const backendMode = ctx.taskStore.isBackendMode();
-  const db = backendMode ? null : ctx.taskStore.getDatabase();
-  const asyncLayer = backendMode ? ctx.taskStore.getAsyncLayer() : null;
-  return createCliPressStore(db, asyncLayer);
+  const asyncLayer = ctx.taskStore.getAsyncLayer();
+  if (!asyncLayer) throw new Error("CLI Printing Press routes require the project PostgreSQL AsyncDataLayer");
+  /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Printing Press routes persist exclusively through plugin-owned PostgreSQL tables. */
+  return createCliPressStore(null, asyncLayer);
 }
 
 function toDraft(service: Service, spec: CliSpec | undefined, endpoints: ServiceDraft["endpoints"]): ServiceDraft {

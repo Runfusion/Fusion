@@ -7,6 +7,7 @@ import type { TaskDetail, TaskStep, WorkflowStepResult } from "@fusion/core";
 import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
 import { createMermaidCodeComponent, sharedRehypePlugins } from "./markdownPipeline";
 import { ProviderIcon } from "./ProviderIcon";
+import { MergeDetails } from "./MergeDetails";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { inferProviderIconKey } from "../utils/providerIconKey";
 import { buildTokenCostRows, formatCost, formatCount, totalCostForRows } from "../utils/taskTokenCost";
@@ -169,6 +170,14 @@ export function TaskSummaryTab({ task, pricingOverrides }: TaskSummaryTabProps) 
           </div>
         </section>
       ) : null}
+
+      {/*
+      FNXC:TaskDetailSummaryTab 2026-07-29-00:00:
+      FN-8197 / issue #2248 moves Merge Details from Definition into the done-only Summary tab. Both
+      surfaces apply only to completed tasks, and merge status, PR, and commit-message metadata belong
+      with completion data rather than the task plan.
+      */}
+      <MergeDetails task={task} />
 
       {hasAgentWork ? (
         <section className="task-summary-section task-summary-section--agent-work">

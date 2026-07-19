@@ -16,7 +16,7 @@
 
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { getTableColumns, sql } from "drizzle-orm";
 import {
   applySchemaBaseline,
   createAsyncDataLayer,
@@ -26,21 +26,31 @@ import {
   type ResolvedBackend,
 } from "@fusion/core";
 import { CePipelineStore } from "../sync/pipeline-store.js";
+import {
+  cePipelineLinks as localCePipelineLinks,
+  cePipelineState as localCePipelineState,
+  cePipelineSyncQueue as localCePipelineSyncQueue,
+} from "../sync/pg-schema.js";
 import { CeSessionStore, PlanHandoffClaimError } from "../session/session-store.js";
 import {
   PG_AVAILABLE,
+  PG_TEST_URL_BASE,
   pgDescribe,
 } from "@fusion/test-utils/pg-test-harness";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_USER = process.env.USER ?? "postgres";
+/*
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
+*/
 
 function adminExec(statement: string): void {
   // Single short psql DDL call (CREATE/DROP DATABASE can't run in a tx). This
   // is the same acceptable execSync use as core's data-layer.test.ts.
   execSync(
-    `psql -h localhost -p 5432 -U ${PG_USER} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }
@@ -118,6 +128,24 @@ afterAll(async () => {
     await ctx.close();
     ctx = null;
   }
+});
+
+it("keeps bundle-local CE Drizzle columns aligned with the canonical core schema", () => {
+  /*
+  FNXC:CompoundEngineeringSchema 2026-07-14-23:53:
+  This contract is deliberately outside the PostgreSQL-gated suite: schema drift must fail in every test environment even when the published-bundle shim prevents importing canonical core table objects at runtime.
+  */
+  const columnSignature = (table: Parameters<typeof getTableColumns>[0]) =>
+    Object.entries(getTableColumns(table)).map(([property, column]) => ({
+      property,
+      name: column.name,
+      dataType: column.dataType,
+      notNull: column.notNull,
+    })).sort((a, b) => a.name.localeCompare(b.name));
+
+  expect(columnSignature(localCePipelineLinks)).toEqual(columnSignature(postgresSchema.plugin.cePipelineLinks));
+  expect(columnSignature(localCePipelineState)).toEqual(columnSignature(postgresSchema.plugin.cePipelineState));
+  expect(columnSignature(localCePipelineSyncQueue)).toEqual(columnSignature(postgresSchema.plugin.cePipelineSyncQueue));
 });
 
 pgDescribe("CePipelineStore (PG backend mode)", () => {
@@ -220,6 +248,25 @@ pgDescribe("CePipelineStore (PG backend mode)", () => {
     expect(miss).toBeUndefined();
   });
 
+  it("isolates identical pipeline, task, and queue ids between two bound projects", async () => {
+    const projectA = new CePipelineStore(null, ctx!.layer);
+    const projectB = new CePipelineStore(null, ctx!.layerB);
+    await projectA.createLinkAsync({ id: "shared-link", taskId: "shared-task", cePipelineId: "shared-pipeline", ceStageId: "work" });
+    await projectB.createLinkAsync({ id: "shared-link", taskId: "shared-task", cePipelineId: "shared-pipeline", ceStageId: "review" });
+    await projectA.upsertStateAsync({ cePipelineId: "shared-pipeline", currentStage: "work" });
+    await projectB.upsertStateAsync({ cePipelineId: "shared-pipeline", currentStage: "review" });
+    await projectA.enqueueSyncAsync({ id: "shared-queue", cePipelineId: "shared-pipeline", taskId: "shared-task", reason: "task_moved" });
+    await projectB.enqueueSyncAsync({ id: "shared-queue", cePipelineId: "shared-pipeline", taskId: "shared-task", reason: "task_completed" });
+
+    expect((await projectA.findByTaskIdAsync("shared-task"))?.ceStageId).toBe("work");
+    expect((await projectB.findByTaskIdAsync("shared-task"))?.ceStageId).toBe("review");
+    expect((await projectA.getStateAsync("shared-pipeline"))?.currentStage).toBe("work");
+    expect((await projectB.getStateAsync("shared-pipeline"))?.currentStage).toBe("review");
+    await projectB.markSyncProcessedAsync("shared-queue");
+    expect((await projectA.listPendingSyncAsync()).some((entry) => entry.id === "shared-queue")).toBe(true);
+    expect((await projectB.listPendingSyncAsync()).some((entry) => entry.id === "shared-queue")).toBe(false);
+  });
+
   it("state upsert seeds then updates; listAllState sweeps all", async () => {
     const store = new CePipelineStore(null, ctx!.layer);
     const seeded = await store.upsertStateAsync({
@@ -246,6 +293,35 @@ pgDescribe("CePipelineStore (PG backend mode)", () => {
 
     const all = await store.listAllStateAsync();
     expect(all.some((s) => s.cePipelineId === "pipe-state-1")).toBe(true);
+  });
+
+  it("atomically preserves independently omitted state fields under concurrent upserts", async () => {
+    const store = new CePipelineStore(null, ctx!.layer);
+    await store.upsertStateAsync({
+      cePipelineId: "pipe-state-concurrent",
+      currentStage: "work",
+      status: "running",
+      lastArtifactPath: null,
+    });
+
+    await Promise.all([
+      store.upsertStateAsync({
+        cePipelineId: "pipe-state-concurrent",
+        currentStage: "review",
+        status: "awaiting_board",
+      }),
+      store.upsertStateAsync({
+        cePipelineId: "pipe-state-concurrent",
+        currentStage: "review",
+        lastArtifactPath: "/artifacts/concurrent-review.md",
+      }),
+    ]);
+
+    expect(await store.getStateAsync("pipe-state-concurrent")).toMatchObject({
+      currentStage: "review",
+      status: "awaiting_board",
+      lastArtifactPath: "/artifacts/concurrent-review.md",
+    });
   });
 
   it("transitionStateAsync advances status and stage", async () => {

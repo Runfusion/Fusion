@@ -234,7 +234,10 @@ describe("FN-5742 dual-observe merge seam", () => {
       getActiveMergingTask: vi.fn().mockReturnValue(null),
     } as any;
 
-    if ((ProjectEngine.prototype as any).isTransientMergeRetryExhausted.call({}, { mergeTransientRetryCount: 3 }, "socket hang up")) {
+    // FNXC:MergeReliability 2026-07-15-19:25 (FN-8004): derive the exhausted seed from the
+    // constant. Hardcoding 3 silently inverted this test's premise when the budget rose to 5.
+    const exhaustedCount = ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES;
+    if ((ProjectEngine.prototype as any).isTransientMergeRetryExhausted.call({}, { mergeTransientRetryCount: exhaustedCount }, "socket hang up")) {
       const record = store.getMergeRequestRecord("FN-MR");
       if (record.state === "running") {
         store.transitionMergeRequestState("FN-MR", "retrying", { attemptCount: record.attemptCount, lastError: "socket hang up" });

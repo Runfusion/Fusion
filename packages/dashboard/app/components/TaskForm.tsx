@@ -13,6 +13,7 @@ import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTra
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
+import { PendingImagePreviews } from "./PendingImagePreviews";
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
   if (status === "online") return t("taskForm.nodeStatusOnline", "Online");
@@ -1200,24 +1201,13 @@ export function TaskForm({
       {/* Attachments */}
       <div className="form-group">
         <label>{t("taskForm.attachmentsLabel", "Attachments")}</label>
-        {pendingImages.length > 0 && (
-          <div className="inline-create-previews">
-            {pendingImages.map((img, i) => (
-              <div key={img.previewUrl} className="inline-create-preview">
-                <img src={img.previewUrl} alt={img.file.name} />
-                <button
-                  type="button"
-                  className="inline-create-preview-remove"
-                  onClick={() => removeImage(i)}
-                  disabled={disabled}
-                  title={t("taskForm.removeImage", "Remove image")}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <PendingImagePreviews
+          images={pendingImages}
+          onRemove={removeImage}
+          disabled={disabled}
+          removeLabel={t("taskForm.removeImage", "Remove image")}
+          testIdPrefix="task-form-preview"
+        />
         <input
           ref={fileInputRef}
           type="file"

@@ -4,7 +4,9 @@ FN-6441 rescued this orphaned component test after standalone dashboard-app exec
 */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render as rtlRender, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { LIVE_DEMO_ARTIFACT_MIME_TYPE } from "@fusion/core";
 import { TaskReviewTab } from "../TaskReviewTab";
+import { useArtifacts } from "../../hooks/useArtifacts";
 import { makeTask } from "./TaskDetailModal.test-helpers";
 import { loadAllAppCss } from "../../test/cssFixture";
 
@@ -18,12 +20,17 @@ const apiMocks = vi.hoisted(() => ({
   addressPrFeedback: vi.fn(),
 }));
 
+vi.mock("../../hooks/useArtifacts", () => ({
+  useArtifacts: vi.fn(),
+}));
+
 vi.mock("../../api", () => ({
   fetchTaskReview: apiMocks.fetchTaskReview,
   refreshTaskReview: apiMocks.refreshTaskReview,
   reviseTaskReviewItems: apiMocks.reviseTaskReviewItems,
   updateTask: apiMocks.updateTask,
   addressPrFeedback: apiMocks.addressPrFeedback,
+  artifactMediaUrlWithToken: vi.fn((id: string) => `/api/artifacts/${id}/media`),
 }));
 
 async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
@@ -38,6 +45,26 @@ describe("TaskReviewTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    vi.mocked(useArtifacts).mockReturnValue({ artifacts: [], loading: false, error: null, refresh: vi.fn() });
+  });
+
+  it("renders videos and marked live-demo descriptors while hiding an empty review-artifact affordance", async () => {
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: { source: "reviewer-agent", items: [], addressing: [] }, automationStatus: null, emptyMessage: null });
+    const { rerender } = await renderWithAct(<TaskReviewTab task={makeTask({ reviewState: undefined })} addToast={vi.fn()} projectId="project-1" />);
+    expect(screen.queryByTestId("task-review-artifacts")).not.toBeInTheDocument();
+
+    vi.mocked(useArtifacts).mockReturnValue({
+      artifacts: [
+        { id: "video", type: "video", title: "Feature walkthrough", authorId: "agent", authorType: "agent", taskId: "FN-1", createdAt: "2026-07-17T00:00:00.000Z", updatedAt: "2026-07-17T00:00:00.000Z" },
+        { id: "document", type: "document", title: "Task notes", authorId: "agent", authorType: "agent", taskId: "FN-1", createdAt: "2026-07-17T00:00:00.000Z", updatedAt: "2026-07-17T00:00:00.000Z" },
+        { id: "live-demo", type: "document", mimeType: LIVE_DEMO_ARTIFACT_MIME_TYPE, title: "Live demo descriptor", authorId: "agent", authorType: "agent", taskId: "FN-1", createdAt: "2026-07-17T00:00:00.000Z", updatedAt: "2026-07-17T00:00:00.000Z" },
+      ], loading: false, error: null, refresh: vi.fn(),
+    });
+    rerender(<TaskReviewTab task={makeTask({ reviewState: undefined })} addToast={vi.fn()} projectId="project-1" />);
+    expect(await screen.findByTestId("task-review-artifacts")).toBeInTheDocument();
+    expect(screen.getByText("Feature walkthrough")).toBeInTheDocument();
+    expect(screen.queryByText("Task notes")).not.toBeInTheDocument();
+    expect(screen.getByText("Live demo descriptor")).toBeInTheDocument();
   });
 
   it("renders direct-mode empty state when no reviewer feedback exists", async () => {

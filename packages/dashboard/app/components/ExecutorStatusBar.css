@@ -186,6 +186,49 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
   line-height: 1;
 }
 
+/* Mobile mode is component-owned so short landscape phones hide labels and
+   expose tap targets under the same viewport contract. */
+.executor-status-bar--mobile .executor-status-bar__label {
+  display: none;
+}
+
+.executor-status-bar__stat-tooltip {
+  position: fixed;
+  z-index: var(--z-popover, 60);
+  transform: translate(-50%, calc(-100% - var(--space-sm)));
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: inherit;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.executor-status-bar__segment--stat {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+.executor-status-bar--mobile .executor-status-bar__segment--stat {
+  min-width: var(--executor-status-touch-size, calc(var(--space-lg) * 2 + var(--space-xs)));
+  min-height: var(--executor-status-touch-size, calc(var(--space-lg) * 2 + var(--space-xs)));
+  justify-content: center;
+  cursor: pointer;
+}
+
+.executor-status-bar__segment--stat:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 /* Max concurrent display */
 .executor-status-bar__max {
   font-family: var(--font-mono);
@@ -416,17 +459,10 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
     overflow: hidden;
   }
 
-  .executor-status-bar__label {
-    display: none;
-  }
-
   .executor-status-bar__project-path {
     max-width: min(26ch, 30vw);
   }
 
-  .background-tasks-indicator {
-    flex-shrink: 0;
-  }
 }
 
 /* Light theme support */

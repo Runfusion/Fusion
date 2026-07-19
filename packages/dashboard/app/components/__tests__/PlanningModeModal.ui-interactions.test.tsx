@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),
@@ -29,9 +30,7 @@ import userEvent from "@testing-library/user-event";
 import * as api from "../../api";
 import { PlanningModeModal } from "../PlanningModeModal";
 import { TaskDetailModal } from "../TaskDetailModal";
-import { useSessionLock } from "../../hooks/useSessionLock";
-import { getSessionTabId } from "../../utils/getSessionTabId";
-import type { MergeResult } from "@fusion/core";
+import type { MergeResult, PlanningQuestion } from "@fusion/core";
 import {
   mockStartPlanning,
   mockStartPlanningStreaming,
@@ -43,6 +42,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -87,6 +87,7 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
@@ -106,7 +107,28 @@ vi.mock("../../api", () => ({
   refineTask: (...args: any[]) => mockRefineTask(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
   fetchTaskEffectiveSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
-  fetchGlobalSettings: vi.fn().mockResolvedValue({}),
+  /*
+  FNXC:PlanningModeSettings 2026-07-18-07:20:
+  Same FN-8245 deterministic settle as planning-flow: Start Planning is gated on
+  clarificationSettingsLoading, so a microtask-resolved fetchGlobalSettings makes
+  fireEvent.click races no-op and leaves the suite red under full-suite load.
+  */
+  fetchGlobalSettings: vi.fn(() => {
+    const settled = {
+      then(onFulfilled: (settings: Record<string, never>) => unknown) {
+        onFulfilled({});
+        return settled;
+      },
+      catch() {
+        return settled;
+      },
+      finally(onFinally: () => unknown) {
+        onFinally();
+        return settled;
+      },
+    };
+    return settled;
+  }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
@@ -123,6 +145,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   useViewportMode: () => mockUseViewportMode(),
@@ -131,6 +155,21 @@ vi.mock("../../hooks/useViewportMode", () => ({
 vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: any[]) => mockUseMobileKeyboard(...args),
 }));
+
+const MARKDOWN_QUESTION: PlanningQuestion = {
+  id: "markdown-question",
+  type: "text",
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
 
 describe("PlanningModeModal", () => {
   const mockOnClose = vi.fn();
@@ -155,6 +194,7 @@ describe("PlanningModeModal", () => {
     // realistically in tests.
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);
@@ -219,6 +259,30 @@ describe("PlanningModeModal", () => {
       expect(screen.getByRole("button", { name: "Plan" })).toBeDefined();
       expect(container.querySelector(".detail-body")).not.toBeNull();
     });
+  });
+
+  it("renders markdown formatting in AI planning questions", async () => {
+    mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+      setTimeout(() => handlers.onQuestion?.(MARKDOWN_QUESTION), 0);
+      return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+    });
+
+    render(
+      <PlanningModeModal
+        isOpen={true}
+        onClose={mockOnClose}
+        onTaskCreated={mockOnTaskCreated}
+        onTasksCreated={vi.fn()}
+        tasks={mockTasks}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+      target: { value: "Format the planning question" },
+    });
+    fireEvent.click(screen.getByText("Start Planning"));
+
+    await waitFor(expectMarkdownQuestionFormatting);
   });
 
   describe("Loading state", () => {
@@ -456,6 +520,12 @@ describe("PlanningModeModal", () => {
     });
 
     it("shows loading state with appropriate text after submitting a response", async () => {
+      /*
+      FNXC:DashboardTests 2026-07-18-11:45:
+      Full Suite shard 3 failed when a 50ms setTimeout second-question race skipped the
+      loading paint under CI load. Gate the next SSE question on an explicit release so
+      `.planning-loading` is assertable before the follow-up question arrives.
+      */
       const secondQuestion: PlanningQuestion = {
         id: "q-requirements",
         type: "text",
@@ -464,6 +534,10 @@ describe("PlanningModeModal", () => {
       };
 
       let streamHandlers: any = null;
+      let releaseSecondQuestion: (() => void) | null = null;
+      const secondQuestionGate = new Promise<void>((resolve) => {
+        releaseSecondQuestion = resolve;
+      });
 
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamHandlers = handlers;
@@ -479,12 +553,12 @@ describe("PlanningModeModal", () => {
       });
 
       mockRespondToPlanning.mockImplementation(async () => {
-        // Simulate server broadcasting second question via the existing SSE connection
-        setTimeout(() => {
+        // Hold the follow-up question until the loading UI has been observed.
+        void secondQuestionGate.then(() => {
           if (streamHandlers) {
             streamHandlers.onQuestion?.(secondQuestion);
           }
-        }, 50);
+        });
         return { sessionId: "session-123", currentQuestion: null, summary: null };
       });
 
@@ -520,10 +594,14 @@ describe("PlanningModeModal", () => {
       // Verify thinking container is visible during loading
       expect(container.querySelector(".planning-thinking-container")).not.toBeNull();
 
+      await act(async () => {
+        releaseSecondQuestion?.();
+      });
+
       // Wait for second question to appear
       await waitFor(() => {
         expect(screen.getByText("What are the key requirements?")).toBeDefined();
-      }, { timeout: 3000 });
+      });
     });
   });
 
@@ -798,7 +876,6 @@ describe("PlanningModeModal", () => {
           title: "Existing session",
           preview: "An existing planning session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: new Date().toISOString(),
           archived: false,
         },
@@ -980,8 +1057,17 @@ describe("PlanningModeModal", () => {
     it("toggles description between plain textarea and formatted markdown preview", async () => {
       const { container } = await renderPlanningSummary("## Heading\n\n- item\n\n**bold**");
 
-      expect(container.querySelector(".planning-textarea")).not.toBeNull();
-      expect(container.querySelector(".planning-description-preview")).toBeNull();
+      expect(container.querySelector(".planning-description-preview")).not.toBeNull();
+      expect(container.querySelector(".planning-textarea")).toBeNull();
+      expect(screen.getByRole("heading", { level: 2, name: "Heading" })).toBeDefined();
+      expect(container.querySelector("strong")?.textContent).toBe("bold");
+
+      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
+
+      await waitFor(() => {
+        expect(container.querySelector(".planning-textarea")).not.toBeNull();
+        expect(container.querySelector(".planning-description-preview")).toBeNull();
+      });
 
       fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
 
@@ -989,12 +1075,6 @@ describe("PlanningModeModal", () => {
         expect(container.querySelector(".planning-description-preview")).not.toBeNull();
         expect(screen.getByRole("heading", { level: 2, name: "Heading" })).toBeDefined();
         expect(container.querySelector("strong")?.textContent).toBe("bold");
-      });
-
-      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
-
-      await waitFor(() => {
-        expect(container.querySelector(".planning-textarea")).not.toBeNull();
       });
     });
 
@@ -1005,6 +1085,7 @@ describe("PlanningModeModal", () => {
       mockViewport(viewport);
       const user = userEvent.setup();
       await renderPlanningSummary("Generated summary with existing words");
+      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
 
       const textarea = screen.getByLabelText("Description") as HTMLTextAreaElement;
       textarea.focus();
@@ -1030,6 +1111,11 @@ describe("PlanningModeModal", () => {
       const expandButton = screen.getByRole("button", { name: "Expand description" });
       expect(markdownToggle.closest("label")).toBeNull();
       expect(expandButton.closest("label")).toBeNull();
+
+      expect(container.querySelector(".planning-description-preview")).not.toBeNull();
+      expect(container.querySelector(".planning-textarea")).toBeNull();
+
+      fireEvent.click(markdownToggle);
 
       const textarea = container.querySelector<HTMLTextAreaElement>(".planning-textarea");
       expect(textarea).not.toBeNull();

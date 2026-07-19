@@ -37,7 +37,6 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
     useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
   };
 });
-
 vi.mock("../../sse-bus", () => ({
   subscribeSse: (...args: unknown[]) => mockSubscribeSse(...args),
 }));
@@ -153,4 +152,3 @@ describe("MissionManager taskPrefix clear", () => {
     expect(JSON.stringify(updates)).toContain('"taskPrefix":null');
   });
 });
-

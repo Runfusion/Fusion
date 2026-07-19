@@ -24,7 +24,9 @@ vi.mock("@fusion/core", async (importActual) => {
 
 function makeStore(overrides: Record<string, unknown> = {}) {
   return {
+    // FNXC:CliTests 2026-07-17-10:56: The real resolveGlobalBackupRoot now obtains the backup root from getGlobalSettingsDir, so this spread-importActual test must provide the same store method.
     getSettings: vi.fn(async () => ({ autoBackupDir: ".fusion/backups" })),
+    getGlobalSettingsDir: vi.fn(() => "/proj/.fusion"),
     fusionDir: "/proj/.fusion",
     close: vi.fn().mockResolvedValue(undefined),
     ...overrides,

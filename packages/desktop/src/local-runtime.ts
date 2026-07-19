@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { appendFileSync } from "node:fs";
 import type { Server } from "node:http";
+import type { AsyncDataLayer, LoadedPluginSchemaContract } from "@fusion/core";
 import type { AddressInfo } from "node:net";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
@@ -29,12 +30,29 @@ function strace(msg: string): void {
 export type RuntimeSource = "embedded-local" | "external-cli" | "none";
 export type RuntimeState = "stopped" | "starting" | "running" | "error";
 
+/*
+FNXC:MigrationHoldingPage 2026-07-17-13:20:
+The one-time SQLite→PostgreSQL migration runs inside createTaskStoreForBackend
+BEFORE the embedded server listens, so during it the desktop window only shows
+the static "Starting local Fusion runtime…" gate. Surface structured migration
+progress through the runtime status → IPC getRuntimeStatus →
+fusionShell.getState().localRuntime → DesktopLaunchGate poll, which renders it
+and suspends its 30s startup timeout while progress advances. `label` is the
+same formatMigrationProgress() string the CLI logs.
+*/
+export interface DesktopMigrationProgress {
+  active: boolean;
+  phase: string;
+  label: string;
+}
+
 export interface DesktopRuntimeStatus {
   source: RuntimeSource;
   state: RuntimeState;
   port?: number;
   baseUrl?: string;
   error?: string;
+  migration?: DesktopMigrationProgress;
 }
 
 /*
@@ -46,14 +64,13 @@ export interface DesktopRuntimeStatus {
  * members this wiring needs beyond the pre-existing init/watch/close surface.
  */
 type PluginStoreLike = { init(): Promise<void> };
-type PluginDatabaseLike = { runPluginSchemaInits(hooks: Array<{ pluginId: string; hook: unknown }>): Promise<void> };
-
 type TaskStoreLike = {
   init(): Promise<void>;
   watch(): Promise<void>;
   close(): void;
   getPluginStore(): PluginStoreLike;
-  getDatabase(): PluginDatabaseLike;
+  runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void>;
+  getAsyncLayer(): AsyncDataLayer;
 };
 
 type RuntimeCleanup = () => Promise<void> | void;
@@ -69,7 +86,7 @@ type RuntimeInstance = {
 export interface LocalRuntimeManagerOptions {
   rootDir: string;
   getExternalPort?: () => number | undefined;
-  createStore?: (rootDir: string) => Promise<TaskStoreLike>;
+  createStore?: (rootDir: string, onMigrationProgress?: (progress: DesktopMigrationProgress) => void) => Promise<TaskStoreLike>;
   createDashboardServer?: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
   /**
    * FNXC:DesktopRuntime 2026-07-05-00:00:
@@ -95,25 +112,32 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
+async function createStoreDefault(
+  rootDir: string,
+  onMigrationProgress?: (progress: DesktopMigrationProgress) => void,
+): Promise<TaskStoreLike> {
   // FNXC:BackendFlip 2026-06-26-14:40:
   // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
   // default-flip: the factory boots embedded PG by default when DATABASE_URL
-  // is unset, external PG when DATABASE_URL is set, and returns null only
-  // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy SQLite
-  // path). The backend shutdown handle is stashed on the returned object so
+  // is unset and external PG when DATABASE_URL is set. The backend shutdown handle is stashed on the returned object so
   // the runtime manager's stop path can release the pool / stop an embedded
   // cluster.
-  const { TaskStore, createTaskStoreForBackend } = await import("@fusion/core");
-  const backendBoot = await createTaskStoreForBackend({ rootDir });
-  if (backendBoot) {
-    const store = backendBoot.taskStore as unknown as TaskStoreLike;
-    // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
-    (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
-      backendBoot.shutdown;
-    return store;
-  }
-  return new TaskStore(rootDir) as TaskStoreLike;
+  const { createTaskStoreForBackend, formatMigrationProgress } = await import("@fusion/core");
+  const backendBoot = await createTaskStoreForBackend({
+    rootDir,
+    /* FNXC:MigrationHoldingPage 2026-07-17-13:20: forward the SQLite→PG migration stream so the launch gate can show live progress instead of a silent multi-minute "Starting…". */
+    onMigrationProgress: (event) =>
+      onMigrationProgress?.({ active: true, phase: event.phase, label: formatMigrationProgress(event) }),
+  });
+  /* FNXC:PostgresDesktopRuntime 2026-07-14-18:34: Desktop startup must fail visibly if PostgreSQL cannot boot; the removed opt-out must never construct an unbacked SQLite TaskStore. */
+  const store = backendBoot.taskStore as unknown as TaskStoreLike;
+  // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
+  (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
+    backendBoot.shutdown;
+  // FNXC:DesktopClosePolicy 2026-07-18-06:00: detach variant for the "leave PostgreSQL running" quit answer.
+  (store as TaskStoreLike & { __backendDetach?: () => Promise<void> }).__backendDetach =
+    backendBoot.detachKeepingEmbedded;
+  return store;
 }
 
 /*
@@ -174,7 +198,8 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
    * FNXC:DesktopRuntime 2026-06-20-23:39:
    * Embedded desktop local mode should be an executable Fusion node, not a dashboard-only shell. Start all registered project engines and pass the manager to the API server so project-scoped routes can start newly accessed engines.
    */
-  const centralCore = new CentralCore();
+  /* FNXC:PostgresDesktopLifecycle 2026-07-14-19:10: Desktop engines and the dashboard share the TaskStore's AsyncDataLayer; constructing a layerless CentralCore would boot a second pool and repeat schema initialization. */
+  const centralCore = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() });
   const engineManager = new ProjectEngineManager(centralCore);
   const providerSeeding: { dispose?: () => void } = {};
   const cleanup = async () => {
@@ -219,7 +244,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
     const authStorage = createFusionAuthStorage();
     // FNXC:DesktopRuntime 2026-07-03-07:00: a ModelRegistry is required for the /api/models endpoint;
     // without it the onboarding model picker shows "no models" even with a provider connected.
-    const modelRegistry = createFusionModelRegistry(authStorage);
+    const modelRegistry = await createFusionModelRegistry(authStorage);
     strace("createDashboardServer: seedDashboardProviders");
     const { authStorage: wrappedAuthStorage, dispose } = await seedDashboardProviders({
       store: store as never,
@@ -280,10 +305,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       strace("createDashboardServer: pluginLoader.loadAllPlugins");
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
       strace(`createDashboardServer: plugins loaded=${loaded} errors=${errors}`);
-      const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-      if (schemaHooks.length > 0) {
-        await store.getDatabase().runPluginSchemaInits(schemaHooks);
-      }
+      /* FNXC:DesktopPluginSchema 2026-07-14-23:31: PluginLoader runs backend-aware schema contracts before onLoad; embedded desktop must not replay them after loadAllPlugins. */
 
       ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
         if (!isBundledPluginId(pluginId)) {
@@ -306,6 +328,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
         }
       };
     } catch (error) {
+      console.error(`[plugins] Desktop plugin initialization failed: ${error instanceof Error ? error.message : String(error)}`);
       strace(
         `createDashboardServer: plugin subsystem init FAILED (non-fatal, dashboard still boots) — ${error instanceof Error ? error.stack : String(error)}`,
       );
@@ -370,7 +393,7 @@ export class LocalRuntimeManager {
   private status: DesktopRuntimeStatus = { source: "none", state: "stopped" };
 
   private readonly getExternalPort: () => number | undefined;
-  private readonly createStore: (rootDir: string) => Promise<TaskStoreLike>;
+  private readonly createStore: (rootDir: string, onMigrationProgress?: (progress: DesktopMigrationProgress) => void) => Promise<TaskStoreLike>;
   private readonly createDashboardServer: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
   private readonly startupRetries: number;
   private readonly startupRetryDelayMs: number;
@@ -494,7 +517,18 @@ export class LocalRuntimeManager {
 
     try {
       strace(`startEmbedded: BEGIN rootDir=${this.options.rootDir}`);
-      store = await this.createStore(this.options.rootDir);
+      /*
+      FNXC:MigrationHoldingPage 2026-07-17-13:20:
+      Publish live migration progress into the "starting" status so the renderer's
+      DesktopLaunchGate (polling getRuntimeStatus every 250ms) can show it. Only
+      overwrite while still starting — a late/stale event must never clobber a
+      terminal running/error status.
+      */
+      store = await this.createStore(this.options.rootDir, (progress) => {
+        if (this.status.state === "starting") {
+          this.status = { source: "embedded-local", state: "starting", migration: progress };
+        }
+      });
       strace("startEmbedded: store.init");
       await store.init();
       strace("startEmbedded: store.watch");
@@ -524,9 +558,11 @@ export class LocalRuntimeManager {
           server!.close(() => resolve());
         });
       }
-      await cleanup?.();
+      await Promise.resolve(cleanup?.()).catch(() => undefined);
       if (store) {
-        store.close();
+        const backendShutdown = (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
+        if (backendShutdown) await backendShutdown().catch(() => undefined);
+        else store.close();
       }
       this.runtime = null;
       strace(`startEmbedded: CATCH/ERROR ${error instanceof Error ? error.stack : String(error)}`);
@@ -534,12 +570,12 @@ export class LocalRuntimeManager {
     }
   }
 
-  async stopLocal(): Promise<DesktopRuntimeStatus> {
+  async stopLocal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.stopPromise) {
       return this.stopPromise;
     }
 
-    this.stopPromise = this.stopInternal();
+    this.stopPromise = this.stopInternal(options);
     try {
       return await this.stopPromise;
     } finally {
@@ -547,21 +583,47 @@ export class LocalRuntimeManager {
     }
   }
 
-  private async stopInternal(): Promise<DesktopRuntimeStatus> {
+  private async stopInternal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.runtime) {
       const runtime = this.runtime;
       this.runtime = null;
       await new Promise<void>((resolve) => runtime.server.close(() => resolve()));
-      await runtime.cleanup?.();
-      runtime.store.close();
+      let cleanupError: unknown;
+      try {
+        await runtime.cleanup?.();
+      } catch (error) {
+        cleanupError = error;
+      }
       // FNXC:RuntimeStartupWiring 2026-06-24-10:30:
       // Release the backend connection pool / embedded PG cluster if the store
       // was booted via the startup factory. store.close() already closes the
       // AsyncDataLayer pool; this adds embedded-cluster teardown. Best-effort.
-      const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
-      if (backendShutdown) {
-        await backendShutdown().catch(() => undefined);
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-05:00:
+      keepEmbeddedPostgres is the operator's Windows quit-prompt answer: close
+      the pools and the Fusion runtime but leave the embedded postmaster
+      running for other Fusion processes. Default (false) preserves the full
+      teardown for programmatic restarts and every non-prompted path.
+      */
+      const storeWithBackend = runtime.store as TaskStoreLike & {
+        __backendShutdown?: () => Promise<void>;
+        __backendDetach?: () => Promise<void>;
+      };
+      if (options.keepEmbeddedPostgres && storeWithBackend.__backendDetach) {
+        /*
+        FNXC:DesktopClosePolicy 2026-07-18-06:00:
+        Review finding: skipping the backend shutdown alone left the embedded
+        lifecycle's process shutdown hook armed, so Electron exit stopped the
+        postmaster despite the operator's "leave it running" answer. Detach
+        closes pools and DISARMS that hook without stopping the server.
+        */
+        await storeWithBackend.__backendDetach().catch(() => undefined);
+      } else if (storeWithBackend.__backendShutdown) {
+        await storeWithBackend.__backendShutdown().catch(() => undefined);
+      } else {
+        runtime.store.close();
       }
+      if (cleanupError) throw cleanupError;
       this.status = { source: "none", state: "stopped" };
       return this.status;
     }

@@ -8,6 +8,7 @@ import {
   getAvailableTemplates,
   getTemplatesForRole,
   FUSION_RUNTIME_SELF_AWARENESS,
+  TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
 } from "../agent-prompts.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BUILTIN_SEAM_PROMPTS, builtinSeamPrompt } from "../builtin-workflow-prompts.js";
@@ -33,10 +34,56 @@ describe("resolveAgentPrompt", () => {
     expect(result).toContain("task specification agent");
   });
 
+  it("renders triage heartbeat patrol guidance by default and when explicitly enabled", () => {
+    const defaultPrompt = resolveAgentPrompt("triage");
+    const enabledPrompt = resolveAgentPrompt("triage", undefined, { plannerHeartbeatPatrolEnabled: true });
+
+    for (const prompt of [defaultPrompt, enabledPrompt]) {
+      expect(prompt).toContain("Patrol for vague requests");
+      expect(prompt).toContain("review follow-ups that should become new tasks");
+      expect(prompt).not.toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+    }
+  });
+
+  it("renders no-patrol triage heartbeat instructions when disabled", () => {
+    const result = resolveAgentPrompt("triage", undefined, { plannerHeartbeatPatrolEnabled: false });
+
+    expect(result).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+    expect(result).not.toContain("Patrol for vague requests");
+    expect(result).not.toContain("review follow-ups that should become new tasks");
+  });
+
+  it("renders no-patrol concise triage heartbeat instructions when disabled", () => {
+    const result = resolveAgentPrompt("triage", {
+      roleAssignments: { triage: "concise-triage" },
+    }, { plannerHeartbeatPatrolEnabled: false });
+
+    expect(result).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+    expect(result).not.toContain("turn it into short, actionable task specs or follow-up tickets");
+  });
+
   it("returns the correct built-in prompt for reviewer when no config provided", () => {
     const result = resolveAgentPrompt("reviewer");
     expect(result).toBeTruthy();
     expect(result).toContain("independent code and plan reviewer");
+    // FNXC:PlanReviewReplan 2026-07-15-11:15: convergence guidance for Plan Review REVISE thrash.
+    expect(result).toContain("Spec / Plan Review Convergence");
+    expect(result).toContain("concrete PROMPT.md edit");
+  });
+
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new triage-side planner sections.
+  it("includes the front-loaded File Scope and Storage architecture sections in the triage prompt", () => {
+    const result = resolveAgentPrompt("triage");
+    expect(result).toContain("## File Scope — front-load surface enumeration");
+    expect(result).toContain("## Storage architecture");
+  });
+
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new reviewer-side spec convergence sections.
+  it("includes Spec Altitude and re-review convergence sections in the reviewer prompt", () => {
+    const result = resolveAgentPrompt("reviewer");
+    expect(result).toContain("## Spec Altitude");
+    expect(result).toContain("Converging on re-review");
+    expect(result).toContain("Severity ratchet at attempt 3+");
   });
 
   it("returns the correct built-in prompt for merger when no config provided", () => {
@@ -292,7 +339,9 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
-    expect(fastPrompt.length).toBeLessThan(6000);
+    // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35: Original Description contract
+    // adds a few lines to fast planning; keep lean but allow the new mandatory section.
+    expect(fastPrompt.length).toBeLessThan(6500);
     expect(fastPrompt.split("\n").length).toBeLessThan(120);
   });
 
@@ -331,6 +380,32 @@ describe("resolveAgentPrompt", () => {
     expect(fastTransformationIdx).toBeGreaterThan(-1);
     expect(fastMissionIdx).toBeGreaterThan(-1);
     expect(fastTransformationIdx).toBeLessThan(fastMissionIdx);
+  });
+
+  /*
+  FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+  Planning prompts must require ## Original Description (verbatim) near the top so
+  generated PROMPT.md preserves the operator source request after Mission rewrites.
+  */
+  it("requires ## Original Description near the top of generated PROMPT.md across planning prompts", () => {
+    const standardPrompt = resolveAgentPrompt("triage");
+    const fastPrompt = builtinSeamPrompt("planning-fast");
+    const concise = resolveAgentPrompt("triage", {
+      roleAssignments: { triage: "concise-triage" },
+    });
+
+    for (const prompt of [standardPrompt, fastPrompt, concise]) {
+      expect(prompt).toContain("## Original Description");
+      expect(prompt.toLowerCase()).toMatch(/verbatim/);
+    }
+
+    // Template order: Original Description before Before → After and Mission
+    const originalIdx = standardPrompt.indexOf("## Original Description");
+    const transformIdx = standardPrompt.indexOf("## Before → After Transformation");
+    const missionIdx = standardPrompt.indexOf("## Mission");
+    expect(originalIdx).toBeGreaterThan(-1);
+    expect(originalIdx).toBeLessThan(transformIdx);
+    expect(originalIdx).toBeLessThan(missionIdx);
   });
 
   it("triage planning prompt is sourced from workflow IR without an engine duplicate", () => {
@@ -442,6 +517,13 @@ describe("resolveAgentPrompt", () => {
   it("triage heartbeat guidance is customized for standard and concise templates", () => {
     const defaultTriage = resolveAgentPrompt("triage");
     expect(defaultTriage).toContain("Patrol for vague requests");
+    expect(defaultTriage).toContain("Before calling `fn_task_create` during a no-task heartbeat");
+    expect(defaultTriage).toContain("recent triage or model-availability failures");
+    expect(defaultTriage).toContain("model fallback exhaustion");
+    expect(defaultTriage).toContain("429/rate-limit");
+    expect(defaultTriage).toContain("404/model-unavailable");
+    expect(defaultTriage).toContain("skip creating new work rather than adding load");
+    expect(defaultTriage).toContain("`fn_task_list` or `fn_task_show` result fetched during this heartbeat run");
 
     const conciseConfig: AgentPromptsConfig = {
       roleAssignments: {
@@ -451,6 +533,13 @@ describe("resolveAgentPrompt", () => {
     const conciseTriage = resolveAgentPrompt("triage", conciseConfig);
     expect(conciseTriage).toContain("Keep heartbeat output lean and useful");
     expect(conciseTriage).toContain("minimum complete PROMPT.md");
+    expect(conciseTriage).toContain("Before `fn_task_create`");
+    expect(conciseTriage).toContain("recent model-availability");
+    expect(conciseTriage).toContain("model fallback exhaustion");
+    expect(conciseTriage).toContain("429/rate-limit");
+    expect(conciseTriage).toContain("404/model-unavailable");
+    expect(conciseTriage).toContain("back off instead of adding load");
+    expect(conciseTriage).toContain("`fn_task_list`/`fn_task_show` results fetched in this heartbeat run");
   });
 
   it("merger and senior-engineer heartbeat guidance is role-specific", () => {

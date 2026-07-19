@@ -106,10 +106,13 @@ Mobile long-press opens the Board task context menu, so non-editing card text mu
 
 /*
 FNXC:TaskCardLayout 2026-07-11-00:00:
-FN-7837 keeps the id row and right-aligned size/actions cluster together while extra header badges wrap inside this middle group, preventing the size chip from orphaning onto a misaligned second row on desktop and mobile.
+FN-7837 keeps the id, size chip, and right-aligned actions cluster together while extra header badges wrap inside this middle group, preventing header metadata from orphaning onto a misaligned second row on desktop and mobile.
 
 FNXC:TaskCardLayout 2026-07-12-00:00:
-FN-7862 requires the task id, the first badge row, and the right-side controls to share one centered header baseline. Use the existing card chip height as the row rhythm while preserving FN-7837: the outer header stays nowrap, badges wrap only in the middle group, and the size chip remains in the right cluster.
+FN-7862 requires the task id, the first badge row, and the right-side controls to share one centered header baseline. Use the existing card chip height as the row rhythm while preserving FN-7837: the outer header stays nowrap and badges wrap only in the middle group.
+
+FNXC:TaskCardLayout 2026-07-17-13:05 (FN-8234):
+The size chip is a direct header child immediately after the task id, before this wrapping middle group. Its chip-height rhythm must align with the id and trailing actions without returning it to the actions cluster.
 */
 .card-header-badges {
   display: flex;
@@ -136,7 +139,7 @@ FNXC:TaskCardLayout 2026-07-12-00:00:
 FN-7871 requires the mono task id to read optically centered with the first-row header badges and right-side icons/chips. Keep the outer FN-7862 flex-start first-row anchor and FN-7837 middle-badge wrapping intact; use a token-derived visual nudge on the id itself because its line-height: 1 glyph box sits slightly high inside the shared chip-height row.
 
 FNXC:TaskCardLayout 2026-07-13-01:01:
-Lock the id to the same chip-height row as .card-header-actions so the whole right cluster (Actions/⋯/size) shares one optical baseline with FN-#### on desktop and mobile.
+Lock the id to the same chip-height row as .card-header-actions so the task id, adjacent size chip, and trailing actions share one optical baseline on desktop and mobile.
 */
 .card-id {
   display: inline-flex;
@@ -430,9 +433,33 @@ The Plan Review "Reviewing" badge must read as an active review state without ad
   color: var(--text-muted);
 }
 
+.card-status-badge.needs-user-feedback {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
 .card-status-badge.awaiting-approval {
   background: var(--status-triage-bg-deep);
   color: var(--triage);
+}
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-12:15:
+FN-7985 promotes exhausted automatic Plan Review revisions from an ordinary approval hold to a
+warning badge, while generic and release-authorization holds retain the triage appearance.
+*/
+.card-status-badge.awaiting-approval--plan-review-replan-cap {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+@media (max-width: 768px) {
+  .card-status-badge.awaiting-approval--plan-review-replan-cap {
+    max-width: 100%;
+    text-align: center;
+  }
 }
 
 .card-status-badge.awaiting-input {
@@ -444,22 +471,25 @@ The Plan Review "Reviewing" badge must read as an active review state without ad
 /*
 FNXC:PlannerOversight 2026-07-05-00:00:
 FN-7592 replaces the overseer badge's uppercase text label with a small `Eye` icon so it
-reads as a compact glyph rather than a wide pill. Size the badge to the icon (no min-width,
-tight padding) and color it per `PlannerOverseerState` via the `data-planner-overseer-state`
-attribute so operators can distinguish watching/steering/recovering/awaiting-confirmation at
+reads as a compact glyph rather than a wide pill. Color it per `PlannerOverseerState` via the
+`data-planner-overseer-state` attribute so operators can distinguish watching/steering/recovering/awaiting-confirmation at
 a glance without reading text. Colors reuse existing semantic tokens: neutral/info for the
 passive "watching" state, warning for the more active "steering"/"recovering" states, and the
 triage token for "awaiting-confirmation" (a human-decision hold), matching the hue conventions
 used elsewhere in this file (e.g. .card-oversight-badge--*, .card-status-badge--triage).
+
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+The Eye inherits shared text-badge padding, border, and line height. Its token-sized glyph must
+not enlarge that shared box, so icon-only and text header chips stay one height on desktop and mobile.
 */
 .card-planner-overseer-state {
-  padding: calc(var(--space-xs) / 2);
-  line-height: 0;
+  box-sizing: border-box;
+  line-height: 1;
 }
 
 .card-planner-overseer-state svg {
-  width: 12px;
-  height: 12px;
+  width: 0.625rem;
+  height: 0.625rem;
 }
 
 .card-planner-overseer-state[data-planner-overseer-state="watching"] {
@@ -503,8 +533,14 @@ FN-6774 removes the saturated stuck-task edge stripe from board cards. Keep the 
   }
 }
 
-/* Size badge: positioned in card header, subtle color coding for effort estimation */
+/*
+FNXC:TaskCardLayout 2026-07-17-14:00 (FN-8253):
+As a direct header child after .card-id, the size chip must match sibling header-badge height rather than use a bespoke chip-height minimum. Center it on the header row to preserve its baseline alignment with the id and trailing actions. Its existing color coding remains unchanged.
+*/
 .card-size-badge {
+  align-self: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
   letter-spacing: 0.5px;
 }
 
@@ -547,18 +583,27 @@ FN-6774 removes the saturated stuck-task edge stripe from board cards. Keep the 
   color: var(--color-error-dark);
 }
 
+/*
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+Fast-mode's icon-only chip shares the text-badge box geometry instead of a fixed square. Keep the
+Zap at the badge text size so it remains centered without making the header row taller on desktop or mobile.
+*/
 .card-execution-mode-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1rem;
-  height: 1rem;
+  box-sizing: border-box;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
   border-radius: var(--radius-pill);
 }
 
 .card-execution-mode-badge svg {
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 0.625rem;
+  height: 0.625rem;
 }
 
 .card-execution-mode-badge--fast {
@@ -790,17 +835,25 @@ falling through to an unstyled transparent shell.
   box-shadow: var(--shadow-md);
 }
 
-/* Mission badge: clickable link to mission from task card */
+/*
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+The clickable mission chip uses the shared text-badge box geometry, including its transparent
+border. This keeps its label and Target glyph on the same header baseline as status and icon-only chips
+at desktop and mobile breakpoints.
+*/
 .card-mission-badge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  box-sizing: border-box;
+  gap: var(--space-xs);
   font-size: 0.625rem;
   font-weight: 600;
+  line-height: 1;
   font-family: var(--font-mono);
   color: var(--badge-mission-text);
   background: var(--badge-mission-bg);
-  padding: 2px 6px;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
@@ -808,6 +861,11 @@ falling through to an unstyled transparent shell.
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.card-mission-badge svg {
+  width: 0.625rem;
+  height: 0.625rem;
 }
 
 .card-mission-badge:hover {
@@ -829,6 +887,16 @@ falling through to an unstyled transparent shell.
   margin-top: var(--space-xs);
   flex-wrap: wrap;
   row-gap: var(--space-xs);
+}
+
+/*
+FNXC:TaskCardCostBadge 2026-07-12-00:00:
+On cards with Promote, the opt-in cost badge belongs directly below that action in the bottom-right corner. Keep its shared card-cost-indicator styling and only position its wrapper so cards without Promote retain their existing footer/meta layout.
+*/
+.card-promote-cost-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-xs);
 }
 
 .card-provider-icons {
@@ -885,17 +953,10 @@ falling through to an unstyled transparent shell.
   white-space: nowrap;
 }
 
-@container task-card (max-width: 240px) {
-  .card-agent-badge-text {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .card-agent-badge-text {
-    display: none;
-  }
-}
+/*
+FNXC:TaskCardBadges 2026-07-15-00:00:
+Task-card agent badges must retain their visible text label in narrow containers and on mobile. Do not hide the label into an icon-only pill; the existing ellipsis constraints preserve the card's no-wrap badge geometry for long names.
+*/
 
 .card-agent-badge--loading {
   animation: pulse 1.5s ease-in-out infinite;
@@ -1130,7 +1191,8 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
     max-width: 100%;
   }
 
-  .card-undo-chip {
+  .card-undo-chip,
+  .card-reverted-chip {
     max-width: 100%;
   }
 }
@@ -1141,8 +1203,14 @@ FN-7555's "Undo of <id>" chip is purely informational (not a warning/error), so 
 reuses the neutral `.card-time-indicator` token pair instead of the near-duplicate
 chip's `--color-warning` tokens. Layout (padding/height/radius/font) still matches
 `.card-duplicate-chip` for visual consistency in the footer row.
+
+FNXC:TaskRevert 2026-07-16-00:00:
+FN-8066's Reverted chip is source-task provenance rather than a warning/error. It
+shares the neutral undo-chip tokens and narrow-screen constraints so completed-card
+footer chips retain their established density in board and list layouts.
 */
-.card-undo-chip {
+.card-undo-chip,
+.card-reverted-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -1161,7 +1229,8 @@ chip's `--color-warning` tokens. Layout (padding/height/radius/font) still match
   white-space: nowrap;
 }
 
-.card-undo-chip > span {
+.card-undo-chip > span,
+.card-reverted-chip > span {
   display: inline-flex;
   align-items: center;
   line-height: 1;
@@ -1441,10 +1510,10 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
 
 /*
 FNXC:TaskCardLayout 2026-07-12-00:00:
-FN-7889 requires the right-side size/menu icons and action chips to share the mono task id's optical centerline. Mirror FN-7871's token-derived id nudge on the whole right cluster while preserving FN-7862's flex-start first-row anchor and FN-7837's middle-badge wrap/size-chip-not-orphaned contract.
+FN-7889 requires the right-side menu icons and action chips to share the mono task id's optical centerline. Mirror FN-7871's token-derived id nudge on the whole trailing-actions cluster while preserving FN-7862's flex-start first-row anchor and FN-7837's middle-badge wrap contract.
 
 FNXC:TaskCardLayout 2026-07-13-01:00:
-The whole right cluster (Actions/Send-back, ⋯ menu, size badge) must share the task-id first-row baseline. Lock the cluster to the chip height so a larger touch-target child (28px ⋯) cannot grow the flex line and sink Actions/size below the id; overflow stays visible so the hit box can extend outside the locked row.
+The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the task-id first-row baseline. Lock the cluster to the chip height so a larger touch-target child (28px ⋯) cannot grow the flex line and sink actions below the id; overflow stays visible so the hit box can extend outside the locked row.
 */
 .card-header-actions {
   display: flex;
@@ -1566,7 +1635,7 @@ FNXC:TaskCardMenu 2026-07-10-12:00:
 Mobile has no hover — the ⋯ affordance must be always visible with a comfortable touch target. Includes short-landscape phones per the project mobile MQ.
 
 FNXC:TaskCardLayout 2026-07-13-00:59:
-The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-actions' flex line. Without a negative vertical margin (same cancel pattern as .card-edit-btn/.card-delete-btn), align-items:center sinks the Actions/Send-back trigger and size badge below the mono task-id baseline on mobile. Keep the 28px hit box; cancel only the layout contribution so the right cluster stays vertically aligned with the task id (follow-up to FN-7933's within-cluster centerline).
+The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-actions' flex line. Without a negative vertical margin (same cancel pattern as .card-edit-btn/.card-delete-btn), align-items:center sinks the Actions/Send-back trigger below the mono task-id baseline on mobile. Keep the 28px hit box; cancel only the layout contribution so trailing actions stay vertically aligned with the task id (follow-up to FN-7933's within-cluster centerline).
 */
 @media (max-width: 768px), (max-height: 480px) {
   .card-menu-btn {
@@ -1667,17 +1736,9 @@ too so future divergence doesn't have to rediscover the shared selector group.
   outline-offset: 1px;
 }
 
-/* Send Back button and dropdown */
-.card-send-back {
-  position: relative;
-}
-
 /*
-FNXC:TaskCardLayout 2026-07-12-00:00:
-FN-7928 requires the Send-back/Actions trigger, ⋯ menu button, and size badge to share one optical vertical center inside .card-header-actions. Normalize their line boxes while preserving FN-7889's cluster↔id transform nudge, FN-7862's flex-start header anchor, FN-7837's middle-badge wrap/size-chip-not-orphaned contract, and FN-4351's mobile no-min-height rule.
-
-FNXC:TaskCardLayout 2026-07-13-01:03:
-The Actions/Send-back text+chevron chip still reads a little low against the ⋯ icon and single-letter size badge even after the locked chip-height row. Use a quarter-space-xs optical raise (and box-sizing so the 1px border does not inflate the flex cross size) so the three controls share one centerline.
+FNXC:TaskCardLayout 2026-07-16-00:00 (FN-8149):
+The three-dot menu is the sole card move/action entry point. Keep this shared button treatment because Start and Promote still use .card-send-back-btn; their hover-reveal and optical alignment must remain intact after menu consolidation.
 */
 .card-send-back-btn {
   display: inline-flex;
@@ -1743,49 +1804,6 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
   border-color: color-mix(in srgb, var(--text-muted) 24%, transparent);
 }
 
-.card-send-back-menu {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  right: 0;
-  z-index: 50;
-  min-width: 100px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-}
-
-.card-action-row .card-send-back {
-  margin-left: auto;
-}
-
-.card-meta .card-send-back {
-  margin-left: auto;
-}
-
-.card-send-back-menu-item {
-  display: block;
-  width: 100%;
-  padding: calc(var(--space-sm) - (var(--space-xs) / 4)) var(--space-md);
-  font-size: 0.75rem;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--transition-instant);
-}
-
-.card-send-back-menu-item:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
-
-.card-send-back-menu-item:focus {
-  outline: none;
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
 
 /* Loading state during save */
 .card-edit-loading {
@@ -1841,7 +1859,10 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     height: 16px;
   }
 
-  /* FN-4365/FN-4351/FN-7837/FN-7862: keep secondary actions compact, token-spaced, and inline with the non-wrapping, centered header title row on mobile. */
+  /*
+  FNXC:TaskCardLayout 2026-07-17-14:00 (FN-8253):
+  At narrow and short-landscape breakpoints, the id, wrapping badge group, and trailing actions retain the mobile chip-height row. The direct id-adjacent size chip instead derives its height from shared badge geometry so it matches sibling header badges while its centered alignment preserves the non-wrapping header baseline.
+  */
   .card-id,
   .card-header-badges,
   .card-header-actions {
@@ -1850,10 +1871,10 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
 
   /*
   FNXC:TaskCardLayout 2026-07-13-00:00:
-  FN-7933 follows FN-7928 by keeping the Send-back/Actions trigger, ⋯ menu button, and size badge on one optical vertical center inside the header actions at the mobile breakpoint. Preserve FN-7889's cluster↔id nudge, FN-7862's flex-start header anchor, FN-7837's badge-wrap/size-chip grouping, FN-7928's desktop centering, and FN-4351's no-min-height mobile rule for the send-back/menu buttons.
+  FN-7933 follows FN-7928 by keeping the Send-back/Actions trigger and ⋯ menu button on one optical vertical center inside trailing header actions at the mobile breakpoint. Preserve FN-7889's cluster↔id nudge, FN-7862's flex-start header anchor, FN-7837's badge-wrap grouping, FN-7928's desktop centering, and FN-4351's no-min-height mobile rule for the send-back/menu buttons.
 
   FNXC:TaskCardLayout 2026-07-13-01:01:
-  On mobile the entire right row (Actions/Send-back + ⋯ + size) must sit on the same first-row baseline as the task id. Lock the cluster (and the mono id) to the mobile chip height so the 28px ⋯ touch target cannot stretch the row and drop the whole right cluster below FN-#### / DONE. overflow:visible keeps the larger hit boxes paintable outside the locked row.
+  On mobile the id-adjacent size chip and trailing actions must sit on the same first-row baseline as the task id. Lock the cluster and mono id to the mobile chip height so the 28px ⋯ touch target cannot stretch the row and drop trailing actions below FN-#### / DONE. overflow:visible keeps the larger hit boxes paintable outside the locked row.
   */
   .card-id {
     height: var(--card-chip-height-mobile);
@@ -1877,12 +1898,6 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     line-height: 1;
   }
 
-  /* Keep Actions/Send-back on the locked row centerline (no extra vertical box growth). */
-  .card-send-back {
-    display: inline-flex;
-    align-items: center;
-    height: 100%;
-  }
 
   /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
   .card-archive-btn,
@@ -1896,13 +1911,17 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     line-height: 1;
     margin-top: 0;
     margin-bottom: 0;
-    /* Keep the base optical raise so Actions does not sit below ⋯ / size on the locked mobile row. */
+    /* Keep the base optical raise for Start/Promote while they share this compact mobile treatment. */
     transform: translateY(calc(var(--space-xs) / -4));
   }
 
   .card-promote-action.card-send-back-btn {
     opacity: 1;
     margin-left: auto;
+  }
+
+  .card-promote-cost-row {
+    justify-content: flex-end;
   }
 
   /* Card: compact progress bar on narrow cards */
@@ -1951,19 +1970,31 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     row-gap: var(--space-xs);
   }
 
-  /* Card: smaller status badges for 280px width */
+  /*
+  FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+  Every header chip uses this mobile text-badge scale. The former size-only block padding made
+  its box diverge; text, icon-only, PR, oversight, and mission chips must remain one height.
+  */
   .card-status-badge,
   .card-priority-badge,
   .card-size-badge,
-  /* FNXC:PlannerOversight 2026-07-04-00:00: mobile-scale the FN-7516 oversight
-     badge alongside the other .card-meta-badges chips at narrow widths. */
+  .card-no-commits-expected-badge,
+  .card-planner-overseer-state,
+  .card-execution-mode-badge,
+  .card-pr-node-badge,
+  .card-mission-badge,
   .card-oversight-badge {
     font-size: 0.5625rem;
+    line-height: 1;
     padding: calc(var(--space-xs) / 4) calc((var(--space-xs) * 3) / 2);
+    border: var(--btn-border-width) solid transparent;
   }
 
-  .card-size-badge {
-    padding-block: calc((var(--space-xs) / 4) + var(--btn-border-width));
+  .card-planner-overseer-state svg,
+  .card-execution-mode-badge svg,
+  .card-mission-badge svg {
+    width: 0.5625rem;
+    height: 0.5625rem;
   }
 
   .card-stalled-review-reason {

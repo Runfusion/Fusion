@@ -1,68 +1,87 @@
 import type { TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
-import { getCliPackageVersion, isUnresolvedCliPackageVersion } from "./cli-package-version.js";
+import { getCliPackageVersion } from "./cli-package-version.js";
+import {
+  FUSION_SELF_REPO,
+  computeNextMinorVersion,
+  formatReleaseVersionLines,
+  isFusionSelfRepo,
+} from "./fusion-release-version.js";
+
+interface TaskSourceIssueRef {
+  provider: string;
+  repository: string;
+  issueNumber: number;
+}
 
 interface TaskMovedEvent {
   task: {
     id: string;
     title?: string;
-    sourceIssue?: {
-      provider: string;
-      repository: string;
-      issueNumber: number;
+    sourceIssue?: TaskSourceIssueRef;
+    githubTracking?: {
+      enabled?: boolean;
+      issue?: { owner?: string; repo?: string; number?: number };
     };
   };
+  /** Present on the real store event; GitHubTrackingCommentService no-ops when `from === to`. */
+  from?: string;
   to: string;
 }
 
 const DEFAULT_COMMENT_TEMPLATE = "✅ Task {taskId} ({taskTitle}) has been completed and resolved.";
 
 /*
- * FNXC:GitHubIssueComment 2026-07-05-01:30:
- * Requirement: when a Fusion task's linked source GitHub issue lives in the
- * Fusion self-repo (`runfusion/fusion`, case-insensitive), the completion
- * comment posted on `done` must ALSO include both a "Current version:" line
- * and a "Target release:" line (the next-minor bump of the currently
- * published `@runfusion/fusion` version), so readers know which Fusion
- * release ships the fix. Every other linked repository's completion comment
- * must remain byte-for-byte identical to the pre-FN-7575 template output.
- * If the resolved version is unparseable/unresolved (the `0.0.0` sentinel),
- * fall back silently to the base comment with no version lines — never throw.
+ * FNXC:GitHubIssueComment 2026-07-15-11:20:
+ * Requirement: a task must never receive TWO done comments on the SAME issue. A task can carry both
+ * linkages at once — maybeCreateTrackingIssue() ADOPTS a github sourceIssue as githubTracking.issue
+ * (github-tracking.ts, `source_issue_linked`), pointing both services at one issue — so with
+ * `githubCommentOnDone` on, this service and GitHubTrackingCommentService both commented on it.
+ *
+ * Suppress THIS service only when the tracking service will provably post to the SAME issue: it owns
+ * the richer comment (commit/branch/PR/files/merged + release lines). The two may legitimately target
+ * DIFFERENT issues (a tracking issue linked separately from the source issue) — that is two comments
+ * on two issues, which is correct and must keep working, so match on identity, never on "both linked".
+ *
+ * Mirrors the tracking service's own `from === to` no-op guard: on a same-column re-emit the tracking
+ * service stays silent, so suppressing here would drop the only comment.
  */
-const FUSION_SELF_REPO = "runfusion/fusion";
-
-/** Case-insensitive, trimmed `owner/repo` slug comparison against the Fusion self-repo. */
-function isFusionSelfRepo(repository: string): boolean {
-  return repository.trim().toLowerCase() === FUSION_SELF_REPO;
+function sameGitHubIssue(
+  sourceIssue: TaskSourceIssueRef,
+  trackingIssue: { owner?: string; repo?: string; number?: number },
+): boolean {
+  const [owner, repo] = sourceIssue.repository.split("/");
+  if (!owner || !repo || !trackingIssue.owner || !trackingIssue.repo) {
+    return false;
+  }
+  return owner.toLowerCase() === trackingIssue.owner.toLowerCase()
+    && repo.toLowerCase() === trackingIssue.repo.toLowerCase()
+    && sourceIssue.issueNumber === trackingIssue.number;
 }
 
-/** `major.minor.patch` leading numeric semver shape; ignores any trailing prerelease/build metadata. */
-const SEMVER_PREFIX_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)/;
-
-/**
- * Compute the next-minor release version (patch reset to 0) from a semver string,
- * e.g. `"0.55.0"` -> `"0.56.0"`, `"1.2.9"` -> `"1.3.0"`, `"v0.55.0"` -> `"0.56.0"`.
- * Returns `null` for the unresolved `"0.0.0"` sentinel or any unparseable input so
- * callers can skip appending version lines rather than emit garbage.
- */
-function computeNextMinorVersion(current: string): string | null {
-  if (isUnresolvedCliPackageVersion(current)) {
-    return null;
+/** True when GitHubTrackingCommentService will post its own done comment to this exact issue. */
+function trackingCommentCoversSourceIssue(event: TaskMovedEvent, sourceIssue: TaskSourceIssueRef): boolean {
+  if (event.from === event.to) {
+    return false;
   }
-
-  const match = SEMVER_PREFIX_PATTERN.exec(current.trim());
-  if (!match) {
-    return null;
+  const tracking = event.task.githubTracking;
+  if (tracking?.enabled !== true || !tracking.issue) {
+    return false;
   }
-
-  const major = Number.parseInt(match[1] ?? "", 10);
-  const minor = Number.parseInt(match[2] ?? "", 10);
-  if (!Number.isFinite(major) || !Number.isFinite(minor)) {
-    return null;
-  }
-
-  return `${major}.${minor + 1}.0`;
+  return sameGitHubIssue(sourceIssue, tracking.issue);
 }
+
+/*
+ * FNXC:GitHubIssueComment 2026-07-15-10:40:
+ * Self-repo detection and next-minor computation live in `fusion-release-version.ts` so this
+ * service and GitHubTrackingCommentService share one implementation. See that module for the
+ * requirement and the FN-7575 miss.
+ *
+ * NOT redundant with GitHubTrackingCommentService: this service covers the `sourceIssue` IMPORT
+ * linkage (documented `githubCommentOnDone`; docs/settings-reference.md), while that one covers the
+ * `githubTracking.enabled` linkage. An issue imported with tracking defaults off has sourceIssue and
+ * no tracking, so THIS is the only surface that comments. Do not delete it as a duplicate.
+ */
 
 export class GitHubIssueCommentService {
   private readonly store: TaskStore;
@@ -121,18 +140,29 @@ export class GitHubIssueCommentService {
       return;
     }
 
+    if (trackingCommentCoversSourceIssue(event, sourceIssue)) {
+      /*
+       * FNXC:GitHubIssueComment 2026-07-15-11:20:
+       * Logged, not silent: suppression is otherwise invisible, and a custom `githubCommentTemplate`
+       * not appearing on a tracked issue is surprising enough to need a breadcrumb. Once per task
+       * completion, so this is not the high-frequency skip-log noise FN-8024 removed.
+       */
+      await this.store.logEntry(
+        task.id,
+        "Skipped GitHub issue completion comment",
+        `${sourceIssue.repository}#${sourceIssue.issueNumber} is tracked; GitHub tracking comment covers it`,
+      );
+      return;
+    }
+
     const template = settings.githubCommentTemplate || DEFAULT_COMMENT_TEMPLATE;
     let commentBody = template
       .replaceAll("{taskId}", task.id)
       .replaceAll("{taskTitle}", task.title ?? "");
 
-    if (isFusionSelfRepo(sourceIssue.repository)) {
-      const currentVersion = this.getCurrentVersion();
-      const nextMinorVersion = computeNextMinorVersion(currentVersion);
-      if (nextMinorVersion) {
-        const currentLine = currentVersion.startsWith("v") ? currentVersion : `v${currentVersion}`;
-        commentBody += `\n\nCurrent version: ${currentLine}\nTarget release: v${nextMinorVersion}`;
-      }
+    const versionLines = formatReleaseVersionLines(sourceIssue.repository, () => this.getCurrentVersion());
+    if (versionLines.length > 0) {
+      commentBody += `\n\n${versionLines.join("\n")}`;
     }
 
     try {
@@ -154,4 +184,6 @@ export class GitHubIssueCommentService {
   }
 }
 
-export { DEFAULT_COMMENT_TEMPLATE, FUSION_SELF_REPO, isFusionSelfRepo, computeNextMinorVersion };
+export { DEFAULT_COMMENT_TEMPLATE };
+// Re-exported from ./fusion-release-version.js for back-compat with existing importers/tests.
+export { FUSION_SELF_REPO, isFusionSelfRepo, computeNextMinorVersion };

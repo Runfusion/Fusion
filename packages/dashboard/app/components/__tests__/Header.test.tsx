@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { Header } from "../Header";
+import { Header, resolveReportContextRefs } from "../Header";
 
 // Mock fetchScripts for overflow submenu
 const mockFetchScripts = vi.fn();
@@ -49,6 +49,11 @@ function renderHeader(props = {}, tier: ViewportTier = "desktop") {
 }
 
 describe("Header", () => {
+  it("derives report context from task hash routes and legacy query parameters", () => {
+    expect(resolveReportContextRefs({ hash: "#/tasks/FN-8277", search: "?agentId=agent-1" })).toEqual({ taskId: "FN-8277", agentId: "agent-1" });
+    expect(resolveReportContextRefs({ hash: "", search: "?taskId=FN-8277" })).toEqual({ taskId: "FN-8277", agentId: undefined });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchScripts.mockResolvedValue({});
@@ -423,6 +428,21 @@ describe("Header", () => {
 
       expect(onChangeView).toHaveBeenCalledWith("research");
       expect(screen.queryByTestId("view-overflow-research")).toBeNull();
+    });
+
+    it("gates Ideation in the desktop overflow and routes the enabled fallback", () => {
+      const hidden = renderHeader({ onChangeView: noop, experimentalFeatures: { ideationView: false } });
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-ideation")).toBeNull();
+      hidden.unmount();
+
+      const onChangeView = vi.fn();
+      renderHeader({ onChangeView, view: "ideation", experimentalFeatures: { ideationView: true } });
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger).toHaveClass("active");
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByTestId("view-overflow-ideation"));
+      expect(onChangeView).toHaveBeenCalledWith("ideation");
     });
 
     it("hides evals in the desktop view overflow when evalsView is disabled", () => {

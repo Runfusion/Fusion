@@ -158,6 +158,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
   useViewportMode: () => "mobile",
@@ -216,12 +218,23 @@ describe("SettingsModal", () => {
       });
 
       await expectSettingPersists({
-        section: "models",
+        section: "models · global",
         label: "Sync opencode-go model list at startup",
         kind: "checkbox",
         value: false,
         scope: "global",
         expectedKey: "opencodeGoModelSync",
+      });
+    });
+
+    it("saves the task-definition input-language toggle in the project settings payload", async () => {
+      await expectSettingPersists({
+        section: "Models · Project",
+        label: "Write task definitions in the operator's input language",
+        kind: "checkbox",
+        value: true,
+        scope: "project",
+        expectedKey: "taskDefinitionInInputLanguage",
       });
     });
 
@@ -235,7 +248,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Global" }));
       await settingsModalUser.click(screen.getByText("OpenRouter advanced"));
 
       expect(screen.getByLabelText("OpenRouter HTTP-Referer")).toBeInTheDocument();
@@ -302,7 +315,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.getByText(/The Project Default Model is the fallback for this project/i)).toBeInTheDocument();
 
@@ -334,7 +347,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
       await settingsModalUser.click(screen.getByLabelText("Project Default Model"));
       await settingsModalUser.click(screen.getByText("GPT-4o"));
       await settingsModalUser.click(screen.getByText("Save"));
@@ -482,6 +495,34 @@ describe("SettingsModal", () => {
       expect(onClose).toHaveBeenCalled();
     });
 
+    it("renders saved workflow model lane values as project overrides after reload", async () => {
+      const expectedPatch = { planningProvider: "openai", planningModelId: "gpt-4o" };
+      mockUpdateWorkflowSettingValues.mockResolvedValue({
+        stored: expectedPatch,
+        effective: expectedPatch,
+        orphaned: [],
+      });
+      await setupWorkflowModelLaneTest();
+
+      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
+      await settingsModalUser.click(await screen.findByText("GPT-4o"));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => {
+        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", expectedPatch, "proj-1");
+      });
+
+      cleanup();
+      mockFetchWorkflow.mockClear();
+      mockFetchWorkflowSettingValues.mockClear();
+      mockUpdateWorkflowSettingValues.mockClear();
+      await setupWorkflowModelLaneTest({ stored: expectedPatch, effective: expectedPatch });
+
+      const lane = screen.getByTestId("workflow-model-lane-planning");
+      expect(within(lane).getByText("Override (Project)")).toBeInTheDocument();
+      expect(within(lane).getByText("GPT-4o")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-model-lane-execution")).toHaveTextContent("Inherited (Workflow)");
+    });
+
     it("renders fallback workflow model lanes only when the default workflow declares them", async () => {
       await setupWorkflowModelLaneTest();
 
@@ -564,6 +605,36 @@ describe("SettingsModal", () => {
         expect(onClose).toHaveBeenCalled();
       });
       expect(mockUpdateWorkflowSettingValues).not.toHaveBeenCalled();
+    });
+
+    it("preserves pending workflow lane edits when Project Models unmounts before primary Save", async () => {
+      const expectedPatch = { planningProvider: "openai", planningModelId: "gpt-4o" };
+      mockUpdateWorkflowSettingValues.mockResolvedValue({
+        stored: expectedPatch,
+        effective: expectedPatch,
+        orphaned: [],
+      });
+      const onClose = vi.fn();
+      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
+
+      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
+      await settingsModalUser.click(await screen.findByText("GPT-4o"));
+      expect(within(screen.getByTestId("workflow-model-lane-planning")).getByText("GPT-4o")).toBeInTheDocument();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "General · Global" }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("workflow-model-lane-planning")).not.toBeInTheDocument();
+      });
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+          "workflow-custom",
+          expectedPatch,
+          "proj-1",
+        );
+      });
+      expect(onClose).toHaveBeenCalled();
     });
 
     it("resets workflow model lanes by sending null patches from the primary Settings Save", async () => {
@@ -716,7 +787,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       expect(screen.queryByText(/^Version\s+/)).not.toBeInTheDocument();
-      await settingsModalUser.click(screen.getByText("Scheduling & Capacity"));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(await screen.findByLabelText("Max Concurrent Tasks")).toBeInTheDocument();
       expect(addToast).not.toHaveBeenCalled();
     });

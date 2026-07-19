@@ -24,7 +24,7 @@
  * Transition context: these helpers live in @fusion/core (where the schema is
  * defined) and are exported so the dashboard's AiSessionStore can import them.
  */
-import { and, desc, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 
@@ -50,8 +50,6 @@ export interface AiSessionRow {
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
-  lockedByTab: string | null;
-  lockedAt: string | null;
   archived?: number;
 }
 
@@ -62,7 +60,6 @@ export interface AiSessionSummary {
   title: string;
   preview?: string;
   projectId: string | null;
-  lockedByTab: string | null;
   updatedAt: string;
   archived?: boolean;
 }
@@ -106,11 +103,10 @@ function rowToSession(row: Record<string, unknown>): AiSessionRow {
     result: result == null ? null : typeof result === "string" ? result : JSON.stringify(result),
     thinkingOutput: (row.thinkingOutput as string) ?? "",
     error: (row.error as string | null) ?? null,
-    projectId: (row.projectId as string | null) ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
-    lockedByTab: (row.lockedByTab as string | null) ?? null,
-    lockedAt: (row.lockedAt as string | null) ?? null,
     archived: typeof row.archived === "number" ? row.archived : Number(row.archived ?? 0),
   };
 }
@@ -127,8 +123,7 @@ function safeJsonParse<T>(value: string, fallback: T): T {
 
 /**
  * FNXC:AiSessionStore 2026-06-24-23:10:
- * Insert or update an AI session row. lockedByTab/lockedAt are set to null on
- * insert but NOT modified on conflict (locks are managed by lock methods).
+ * Insert or update an AI session row.
  */
 export async function upsertAiSession(handle: QueryHandle, session: AiSessionRow): Promise<AiSessionRow> {
   const now = new Date().toISOString();
@@ -159,11 +154,10 @@ export async function upsertAiSession(handle: QueryHandle, session: AiSessionRow
       result: resultValue,
       thinkingOutput: thinking,
       error: session.error ?? null,
-      ...(session.projectId ? { projectId: session.projectId } : {}),
+      // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition (the composite (project_id, id) PK conflict target below is partition-scoped by design).
+      ...(session.projectId ? { ownerProjectId: session.projectId } : {}),
       createdAt: session.createdAt || now,
       updatedAt: now,
-      lockedByTab: null,
-      lockedAt: null,
     })
     .onConflictDoUpdate({
       target: [schema.project.aiSessions.projectId, schema.project.aiSessions.id],
@@ -208,15 +202,14 @@ export async function listActiveAiSessions(
     inArray(schema.project.aiSessions.status, ["generating", "awaiting_input", "error"]),
     eq(schema.project.aiSessions.archived, 0),
   ];
-  if (projectId) conditions.push(eq(schema.project.aiSessions.projectId, projectId));
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
   const rows = await handle
     .select({
       id: schema.project.aiSessions.id,
       type: schema.project.aiSessions.type,
       status: schema.project.aiSessions.status,
       title: schema.project.aiSessions.title,
-      projectId: schema.project.aiSessions.projectId,
-      lockedByTab: schema.project.aiSessions.lockedByTab,
+      projectId: schema.project.aiSessions.ownerProjectId,
       updatedAt: schema.project.aiSessions.updatedAt,
       archived: schema.project.aiSessions.archived,
     })
@@ -229,17 +222,22 @@ export async function listActiveAiSessions(
 /**
  * List all sessions (including complete), optionally filtered by projectId.
  * By default excludes archived. Returns summary rows with inputPayload.
+ *
+ * FNXC:PlanningMode 2026-07-15-00:00:
+ * FN-7994 narrows the Planning sidebar's refresh to planning rows before
+ * inputPayload blobs cross the API boundary; calls without a type stay broad.
  */
 export async function listAllAiSessions(
   handle: QueryHandle,
   projectId?: string,
-  options?: { includeArchived?: boolean },
+  options?: { includeArchived?: boolean; type?: AiSessionType },
 ): Promise<unknown[]> {
   const conditions: ReturnType<typeof eq>[] = [];
   if (!options?.includeArchived) {
     conditions.push(eq(schema.project.aiSessions.archived, 0));
   }
-  if (projectId) conditions.push(eq(schema.project.aiSessions.projectId, projectId));
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
+  if (options?.type) conditions.push(eq(schema.project.aiSessions.type, options.type));
   const query = handle
     .select({
       id: schema.project.aiSessions.id,
@@ -247,8 +245,7 @@ export async function listAllAiSessions(
       status: schema.project.aiSessions.status,
       title: schema.project.aiSessions.title,
       inputPayload: schema.project.aiSessions.inputPayload,
-      projectId: schema.project.aiSessions.projectId,
-      lockedByTab: schema.project.aiSessions.lockedByTab,
+      projectId: schema.project.aiSessions.ownerProjectId,
       updatedAt: schema.project.aiSessions.updatedAt,
       archived: schema.project.aiSessions.archived,
     })
@@ -268,7 +265,7 @@ export async function listRecoverableAiSessions(
   const conditions = [
     inArray(schema.project.aiSessions.status, ["generating", "awaiting_input"]),
   ];
-  if (projectId) conditions.push(eq(schema.project.aiSessions.projectId, projectId));
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
   const rows = await handle
     .select()
     .from(schema.project.aiSessions)
@@ -388,96 +385,14 @@ export async function unarchiveAiSession(handle: QueryHandle, id: string): Promi
   return result.length > 0;
 }
 
-// ── Locks ──
-
-export async function acquireAiSessionLock(
-  handle: QueryHandle,
-  sessionId: string,
-  tabId: string,
-): Promise<{ acquired: boolean; currentHolder: string | null }> {
-  const now = new Date().toISOString();
-  const result = await handle
-    .update(schema.project.aiSessions)
-    .set({ lockedByTab: tabId, lockedAt: now })
-    .where(
-      and(
-        eq(schema.project.aiSessions.id, sessionId),
-        or(isNull(schema.project.aiSessions.lockedByTab), eq(schema.project.aiSessions.lockedByTab, tabId)),
-      ),
-    )
-    .returning({ id: schema.project.aiSessions.id });
-
-  if (result.length > 0) {
-    return { acquired: true, currentHolder: null };
-  }
-
-  const holderRows = await handle
-    .select({ lockedByTab: schema.project.aiSessions.lockedByTab })
-    .from(schema.project.aiSessions)
-    .where(eq(schema.project.aiSessions.id, sessionId))
-    .limit(1);
-  return { acquired: false, currentHolder: holderRows[0]?.lockedByTab ?? null };
-}
-
-export async function releaseAiSessionLock(
-  handle: QueryHandle,
-  sessionId: string,
-  tabId: string,
-): Promise<boolean> {
-  const result = await handle
-    .update(schema.project.aiSessions)
-    .set({ lockedByTab: null, lockedAt: null })
-    .where(and(eq(schema.project.aiSessions.id, sessionId), eq(schema.project.aiSessions.lockedByTab, tabId)))
-    .returning({ id: schema.project.aiSessions.id });
-  return result.length > 0;
-}
-
-export async function forceAcquireAiSessionLock(
-  handle: QueryHandle,
-  sessionId: string,
-  tabId: string,
-): Promise<boolean> {
-  const now = new Date().toISOString();
-  const result = await handle
-    .update(schema.project.aiSessions)
-    .set({ lockedByTab: tabId, lockedAt: now })
-    .where(eq(schema.project.aiSessions.id, sessionId))
-    .returning({ id: schema.project.aiSessions.id });
-  return result.length > 0;
-}
-
-export async function getAiSessionLockHolder(
-  handle: QueryHandle,
-  sessionId: string,
-): Promise<{ tabId: string | null; lockedAt: string | null }> {
-  const rows = await handle
-    .select({ lockedByTab: schema.project.aiSessions.lockedByTab, lockedAt: schema.project.aiSessions.lockedAt })
-    .from(schema.project.aiSessions)
-    .where(eq(schema.project.aiSessions.id, sessionId))
-    .limit(1);
-  return {
-    tabId: rows[0]?.lockedByTab ?? null,
-    lockedAt: rows[0]?.lockedAt ?? null,
-  };
-}
-
-export async function releaseStaleAiSessionLocks(
-  handle: QueryHandle,
-  maxAgeMs = 30 * 60 * 1000,
-): Promise<number> {
-  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-  const result = await handle
-    .update(schema.project.aiSessions)
-    .set({ lockedByTab: null, lockedAt: null })
-    .where(
-      and(
-        isNotNull(schema.project.aiSessions.lockedByTab),
-        lte(schema.project.aiSessions.lockedAt, cutoff),
-      ),
-    )
-    .returning({ id: schema.project.aiSessions.id });
-  return result.length;
-}
+/*
+FNXC:PlanningMultiTab 2026-07-14-00:00:
+The per-tab session lock (acquire/release/force-acquire/holder/stale-release) was removed here
+along with the `lockedByTab`/`lockedAt` columns. AI interview sessions (planning, subtask,
+mission, milestone, slice) are multi-tab: the persisted session row is the shared source of
+truth, any tab may read and interact, and concurrent writes are resolved by each producer's
+generation-in-progress guard rather than by a tab-ownership lock.
+*/
 
 // ── Delete ──
 

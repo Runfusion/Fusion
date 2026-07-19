@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS project.agent_log_entries_legacy (
 FNXC:ProjectDataIsolation 2026-07-14-12:45:
 Embedded PostgreSQL is administered by a superuser, which bypasses RLS. Application pools assume this deliberately non-superuser role; only the separate migration connection retains administrative bypass.
 */
+/*
+FNXC:ProjectDataIsolation 2026-07-15-00:00:
+Roles live in the CLUSTER-wide pg_authid, but the applier's pg_advisory_xact_lock('fusion:schema-applier') is per-DATABASE. Concurrent appliers on different databases of one cluster (the PG gate gives every test its own database; multi-project deployments give every project its own) therefore hold uncontended locks, all observe the role as absent, and all reach CREATE ROLE — the losers failed the migration with 23505 on pg_authid_rolname_index. No lock in this transaction can make the check-then-create atomic across databases, so tolerate losing the race instead: a concurrent creator produced exactly the role we wanted. Catch unique_violation (index-level, what the race actually raises) as well as duplicate_object (what a non-racing re-create raises).
+*/
 DO $$
 DECLARE
   current_user_is_superuser boolean;
@@ -38,14 +42,19 @@ BEGIN
     PostgreSQL roles are cluster-wide while Gate databases apply this migration
     concurrently. Advisory locks are database-local, so make CREATE ROLE itself
     race-safe across databases by accepting the concurrent winner.
+
+    FNXC:ProjectDataIsolation 2026-07-15-01:50:
+    Always CREATE ROLE (no IF NOT EXISTS). The check-then-create path is not atomic
+    across databases of one cluster: concurrent appliers all observe the role as
+    absent and race on CREATE ROLE, raising 23505 on pg_authid_rolname_index.
+    EXCEPTION WHEN duplicate_object OR unique_violation tolerates losing that race
+    (unique_violation is what the index race actually raises).
     */
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
-      BEGIN
-        CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-      EXCEPTION
-        WHEN duplicate_object OR unique_violation THEN NULL;
-      END;
-    END IF;
+    BEGIN
+      CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+      NULL; -- concurrent applier created the role first; safe to skip
+    END;
     EXECUTE format('GRANT fusion_runtime TO %I', current_user);
   END IF;
 END $$;

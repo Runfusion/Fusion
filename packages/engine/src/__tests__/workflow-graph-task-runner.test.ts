@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Settings, TaskDetail, WorkflowDefinition, WorkflowIr } from "@fusion/core";
-import { TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, PG_AVAILABLE } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 import { NotificationService } from "../notification/notification-service.js";
 import { WorkflowGraphTaskRunner, type WorkflowGraphRunnerStore } from "../workflow-graph-task-runner.js";
@@ -268,10 +265,10 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     expect(result.reason).toMatch(/workflow-missing/);
   });
 
-  it("persists a valid workflow through the store and launches it through the graph runner", async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "fn-7113-workflow-run-"));
-    const globalDir = mkdtempSync(join(tmpdir(), "fn-7113-workflow-global-"));
-    const store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+  // FNXC:PgMigrationQuarantine 2026-07-17-18:15: FN-8258 exercises persisted workflow selection against the PostgreSQL AsyncDataLayer rather than removed SQLite inMemoryDb construction.
+  (PG_AVAILABLE ? it : it.skip)("persists a valid workflow through the store and launches it through the graph runner", async () => {
+    const harness = await createTaskStoreForTest({ prefix: "fusion_workflow_graph_runner" });
+    const store = harness.store;
     try {
       const invalidIr: WorkflowIr = {
         version: "v2",
@@ -313,8 +310,7 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
       expect(result.disposition).toBe("completed");
       expect(calls).toEqual(["custom:lint", "execute", "review", "merge", "custom:notify"]);
     } finally {
-      rmSync(rootDir, { recursive: true, force: true });
-      rmSync(globalDir, { recursive: true, force: true });
+      await harness.teardown();
     }
   });
 

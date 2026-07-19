@@ -18,7 +18,7 @@
  */
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "./postgres/data-layer.js";
 import type {
   ExperimentSession,
   ExperimentSessionListOptions,
@@ -35,7 +35,8 @@ function rowToSession(row: Record<string, unknown>): ExperimentSession {
   return {
     id: row.id as string,
     name: row.name as string,
-    projectId: (row.projectId as string | null) ?? undefined,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? undefined,
     status: row.status as ExperimentSessionStatus,
     metric: (metricRaw as ExperimentSession["metric"]) ?? { name: "unknown", direction: "maximize" },
     currentSegment: Number(row.currentSegment ?? 1),
@@ -74,7 +75,8 @@ export async function createExperimentSession(
   await handle.insert(schema.project.experimentSessions).values({
     id: session.id,
     name: session.name,
-    projectId: session.projectId ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain project goes to owner_project_id; project_id (the RLS partition) is owned by the fusion_assign_project_id trigger/GUC.
+    ownerProjectId: session.projectId ?? null,
     status: session.status,
     metric: JSON.stringify(session.metric),
     currentSegment: session.currentSegment,
@@ -109,7 +111,7 @@ export async function getExperimentSession(handle: QueryHandle, id: string): Pro
 export async function listExperimentSessions(handle: QueryHandle, options: ExperimentSessionListOptions = {}): Promise<ExperimentSession[]> {
   const conditions: ReturnType<typeof eq>[] = [];
   if (options.status) conditions.push(eq(schema.project.experimentSessions.status, options.status));
-  if (options.projectId) conditions.push(eq(schema.project.experimentSessions.projectId, options.projectId));
+  if (options.projectId) conditions.push(eq(schema.project.experimentSessions.ownerProjectId, options.projectId));
   const query = handle
     .select()
     .from(schema.project.experimentSessions)
@@ -126,7 +128,7 @@ export async function persistExperimentSession(handle: QueryHandle, session: Exp
     .update(schema.project.experimentSessions)
     .set({
       name: session.name,
-      projectId: session.projectId ?? null,
+      ownerProjectId: session.projectId ?? null,
       status: session.status,
       metric: JSON.stringify(session.metric),
       currentSegment: session.currentSegment,
@@ -164,13 +166,23 @@ export async function appendExperimentRecord(
   input: { id: string; sessionId: string; segment: number; type: ExperimentRecordType; payload: Record<string, unknown> },
 ): Promise<ExperimentSessionRecord> {
   return layer.transactionImmediate(async (tx) => {
+    const parentRows = await tx
+      .select({ projectId: schema.project.experimentSessions.projectId })
+      .from(schema.project.experimentSessions)
+      .where(eq(schema.project.experimentSessions.id, input.sessionId))
+      .limit(1);
+    const ownership = projectOwnershipPartition(parentRows[0]?.projectId ?? layer.projectId);
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.experimentSessionRecords.seq}), 0) + 1` })
       .from(schema.project.experimentSessionRecords)
-      .where(eq(schema.project.experimentSessionRecords.sessionId, input.sessionId));
+      .where(and(
+        eq(schema.project.experimentSessionRecords.projectId, ownership),
+        eq(schema.project.experimentSessionRecords.sessionId, input.sessionId),
+      ));
     const seq = seqRows[0]?.nextSeq ?? 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.experimentSessionRecords).values({
+      projectId: ownership,
       id: input.id,
       sessionId: input.sessionId,
       segment: input.segment,

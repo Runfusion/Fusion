@@ -150,6 +150,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
   useViewportMode: () => "mobile",
@@ -194,6 +196,14 @@ vi.mock("../FileBrowser", () => ({
 
 describe("SettingsModal", () => {
   installSettingsModalEnv();
+
+  /*
+  FNXC:SettingsModalTests 2026-07-16-13:30:
+  The Advanced settings switch (FNXC:SettingsSimplification 2026-07-11) hides advanced-only nav items (remote, scheduled-evals, research-global, research-project) in Basic mode, and these suites navigate to those sections via the nav. Opt into Advanced mode the same way settings-mobile and models-auth do; installSettingsModalEnv()'s beforeEach clears localStorage first, so this must be re-set per test.
+  */
+  beforeEach(() => {
+    localStorage.setItem("fusion:settings:show-advanced", "true");
+  });
 
   describe("Remote section", () => {
     beforeEach(() => {
@@ -894,7 +904,7 @@ describe("SettingsModal", () => {
     it("calls testNotification with ntfy provider ID when ntfy test button clicked", async () => {
       mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
       await renderModalSection("notifications", "Notifications");
-      await settingsModalUser.click(screen.getByText("Advanced"));
+      await settingsModalUser.click(screen.getByText("Advanced", { selector: "summary" }));
       fireEvent.change(screen.getByLabelText("Access token (optional)"), { target: { value: "secret-token" } });
 
       await settingsModalUser.click(screen.getByRole("button", { name: /Test notification/ }));
@@ -918,7 +928,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByLabelText("Enable"));
       fireEvent.change(screen.getByLabelText("ntfy Topic"), { target: { value: "fresh-topic" } });
-      await settingsModalUser.click(screen.getByText("Advanced"));
+      await settingsModalUser.click(screen.getByText("Advanced", { selector: "summary" }));
       fireEvent.change(screen.getByLabelText("Custom ntfy server URL (optional)"), { target: { value: "https://ntfy.override.example//" } });
       fireEvent.change(screen.getByLabelText("Access token (optional)"), { target: { value: "override-token" } });
       await settingsModalUser.click(screen.getByRole("button", { name: /Test notification/ }));
@@ -964,7 +974,7 @@ describe("SettingsModal", () => {
         ntfyAccessToken: "saved-token",
       });
       await renderModalSection("notifications", "Notifications");
-      await settingsModalUser.click(screen.getByText("Advanced"));
+      await settingsModalUser.click(screen.getByText("Advanced", { selector: "summary" }));
       const tokenInput = screen.getByLabelText("Access token (optional)");
       await settingsModalUser.clear(tokenInput);
       await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
@@ -1211,11 +1221,15 @@ describe("SettingsModal", () => {
     });
 
     const openResearchGlobalSection = async () => {
-      await settingsModalUser.click(await screen.findByRole("button", { name: /Research Defaults/i }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: /Research · Global/i }));
     };
 
+    /*
+    FNXC:SettingsModalTests 2026-07-16-13:30:
+    The project research nav entry is labeled "Research · Project" (settings.nav.researchProject); the old anchored /^Research$/ matcher predates that rename.
+    */
     const openResearchProjectSection = async () => {
-      await settingsModalUser.click(await screen.findByRole("button", { name: /^Research$/i }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: /Research · Project/i }));
     };
 
     it("renders global research defaults fields with expected default values", async () => {
@@ -1395,10 +1409,14 @@ describe("SettingsModal", () => {
       expect(await screen.findByLabelText("SearXNG URL")).toBeInTheDocument();
       expect(screen.getByText(/Open Authentication Settings/i)).toBeInTheDocument();
 
+      /*
+      FNXC:SettingsModalTests 2026-07-16-13:30:
+      The three provider controls migrated from bespoke `.form-group` markup to the shared Settings*Row primitives (`.settings-field-row`), and the provider dropdown is a `.select`, not an `.input`. The intent is unchanged: the disclosure body holds exactly the three provider controls, styled with the standard control classes.
+      */
       const advancedBody = details?.querySelector(".settings-research-provider-advanced-body");
       expect(advancedBody).toBeTruthy();
-      expect(advancedBody?.querySelectorAll(".form-group")).toHaveLength(3);
-      expect(screen.getByLabelText("Search Provider")).toHaveClass("input");
+      expect(advancedBody?.querySelectorAll(".settings-field-row")).toHaveLength(3);
+      expect(screen.getByLabelText("Search Provider")).toHaveClass("select");
       expect(screen.getByLabelText("SearXNG URL")).toHaveClass("input");
       expect(screen.getByLabelText("Google Search CX")).toHaveClass("input");
     });
@@ -1527,7 +1545,8 @@ describe("SettingsModal", () => {
     it("falls back to first visible section when initial section is unavailable", async () => {
       renderModal({ initialSection: "unknown-section" as any });
       await waitForSettingsModalReady();
-      expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
+      // FNXC:SettingsNavigation 2026-07-16-13:40: FN-8130 keeps the unknown-section fallback on the always-visible Appearance default.
+      expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     });
   });
 

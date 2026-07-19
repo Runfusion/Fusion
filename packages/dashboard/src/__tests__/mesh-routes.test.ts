@@ -33,6 +33,7 @@ const mockAbortDistributedTaskIdReservation = vi.fn();
 const mockGetDistributedTaskIdState = vi.fn();
 const mockApplyReplicatedTaskCreate = vi.fn();
 const mockApplyAuthMaterialSnapshot = vi.fn();
+const mockGetAuthMaterialSnapshot = vi.fn();
 
 // Mock GlobalSettingsStore
 const mockGetSettings = vi.fn().mockResolvedValue({});
@@ -58,6 +59,7 @@ vi.mock("@fusion/core", async () => {
       getSettingsForSync: mockGetSettingsForSync,
       applyRemoteSettings: mockApplyRemoteSettings,
       applyAuthMaterialSnapshot: mockApplyAuthMaterialSnapshot,
+      getAuthMaterialSnapshot: mockGetAuthMaterialSnapshot,
     }; }),
     // FNXC:PostgresCutover 2026-07-10: the mesh sync response path constructs a
     // REAL AgentStore for the agents/agentRuns shared-state snapshots; the
@@ -102,17 +104,20 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 });
 
 class MockStore extends EventEmitter {
-  // FNXC:PostgresCutover 2026-07-10: createServer resolves the chat/session
-  // layers via store.getAsyncLayer(); null = legacy mode for this mock (this
-  // single missing method had the whole file red since the cutover).
-  getAsyncLayer(): null {
-    return null;
+  /*
+  FNXC:PostgresCutover 2026-07-10-00:00:
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  createServer requires a project PostgreSQL AsyncDataLayer for ChatStore /
+  AgentStore construction. Mesh route tests only exercise HTTP topology and
+  allocator routes, so a minimal stub layer is enough — real query paths are
+  covered by pg harness suites.
+  */
+  getAsyncLayer(): { projectId: string } {
+    return { projectId: "mesh-routes-test-project" };
   }
 
-  // Settings sync stays enabled for this mock (sqlite topology); the PG-mode
-  // 409 gating is covered in routes-system.test.ts.
   get backendMode(): boolean {
-    return false;
+    return true;
   }
 
   getRootDir(): string {
@@ -194,6 +199,29 @@ function makeNodeConfig(overrides: Partial<Record<string, unknown>> = {}) {
     updatedAt: "2026-04-01T12:00:00.000Z",
     ...overrides,
   };
+}
+
+/*
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+createServer now boots ChatStore/AiSessionStore against the project PG layer and
+fire-and-forgets recoverStaleSessions. Mesh route unit tests inject inert stores
+so createServer does not touch a stub layer's query builders.
+*/
+function createMeshTestServer(store: TaskStore, extra: Record<string, unknown> = {}) {
+  const chatStore = Object.assign(new EventEmitter(), {
+    deleteSessionsForAgentId: vi.fn().mockResolvedValue(undefined),
+  });
+  const aiSessionStore = Object.assign(new EventEmitter(), {
+    recoverStaleSessions: vi.fn().mockResolvedValue(undefined),
+    rehydrateFromStore: vi.fn().mockResolvedValue(0),
+    stopScheduledCleanup: vi.fn(),
+    cleanupStaleSessions: vi.fn().mockResolvedValue({ terminalDeleted: 0, orphanedDeleted: 0 }),
+  });
+  return createServer(store, {
+    chatStore: chatStore as never,
+    aiSessionStore: aiSessionStore as never,
+    ...extra,
+  });
 }
 
 type RuntimeLogEntry = {
@@ -289,7 +317,7 @@ describe("POST /api/mesh/sync", () => {
     ]);
 
     const store = new MockStore();
-    app = createServer(store as unknown as TaskStore);
+    app = createMeshTestServer(store as unknown as TaskStore);
   });
 
   it("should merge peers and return sync response", async () => {
@@ -533,7 +561,12 @@ describe("POST /api/mesh/sync", () => {
     expect(newPeerIds).not.toContain("node_b");
   });
 
-  describe("settings sync", () => {
+  /*
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Mesh settings gossip is retired. Shared PostgreSQL is the settings SoT; mesh
+  sync ignores inbound settings payloads and never echoes settings in responses.
+  */
+  describe("settings sync (retired under shared PostgreSQL)", () => {
     function makeSettingsPayload(overrides: Partial<Record<string, unknown>> = {}) {
       return {
         exportedAt: "2026-04-01T00:00:00.000Z",
@@ -548,23 +581,19 @@ describe("POST /api/mesh/sync", () => {
       mockGetSettingsForSync.mockReset();
       mockApplyRemoteSettings.mockReset();
       mockGetSettings.mockReset();
+      mockGetAuthMaterialSnapshot.mockReset();
+      mockGetAuthMaterialSnapshot.mockReturnValue(undefined);
     });
 
-    it("should apply settings when remote checksum differs", async () => {
+    it("ignores inbound settings and does not apply or echo them", async () => {
       const remotePayload = makeSettingsPayload({ checksum: "remote-checksum" });
-      const localPayload = makeSettingsPayload({ checksum: "local-checksum" });
-
-      mockGetSettings.mockResolvedValue({});
-      mockGetSettingsForSync.mockResolvedValue(localPayload);
-      mockApplyRemoteSettings.mockResolvedValue({
-        success: true,
-        globalCount: 5,
-        projectCount: 2,
-        authCount: 1,
+      const runtimeHarness = createRuntimeLoggerHarness();
+      const appWithLogger = createMeshTestServer(new MockStore() as unknown as TaskStore, {
+        runtimeLogger: runtimeHarness.logger,
       });
 
       const response = await request(
-        app,
+        appWithLogger,
         "POST",
         "/api/mesh/sync",
         JSON.stringify({
@@ -573,75 +602,30 @@ describe("POST /api/mesh/sync", () => {
           knownPeers: [],
           timestamp: "2026-04-01T12:00:00.000Z",
           settings: remotePayload,
-        }),
-        { "Content-Type": "application/json" }
-      );
-
-      expect(response.status).toBe(200);
-      expect(mockApplyRemoteSettings).toHaveBeenCalledWith(remotePayload);
-      expect(mockGetSettingsForSync).toHaveBeenCalled();
-      expect((response.body as any).settings).toBeDefined();
-      expect((response.body as any).settings.checksum).toBe("local-checksum");
-    });
-
-    it("should skip applying settings when checksums match", async () => {
-      const samePayload = makeSettingsPayload({ checksum: "same-checksum" });
-
-      mockGetSettings.mockResolvedValue({});
-      mockGetSettingsForSync.mockResolvedValue(samePayload);
-
-      const response = await request(
-        app,
-        "POST",
-        "/api/mesh/sync",
-        JSON.stringify({
-          senderNodeId: "node_remote",
-          senderNodeUrl: "https://remote.example.com",
-          knownPeers: [],
-          timestamp: "2026-04-01T12:00:00.000Z",
-          settings: samePayload,
         }),
         { "Content-Type": "application/json" }
       );
 
       expect(response.status).toBe(200);
       expect(mockApplyRemoteSettings).not.toHaveBeenCalled();
-      expect((response.body as any).settings).toBeDefined();
-    });
-
-    it("should respond with settings when request includes settings", async () => {
-      const remotePayload = makeSettingsPayload({ checksum: "remote-checksum" });
-      const localPayload = makeSettingsPayload({ checksum: "local-checksum" });
-
-      mockGetSettings.mockResolvedValue({});
-      mockGetSettingsForSync.mockResolvedValue(localPayload);
-      mockApplyRemoteSettings.mockResolvedValue({
-        success: true,
-        globalCount: 1,
-        projectCount: 0,
-        authCount: 0,
-      });
-
-      const response = await request(
-        app,
-        "POST",
-        "/api/mesh/sync",
-        JSON.stringify({
-          senderNodeId: "node_remote",
-          senderNodeUrl: "https://remote.example.com",
-          knownPeers: [],
-          timestamp: "2026-04-01T12:00:00.000Z",
-          settings: remotePayload,
+      expect(mockGetSettingsForSync).not.toHaveBeenCalled();
+      expect((response.body as any).settings).toBeUndefined();
+      expect(mockMergePeers).toHaveBeenCalled();
+      expect(runtimeHarness.entries).toContainEqual(
+        expect.objectContaining({
+          level: "info",
+          scope: "test:routes:remote-route:mesh-sync",
+          message: "Ignored inbound settings payload — settings live in shared PostgreSQL",
+          context: expect.objectContaining({
+            nodeId: "node_remote",
+            upstreamPath: "/api/mesh/sync",
+            operationStage: "settings-sync",
+          }),
         }),
-        { "Content-Type": "application/json" }
       );
-
-      expect(response.status).toBe(200);
-      expect((response.body as any).settings).toBeDefined();
-      expect((response.body as any).settings.checksum).toBe("local-checksum");
     });
 
-    it("should NOT include settings in response when request does not include settings", async () => {
+    it("does not include settings in response when request has no settings", async () => {
       const response = await request(
         app,
         "POST",
@@ -658,104 +642,6 @@ describe("POST /api/mesh/sync", () => {
       expect(response.status).toBe(200);
       expect((response.body as any).settings).toBeUndefined();
       expect(mockGetSettingsForSync).not.toHaveBeenCalled();
-    });
-
-    it("should not fail sync when settings apply fails", async () => {
-      const remotePayload = makeSettingsPayload({ checksum: "remote-checksum" });
-      const localPayload = makeSettingsPayload({ checksum: "local-checksum" });
-      const runtimeHarness = createRuntimeLoggerHarness();
-      const appWithLogger = createServer(new MockStore() as unknown as TaskStore, {
-        runtimeLogger: runtimeHarness.logger,
-      });
-
-      mockGetSettings.mockResolvedValue({});
-      mockGetSettingsForSync.mockResolvedValue(localPayload);
-      mockApplyRemoteSettings.mockResolvedValue({
-        success: false,
-        globalCount: 0,
-        projectCount: 0,
-        authCount: 0,
-        error: "Checksum mismatch",
-      });
-
-      const response = await request(
-        appWithLogger,
-        "POST",
-        "/api/mesh/sync",
-        JSON.stringify({
-          senderNodeId: "node_remote",
-          senderNodeUrl: "https://remote.example.com",
-          knownPeers: [],
-          timestamp: "2026-04-01T12:00:00.000Z",
-          settings: remotePayload,
-        }),
-        { "Content-Type": "application/json" }
-      );
-
-      // Sync should still succeed even if settings apply failed
-      expect(response.status).toBe(200);
-      expect(mockMergePeers).toHaveBeenCalled();
-      expect((response.body as any).knownPeers).toBeDefined();
-      expect(runtimeHarness.entries).toContainEqual(
-        expect.objectContaining({
-          level: "warn",
-          scope: "test:routes:remote-route:mesh-sync",
-          message: "Failed to apply remote settings payload",
-          context: expect.objectContaining({
-            nodeId: "node_remote",
-            upstreamPath: "/api/mesh/sync",
-            operationStage: "apply-remote-settings",
-            transportClassification: "unexpected",
-            errorClass: "Error",
-            errorMessage: "Checksum mismatch",
-          }),
-        }),
-      );
-    });
-
-    it("should not fail sync when getSettingsForSync throws", async () => {
-      const remotePayload = makeSettingsPayload({ checksum: "remote-checksum" });
-      const runtimeHarness = createRuntimeLoggerHarness();
-      const appWithLogger = createServer(new MockStore() as unknown as TaskStore, {
-        runtimeLogger: runtimeHarness.logger,
-      });
-
-      mockGetSettings.mockRejectedValue(new Error("Settings unavailable"));
-
-      const response = await request(
-        appWithLogger,
-        "POST",
-        "/api/mesh/sync",
-        JSON.stringify({
-          senderNodeId: "node_remote",
-          senderNodeUrl: "https://remote.example.com",
-          knownPeers: [],
-          timestamp: "2026-04-01T12:00:00.000Z",
-          settings: remotePayload,
-        }),
-        { "Content-Type": "application/json" }
-      );
-
-      // Sync should still succeed even if getting settings failed
-      expect(response.status).toBe(200);
-      expect(mockMergePeers).toHaveBeenCalled();
-      expect((response.body as any).knownPeers).toBeDefined();
-      expect((response.body as any).settings).toBeUndefined();
-      expect(runtimeHarness.entries).toContainEqual(
-        expect.objectContaining({
-          level: "error",
-          scope: "test:routes:remote-route:mesh-sync",
-          message: "Settings sync operation failed",
-          context: expect.objectContaining({
-            nodeId: "node_remote",
-            upstreamPath: "/api/mesh/sync",
-            operationStage: "settings-sync",
-            transportClassification: "unexpected",
-            errorClass: "Error",
-            errorMessage: "Settings unavailable",
-          }),
-        }),
-      );
     });
   });
 
@@ -861,7 +747,7 @@ describe("/api/mesh/task-ids routes", () => {
     mockCommitDistributedTaskIdReservation.mockResolvedValue({ reservationId: "res-1", taskId: "FN-001", sequence: 1, committedClusterTaskCount: 1, committedAt: "2030-01-01T00:00:00.000Z" });
     mockAbortDistributedTaskIdReservation.mockResolvedValue({ reservationId: "res-1", taskId: "FN-001", sequence: 1, committedClusterTaskCount: 0, abortedAt: "2030-01-01T00:00:00.000Z" });
     mockGetDistributedTaskIdState.mockResolvedValue({ nextSequence: 2, committedClusterTaskCount: 1, activeReservationCount: 0, burnedReservationCount: 0, lastCommittedTaskId: "FN-001" });
-    app = createServer(new MockStore() as unknown as TaskStore);
+    app = createMeshTestServer(new MockStore() as unknown as TaskStore);
   });
 
   it("reserves distributed task ids locally", async () => {
@@ -894,12 +780,42 @@ describe("/api/mesh/task-ids routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 503 when coordinator is unreachable for writes", async () => {
-    mockGetNode.mockResolvedValue(makeNodeConfig({ id: "node_remote_1", url: "https://remote.example.com", apiKey: "secret" }));
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
-    const response = await request(app, "POST", "/api/mesh/task-ids/commit", JSON.stringify({ reservationId: "res-1", nodeId: "node-a", coordinatorNodeId: "node_remote_1" }), { "Content-Type": "application/json" });
-    expect(response.status).toBe(503);
-    vi.unstubAllGlobals();
+  /*
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Remote coordinator hops are retired on all three mutating allocator routes.
+  Assert the invariant across reserve/commit/abort, not only commit.
+  */
+  it.each([
+    {
+      name: "reserve",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/reserve",
+      body: { prefix: "FN", nodeId: "node-a", coordinatorNodeId: "node_remote_1" },
+      mock: mockReserveDistributedTaskId,
+      expectedArgs: { prefix: "FN", nodeId: "node-a", ttlMs: undefined },
+    },
+    {
+      name: "commit",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/commit",
+      body: { reservationId: "res-1", nodeId: "node-a", coordinatorNodeId: "node_remote_1" },
+      mock: mockCommitDistributedTaskIdReservation,
+      expectedArgs: { reservationId: "res-1", nodeId: "node-a" },
+    },
+    {
+      name: "abort",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/abort",
+      body: { reservationId: "res-1", nodeId: "node-a", reason: "abort", coordinatorNodeId: "node_remote_1" },
+      mock: mockAbortDistributedTaskIdReservation,
+      expectedArgs: { reservationId: "res-1", nodeId: "node-a", reason: "abort" },
+    },
+  ])("ignores coordinatorNodeId on $name and allocates locally", async ({ method, path, body, mock, expectedArgs }) => {
+    mockGetNode.mockClear();
+    const response = await request(app, method, path, JSON.stringify(body), { "Content-Type": "application/json" });
+    expect(response.status).toBe(200);
+    expect(mock).toHaveBeenCalledWith(expectedArgs);
+    expect(mockGetNode).not.toHaveBeenCalled();
   });
 });
 
@@ -913,7 +829,7 @@ describe("GET /api/mesh/state", () => {
     mockInit.mockResolvedValue(undefined);
     mockClose.mockResolvedValue(undefined);
     mockGetNode.mockResolvedValue(undefined);
-    app = createServer(new MockStore() as unknown as TaskStore);
+    app = createMeshTestServer(new MockStore() as unknown as TaskStore);
   });
 
   it("returns local-only mesh snapshot when includeRemote=false", async () => {
@@ -951,7 +867,7 @@ describe("GET /api/mesh/state", () => {
     };
 
     const store = new MockStore();
-    const sharedApp = createServer(store as unknown as TaskStore, { centralCore: sharedCentral as never });
+    const sharedApp = createMeshTestServer(store as unknown as TaskStore, { centralCore: sharedCentral as never });
     const response = await request(sharedApp, "GET", "/api/mesh/state?includeRemote=false");
 
     expect(response.status).toBe(200);
@@ -1060,7 +976,7 @@ describe("PostgreSQL backend mode: task mesh replication disabled", () => {
     mockUpdateNode.mockResolvedValue({ id: "node_remote", status: "online" });
     mockReserveDistributedTaskId.mockResolvedValue({ reservationId: "res-1", taskId: "FN-001", sequence: 1, expiresAt: "2030-01-01T00:00:00.000Z", committedClusterTaskCount: 0 });
     store = new BackendModeMockStore();
-    app = createServer(store as unknown as TaskStore);
+    app = createMeshTestServer(store as unknown as TaskStore);
   });
 
   it("POST /api/mesh/tasks/create no longer exists (route removed — replication is the database)", async () => {

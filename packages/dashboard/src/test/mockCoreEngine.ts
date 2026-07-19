@@ -79,6 +79,24 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
     )),
     // FNXC:McpConfig 2026-07-02-13:45: Planning/mission route tests share this engine mock; MCP resolution must return the full shaped empty result so readonly session creation can proceed without importing real engine stores.
     resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-15:55:
+    FN-8277 routes planning/subtask creation through createAgentTask. The wholesale
+    @fusion/engine mock previously fell back to vi.fn() → undefined, so
+    `const { task } = await createAgentTask(...)` threw. Default to a thin wrapper
+    that uses the real store.createTask and reports wasDuplicate:false.
+    */
+    createAgentTask: vi.fn(async (
+      store: { createTask?: (input: unknown, options?: unknown) => Promise<unknown> },
+      input: unknown,
+      _options?: unknown,
+    ) => {
+      if (typeof store?.createTask !== "function") {
+        throw new Error("createAgentTask mock requires store.createTask");
+      }
+      const task = await store.createTask(input, { settings: {} });
+      return { task, wasDuplicate: false };
+    }),
     ...overrides,
   });
 }

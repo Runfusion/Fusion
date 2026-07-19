@@ -163,6 +163,8 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   // Generation counter bumped by retryBootstrap to re-trigger auto-create effect
   const [retryGeneration, setRetryGeneration] = useState(0);
+  // FNXC:Terminal 2026-07-15-10:40: Forces auto-create to reconsider the current generation after a stale attempt settles.
+  const [bootstrapWakeGeneration, setBootstrapWakeGeneration] = useState(0);
   // Ref-based generation token to protect against stale completions from prior
   // bootstrap attempts. Only the current generation may mutate state.
   const generationRef = useRef(0);
@@ -170,6 +172,12 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
 
   useEffect(() => {
     generationRef.current += 1;
+    // FNXC:Terminal 2026-07-15-10:40:
+    // FN-8302 requires first-tab bootstrap to converge to an active tab or an
+    // actionable error. A reset can invalidate an already-started create, so
+    // wake the auto-create effect for the new generation instead of letting a
+    // stale completion leave TerminalModal on "Starting terminal..." forever.
+    setBootstrapWakeGeneration((generation) => generation + 1);
     setTabs(readTabsFromStorage(projectId, storageScope));
     setIsReady(false);
     setServerAvailable(true);
@@ -309,8 +317,11 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
           "createTerminalSession"
         )
           .then((session) => {
-            // Only apply state changes if this is still the current generation
-            if (gen !== generationRef.current) return;
+            // FNXC:Terminal 2026-07-15-10:40: A stale completion cannot mutate tabs, but must wake the active generation so its empty bootstrap state retries deterministically.
+            if (gen !== generationRef.current) {
+              setBootstrapWakeGeneration((generation) => generation + 1);
+              return;
+            }
 
             const newTab: TerminalTab = {
               id: generateTabId(),
@@ -333,8 +344,11 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
             setBootstrapError(null);
           })
           .catch((err) => {
-            // Only set error if this is still the current generation
-            if (gen !== generationRef.current) return;
+            // FNXC:Terminal 2026-07-15-10:40: A stale failure cannot set an error, but must wake the current empty generation to preserve tab-or-error convergence.
+            if (gen !== generationRef.current) {
+              setBootstrapWakeGeneration((generation) => generation + 1);
+              return;
+            }
             if (!isRelativeUrlFetchError(err)) {
               console.error(err);
             }
@@ -350,7 +364,16 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
       }, 0);
       return () => clearTimeout(timeout);
     }
-  }, [bootstrapError, defaultCwd, isReady, projectId, serverAvailable, tabs.length, retryGeneration]); // Run when ready or when tabs become empty
+  }, [
+    bootstrapError,
+    bootstrapWakeGeneration,
+    defaultCwd,
+    isReady,
+    projectId,
+    serverAvailable,
+    tabs.length,
+    retryGeneration,
+  ]); // Run when ready, when tabs become empty, or after a stale attempt settles
 
   /**
    * Internal create tab function (used for auto-creation and user-initiated creation).

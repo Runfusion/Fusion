@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import * as readline from "node:readline";
-import { PluginStore, PluginLoader, validatePluginManifest, resolveGlobalDir } from "@fusion/core";
+import { PluginStore, PluginLoader, validatePluginManifest, resolveGlobalDir, CentralCore } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
 
 export interface BuiltinPluginCatalogEntry {
@@ -110,11 +110,53 @@ export async function createPluginStore(
     await pluginStore.init();
     return pluginStore;
   } catch {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Unregistered-project fallback. PluginStore persists install/state rows in the
+    central DB and needs an AsyncDataLayer to run in PostgreSQL backend mode; the
+    old fallback constructed it WITHOUT one, so `init()` hit the removed-SQLite
+    stub and threw in every PG deployment. Bootstrap a layer-less CentralCore
+    (which self-bootstraps the embedded-PG AsyncDataLayer in init()) and pass its
+    layer so the fallback store is backend-mode just like the resolveProject path.
+    */
     const projectPath = await getProjectPath(projectName);
+    const centralGlobalDir = options?.centralGlobalDir ?? resolveGlobalDir();
+    const central = new CentralCore(centralGlobalDir);
+    await central.init();
+    const backendLayer = central.asyncLayer;
     const pluginStore = new PluginStore(projectPath, {
-      centralGlobalDir: options?.centralGlobalDir ?? resolveGlobalDir(),
+      centralGlobalDir,
+      ...(backendLayer ? { asyncLayer: backendLayer } : {}),
     });
-    await pluginStore.init();
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-18:10:
+    `central.init()` bootstraps and OWNS an embedded-Postgres backend (pool +
+    postmaster). Since we don't return `central`, tie its teardown to the returned
+    store: closing the PluginStore also stops the CentralCore. `closeWithCentral` is
+    async so a lifecycle-managing caller can `await store.close()` for a graceful
+    shutdown (a Promise return is void-compatible with `close(): void`). Even a
+    fire-and-forget CLI exit does NOT leak the backend: EmbeddedPostgres self-registers
+    beforeExit/SIGTERM/SIGINT stop hooks (see embedded-lifecycle.ts) that stop the
+    postmaster if the caller forgets, and `beforeExit` keeps the process alive for the
+    async stop.
+    */
+    const closePluginStore = pluginStore.close.bind(pluginStore);
+    const closeWithCentral = async (): Promise<void> => {
+      closePluginStore();
+      await central.close().catch(() => undefined);
+    };
+    pluginStore.close = closeWithCentral;
+    try {
+      await pluginStore.init();
+    } catch (initErr) {
+      /*
+      If init() rejects the store is never returned, so the reassigned close() is
+      unreachable. Await the teardown here so the owned CentralCore's embedded
+      Postgres is stopped before we rethrow.
+      */
+      await closeWithCentral();
+      throw initErr;
+    }
     return pluginStore;
   }
 }

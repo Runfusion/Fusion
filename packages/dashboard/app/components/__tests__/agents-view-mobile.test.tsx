@@ -56,6 +56,7 @@ RuntimeFallbackBadge per agent card, and this file renders <AgentsView> outside 
 the badge throw unmounts the tree (buttons/labels vanish), so mock the hook like TaskCard.test.tsx does.
 */
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

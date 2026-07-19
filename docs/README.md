@@ -58,10 +58,10 @@ Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Referenc
 | [Architecture](./architecture.md) | System architecture, package layout, storage model, and engine execution flow |
 | [Secrets Store (`SecretsStore`)](./architecture.md#secrets-store-secretsstore) | Core encrypted secret subsystem overview: scopes, AES-256-GCM at-rest model, policy semantics, and public store API surface |
 | [Dashboard Real-Time](./dashboard-realtime.md) | Canonical event-stream architecture contract (shared `/api/events` bus + dedicated stream boundaries), with project/node scoping, reconnect/cleanup behavior, and realtime pitfalls |
-| [Storage](./storage.md) | Storage architecture, migration, archive system, and SQLite schema |
+| [Storage](./storage.md) | PostgreSQL runtime storage, archive, migration compatibility, and file-backed payloads |
 | [DAG Architecture Deliverables](./dag/) | Milestone A DAG architecture documents plus Milestone B prototype scaffold docs (schema migration plan, DagCoordinator design, implementation checklist) |
 | [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
-| [Shared Mesh Replication Protocol](./shared-mesh-protocol.md) | Canonical multi-leader replication/write-coordination contract (versioning, quorum, leases/fencing, queue/replay, reconciliation, and degraded-read semantics) |
+| [Shared Cluster Protocol](./shared-mesh-protocol.md) | Shared PostgreSQL multi-node contract: claims/leases, membership, auth, and retired multi-leader mesh replication |
 | [Signals Connectors](./signals-connectors.md) | HMAC-signed external signal connectors for setup, payload mapping, and security notes across Sentry, Datadog, PagerDuty, and generic webhooks |
 | [Multi-Project Sequencing and Dependency Analysis](./multi-project-sequencing.md) | Sequencing guidance for FN-3448/FN-3449/FN-3503/FN-3182, including identity boundaries and recommended board dependency edges |
 | [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions |
@@ -116,7 +116,7 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [Dev Server Module Boundary Audit](./dev-server-module-boundary-audit.md) | Boundary/ownership audit for parallel `dev-server-*` vs `devserver-*` dashboard modules and FN-2212 prioritization guidance |
 | [spawn_agent Approval Evaluation (FN-3973)](./spawn-agent-approval-evaluation.md) | Decision to keep fn_spawn_agent under generic action-gate governance rather than durable agent provisioning policy |
 | [Task Lineage Reconciliation Notes](./task-lineage-reconciliation.md) | Historical task-ID reuse patterns, confidence semantics for commit attribution, and reconciliation methodology (FN-3953, FN-3998) |
-| [Dashboard Load Performance](./performance/dashboard-load.md) | SQLite index analysis and optimization for dashboard boot path queries |
+| [Dashboard Load Performance (historical)](./performance/dashboard-load.md) | Pre-cutover SQLite index analysis retained for performance archaeology |
 | [CLI Printing Press Plugin Design](./design/cli-printing-press-plugin.md) | Architecture design for the CLI printing press bundled plugin (FN-3762) |
 | [CLI Printing Press Research](./research/cli-printing-press.md) | Upstream `cli-printing-press` analysis and Fusion integration mapping (FN-3761) |
 | [Research vs Experiment Session Naming Decision](./research/naming-decision-2026-05.md) | Naming decision record: hybrid approach retaining `research_*` for cited-search/synthesis and adding `experiment_session_*` for upstream parity (FN-4223) |
@@ -142,7 +142,10 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 
 | [Lost-Work Tasks Incident (2026-05-23)](./incidents/2026-05-23-lost-work-tasks.md) | Incident catalog of 9 lost-work tasks from no-op finalize and reuse-handoff bugs |
 | [GitLab Parity Inventory (FN-7421)](./gitlab-parity-inventory.md) | Implementation map for first-class GitLab support: import, linked issue tracking, comments, auth/settings UI, CLI/extension, and Command Center surfaces to mirror or explicitly exclude |
+| [PostgreSQL Runtime Cutover Review (2026-07-14)](./postgres-migration-review-2026-07-14.md) | Current end-to-end authority inventory, intentional legacy SQLite readers, deployment contract, and verification record |
+| [SQLite → PostgreSQL Migration Review (2026-06-26, historical)](./postgres-migration-review-2026-06-26.md) | Historical multi-agent review of the incomplete migration branch and its original findings |
 | [Dashboard Theme & UI Plugin System Proposal (2026-07-01)](./proposals/2026-07-01-dashboard-theme-plugin-system.md) | Feasibility-spike proposal for a controlled dashboard theme/UI shell extension point sharing one backend source of truth |
+| [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
 
 ## External Resources
 

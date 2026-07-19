@@ -130,8 +130,12 @@
   font-size: var(--font-size-xs);
 }
 
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
+FN-8007 makes the current-use dot's half-thumb edge inset match the native desktop range thumb. This preserves the min-relative thumb alignment used by the marker: one running agent stays visible at the start and over-cap use stays on the cap thumb.
+*/
 .engine-control-menu__range-wrap {
-  --engine-control-range-thumb-size: var(--space-md);
+  --engine-control-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);
   position: relative;
   display: flex;
   align-items: center;
@@ -141,11 +145,28 @@
   /*
   FNXC:GlobalConcurrencyControls 2026-06-30-21:45:
   Footer current-use dots must align with the Command Center concurrency sliders. Mirror the dashboard range-input geometry instead of nudging the marker so the shared current/cap marker math lands on the same effective track/thumb positions across footer and dashboard surfaces.
+
+  FNXC:GlobalConcurrencyControls 2026-07-15-00:00:
+  FN-7973 requires horizontal concurrency thumb drags to opt out of the mobile pan-y ancestor lock. touch-action:none gives a touch beginning on this range input to the native slider rather than allowing a near-horizontal drag to become page panning.
   */
   inline-size: 100%;
   min-block-size: var(--space-xl);
   accent-color: var(--accent);
-  touch-action: pan-y;
+  touch-action: none;
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-18:10:
+FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size token. This prevents browser-default thumb dimensions from changing the marker travel geometry; WebKit and Gecko must use the same dimensions as the half-thumb inset.
+*/
+.engine-control-menu__range::-webkit-slider-thumb {
+  width: var(--engine-control-range-thumb-size);
+  height: var(--engine-control-range-thumb-size);
+}
+
+.engine-control-menu__range::-moz-range-thumb {
+  width: var(--engine-control-range-thumb-size);
+  height: var(--engine-control-range-thumb-size);
 }
 
 /* FNXC:GlobalConcurrencyControls 2026-06-26-06:26: The current-use marker reuses the global .status-dot convention and is positioned with logical inset properties so utilization is visible on LTR/RTL slider tracks without intercepting drag input. */

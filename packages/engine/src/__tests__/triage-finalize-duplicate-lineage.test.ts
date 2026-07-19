@@ -16,6 +16,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn(),
     moveTask: vi.fn(),
     logEntry: vi.fn(),
+    // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records task:auto-archived-duplicate activity.
+    recordActivity: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
@@ -102,8 +104,27 @@ describe("triage finalize duplicate lineage", () => {
     expect(vi.mocked(store.updateTask).mock.calls[0]?.[1]).not.toHaveProperty("sourceMetadataPatch");
   });
 
-  it("preserves duplicate stub delete path", async () => {
-    const store = createMockStore();
+  it("preserves opt-in duplicate stub delete path", async () => {
+    /*
+    FNXC:EngineTests 2026-07-17-11:50:
+    Issue #2225 default is prompt (flag + pause). Deletion remains opt-in via
+    settings.triageDuplicateResolution === "delete" and still requires a live
+    canonical task for the marker short-circuit.
+    */
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ requirePlanApproval: false, triageDuplicateResolution: "delete" } as Settings),
+      /*
+      FNXC:EngineTests 2026-07-17-18:10:
+      PR #2275 review: preserve a default current-task mock for non-canonical IDs.
+      Returning undefined for FN-001 risks NPEs if recovery re-fetches the subject task.
+      */
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "FN-4894") {
+          return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
+        }
+        return createTask({ id: "FN-001" });
+      }),
+    });
     await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
 
     expect(store.deleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
@@ -113,6 +134,33 @@ describe("triage finalize duplicate lineage", () => {
         runId: expect.stringMatching(/^triage-delete-FN-001-/),
       }),
     }));
-    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("flags and parks DUPLICATE markers under default prompt resolution", async () => {
+    const store = createMockStore({
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "FN-4894") {
+          return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
+        }
+        return createTask({ id: "FN-001" });
+      }),
+    });
+    await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
+
+    expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
+      type: "task:auto-archived-duplicate",
+      taskId: "FN-001",
+    }));
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({
+        sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-4894", duplicateSource: "triage-marker" }),
+      }),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ paused: true, pausedReason: "duplicate-decision-required" }),
+    );
+    expect(store.deleteTask).not.toHaveBeenCalled();
   });
 });

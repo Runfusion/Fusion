@@ -2233,6 +2233,8 @@ describe("TaskExecutor global pause behavior", () => {
       paused: false,
       pausedByAgentId: null,
       status: null,
+      // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+      bulkCompletionRefusalAt: null,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
@@ -2311,6 +2313,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2381,6 +2385,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2455,6 +2461,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2521,6 +2529,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2613,14 +2623,13 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   // createTaskUpdateTool is a private executor method; the bare-call guard runs
   // before any store access, so we reach it via the lowest-cost seam: construct
   // a TaskExecutor over a mock store and invoke the private method with `as any`.
-  function makeTool() {
-    const store = createMockStore();
+  function makeTool(store = createMockStore()) {
     const executor = new TaskExecutor(store, "/tmp/test");
-    return (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map());
+    return { store, tool: (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map()) };
   }
 
   it("returns isError with a self-describing message when no fields are supplied", async () => {
-    const tool = makeTool();
+    const { tool } = makeTool();
     const result = await tool.execute("call-1", {});
     expect(result.isError).toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
@@ -2630,12 +2639,34 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   });
 
   it("does not trigger the guard when a dependencies-only patch is supplied", async () => {
-    const tool = makeTool();
+    const { tool } = makeTool();
     const result = await tool.execute("call-1", { dependencies: [] });
     // Reaches the dependencies path, not the bare-call guard.
     expect(result.isError).not.toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).not.toContain("fn_task_update requires at least one of");
+  });
+
+  it("accepts a store-accepted skipped transition without tool-side agent-log narration", async () => {
+    /*
+    FNXC:ProactiveChatStatus 2026-07-18-12:40:
+    FN-8064 moved step start/success/skip narration into TaskStore.updateStep (merge-queue-ops)
+    so workflow projection, review auto-approval, and self-healing share the same chat rows.
+    fn_task_update only reports progress text; appendAgentLog is store-owned when
+    proactiveTaskChatEnabled is true. Covered by packages/core proactive-step-status.pg.test.ts.
+    */
+    const { store, tool } = makeTool();
+    store.updateStep.mockResolvedValue(createMockTaskDetail({
+      steps: [{ name: "No code change needed", status: "skipped", dependsOn: [] }],
+    }));
+
+    const result = await tool.execute("call-1", { step: 0, status: "skipped" });
+
+    expect(result.isError).not.toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Step 0");
+    expect(text).toContain("skipped");
+    expect(store.appendAgentLog).not.toHaveBeenCalled();
   });
 });
 

@@ -53,7 +53,8 @@ type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 function rowToInsight(row: Record<string, unknown>): Insight {
   return {
     id: row.id as string,
-    projectId: row.projectId as string,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? "",
     title: row.title as string,
     content: (row.content as string | null) ?? null,
     category: row.category as InsightCategory,
@@ -69,7 +70,7 @@ function rowToInsight(row: Record<string, unknown>): Insight {
 function rowToRun(row: Record<string, unknown>): InsightRun {
   return {
     id: row.id as string,
-    projectId: row.projectId as string,
+    projectId: (row.ownerProjectId as string | null) ?? "",
     trigger: row.trigger as InsightRunTrigger,
     status: row.status as InsightRunStatus,
     summary: (row.summary as string | null) ?? null,
@@ -97,7 +98,8 @@ export async function createInsight(
 ): Promise<void> {
   await handle.insert(schema.project.projectInsights).values({
     id: insight.id,
-    projectId: insight.projectId,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition, and domain writes into it desynced the composite FK partition of project_insight_run_events.
+    ownerProjectId: insight.projectId,
     title: insight.title,
     content: insight.content ?? null,
     category: insight.category,
@@ -127,7 +129,7 @@ export async function getInsight(handle: QueryHandle, id: string): Promise<Insig
  */
 export async function listInsights(handle: QueryHandle, options: InsightListOptions = {}): Promise<Insight[]> {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsights.projectId, options.projectId));
+  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsights.ownerProjectId, options.projectId));
   if (options.category !== undefined) conditions.push(eq(schema.project.projectInsights.category, options.category));
   if (options.status !== undefined) conditions.push(eq(schema.project.projectInsights.status, options.status));
   if (options.runId !== undefined) conditions.push(eq(schema.project.projectInsights.lastRunId, options.runId));
@@ -154,7 +156,7 @@ export async function upsertInsight(
     .from(schema.project.projectInsights)
     .where(
       and(
-        eq(schema.project.projectInsights.projectId, projectId),
+        eq(schema.project.projectInsights.ownerProjectId, projectId),
         eq(schema.project.projectInsights.fingerprint, input.fingerprint),
       ),
     );
@@ -219,7 +221,7 @@ export async function createInsightRun(
 ): Promise<InsightRun> {
   await handle.insert(schema.project.projectInsightRuns).values({
     id: run.id,
-    projectId: run.projectId,
+    ownerProjectId: run.projectId,
     trigger: run.trigger,
     status: "pending",
     summary: null,
@@ -270,7 +272,7 @@ export async function getInsightRun(handle: QueryHandle, id: string): Promise<In
  */
 export async function listInsightRuns(handle: QueryHandle, options: InsightRunListOptions = {}): Promise<InsightRun[]> {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsightRuns.projectId, options.projectId));
+  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsightRuns.ownerProjectId, options.projectId));
   if (options.status !== undefined) conditions.push(eq(schema.project.projectInsightRuns.status, options.status));
   if (options.trigger !== undefined) conditions.push(eq(schema.project.projectInsightRuns.trigger, options.trigger));
   const query = handle
@@ -295,7 +297,7 @@ export async function findActiveInsightRun(
     .from(schema.project.projectInsightRuns)
     .where(
       and(
-        eq(schema.project.projectInsightRuns.projectId, projectId),
+        eq(schema.project.projectInsightRuns.ownerProjectId, projectId),
         eq(schema.project.projectInsightRuns.trigger, trigger),
         inArray(schema.project.projectInsightRuns.status, ["pending", "running"]),
       ),
@@ -315,21 +317,32 @@ export async function appendInsightRunEvent(
   let seq = 1;
   const createdAt = new Date().toISOString();
   await layer.transactionImmediate(async (tx) => {
+    // FNXC:MultiProjectIsolation 2026-07-16-09:10: read the parent run's PARTITION column
+    // (projectId, not ownerProjectId) and stamp it explicitly on the child event insert.
+    // The ambient fusion.project_id GUC is not guaranteed to match the parent's partition —
+    // unbound/bypass handles (tests, admin, maintenance) would otherwise get the trigger's
+    // default (__legacy_unscoped__ or another ambient partition) and fail the composite
+    // (project_id, run_id) FK with SQLSTATE 23503. The trigger only rewrites blank values,
+    // so an explicit non-blank project_id is preserved, and RLS WITH CHECK still passes for
+    // bound sessions (they can only read their own partition's parent run anyway).
     const runRows = await tx
-      .select({ projectId: schema.project.projectInsightRuns.projectId })
+      .select({
+        id: schema.project.projectInsightRuns.id,
+        projectId: schema.project.projectInsightRuns.projectId,
+      })
       .from(schema.project.projectInsightRuns)
       .where(eq(schema.project.projectInsightRuns.id, input.runId))
       .limit(1);
-    const projectId = runRows[0]?.projectId;
-    if (!projectId) throw new Error(`Insight run not found: ${input.runId}`);
+    if (!runRows[0]) throw new Error(`Insight run not found: ${input.runId}`);
+    const parentPartitionId = runRows[0].projectId as string;
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.projectInsightRunEvents.seq}), 0) + 1` })
       .from(schema.project.projectInsightRunEvents)
       .where(eq(schema.project.projectInsightRunEvents.runId, input.runId));
     seq = Number(seqRows[0]?.nextSeq ?? 1);
     await tx.insert(schema.project.projectInsightRunEvents).values({
-      projectId,
       id: input.id,
+      projectId: parentPartitionId,
       runId: input.runId,
       seq,
       type: input.type,
@@ -465,7 +478,7 @@ export async function updateInsightRun(
 
 function buildInsightCountConditions(options: Pick<InsightListOptions, "projectId" | "category" | "status" | "runId">): ReturnType<typeof eq>[] {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsights.projectId, options.projectId));
+  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsights.ownerProjectId, options.projectId));
   if (options.category !== undefined) conditions.push(eq(schema.project.projectInsights.category, options.category));
   if (options.status !== undefined) conditions.push(eq(schema.project.projectInsights.status, options.status));
   if (options.runId !== undefined) conditions.push(eq(schema.project.projectInsights.lastRunId, options.runId));
@@ -485,7 +498,7 @@ export async function countInsights(handle: QueryHandle, options: Omit<InsightLi
 
 function buildRunCountConditions(options: Pick<InsightRunListOptions, "projectId" | "status" | "trigger">): ReturnType<typeof eq>[] {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsightRuns.projectId, options.projectId));
+  if (options.projectId !== undefined) conditions.push(eq(schema.project.projectInsightRuns.ownerProjectId, options.projectId));
   if (options.status !== undefined) conditions.push(eq(schema.project.projectInsightRuns.status, options.status));
   if (options.trigger !== undefined) conditions.push(eq(schema.project.projectInsightRuns.trigger, options.trigger));
   return conditions;
@@ -517,7 +530,7 @@ export async function listStalePendingRuns(
     inArray(schema.project.projectInsightRuns.status, ["pending", "running"]),
     lte(sql`coalesce(${schema.project.projectInsightRuns.startedAt}, ${schema.project.projectInsightRuns.createdAt})`, olderThanIso),
   ];
-  if (options.projectId) conditions.push(eq(schema.project.projectInsightRuns.projectId, options.projectId));
+  if (options.projectId) conditions.push(eq(schema.project.projectInsightRuns.ownerProjectId, options.projectId));
   const rows = await handle
     .select()
     .from(schema.project.projectInsightRuns)

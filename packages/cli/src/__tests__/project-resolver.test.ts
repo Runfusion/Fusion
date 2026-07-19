@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, statSync } from "node:fs";
-import { TaskStore } from "@fusion/core";
+import { TaskStore, createTaskStoreForBackend } from "@fusion/core";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
   const mock = vi.fn(function () {});
@@ -17,8 +17,9 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
   return mock;
 }
 
-const { mockIsValidSqliteDatabaseFile } = vi.hoisted(() => ({
+const { mockIsValidSqliteDatabaseFile, mockHasProjectIdentity } = vi.hoisted(() => ({
   mockIsValidSqliteDatabaseFile: vi.fn(),
+  mockHasProjectIdentity: vi.fn(),
 }));
 
 // Mock fs module
@@ -29,6 +30,10 @@ vi.mock("node:fs", () => ({
 
 // Mock @fusion/core
 vi.mock("@fusion/core", async () => {
+  const TaskStoreMock = makeConstructibleMock(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    listTasks: vi.fn().mockResolvedValue([]),
+  }));
   return {
     CentralCore: class MockCentralCore {
       init = vi.fn().mockResolvedValue(undefined);
@@ -56,9 +61,14 @@ vi.mock("@fusion/core", async () => {
     },
     isValidSqliteDatabaseFile: (...args: Parameters<typeof mockIsValidSqliteDatabaseFile>) =>
       mockIsValidSqliteDatabaseFile(...args),
-    TaskStore: makeConstructibleMock(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      listTasks: vi.fn().mockResolvedValue([]),
+    hasProjectIdentity: (...args: Parameters<typeof mockHasProjectIdentity>) =>
+      mockHasProjectIdentity(...args),
+    TaskStore: TaskStoreMock,
+    createTaskStoreForBackend: vi.fn(async () => ({
+      taskStore: new TaskStoreMock(),
+      asyncLayer: {},
+      backend: { mode: "embedded" },
+      shutdown: vi.fn().mockResolvedValue(undefined),
     })),
     readProjectIdentity: vi.fn().mockReturnValue(undefined),
     writeProjectIdentity: vi.fn(),
@@ -97,6 +107,9 @@ const {
   suggestProjectName,
   resolveAbsolutePath,
   formatLastActivity,
+  getProjectsWithStatus,
+  getProjectTaskCounts,
+  resolveProjectStore,
   resetProjectResolution,
 } = projectResolver;
 
@@ -105,6 +118,7 @@ describe("Project Resolver", () => {
     vi.clearAllMocks();
     resetProjectResolution();
     mockIsValidSqliteDatabaseFile.mockReturnValue(false);
+    mockHasProjectIdentity.mockReturnValue(false);
     vi.mocked(TaskStore).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       listTasks: vi.fn().mockResolvedValue([]),
@@ -116,6 +130,13 @@ describe("Project Resolver", () => {
   });
 
   describe("findKbDir", () => {
+    it("finds a PostgreSQL-era project identity marker without SQLite", () => {
+      mockHasProjectIdentity.mockImplementation((path) => String(path) === "/project/.fusion");
+
+      expect(findKbDir("/project/src")).toBe("/project");
+      expect(mockIsValidSqliteDatabaseFile).not.toHaveBeenCalledWith("/project/.fusion/fusion.db");
+    });
+
     it("should find .fusion directory in current path", () => {
       mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/project/.fusion/fusion.db");
 
@@ -139,6 +160,172 @@ describe("Project Resolver", () => {
       mockIsValidSqliteDatabaseFile.mockReturnValue(false);
       const result = findKbDir("/project");
       expect(result).toBeNull();
+    });
+  });
+
+  describe("PostgreSQL project status reads", () => {
+    const project = {
+      id: "proj_1234567890abcdef",
+      name: "alpha",
+      path: "/projects/alpha",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    it("boots and releases an owned PostgreSQL store for aggregate status", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const listTasks = vi.fn().mockResolvedValue([{ column: "todo" }, { column: "done" }]);
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks } as never,
+        shutdown,
+      } as never);
+
+      const result = await getProjectsWithStatus();
+
+      expect(result).toEqual([{ project, runtimeStatus: "not_started", taskCount: 2 }]);
+      expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("releases aggregate status backends when task reads reject", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks: vi.fn().mockRejectedValue(new Error("read failed")) } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectsWithStatus()).resolves.toEqual([
+        { project, runtimeStatus: "not_started", taskCount: 0 },
+      ]);
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("bounds aggregate PostgreSQL backend fan-out and preserves project order", async () => {
+      const projects = Array.from({ length: 7 }, (_, index) => ({
+        ...project,
+        id: `proj_${index}`,
+        name: `project-${index}`,
+        path: `/projects/${index}`,
+      }));
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue(projects as never);
+      let active = 0;
+      let peak = 0;
+      vi.mocked(createTaskStoreForBackend).mockImplementation(async ({ projectId }) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        return {
+          taskStore: { listTasks: vi.fn().mockResolvedValue([{ column: projectId }]) },
+          shutdown: vi.fn(async () => { active -= 1; }),
+        } as never;
+      });
+
+      const result = await getProjectsWithStatus();
+
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(active).toBe(0);
+      expect(result.map(({ project: item }) => item.id)).toEqual(projects.map((item) => item.id));
+    });
+
+    it("boots and releases an owned PostgreSQL store for one-shot column counts", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const listTasks = vi.fn().mockResolvedValue([{ column: "todo" }, { column: "todo" }, { column: "done" }]);
+      const central = await getCentralCore();
+      vi.mocked(central.getProject).mockResolvedValue(project as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectTaskCounts(project.id)).resolves.toEqual({ todo: 2, done: 1 });
+      expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("releases one-shot column-count backends when task reads reject", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const central = await getCentralCore();
+      vi.mocked(central.getProject).mockResolvedValue(project as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks: vi.fn().mockRejectedValue(new Error("read failed")) } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectTaskCounts(project.id)).rejects.toThrow("read failed");
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("releases an owner-resolved command store exactly once", async () => {
+      /*
+       * FNXC:PostgresProjectResolverLifecycle 2026-07-14-22:20:
+       * Short-lived commands release their factory store explicitly; later module cleanup and repeated close calls must not invoke the same backend shutdown again.
+       */
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const taskStore = { getMissionStore: vi.fn() };
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore,
+        shutdown,
+      } as never);
+
+      const owner = await resolveProjectStore({ project: project.name });
+      expect(owner.store).toBe(taskStore);
+
+      await owner.close();
+      await owner.close();
+      await cleanupProjectResolution();
+
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("mission command store ownership", () => {
+    it("awaits owner cleanup before a successful command exit", async () => {
+      const order: string[] = [];
+      const close = vi.fn(async () => {
+        order.push("close");
+      });
+      const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        order.push(`exit:${code}`);
+        throw new Error(`exit:${code}`);
+      }) as never);
+      vi.spyOn(projectResolver, "resolveProjectStore").mockResolvedValue({
+        store: {
+          getMissionStore: () => ({ listMissions: vi.fn().mockResolvedValue([]) }),
+        } as never,
+        close,
+      });
+      const { runMissionList } = await import("../commands/mission.js");
+
+      await expect(runMissionList("alpha", { includeDrafts: false })).rejects.toThrow("exit:0");
+
+      expect(close).toHaveBeenCalledOnce();
+      expect(exit).toHaveBeenCalledWith(0);
+      expect(order).toEqual(["close", "exit:0"]);
+    });
+
+    it("awaits owner cleanup when mission work rejects", async () => {
+      const close = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(projectResolver, "resolveProjectStore").mockResolvedValue({
+        store: {
+          getMissionStore: () => ({
+            listMissions: vi.fn().mockRejectedValue(new Error("mission read failed")),
+          }),
+        } as never,
+        close,
+      });
+      const { runMissionList } = await import("../commands/mission.js");
+
+      await expect(runMissionList("alpha", { includeDrafts: false })).rejects.toThrow("mission read failed");
+      expect(close).toHaveBeenCalledOnce();
     });
   });
 
@@ -212,7 +399,7 @@ describe("Project Resolver", () => {
       expect(resolved.projectId).toBe("proj_123");
       expect(resolved.name).toBe("alpha");
       expect(resolved.directory).toBe("/workspace/alpha");
-      expect(resolved.store.init).toHaveBeenCalledOnce();
+      expect(resolved.store).toBeDefined();
     });
 
     it("should throw NOT_FOUND if --project project not found", async () => {

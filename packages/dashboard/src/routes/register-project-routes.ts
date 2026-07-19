@@ -1,6 +1,9 @@
 import * as fsPromises from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import {
+  invalidateGitBinaryCache,
+  isSpawnGitEnoent,
+  resolveGitBinary,
   countRunningAgentTasks,
   ensureMemoryFileWithBackend,
   isValidSqliteDatabaseFile,
@@ -12,6 +15,7 @@ import type { CentralCore as CentralCoreApi } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
 import { getOrCreateProjectStore, evictProjectStore } from "../project-store-resolver.js";
+import { computeCodebaseMetrics } from "../lib/codebase-metrics.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 const {
@@ -311,6 +315,17 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (normalizedCloneUrl !== undefined && normalizedGitSetupMode !== undefined && normalizedGitSetupMode !== "clone") {
         throw badRequest("cloneUrl can only be provided when gitSetupMode is 'clone'");
       }
+
+      /*
+      FNXC:ProjectSetup 2026-07-18-04:30:
+      skipGitInit is the dashboard's confirmed "create anyway without a git
+      repo" choice when git is missing on the host. Never valid for clone mode
+      (cloning requires git by definition).
+      */
+      const skipGitInit = req.body?.skipGitInit === true;
+      if (skipGitInit && normalizedGitSetupMode === "clone") {
+        throw badRequest("skipGitInit cannot be combined with clone mode");
+      }
       if (normalizedGitSetupMode === "clone" && normalizedCloneUrl === undefined) {
         throw badRequest("cloneUrl must be a non-empty string when gitSetupMode is 'clone'");
       }
@@ -369,11 +384,28 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         }
 
         try {
-          await execFileAsync("git", ["clone", cloneSource, normalizedPath], {
-            timeout: 90_000,
-            maxBuffer: 10 * 1024 * 1024,
-            encoding: "utf-8",
-          });
+          /*
+          FNXC:ProjectSetup 2026-07-18-06:00:
+          Review finding: match runGitCommand's ENOENT invalidate-and-retry so
+          a stale cached absolute git path (moved/uninstalled mid-session)
+          re-resolves once instead of failing every clone until restart.
+          */
+          const runClone = (binary: string) =>
+            execFileAsync(binary, ["clone", cloneSource, normalizedPath], {
+              timeout: 90_000,
+              maxBuffer: 10 * 1024 * 1024,
+              encoding: "utf-8",
+            });
+          const cloneGit = await resolveGitBinary();
+          try {
+            await runClone(cloneGit);
+          } catch (firstError) {
+            if (!isSpawnGitEnoent(firstError)) throw firstError;
+            invalidateGitBinaryCache();
+            const retryGit = await resolveGitBinary();
+            if (retryGit === cloneGit) throw firstError;
+            await runClone(retryGit);
+          }
         } catch (cloneError) {
           if (destinationCreatedForClone) {
             try {
@@ -409,6 +441,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           name: normalizedName,
           isolationMode,
           nodeId,
+          skipGitInit,
         });
         const project = ensured.project;
 
@@ -572,7 +605,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
       const existingPaths = new Set(existingProjects.map((p: { path: string }) => p.path));
 
-      // Scan for openable .fusion/fusion.db files (indicating fn projects)
+      // Scan for PostgreSQL-era project markers or openable legacy SQLite DBs.
       const detected: Array<{ path: string; suggestedName: string; existing: boolean }> = [];
 
       try {
@@ -582,7 +615,16 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           if (!entry.isDirectory()) continue;
 
           const dirPath = join(searchPath, entry.name);
-          if (isValidSqliteDatabaseFile(join(dirPath, ".fusion", "fusion.db"))) {
+          /*
+           * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+           * Current projects advertise `.fusion/project.json`; an openable
+           * `fusion.db` remains discoverable only as legacy migration input.
+           */
+          const fusionDir = join(dirPath, ".fusion");
+          if (
+            readProjectIdentity(fusionDir) !== null
+            || isValidSqliteDatabaseFile(join(fusionDir, "fusion.db"))
+          ) {
             detected.push({
               path: dirPath,
               suggestedName: entry.name,
@@ -842,7 +884,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       // Evict the in-memory store (closes watchers + connection pool) so the
       // dashboard doesn't hold stale resources for an unregistered project.
       // When the project is re-added, getOrCreateProjectStore will re-create it.
-      evictProjectStore(req.params.id);
+      await evictProjectStore(req.params.id);
 
       res.json({ success: true });
     } catch (err: unknown) {
@@ -938,6 +980,24 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (err instanceof ApiError) {
         throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/projects/:id/codebase-metrics
+   * Compute bounded, local-only codebase context and apparent disk metrics.
+   */
+  router.get("/projects/:id/codebase-metrics", async (req, res) => {
+    try {
+      const metrics = await withCentralCore(async (central) => {
+        const project = await central.getProject(req.params.id);
+        if (!project) throw notFound("Project not found");
+        return await computeCodebaseMetrics(project.path);
+      });
+      res.json(metrics);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });

@@ -8,7 +8,7 @@ after the session ends. Ported from fusion-plugin-grok-runtime for full fn_* par
 */
 
 import { createServer, type Server } from "node:http";
-import { writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,9 +62,29 @@ export function toolsToMcpToolDefs(tools: ReadonlyArray<ToolLike> | undefined): 
     }));
 }
 
-function fusionToolsMcpServerPath(): string {
-  // Packaged CLI copies this as mcp-schema-server.cjs next to the bundled plugin.
-  return join(dirname(fileURLToPath(import.meta.url)), "mcp-schema-server.cjs");
+/**
+ * FNXC:OmpAcp 2026-07-18-23:50:
+ * Resolve `mcp-schema-server.cjs` for the fusion-custom-tools stdio MCP child.
+ * `import.meta.url` can land on source (`src/`), packaged `bundled.js`, or a
+ * hot-reload sibling (`.bundled.reload-*.js`). If the file is missing, omp's
+ * session/new fails with JSON-RPC Internal error / ENOENT and the entire OMP
+ * ACP session dies before any turn runs — surface a clear miss instead.
+ */
+export function fusionToolsMcpServerPath(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    // Packaged CLI / same-dir as bundled.js or tool-bridge source.
+    join(here, "mcp-schema-server.cjs"),
+    // Source layout when running from dist/ that still has ../src assets.
+    join(here, "src", "mcp-schema-server.cjs"),
+    join(here, "..", "src", "mcp-schema-server.cjs"),
+    // Monorepo plugin root relative to src/ or dist/plugins/.../bundled.js.
+    join(here, "..", "mcp-schema-server.cjs"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function resultToText(result: unknown): string {
@@ -182,6 +202,22 @@ export async function startFusionToolBridge(
 
   const bridgeUrl = `http://127.0.0.1:${address.port}`;
   const serverPath = fusionToolsMcpServerPath();
+  /*
+  FNXC:OmpAcp 2026-07-18-23:50:
+  Prefer a session without Fusion fn_* tools over a hard session/new Internal
+  error when the MCP schema server asset is missing (ENOENT on posix_spawn).
+  */
+  if (!serverPath) {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    try {
+      unlinkSync(schemaPath);
+    } catch {
+      // best-effort
+    }
+    return null;
+  }
 
   return {
     toolCount: defs.length,
@@ -195,6 +231,16 @@ export async function startFusionToolBridge(
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+      /*
+      FNXC:OmpAcp 2026-07-14-00:30:
+      Remove the temp schema JSON on session end so repeated sessions do not accumulate
+      fusion-omp-mcp-schemas-* files under tmpdir().
+      */
+      try {
+        unlinkSync(schemaPath);
+      } catch {
+        // best-effort cleanup
+      }
     },
   };
 }

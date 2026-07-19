@@ -455,6 +455,71 @@ describe("TaskDetailModal Summary tab", () => {
     expect(css).not.toMatch(/task-summary-token[^{}]*#[0-9a-fA-F]{3,8}/);
   });
 
+  it("renders every Merge Details data state inside the done-only Summary tab", () => {
+    const linkedTask = doneTask({
+      mergeDetails: {
+        commitSha: "abcdef1234567890",
+        mergeConfirmed: true,
+        prNumber: 42,
+        mergedAt: "2026-07-29T12:00:00Z",
+        mergeCommitMessage: "feat: land summary merge details",
+      },
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "merged",
+        title: "Task",
+        headBranch: "fusion/fn-8197",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+    });
+    const view = render(<TaskSummaryTab task={linkedTask} />);
+
+    const summary = screen.getByTestId("task-summary-tab");
+    const mergeCard = summary.querySelector(".merge-details-card");
+    expect(screen.getByText("Merge Details")).toBeTruthy();
+    expect(screen.getByText("Merged successfully")).toBeTruthy();
+    expect(screen.getByText("Merged at")).toBeTruthy();
+    expect(screen.getByText("feat: land summary merge details")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "#42" })).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
+    expect(mergeCard?.classList.contains("pr-card")).toBe(true);
+    expect(summary.contains(mergeCard)).toBe(true);
+
+    view.rerender(
+      <TaskSummaryTab
+        task={doneTask({
+          mergeDetails: { commitSha: "abcdef1234567890", mergeConfirmed: false, prNumber: 7 },
+          prInfo: undefined,
+        })}
+      />,
+    );
+    expect(screen.getByText("Recorded without local merge confirmation")).toBeTruthy();
+    expect(screen.getByText("#7")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "#7" })).toBeNull();
+    expect(screen.queryByText("Merged at")).toBeNull();
+    expect(screen.queryByText("Message")).toBeNull();
+
+    view.rerender(<TaskSummaryTab task={doneTask({ mergeDetails: { commitSha: "abcdef1234567890" } })} />);
+    expect(screen.queryByText("PR")).toBeNull();
+    expect(screen.queryByText("Merged at")).toBeNull();
+    expect(screen.queryByText("Message")).toBeNull();
+
+    view.rerender(<TaskSummaryTab task={doneTask({ mergeDetails: undefined })} />);
+    expect(screen.getByTestId("task-summary-tab")).toBeTruthy();
+    expect(screen.queryByText("Merge Details")).toBeNull();
+  });
+
+  it("keeps relocated Merge Details inside the existing mobile pr-card containment", () => {
+    const { container } = render(<TaskSummaryTab task={doneTask({ mergeDetails: { commitSha: "abcdef1234567890", prNumber: 42 } })} />);
+    const summary = screen.getByTestId("task-summary-tab");
+    const mergeCard = container.querySelector(".task-summary-tab .merge-details-card.pr-card");
+
+    expect(mergeCard).toBeTruthy();
+    expect(summary.contains(mergeCard)).toBe(true);
+    expect(readDashboardStylesSource()).toMatch(/@media \(max-width: 768px\)[\s\S]*\.pr-card/);
+  });
+
   it("renders graceful empty states without orphaned changed-file headings", () => {
     render(
       <TaskDetailModal

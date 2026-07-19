@@ -343,6 +343,12 @@ export function AgentLogViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [modelHeaderExpanded, setModelHeaderExpanded] = useState(false);
   const [isFollowing, setIsFollowing] = useState(true);
+  const isFollowingRef = useRef(true);
+
+  const setFollowing = useCallback((following: boolean) => {
+    isFollowingRef.current = following;
+    setIsFollowing(following);
+  }, []);
 
   useEffect(() => {
     writeBooleanPref(MARKDOWN_TOGGLE_STORAGE_KEY, renderMarkdown);
@@ -384,6 +390,10 @@ export function AgentLogViewer({
     [renderEntries, chronologicalEntryKeys],
   );
 
+  /*
+  FNXC:AgentLog 2026-07-18-14:09:
+  FN-8339 makes log following an explicit pinned-bottom contract: append and in-place stream growth may move the viewport only while it is pinned. Observe both viewport layout and DOM growth, and keep the current value in a ref because observer callbacks can run before React commits the scroll-state render; a real scroll-away must synchronously unsnap those callbacks.
+  */
   // Keep live-follow pinned to the bottom when new streamed entries append.
   // When older history is prepended (load more), preserve viewport position.
   useLayoutEffect(() => {
@@ -402,9 +412,7 @@ export function AgentLogViewer({
       if (previousCount === 0) {
         container.scrollTop = container.scrollHeight;
       } else {
-        const wasNearBottom =
-          previousScrollHeight - (container.scrollTop + container.clientHeight) <=
-          BOTTOM_FOLLOW_THRESHOLD_PX;
+        const wasNearBottom = isFollowingRef.current;
         const appendedLiveEntry = newestEntryChanged && !oldestEntryChanged;
         const prependedOlderEntries = oldestEntryChanged && !newestEntryChanged;
 
@@ -421,46 +429,50 @@ export function AgentLogViewer({
       }
     }
 
+    if (newEntryCount !== previousCount) {
+      setFollowing(isNearBottom(container));
+    }
     previousEntryCountRef.current = newEntryCount;
     previousScrollHeightRef.current = container.scrollHeight;
     previousOldestEntryKeyRef.current = oldestEntryKey;
     previousNewestEntryKeyRef.current = newestEntryKey;
-    setIsFollowing(isNearBottom(container));
-  }, [entries, chronologicalEntryKeys]);
+  }, [entries, chronologicalEntryKeys, setFollowing]);
 
   const handleScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
-    setIsFollowing(isNearBottom(container));
-  }, []);
+    setFollowing(isNearBottom(container));
+  }, [setFollowing]);
 
   const scrollToLive = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
-    setIsFollowing(true);
-  }, []);
+    setFollowing(true);
+  }, [setFollowing]);
 
   useEffect(() => {
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-
     const container = containerRef.current;
     if (!container) {
       return;
     }
 
-    const observer = new ResizeObserver(() => {
-      if (!isFollowing) {
+    const followTail = () => {
+      if (!isFollowingRef.current) {
         return;
       }
       container.scrollTop = container.scrollHeight;
-    });
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followTail);
+    resizeObserver?.observe(container);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(followTail);
+    mutationObserver?.observe(container, { childList: true, characterData: true, subtree: true });
 
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [isFollowing]);
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, []);
 
   // Escape key handler to exit fullscreen mode
   const handleKeyDown = useCallback((e: KeyboardEvent) => {

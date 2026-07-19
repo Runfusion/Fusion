@@ -1,3 +1,4 @@
+import { isActiveMergeStatus } from "./active-merge-status.js";
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "./types.js";
 import type { ProjectSettings, Task, TaskPriority } from "./types.js";
@@ -185,7 +186,7 @@ function getDoneSortTimestamp(task: TaskColumnSortable): number {
 }
 
 function isMergeActiveStatus(status: string | null | undefined): boolean {
-  return status === "merging" || status === "merging-pr" || status === "merging-fix";
+  return isActiveMergeStatus(status);
 }
 
 /**

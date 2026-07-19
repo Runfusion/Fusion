@@ -11,6 +11,7 @@ import { CostBadgeProvider } from "../../context/CostBadgeContext";
 // (PlanningModeModal.*.test.tsx) already do to avoid a widespread
 // "useToast must be used within ToastProvider" failure across this file.
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),
@@ -291,8 +292,9 @@ describe("TaskCard", () => {
   });
 
   it("repaints the memoized card when plannerOverseerState changes, and renders nothing when absent", () => {
-    const idleTask = makeTask({ plannerOverseerState: undefined });
+    const idleTask = makeTask({ plannerOversightLevel: "autonomous", plannerOverseerState: undefined });
     const watchingTask = makeTask({
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "watching",
         oversightLevel: "autonomous",
@@ -319,6 +321,49 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("planner-overseer-state-badge")).toBeInTheDocument();
   });
 
+  it.each(["in-progress", "in-review"] as const)("hides the stale non-off overseer snapshot and header wrapper when a task override resolves oversight off in %s", (column) => {
+    const staleSnapshotTask = makeTask({
+      column,
+      plannerOversightLevel: "off",
+      plannerOverseerState: {
+        state: "watching",
+        oversightLevel: "autonomous",
+        watchedStage: column === "in-review" ? "reviewer" : "executor",
+        signal: "progressing",
+        attemptCount: 0,
+        attemptLimit: 3,
+        pendingConfirmation: false,
+        observedAt: 1700000000000,
+      },
+    });
+
+    render(<TaskCard task={staleSnapshotTask} onOpenDetail={noop} addToast={noop} />);
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
+  });
+
+  it("does not render an overseer badge for a stale non-idle oversight-off snapshot", () => {
+    const staleOffTask = makeTask({
+      column: "in-review",
+      plannerOverseerState: {
+        state: "watching",
+        oversightLevel: "off",
+        watchedStage: "reviewer",
+        signal: "progressing",
+        attemptCount: 0,
+        attemptLimit: 3,
+        pendingConfirmation: false,
+        observedAt: 1700000000000,
+      },
+    });
+
+    render(<TaskCard task={staleOffTask} onOpenDetail={noop} addToast={noop} />);
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
+  });
+
   // FN-7563: the badge used to print the raw kebab-case state (e.g.
   // "awaiting-confirmation") with a bare "Planner overseer: awaiting-confirmation"
   // tooltip. This reproduces the reported in-review symptom and asserts the badge
@@ -326,6 +371,7 @@ describe("TaskCard", () => {
   it("explains an in-review awaiting-confirmation badge with a readable label and a reason-bearing tooltip", () => {
     const task = makeTask({
       column: "in-review",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "awaiting-confirmation",
         oversightLevel: "autonomous",
@@ -359,6 +405,7 @@ describe("TaskCard", () => {
   it("renders readable labels for in-progress watching and recovering overseer states", () => {
     const watchingTask = makeTask({
       column: "in-progress",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "watching",
         oversightLevel: "autonomous",
@@ -382,6 +429,7 @@ describe("TaskCard", () => {
 
     const recoveringTask = makeTask({
       column: "in-progress",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "recovering",
         oversightLevel: "autonomous",
@@ -456,6 +504,23 @@ describe("TaskCard", () => {
     }
   });
 
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onResetTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    try {
+      render(<TaskCard task={makeTask({ column: "in-progress" })} onOpenDetail={noop} onResetTask={onResetTask} addToast={noop} />);
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Reset" }));
+      await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
+      expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+      expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
   /*
   FNXC:TaskCardMenu 2026-07-10-12:00:
   The card actions menu must ALSO be reachable from the visible ⋯ button (first-run users never
@@ -510,6 +575,75 @@ describe("TaskCard", () => {
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
     } finally {
+      cleanupGeometry();
+    }
+  });
+
+  /*
+  FNXC:TaskContextMenu 2026-07-16-20:50 (FN-8178):
+  All card entry points converge on the same portaled auto-focus lifecycle. Simulate a browser that
+  scrolls a focused portal unless `preventScroll` is requested; that scroll previously reached the
+  capture-phase closer and made every card action unusable.
+  */
+  it("keeps every card menu entry point open when autofocus would otherwise scroll", async () => {
+    vi.useFakeTimers();
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onPauseTask = vi.fn(async () => makeTask({ paused: true }));
+    const nativeFocus = HTMLElement.prototype.focus;
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function focusWithBrowserScroll(options?: FocusOptions) {
+      nativeFocus.call(this);
+      if (!options?.preventScroll) {
+        window.setTimeout(() => window.dispatchEvent(new Event("scroll")), 0);
+      }
+    });
+    const openMethods = [
+      () => fireEvent.click(screen.getByTestId("card-menu-btn-FN-001")),
+      () => fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 }),
+      () => {
+        fireEvent.pointerDown(document.querySelector(".card")!, { pointerType: "touch", pointerId: 7, clientX: 24, clientY: 28 });
+        act(() => vi.advanceTimersByTime(550));
+      },
+      () => fireEvent.keyDown(document.querySelector(".card")!, { key: "ContextMenu" }),
+    ];
+
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "in-progress", status: "executing" as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onPauseTask={onPauseTask}
+        />,
+      );
+
+      for (const openMenu of openMethods) {
+        openMenu();
+        act(() => vi.runOnlyPendingTimers());
+        expectBoardContextMenuPortaled();
+        expect(focusSpy).toHaveBeenLastCalledWith({ preventScroll: true });
+
+        const pauseItem = screen.getByRole("menuitem", { name: "Pause" });
+        fireEvent.pointerUp(pauseItem, { pointerType: "touch", pointerId: 8 });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(onPauseTask).toHaveBeenLastCalledWith("FN-001");
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      }
+
+      // Explicit dismissals remain intentional after focus no longer creates a scroll dismissal.
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      expectBoardContextMenuPortaled();
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      act(() => window.dispatchEvent(new Event("scroll")));
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    } finally {
+      focusSpy.mockRestore();
       cleanupGeometry();
     }
   });
@@ -1305,7 +1439,7 @@ describe("TaskCard", () => {
     });
   });
 
-  it("hides delete button for done tasks while keeping archive action in the actions dropdown", () => {
+  it("hides delete button for done tasks while keeping archive in the three-dot menu", async () => {
     const onDeleteTask = vi.fn(async () => makeTask());
     const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
 
@@ -1320,8 +1454,9 @@ describe("TaskCard", () => {
     );
 
     expect(screen.queryByLabelText("Delete task")).toBeNull();
-    expect(screen.getByRole("button", { name: "Actions" })).toBeDefined();
-    expect(screen.queryByLabelText("Archive task")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeDefined();
   });
 
   it.each(["triage", "todo", "in-progress", "in-review"] as const)(
@@ -1341,7 +1476,7 @@ describe("TaskCard", () => {
     },
   );
 
-  it("renders archive action for done tasks inside the actions dropdown", async () => {
+  it("renders archive action for done tasks inside the three-dot menu", async () => {
     const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
 
     render(
@@ -1353,12 +1488,11 @@ describe("TaskCard", () => {
       />,
     );
 
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
     expect(screen.queryByLabelText("Archive task")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
-    fireEvent.click(actionsButton);
-
-    const menu = screen.getByRole("menu");
+    const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
 
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Archive" }));
@@ -1366,7 +1500,7 @@ describe("TaskCard", () => {
     await waitFor(() => expect(onArchiveTask).toHaveBeenCalledWith("FN-001"));
   });
 
-  it("does not render an empty done actions dropdown when no done action is available", () => {
+  it("renders no action-menu shell when neither done action is available", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "done", mergeDetails: undefined })}
@@ -1377,6 +1511,7 @@ describe("TaskCard", () => {
 
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
     expect(container.querySelector(".card-done-actions")).toBeNull();
+    expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
   });
 
   it("does not render archive action for archived tasks", () => {
@@ -1396,14 +1531,13 @@ describe("TaskCard", () => {
   });
 
   /*
-  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-  Coverage for the Revert affordance: presence/absence on done + archived
-  cards (done-actions dropdown, archived inline row, and context menu), the
-  disabled/omitted no-commit-to-revert guard, the auto→clean-success path,
-  and the auto→conflict→confirm→AI-undo fallback path.
+  FNXC:TaskRevert 2026-07-15-00:00 (FN-8035):
+  Coverage for the Revert affordance across done + archived cards. Done-card
+  actions are available only through the three-dot context menu; archived cards
+  retain their inline row. The no-commit guard remains disabled in the menu.
   */
   describe("Revert affordance", () => {
-    it("renders Revert inside the done actions dropdown for a done card with a landed commit", () => {
+    it("renders Archive and Revert in the done card three-dot menu when both are available", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
@@ -1415,8 +1549,9 @@ describe("TaskCard", () => {
       );
 
       expect(container.querySelector(".card-revert-btn")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      const menu = screen.getByRole("menu");
+      expect(container.querySelector(".card-done-actions")).toBeNull();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
       expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
       expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDefined();
     });
@@ -1446,7 +1581,7 @@ describe("TaskCard", () => {
       expect(screen.queryByLabelText("Revert this task's changes")).toBeNull();
     });
 
-    it("omits Revert from the done actions dropdown when the task has no landed commit", () => {
+    it("renders Archive and disabled Revert in the done three-dot menu without a landed commit", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: undefined })}
@@ -1458,10 +1593,26 @@ describe("TaskCard", () => {
       );
 
       expect(container.querySelector(".card-revert-btn")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      const menu = screen.getByRole("menu");
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
       expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
-      expect(within(menu).queryByRole("menuitem", { name: "Revert" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDisabled();
+    });
+
+    it("renders only Revert in the done three-dot menu when archive is unavailable", async () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
+      expect(within(menu).queryByRole("menuitem", { name: "Archive" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeEnabled();
     });
 
     it("shows a disabled Revert context-menu entry when the task has no landed commit", () => {
@@ -1506,7 +1657,7 @@ describe("TaskCard", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
       await act(async () => {
         fireEvent.click(screen.getByRole("menuitem", { name: "Revert" }));
@@ -1539,7 +1690,7 @@ describe("TaskCard", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
       await act(async () => {
         fireEvent.click(screen.getByRole("menuitem", { name: "Revert" }));
@@ -2141,6 +2292,46 @@ describe("TaskCard", () => {
     expect(screen.getByText("executing")).toBeDefined();
   });
 
+  it.each([
+    { column: "todo" as const, status: "planning" },
+    { column: "in-progress" as const, status: "planning" },
+  ])("FN-8170 suppresses stale planning status and its empty header wrapper on $column cards", ({ column, status }) => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column, status })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText("planning")).toBeNull();
+    expect(container.querySelector(".card-header-badges")).toBeNull();
+  });
+
+  it("FN-8170 preserves triage planning and non-planning status badges", () => {
+    const { rerender } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "planning" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByText("planning")).toBeDefined();
+
+    rerender(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          status: "executing",
+          steps: [{ name: "Executing step", status: "in-progress" }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByText("executing")).toBeDefined();
+  });
+
   it("renders merge-remediation status as merge-active for in-review tasks", () => {
     const { container } = render(
       <TaskCard
@@ -2203,6 +2394,50 @@ describe("TaskCard", () => {
     }
   });
 
+  it("keeps the card border and Reviewing badge in agreement for a status-null running Plan Review", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-16T00:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055"]')?.className).toContain("pulsing");
+  });
+
+  it("turns off both border and Reviewing pulse when the render queue gate is active", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055-queued",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-07-16T00:00:00.000Z" }],
+        })}
+        queued
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).not.toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055-queued"]')).toBeNull();
+  });
+
   it("renders the status badge after the card ID in DOM order", () => {
     const { container } = render(
       <TaskCard
@@ -2221,10 +2456,25 @@ describe("TaskCard", () => {
     expect(headerBadges.contains(badge)).toBe(true);
   });
 
-  it("does not render a status badge when task.status is falsy", () => {
+  it("renders an active Planning badge when a status-null triage card has fresh planner activity", () => {
+    const recentAgentActivityAt = new Date().toISOString();
     const { container } = render(
-      <TaskCard task={makeTask({ status: undefined as any })} onOpenDetail={noop} addToast={noop} />,
+      <TaskCard
+        task={makeTask({ column: "triage", status: null as any, recentAgentActivityAt })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
     );
+
+    expect(container.querySelector(".card")).toHaveClass("agent-active");
+    expect(screen.getByLabelText("Planning")).toHaveClass("card-status-badge", "pulsing");
+  });
+
+  it("does not render a status badge when a status-null triage card has no fresh planner activity", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ column: "triage", status: undefined as any })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(container.querySelector(".card")).not.toHaveClass("agent-active");
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
@@ -2246,6 +2496,44 @@ describe("TaskCard", () => {
     expect(within(releaseContainer).queryByText("Awaiting Release Authorization")).toBeNull();
     const releaseBadge = releaseContainer.querySelector(".card-status-badge") as HTMLElement;
     expect(releaseBadge.className).not.toContain("awaiting-release-authorization");
+  });
+
+  /*
+   * FNXC:PlanReviewReplan 2026-07-15-11:09:
+   * When Plan Review exhausts automatic REVISE replans, the card must not look like a
+   * generic require-all hold — badge text + title explain the non-convergence reason.
+   */
+  it("keeps the generic Awaiting Approval badge for an ordinary manual hold", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "awaiting-approval" } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(within(container).getByText("Awaiting Approval")).toBeDefined();
+    expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
+  });
+
+  it("renders a distinct review-budget-exhausted badge when awaitingApprovalReason is plan-review-replan-cap", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          status: "awaiting-approval",
+          awaitingApprovalReason: "plan-review-replan-cap",
+        } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(within(container).getByText("Review budget exhausted")).toBeDefined();
+    expect(within(container).queryByText("Awaiting Approval")).toBeNull();
+    const badge = container.querySelector(".card-status-badge") as HTMLElement;
+    expect(badge.className).toContain("awaiting-approval--plan-review-replan-cap");
+    expect(badge.getAttribute("data-awaiting-approval-reason")).toBe("plan-review-replan-cap");
+    expect(badge.getAttribute("title")).toMatch(/Plan Review requested revisions/i);
   });
 
   it("renders stalled badge with visible reason when stalledReview is set", () => {
@@ -2351,9 +2639,27 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("merging")).toBeDefined();
+    expect(screen.getByText("Merging…")).toBeDefined();
     expect(screen.queryByText("Merge blocked")).toBeNull();
   });
+
+  it.each(["merging", "reviewing", "landing", "merging-pr"] as const)(
+    "FN-merge-badge: shows Merging… badge while task.status is %s",
+    (status) => {
+      render(
+        <TaskCard
+          task={makeTask({
+            column: "in-review",
+            status,
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Merging…")).toBeDefined();
+    },
+  );
 
   it.each([
     {
@@ -3111,6 +3417,28 @@ describe("TaskCard", () => {
       expect(container.querySelector(".card-error")).toBeNull();
     });
 
+    it("suppresses failed chrome and Retry while a stale failed task has automatic recovery pending", () => {
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "todo",
+            status: "failed",
+            error: "Transient provider error",
+            recoveryRetryCount: 1,
+            nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRetryTask={vi.fn(async () => ({}) as Task)}
+        />,
+      );
+
+      expect(container.querySelector(".card-error")).toBeNull();
+      expect(container.querySelector(".card.failed")).toBeNull();
+      expect(container.querySelector(".card-status-badge.failed")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    });
+
     it("calls onRetryTask with task id", async () => {
       const onRetryTask = vi.fn(async () => ({}) as Task);
       render(
@@ -3611,27 +3939,39 @@ describe("TaskCard", () => {
       const { container } = render(
         <TaskCard task={makeTask({ size })} onOpenDetail={noop} addToast={noop} />,
       );
+      const header = container.querySelector(".card-header");
+      const cardId = container.querySelector(".card-id");
       const badge = container.querySelector(".card-size-badge");
       expect(badge).not.toBeNull();
       expect(badge?.classList.contains(expectedClasses[index])).toBe(true);
+      expect(container.querySelectorAll(".card-size-badge")).toHaveLength(1);
+      expect(badge?.parentElement).toBe(header);
+      expect(cardId?.nextElementSibling).toBe(badge);
       // Clean up for next iteration
       container.remove();
     });
   });
 
-  it("places size badge inside card-header-actions container", () => {
+  it("places size badge directly after the task id outside header badge and action groups", () => {
     const { container } = render(
       <TaskCard task={makeTask({ size: "M" })} onOpenDetail={noop} addToast={noop} />,
     );
+    const header = container.querySelector(".card-header");
+    const cardId = container.querySelector(".card-id");
+    const headerBadges = container.querySelector(".card-header-badges");
     const actionsContainer = container.querySelector(".card-header-actions");
     const sizeBadge = container.querySelector(".card-size-badge");
-    
-    expect(actionsContainer).not.toBeNull();
+
+    expect(header).not.toBeNull();
     expect(sizeBadge).not.toBeNull();
-    expect(actionsContainer?.contains(sizeBadge)).toBe(true);
+    expect(sizeBadge?.parentElement).toBe(header);
+    expect(cardId?.nextElementSibling).toBe(sizeBadge);
+    expect(actionsContainer?.contains(sizeBadge)).toBe(false);
+    expect(headerBadges?.contains(sizeBadge) ?? false).toBe(false);
+    expect(sizeBadge?.closest(".card-header-badges")).toBeNull();
   });
 
-  it("renders size badge as the right-most header action after trailing controls", () => {
+  it("keeps trailing controls in header actions after the id-adjacent size badge", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "in-progress", status: "executing" as any, size: "M" })}
@@ -3640,6 +3980,9 @@ describe("TaskCard", () => {
         onPauseTask={async () => makeTask({ paused: true })}
       />,
     );
+    const header = container.querySelector(".card-header");
+    const cardId = container.querySelector(".card-id");
+    const headerBadges = container.querySelector(".card-header-badges");
     const actionsContainer = container.querySelector(".card-header-actions") as HTMLElement | null;
     const menuButton = container.querySelector(".card-menu-btn");
     const sizeBadge = container.querySelector(".card-size-badge");
@@ -3647,9 +3990,11 @@ describe("TaskCard", () => {
     expect(actionsContainer).not.toBeNull();
     expect(menuButton).not.toBeNull();
     expect(sizeBadge).not.toBeNull();
+    expect(sizeBadge?.parentElement).toBe(header);
+    expect(cardId?.nextElementSibling).toBe(sizeBadge);
+    expect(sizeBadge?.compareDocumentPosition(headerBadges!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(actionsContainer?.contains(menuButton)).toBe(true);
-    expect(actionsContainer?.lastElementChild).toBe(sizeBadge);
-    expect(sizeBadge?.nextElementSibling).toBeNull();
+    expect(actionsContainer?.contains(sizeBadge)).toBe(false);
   });
 
   it("places card-header-actions as a direct header child after the wrapped badge group", () => {
@@ -3695,7 +4040,7 @@ describe("TaskCard", () => {
     expect(actionsContainer?.contains(editBtn)).toBe(true);
   });
 
-  it("renders done actions dropdown inside card-header-actions for done columns", () => {
+  it("renders the done-card three-dot menu inside card-header-actions", () => {
     const { container } = render(
       <TaskCard 
         task={makeTask({ column: "done", size: "L" })} 
@@ -3705,133 +4050,48 @@ describe("TaskCard", () => {
       />,
     );
     const actionsContainer = container.querySelector(".card-header-actions");
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
+    const menuButton = screen.getByTestId("card-menu-btn-FN-001");
     
     expect(actionsContainer).not.toBeNull();
     expect(container.querySelector(".card-archive-btn")).toBeNull();
-    expect(actionsContainer?.contains(actionsButton)).toBe(true);
-  });
-
-  it("renders in-review Move control inline in card-meta for overlap-blocked tasks", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", overlapBlockedBy: "FN-OVER", blockedBy: undefined })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const moveControl = container.querySelector(".card-send-back");
-    const metaRow = container.querySelector(".card-meta");
-
-    expect(metaRow).not.toBeNull();
-    expect(moveControl).not.toBeNull();
-    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
-    expect(container.querySelector(".card-action-row")).toBeNull();
-  });
-
-  it("renders in-review Move control after queued badge in card-meta", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", status: "queued" as any, dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined })}
-        queued={true}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const metaRow = container.querySelector(".card-meta");
-    const queuedBadge = container.querySelector(".queued-badge");
-    const moveControl = container.querySelector(".card-send-back");
-
-    expect(metaRow).not.toBeNull();
-    expect(queuedBadge).not.toBeNull();
-    expect(moveControl).not.toBeNull();
-    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
-    expect(queuedBadge?.compareDocumentPosition(moveControl as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(container.querySelector(".card-action-row")).toBeNull();
-  });
-
-  it("keeps in-review Move control in card-action-row when meta row is not visible", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    const actionRow = container.querySelector(".card-action-row");
-
-    expect(actionRow).not.toBeNull();
-    expect(actionRow?.contains(moveButton)).toBe(true);
-    expect(moveButton.closest(".card-meta")).toBeNull();
-  });
-
-  it("renders Create PR before Move inside card-action-row", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", paused: false, userPaused: false, prInfo: undefined as any })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-        prAuthAvailable={true}
-        autoMergeEnabled={false}
-      />,
-    );
-
-    const createPrButton = screen.getByRole("button", { name: "Create pull request" });
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    const actionRow = createPrButton.closest(".card-action-row");
-
-    expect(actionRow).not.toBeNull();
-    expect(moveButton.closest(".card-action-row")).toBe(actionRow);
-    expect(createPrButton.compareDocumentPosition(moveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    const moveControl = moveButton.closest(".card-send-back") as HTMLElement | null;
-    expect(moveControl).not.toBeNull();
-    expect(getComputedStyle(moveControl as HTMLElement).marginLeft).toBe("auto");
-
-    fireEvent.click(moveButton);
-    const menu = screen.getByRole("menu");
-    expect(moveControl?.contains(menu)).toBe(true);
-    const menuStyle = getComputedStyle(menu);
-    expect(menuStyle.right).toBe("0px");
-    expect(menuStyle.left).not.toBe("0px");
+    expect(container.querySelector(".card-done-actions")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    expect(actionsContainer?.contains(menuButton)).toBe(true);
   });
 
   it.each([
-    { name: "meta-row-visible variant", task: makeTask({ column: "in-review", blockedBy: "FN-777" }), expectedContainer: ".card-meta" },
-    { name: "no-meta variant", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }), expectedContainer: ".card-action-row" },
-  ])("keeps Move dropdown behavior for $name", ({ task, expectedContainer }) => {
+    { name: "meta-row overlap badge", task: makeTask({ column: "in-review", overlapBlockedBy: "FN-OVER", blockedBy: undefined }), queued: false },
+    { name: "meta-row queued badge", task: makeTask({ column: "in-review", status: "queued" as any, dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined }), queued: true },
+    { name: "no-meta action-row placement", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }), queued: false },
+  ])("uses the three-dot menu as the only in-review move entry point for $name", ({ task, queued }) => {
     const onMoveTask = vi.fn();
     const { container } = render(
       <TaskCard
         task={task}
+        queued={queued}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={onMoveTask}
       />,
     );
 
-    const host = container.querySelector(expectedContainer);
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    expect(host?.contains(moveButton)).toBe(true);
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
-    fireEvent.click(moveButton);
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
-    expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
+    expect(screen.getByRole("menuitem", { name: "Done (no merge)" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Done (no merge)" }));
 
     expect(onMoveTask).toHaveBeenCalledWith("FN-001", "done", undefined);
   });
 
-  it("FN-4540 keeps in-progress Send back control in card-header-actions", () => {
+  it("uses the three-dot menu for every in-progress move target without a Send back shell", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "in-progress" })}
@@ -3841,11 +4101,28 @@ describe("TaskCard", () => {
       />,
     );
 
-    const sendBackButton = screen.getByRole("button", { name: "Send back" });
-    const actionsContainer = container.querySelector(".card-header-actions");
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
-    expect(actionsContainer).not.toBeNull();
-    expect(actionsContainer?.contains(sendBackButton)).toBe(true);
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+
+    expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
+  });
+
+  it("does not render a move shell when onMoveTask is absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
   });
 
   it("shows timer chip for in-progress cards summing workflow runtime + timed events", () => {
@@ -5537,6 +5814,78 @@ describe("TaskCard", () => {
     expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
   });
 
+  it("places an enabled cost badge below Promote without leaving it in the footer cluster", () => {
+    const pricedTask = makeTask({
+      id: "FN-8324",
+      column: "todo",
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1_000_000,
+        firstUsedAt: "2026-01-01T00:00:00Z",
+        lastUsedAt: "2026-01-01T00:00:00Z",
+        modelProvider: "openai",
+        modelId: "gpt-5-mini",
+      },
+    } as Partial<Task>);
+
+    const { container } = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard
+          task={pricedTask}
+          onOpenDetail={noop}
+          addToast={noop}
+          onPromote={vi.fn().mockResolvedValue(undefined)}
+        />
+      </CostBadgeProvider>,
+    );
+
+    const promoteButton = screen.getByTestId("card-promote-FN-8324");
+    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    const costRow = container.querySelector(".card-promote-cost-row");
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.closest(".card-promote-cost-row")).toBe(costRow);
+    expect(costBadge?.closest(".card-footer-row-right")).toBeNull();
+    expect(promoteButton.compareDocumentPosition(costBadge!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const css = loadAllAppCss();
+    expect(css).toMatch(/\.card-promote-cost-row\s*\{[^}]*justify-content:\s*flex-end;[^}]*margin-top:\s*var\(--space-xs\);[^}]*\}/);
+    expect(css).toMatch(/@media[^{}]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-promote-cost-row\s*\{[^}]*justify-content:\s*flex-end;[^}]*\}/);
+  });
+
+  it("keeps the cost badge absent below Promote when disabled or without token usage", () => {
+    const onPromote = vi.fn().mockResolvedValue(undefined);
+    const pricedTask = makeTask({
+      id: "FN-8324-disabled",
+      column: "todo",
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1_000_000,
+        firstUsedAt: "2026-01-01T00:00:00Z",
+        lastUsedAt: "2026-01-01T00:00:00Z",
+        modelProvider: "openai",
+        modelId: "gpt-5-mini",
+      },
+    } as Partial<Task>);
+    const disabled = render(<TaskCard task={pricedTask} onOpenDetail={noop} addToast={noop} onPromote={onPromote} />);
+    expect(disabled.container.querySelector(".card-cost-indicator")).toBeNull();
+    expect(disabled.container.querySelector(".card-promote-cost-row")).toBeNull();
+    disabled.unmount();
+
+    const noUsage = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard task={makeTask({ id: "FN-8324-no-usage", column: "todo" })} onOpenDetail={noop} addToast={noop} onPromote={onPromote} />
+      </CostBadgeProvider>,
+    );
+    expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
+    expect(noUsage.container.querySelector(".card-promote-cost-row")).toBeNull();
+  });
+
   it("places a todo cost badge inside the meta row when the footer has no leading content", () => {
     const { container } = render(
       <CostBadgeProvider value={{ enabled: true }}>
@@ -5977,6 +6326,23 @@ describe("TaskCard provider icons on agent row", () => {
 });
 
 describe("TaskCard near-duplicate chip", () => {
+  it("shows a needs-user-feedback status when a triage duplicate is paused for a decision", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          paused: true,
+          pausedReason: "duplicate-decision-required",
+          sourceMetadata: { nearDuplicateOf: "FN-1234", duplicateSource: "triage-marker" },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByTestId("card-needs-user-feedback-FN-001")).toHaveTextContent("Needs your decision");
+    expect(screen.getByText("Duplicate of FN-1234")).toBeInTheDocument();
+  });
+
   it("renders duplicate chip when nearDuplicateOf is present", () => {
     render(
       <TaskCard
@@ -6118,6 +6484,73 @@ describe("TaskCard undo-of chip", () => {
     );
 
     expect(screen.queryByText(/Undo of/)).toBeNull();
+  });
+});
+
+/*
+ * FNXC:TaskRevert 2026-07-16-00:00:
+ * FN-8066 regression coverage locks the completed-source invariant at TaskCard,
+ * the shared board/list card component: only persisted, non-blank revert markers
+ * render the compact chip in done or archived columns, while other provenance
+ * chips can coexist in the same footer cluster.
+ */
+describe("TaskCard reverted chip", () => {
+  it.each(["done", "archived"] as const)("renders for reverted %s cards", (column) => {
+    render(
+      <TaskCard
+        task={makeTask({ column, sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
+  });
+
+  it("does not render for missing, blank, or non-completed revert markers", () => {
+    const { rerender } = render(
+      <TaskCard task={makeTask({ column: "done" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "archived", sourceMetadata: { revertedAt: "  " } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "todo", sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+  });
+
+  it("coexists with undo and duplicate provenance chips", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          sourceMetadata: {
+            revertedAt: "2026-07-16T00:00:00.000Z",
+            revertOf: "FN-1234",
+            nearDuplicateOf: "FN-5678",
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Reverted")).toBeInTheDocument();
+    expect(screen.getByText("Undo of FN-1234")).toBeInTheDocument();
+    expect(screen.queryByText("Duplicate of FN-5678")).toBeNull();
   });
 });
 

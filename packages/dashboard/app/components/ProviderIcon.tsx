@@ -526,6 +526,27 @@ function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: st
   );
 }
 
+/*
+FNXC:ProviderIcons 2026-07-18-18:24:
+FN-8354: OMP ACP is a first-class provider, so its shared dashboard icon must use the official omp.sh favicon's stepped T mark rather than the generic Cpu fallback. Render its official single-color silhouette with the provider token so it remains legible in either theme.
+Source: https://omp.sh/favicon.svg
+*/
+function OmpIcon({ size, color, label = "Oh My Pi" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="omp-icon"
+      aria-label={label}
+    >
+      <path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" fill={color} />
+    </svg>
+  );
+}
+
 // Hermes — caduceus (winged staff) mark, single-color so it adapts to theme.
 function HermesIcon({ size, color, label = "Hermes" }: { size: number; color: string; label?: string }) {
   return (
@@ -817,7 +838,10 @@ const providerConfig: Record<
   vercel: { component: VercelIcon, color: "var(--provider-vercel)" },
   "vercel-ai-gateway": { component: VercelIcon, color: "var(--provider-vercel)", label: "Vercel AI Gateway" },
 
-  // Runtime-plugin marks (Hermes / OpenClaw / Paperclip).
+  // Runtime-plugin marks (OMP / Hermes / OpenClaw / Paperclip).
+  "omp-cli": { component: OmpIcon, color: "var(--provider-omp)", label: "Oh My Pi — via omp ACP" },
+  omp: { component: OmpIcon, color: "var(--provider-omp)", label: "Oh My Pi" },
+  "oh-my-pi": { component: OmpIcon, color: "var(--provider-omp)", label: "Oh My Pi" },
   hermes: { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },
   "hermes-agent": { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },
   hermesagent: { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },

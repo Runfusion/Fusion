@@ -357,6 +357,103 @@ describe("CE workflow-step executor integration", () => {
       );
     });
 
+    it.each([
+      ["acquires an absent worktree", undefined, "/tmp/test/.worktrees/acquired-code-review", 1],
+      ["reuses a live worktree", "/tmp/test/.worktrees/live-code-review", "/tmp/test/.worktrees/live-code-review", 0],
+      ["reacquires a stale worktree", "/tmp/test/.worktrees/stale-code-review", "/tmp/test/.worktrees/acquired-code-review", 1],
+    ])("prepares an inline-fix Code Review node when it %s", async (_scenario, existingWorktree, expectedWorktree, acquisitionCount) => {
+      mockedExistsSync.mockImplementation((path) => path !== "/tmp/test/.worktrees/stale-code-review");
+      const store = createMockStore();
+      let live = baseStepTask({
+        worktree: existingWorktree,
+        branch: existingWorktree ? "fusion/fn-ce-1" : undefined,
+        enabledWorkflowSteps: ["code-review"],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        live = { ...live, ...patch };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+      vi.spyOn(executor as any, "createWorktree").mockResolvedValue({
+        path: "/tmp/test/.worktrees/acquired-code-review",
+        branch: "fusion/fn-ce-1",
+      });
+      vi.spyOn(executor as any, "captureBaseCommitSha").mockResolvedValue(undefined);
+      const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "APPROVE" });
+      const requirements: any[] = [];
+      const codeReview = {
+        id: "code-review-step",
+        kind: "gate",
+        config: { name: "Code Review", prompt: "Review the implementation." },
+      };
+      const ir: WorkflowIr = {
+        version: "v2",
+        name: "code-review-worktree-test",
+        columns: [{ id: "in-progress", name: "In Progress", traits: [] }],
+        nodes: [
+          { id: "start", kind: "start" },
+          {
+            id: "code-review",
+            kind: "optional-group",
+            config: { name: "Code Review", defaultOn: true, template: { nodes: [codeReview], edges: [] } },
+          },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "code-review" },
+          { from: "code-review", to: "end", condition: "success" },
+        ],
+      };
+      const settings = { ...(await store.getSettings()), reviewerInlineFixes: true };
+      const graph = new WorkflowGraphExecutor({
+        prepareNodeExecution: (graphNode, task, requirement) => {
+          requirements.push(requirement);
+          return (executor as any).prepareGraphNodeExecution(graphNode, task, settings, requirement);
+        },
+        runCustomNode: (graphNode, task, context) =>
+          (executor as any).runGraphCustomNode(graphNode, task, settings, undefined, context),
+      });
+
+      const result = await graph.run(live as any, settings, ir);
+
+      expect(requirements).toContainEqual({ requiresWorktree: true, reason: "write-capable-node" });
+      expect((executor as any).createWorktree).toHaveBeenCalledTimes(acquisitionCount);
+      expect(executeStep).toHaveBeenCalledTimes(1);
+      expect(executeStep.mock.calls[0]?.[2]).toBe(expectedWorktree);
+      expect(result).toMatchObject({ outcome: "success" });
+      expect(result.context["node:code-review:outcome"]).not.toBe("no-worktree-for-write-node");
+    });
+
+    it("keeps disabled inline fixes and Plan Review read-only during graph preparation", async () => {
+      const requirements: any[] = [];
+      const graph = new WorkflowGraphExecutor({
+        prepareNodeExecution: (_node, _task, requirement) => { requirements.push(requirement); },
+        handlers: { gate: async () => ({ outcome: "success" }) },
+      });
+      const optionalGroup = (id: string, name: string) => ({
+        id,
+        kind: "optional-group" as const,
+        config: { name, defaultOn: true, template: { nodes: [{ id: `${id}-step`, kind: "gate" as const, config: { name } }], edges: [] } },
+      });
+      const ir: WorkflowIr = {
+        version: "v2",
+        name: "readonly-review-worktree-test",
+        columns: [],
+        nodes: [{ id: "start", kind: "start" }, optionalGroup("code-review", "Code Review"), optionalGroup("plan-review", "Plan Review"), { id: "end", kind: "end" }],
+        edges: [
+          { from: "start", to: "code-review" },
+          { from: "code-review", to: "plan-review", condition: "success" },
+          { from: "plan-review", to: "end", condition: "success" },
+        ],
+      };
+      await graph.run(baseStepTask({ enabledWorkflowSteps: ["code-review", "plan-review"] }) as any, {
+        experimentalFeatures: {},
+        reviewerInlineFixes: false,
+      }, ir);
+      expect(requirements).toEqual([]);
+    });
+
     it("finalizes a merge-confirmed workflow graph task that is stranded before done", async () => {
       const store = createMockStore();
       let live = baseStepTask({
@@ -760,6 +857,57 @@ describe("CE workflow-step executor integration", () => {
 
   // ── Item 5: FUSION_HEADLESS gating on stepEnv ───────────────────────────────
   describe("executeWorkflowStep FUSION_HEADLESS (U3)", () => {
+    it.each([
+      ["code-review group", { id: "custom-check", name: "Implementation Check", optionalGroupId: "code-review" }],
+      ["browser-verification group", { id: "custom-check", name: "Implementation Check", optionalGroupId: "browser-verification" }],
+      ["review name", { id: "custom-check", name: "Custom Review" }],
+      ["verification name", { id: "custom-check", name: "Custom Verification" }],
+      ["inline-fix metadata", { id: "custom-check", name: "Implementation Check", reviewCanFixInline: true }],
+    ])("makes the approved PROMPT.md contract authoritative for the %s classifier", async (_label, classifier) => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(`
+# Approved contract
+
+Ship FIVE kinds. Do NOT add roadmap-item in this task.
+      `.trim());
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask({ description: "Original request: ship SIX kinds including roadmap-item." }),
+        makeStep({
+          ...classifier,
+          prompt: "Review the implementation against the approved task contract.",
+          gateMode: "gate",
+        }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.last?.systemPrompt).toContain("--- BEGIN APPROVED PROMPT.md ---");
+      expect(cap.last?.systemPrompt).toContain("Ship FIVE kinds. Do NOT add roadmap-item in this task.");
+      expect(cap.last?.systemPrompt).toContain("PROMPT.md is the authoritative current contract");
+      expect(cap.last?.systemPrompt).toContain("Do not enforce superseded requirements from the original Task Description");
+    });
+
+    it("does not restore the historical task description when PROMPT.md is unavailable", async () => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(undefined);
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask({ description: "Original request: ship SIX kinds including roadmap-item." }),
+        makeStep({ name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.last?.systemPrompt).toContain("Approved Task Contract Unavailable");
+      expect(cap.last?.systemPrompt).toContain("Task Description is historical input only and is not a substitute contract");
+      expect(cap.last?.systemPrompt).toContain("Return REVISE with the single reason that the approved contract could not be loaded");
+    });
+
     it("sets FUSION_HEADLESS=1 only when unattended=true; always sets FUSION_WORKFLOW_STEP", async () => {
       const store = createMockStore();
       const { executor } = makeExecutor(store);

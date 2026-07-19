@@ -14,8 +14,10 @@ vi.mock("@fusion/dashboard", () => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   ...workflowAuthoringEngineMock,
   createFnAgent: vi.fn(),
+  createAgentTask: vi.fn(),
   fetchWebContent: fetchWebContentMock,
   emitGoalRetrievalAudit: vi.fn(),
   createWorkflowAuthoringTools: vi.fn(() => ({})),
@@ -28,6 +30,8 @@ vi.mock("@fusion/engine", () => ({
   workflowDeleteParams: {},
   workflowSettingsParams: {},
   traitListParams: {},
+  normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
+  renderAgentLogEntries: vi.fn(() => ""),
 }));
 
 import kbExtension from "../extension.js";

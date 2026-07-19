@@ -104,47 +104,6 @@
   box-shadow: var(--focus-ring-strong);
 }
 
-.theme-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-md);
-}
-
-@media (max-width: 768px) {
-  .theme-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.theme-option {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  background: var(--card);
-  border: 2px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.theme-option:hover {
-  border-color: var(--todo);
-  background: var(--card-hover);
-}
-
-.theme-option.active {
-  border-color: var(--todo);
-  background: color-mix(in srgb, var(--todo) 14%, transparent);
-}
-
-.theme-option:focus-visible {
-  outline: none;
-  border-color: var(--todo);
-  box-shadow: var(--focus-ring-strong);
-}
-
 .theme-option-swatch {
   width: calc(var(--space-2xl) + var(--space-lg));
   height: calc(var(--space-2xl) + var(--space-lg));
@@ -175,13 +134,6 @@
 
 .theme-option-swatch-sample-4 {
   background: var(--swatch-sample-4);
-}
-
-.theme-option-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-  text-align: center;
 }
 
 /* Theme preview swatch colors */
@@ -339,6 +291,27 @@
   --swatch-sample-4: #e8c888;
 }
 
+.theme-swatch-cobalt {
+  --swatch-sample-1: #071426;
+  --swatch-sample-2: #102848;
+  --swatch-sample-3: #45a8ff;
+  --swatch-sample-4: #5eead4;
+}
+
+.theme-swatch-clay {
+  --swatch-sample-1: #201411;
+  --swatch-sample-2: #3b2620;
+  --swatch-sample-3: #ec7b4c;
+  --swatch-sample-4: #f2a65a;
+}
+
+.theme-swatch-moss {
+  --swatch-sample-1: #111b16;
+  --swatch-sample-2: #243326;
+  --swatch-sample-3: #a8c96b;
+  --swatch-sample-4: #72c7a1;
+}
+
 .theme-swatch-silver {
   --swatch-sample-1: #27272a;
   --swatch-sample-2: #3f3f46;
@@ -452,6 +425,7 @@
   --swatch-sample-4: #27272a;
 }
 
+.theme-swatch-shadcn-mono,
 .theme-swatch-shadcn-mono-red {
   --swatch-sample-1: #09090b;
   --swatch-sample-2: #18181b;
@@ -813,6 +787,7 @@
   --swatch-sample-4: #e4e4e7;
 }
 
+[data-theme="light"] .theme-swatch-shadcn-mono,
 [data-theme="light"] .theme-swatch-shadcn-mono-red {
   --swatch-sample-1: #ffffff;
   --swatch-sample-2: #f4f4f5;
@@ -1143,6 +1118,27 @@
   --swatch-sample-4: #a08050;
 }
 
+[data-theme="light"] .theme-swatch-cobalt {
+  --swatch-sample-1: #f3f8ff;
+  --swatch-sample-2: #e8f2ff;
+  --swatch-sample-3: #146fc0;
+  --swatch-sample-4: #12806f;
+}
+
+[data-theme="light"] .theme-swatch-clay {
+  --swatch-sample-1: #fbf3ea;
+  --swatch-sample-2: #f4e4d4;
+  --swatch-sample-3: #ad4d25;
+  --swatch-sample-4: #b55b26;
+}
+
+[data-theme="light"] .theme-swatch-moss {
+  --swatch-sample-1: #f2f6ee;
+  --swatch-sample-2: #e5eddf;
+  --swatch-sample-3: #557a35;
+  --swatch-sample-4: #397c49;
+}
+
 [data-theme="light"] .theme-swatch-silver {
   --swatch-sample-1: #fafafa;
   --swatch-sample-2: #f4f4f5;
@@ -1235,46 +1231,6 @@
   outline: none;
   border-color: var(--todo);
   box-shadow: var(--focus-ring-strong);
-}
-
-/* Theme current preview in settings */
-.theme-current-preview {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-md) var(--space-lg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 20px;
-}
-
-.theme-preview-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: var(--surface);
-  border-radius: var(--radius);
-  color: var(--todo);
-}
-
-.theme-preview-info {
-  flex: 1;
-}
-
-.theme-preview-label {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 2px;
-}
-
-.theme-preview-value {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  text-transform: capitalize;
 }
 
 @media (max-width: 768px) {

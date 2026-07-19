@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "./postgres/data-layer.js";
 import {
   ResearchLifecycleError,
   TERMINAL_STATUSES,
@@ -57,7 +57,8 @@ function rowToRun(row: Record<string, unknown>): ResearchRun {
     query: row.query as string,
     topic: (row.topic as string | null) ?? undefined,
     status: normalizeStatus((row.status as ResearchRunStatus | "pending") ?? "queued"),
-    projectId: (row.projectId as string | null) ?? undefined,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? undefined,
     trigger: (row.trigger as string | null) ?? undefined,
     providerConfig: row.providerConfig as ResearchRun["providerConfig"],
     sources: (row.sources as ResearchSource[]) ?? [],
@@ -99,7 +100,8 @@ export async function createResearchRun(
     query: run.query,
     topic: run.topic ?? null,
     status: run.status,
-    projectId: run.projectId ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — writing domain data into the partition put parents and children in different partitions and broke the composite FKs (23503).
+    ownerProjectId: run.projectId ?? null,
     trigger: run.trigger ?? null,
     providerConfig: run.providerConfig ?? null,
     sources: run.sources,
@@ -141,7 +143,7 @@ export async function persistResearchRun(handle: QueryHandle, run: ResearchRun):
       query: run.query,
       topic: run.topic ?? null,
       status: run.status,
-      projectId: run.projectId ?? null,
+      ownerProjectId: run.projectId ?? null,
       trigger: run.trigger ?? null,
       providerConfig: run.providerConfig ?? null,
       sources: run.sources,
@@ -169,13 +171,23 @@ export async function appendResearchRunEvent(
   input: { id: string; runId: string; type: string; message: string; status?: ResearchRunStatus | null; classification?: string | null; metadata?: Record<string, unknown> | null },
 ): Promise<void> {
   await layer.transactionImmediate(async (tx) => {
+    const parentRows = await tx
+      .select({ projectId: schema.project.researchRuns.projectId })
+      .from(schema.project.researchRuns)
+      .where(eq(schema.project.researchRuns.id, input.runId))
+      .limit(1);
+    const ownership = projectOwnershipPartition(parentRows[0]?.projectId ?? layer.projectId);
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.researchRunEvents.seq}), 0) + 1` })
       .from(schema.project.researchRunEvents)
-      .where(eq(schema.project.researchRunEvents.runId, input.runId));
+      .where(and(
+        eq(schema.project.researchRunEvents.projectId, ownership),
+        eq(schema.project.researchRunEvents.runId, input.runId),
+      ));
     const seq = seqRows[0]?.nextSeq ?? 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.researchRunEvents).values({
+      projectId: ownership,
       id: input.id,
       runId: input.runId,
       seq,
@@ -207,7 +219,14 @@ export async function createResearchExport(
   handle: QueryHandle,
   input: { id: string; runId: string; format: ResearchExportFormat; content: string; createdAt: string },
 ): Promise<ResearchExport> {
+  const parentRows = await handle
+    .select({ projectId: schema.project.researchRuns.projectId })
+    .from(schema.project.researchRuns)
+    .where(eq(schema.project.researchRuns.id, input.runId))
+    .limit(1);
+  const ownership = projectOwnershipPartition(parentRows[0]?.projectId);
   await handle.insert(schema.project.researchExports).values({
+    projectId: ownership,
     id: input.id,
     runId: input.runId,
     format: input.format,
@@ -251,7 +270,7 @@ export async function getActiveResearchRun(
     .from(schema.project.researchRuns)
     .where(
       and(
-        eq(schema.project.researchRuns.projectId, projectId),
+        eq(schema.project.researchRuns.ownerProjectId, projectId),
         eq(schema.project.researchRuns.trigger, trigger),
         inArray(schema.project.researchRuns.status, ["queued", "running", "cancelling", "retry_waiting"]),
       ),

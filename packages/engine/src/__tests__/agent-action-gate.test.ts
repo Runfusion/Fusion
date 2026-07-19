@@ -207,6 +207,7 @@ describe("agent-action-gate", () => {
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_create", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_add_dep", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_delegate_task", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
+    expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_assign", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_update_agent_config", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_import_github", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_import_github_issue", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
@@ -527,6 +528,7 @@ describe("agent-action-gate", () => {
   it.each([
     "fn_task_create",
     "fn_delegate_task",
+    "fn_task_assign",
     "fn_task_import_github",
     "fn_task_import_github_issue",
     "fn_task_import_gitlab_project_issues",

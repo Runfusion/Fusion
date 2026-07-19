@@ -626,10 +626,10 @@ export class CronRunner {
     error: string | undefined;
   }> {
     try {
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const fusionDir = this.store.getFusionDir();
       const settings = await this.store.getSettings();
-      const result = await runBackupCommand(fusionDir, settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(this.store), settings);
       const output = truncateOutput(result.output ?? "", "");
       return {
         success: result.success,
@@ -1106,7 +1106,7 @@ export function formatInProcessBackupError(err: unknown, fusionDir: string): str
   if (cause.includes("project DB") || cause.includes("central DB")) {
     return cause;
   }
-  return `project DB run backup command failed; source: ${fusionDir}/fusion.db; cause: ${cause}`;
+  return `project PostgreSQL run backup command failed; project state: ${fusionDir}; cause: ${cause}`;
 }
 
 /** Combine and truncate stdout/stderr to stay within storage limits. */

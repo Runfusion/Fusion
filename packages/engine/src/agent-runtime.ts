@@ -67,6 +67,13 @@ export interface AgentRuntimeOptions {
   cwd: string;
   /** System prompt for the agent */
   systemPrompt: string;
+  /*
+  FNXC:MergeQueue 2026-07-15-11:08:
+  Session purpose must reach createFnAgent so merger lanes can skip host-extension fn_* tools.
+  Those tools boot a second TaskStore via createTaskStoreForBackend and have been observed wedging merges on hung fn_task_show (no per-tool timeout, AbortSignal ignored).
+  */
+  /** Lane purpose (executor/merger/triage/…). Used for host-extension policy and diagnostics. */
+  sessionPurpose?: string;
   /**
    * Optional structured prompt layers for cross-session caching.
    * When present, runtimes that support prompt caching use the `stable`

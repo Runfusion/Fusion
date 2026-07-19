@@ -5,8 +5,7 @@ interface RouteRequest {
   query?: Record<string, string | string[] | undefined>;
   body?: unknown;
 }
-import { RoadmapStore } from "../store/roadmap-store.js";
-import { AsyncRoadmapStore } from "../store/async-roadmap-store.js";
+import { createRoadmapStoreForTaskStore, type RoadmapRuntimeStore } from "../server/index.js";
 import {
   generateFeatureSuggestions,
   generateMilestoneSuggestions,
@@ -17,9 +16,6 @@ import {
   validateSuggestionInput,
   ValidationError as SuggestionValidationError,
 } from "./roadmap-suggestions.js";
-
-type RoadmapRuntimeStore = RoadmapStore | AsyncRoadmapStore;
-const roadmapStoreCache = new WeakMap<object, RoadmapRuntimeStore>();
 
 function resolveProjectId(req: RouteRequest): string | undefined {
   const queryProjectId = paramValue(req.query?.projectId);
@@ -37,23 +33,7 @@ async function getRoadmapStore(req: RouteRequest, ctx: PluginContext): Promise<R
     ? await ctx.resolveProjectTaskStore(projectId)
     : ctx.taskStore;
 
-  const taskStoreWithRoadmaps = scopedTaskStore as PluginContext["taskStore"] & {
-    getRoadmapStore?: () => RoadmapStore;
-  };
-
-  if (typeof taskStoreWithRoadmaps.getRoadmapStore === "function") {
-    return taskStoreWithRoadmaps.getRoadmapStore();
-  }
-
-  const key = scopedTaskStore as object;
-  const cached = roadmapStoreCache.get(key);
-  if (cached) return cached;
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:30:
-  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
-  const layer = scopedTaskStore.getAsyncLayer();
-  const store = layer ? new AsyncRoadmapStore(layer) : new RoadmapStore(scopedTaskStore.getDatabase());
-  roadmapStoreCache.set(key, store);
-  return store;
+  return createRoadmapStoreForTaskStore(scopedTaskStore);
 }
 
 function asRequest(req: unknown): RouteRequest {

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { CreateRoomModal, validateRoomName } from "../CreateRoomModal";
+import { FloatingWindow } from "../FloatingWindow";
 import * as apiModule from "../../api";
 
 vi.mock("../../api", () => ({
@@ -70,6 +71,77 @@ describe("CreateRoomModal", () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(onCreate).toHaveBeenCalledWith({ name: "engineering", displayName: "#engineering", memberAgentIds: ["agent-1"] });
+  });
+
+  it("claims a fresh top layer above floating Chat on open and reopen", async () => {
+    const { rerender } = render(
+      <>
+        <FloatingWindow windowKey="chat-modal" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>floating chat representative</div>
+        </FloatingWindow>
+        <CreateRoomModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />
+      </>,
+    );
+
+    const chatPanel = screen.getByTestId("floating-window-chat-modal");
+    const firstOverlay = document.querySelector(".create-room-modal")?.parentElement as HTMLElement;
+    expect(Number(firstOverlay.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
+    await screen.findByRole("button", { name: /Alpha/i });
+
+    // Another Chat interaction can claim its peer stack while the dialog is closed.
+    rerender(
+      <>
+        <FloatingWindow windowKey="chat-modal" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>floating chat representative</div>
+        </FloatingWindow>
+        <CreateRoomModal isOpen={false} onClose={vi.fn()} onCreate={vi.fn()} />
+      </>,
+    );
+    fireEvent.pointerDown(chatPanel);
+
+    rerender(
+      <>
+        <FloatingWindow windowKey="chat-modal" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>floating chat representative</div>
+        </FloatingWindow>
+        <CreateRoomModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />
+      </>,
+    );
+
+    const reopenedOverlay = document.querySelector(".create-room-modal")?.parentElement as HTMLElement;
+    expect(Number(reopenedOverlay.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
+    expect(Number(reopenedOverlay.style.zIndex)).toBeGreaterThan(Number(firstOverlay.style.zIndex));
+  });
+
+  it("stays above floating Chat while agent data is loading or empty", async () => {
+    mockFetchAgents.mockImplementation(() => new Promise(() => {}));
+    const loading = render(
+      <>
+        <FloatingWindow windowKey="chat-loading" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>floating chat representative</div>
+        </FloatingWindow>
+        <CreateRoomModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />
+      </>,
+    );
+
+    const loadingOverlay = document.querySelector(".create-room-modal")?.parentElement as HTMLElement;
+    expect(screen.getByRole("status")).toHaveTextContent("Loading agents...");
+    expect(Number(loadingOverlay.style.zIndex)).toBeGreaterThan(Number(screen.getByTestId("floating-window-chat-loading").style.zIndex));
+    loading.unmount();
+
+    mockFetchAgents.mockResolvedValueOnce([]);
+    render(
+      <>
+        <FloatingWindow windowKey="chat-empty" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>floating chat representative</div>
+        </FloatingWindow>
+        <CreateRoomModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />
+      </>,
+    );
+
+    const emptyOverlay = document.querySelector(".create-room-modal")?.parentElement as HTMLElement;
+    expect(await screen.findByText("No agents in this project yet.")).toBeInTheDocument();
+    expect(Number(emptyOverlay.style.zIndex)).toBeGreaterThan(Number(screen.getByTestId("floating-window-chat-empty").style.zIndex));
   });
 
   it("closes on escape and overlay click", async () => {

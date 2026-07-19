@@ -781,13 +781,13 @@ describe("useTheme", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
-  it("remaps legacy shadcn mono color theme from localStorage", () => {
+  it("preserves restored shadcn mono color theme from localStorage", () => {
     localStorageMock[COLOR_THEME_STORAGE_KEY] = "shadcn-mono";
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.colorTheme).toBe("shadcn-mono-red");
-    expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-mono-red");
+    expect(result.current.colorTheme).toBe("shadcn-mono");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-mono");
   });
 
   it("preserves explicit Glass and Glass Silver color themes from localStorage", () => {
@@ -946,7 +946,7 @@ describe("getThemeInitScript", () => {
       expect(script).toContain(theme);
     });
     expect(script).toContain("validThemes");
-    expect(script).toContain("if (colorTheme === 'shadcn-mono') colorTheme = 'shadcn-mono-red';");
+    expect(script).not.toContain("colorTheme === 'shadcn-mono'");
     expect(script).toContain("colorTheme = 'shadcn-ember'");
   });
 

@@ -13,6 +13,7 @@ vi.mock("../../api", () => ({
   createAgent: vi.fn(),
   updateAgentState: vi.fn(),
   deleteAgent: vi.fn(),
+  fetchSettings: vi.fn(),
 }));
 
 const mockConfirm = vi.fn();
@@ -25,6 +26,7 @@ const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
 const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
+const mockFetchSettings = vi.mocked(apiModule.fetchSettings);
 const mockClipboardWriteText = vi.fn();
 
 import { loadAllAppCss } from "../../test/cssFixture";
@@ -90,6 +92,7 @@ describe("AgentListModal", () => {
     mockCreateAgent.mockResolvedValue(mockAgents[0]);
     mockUpdateAgentState.mockResolvedValue({ ...mockAgents[0], state: "active" });
     mockDeleteAgent.mockResolvedValue(undefined);
+    mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 } as Awaited<ReturnType<typeof apiModule.fetchSettings>>);
   });
 
   describe("modal visibility", () => {
@@ -302,6 +305,30 @@ describe("AgentListModal", () => {
         // Active agent with heartbeat should show "Healthy"
         expect(screen.getByText("Healthy")).toBeTruthy();
       });
+    });
+
+    it("FN-8190: supplies the project multiplier to long-cadence health labels", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 7.5 } as Awaited<ReturnType<typeof apiModule.fetchSettings>>);
+      mockFetchAgents.mockResolvedValue([{
+        ...mockAgents[1],
+        lastHeartbeatAt: new Date(Date.now() - 13 * 3_600_000).toISOString(),
+        runtimeConfig: { heartbeatIntervalMs: 3 * 3_600_000 },
+      }]);
+
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+          projectId={TEST_PROJECT_ID}
+        />
+      );
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalledWith(TEST_PROJECT_ID);
+        expect(screen.getByText("Healthy")).toBeTruthy();
+      });
+      expect(screen.queryByText("Unresponsive")).toBeNull();
     });
 
     it("renders compact error indicator and opens modal with actions for error agents", async () => {
@@ -1038,8 +1065,15 @@ describe("AgentListModal", () => {
 
       fireEvent.click(screen.getByText("New Agent"));
 
+      /*
+      FNXC:DashboardTests 2026-07-14-19:40:
+      Theme-token parity for the create form must scope to AgentListModal stylesheet rules. loadAllAppCss also includes global tokens/ArtifactsGallery intentional white canvases (e.g. background: #fff), which are not create-form regressions.
+      */
       const styles = readStyles();
-      expect(styles).toContain('.agent-list-modal .agent-create-form .input');
+      const createFormInputBlock =
+        styles.match(/\.agent-list-modal \.agent-create-form \.input\s*\{[^}]*\}/)?.[0] ?? "";
+      const createFormBlock =
+        styles.match(/\.agent-list-modal \.agent-create-form\s*\{[^}]*\}/)?.[0] ?? "";
       expect(styles).toContain('.agent-list-modal .agent-create-form .input');
       expect(styles).toContain('flex: 1;');
       expect(styles).toContain('min-width: 0;');
@@ -1048,8 +1082,8 @@ describe("AgentListModal", () => {
       expect(styles).toContain('var(--border)');
       expect(styles).toContain('var(--radius-sm)');
       expect(styles).toContain('var(--focus-ring)');
-      expect(styles).not.toMatch(/background:\s*#fff/);
-      expect(styles).not.toMatch(/background:\s*white/);
+      expect(createFormBlock + createFormInputBlock).not.toMatch(/background:\s*#fff/);
+      expect(createFormBlock + createFormInputBlock).not.toMatch(/background:\s*white/);
     });
 
     it("renders filter with styled container matching AgentsView", async () => {

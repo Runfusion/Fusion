@@ -100,6 +100,13 @@ function createMockStore(settingsOverrides: Partial<Settings> = {}): TaskStore {
       ...settingsOverrides,
     }),
     getFusionDir: vi.fn().mockReturnValue("/tmp/fusion-test/.fusion"),
+    /*
+    FNXC:EngineTests 2026-07-17-06:05:
+    resolveGlobalBackupRoot reads store.getGlobalSettingsDir() and falls back to
+    resolveGlobalDir() when unset. Tests forbid bare resolveGlobalDir() (writes to
+    real ~/.fusion), so return an explicit temp global dir.
+    */
+    getGlobalSettingsDir: vi.fn().mockReturnValue("/tmp/fusion-test-global"),
     on: vi.fn(),
     off: vi.fn(),
   } as unknown as TaskStore;
@@ -2213,7 +2220,8 @@ describe("CronRunner", () => {
       const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
         .executeLegacyCommand(schedule, new Date().toISOString());
 
-      expect(coreModuleMocks.runBackupCommand).toHaveBeenCalledWith("/tmp/.fusion", expect.any(Object));
+      // FNXC:EngineTests 2026-07-17-06:10: backups resolve the shared cluster root via getGlobalSettingsDir.
+      expect(coreModuleMocks.runBackupCommand).toHaveBeenCalledWith("/tmp/fusion-test-global", expect.any(Object));
       expect(runResult.success).toBe(true);
       expect(runResult.output).toContain("fusion-central-");
     });
@@ -2229,7 +2237,7 @@ describe("CronRunner", () => {
         .executeLegacyCommand(schedule, new Date().toISOString());
 
       expect(runResult.success).toBe(false);
-      expect(runResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(runResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
       expect(runResult.output).toBe("");
     });
 
@@ -2249,7 +2257,7 @@ describe("CronRunner", () => {
         .executeCommandStep(step, 0, 30_000, new Date().toISOString());
 
       expect(stepResult.success).toBe(false);
-      expect(stepResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(stepResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
       expect(stepResult.output).toBe("");
     });
   });

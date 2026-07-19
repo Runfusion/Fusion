@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { invalidateGitBinaryCache, isSpawnGitEnoent, resolveGitBinary } from "./git-binary.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GIT_TIMEOUT_MS = 10_000;
@@ -113,16 +114,39 @@ async function runGitCommand(
   args: string[],
   options: { cwd?: string; timeout: number },
 ): Promise<GitRepositoryCommandResult> {
-  const result = await execFileAsync(command, args, {
-    cwd: options.cwd,
-    timeout: options.timeout,
-    encoding: "utf-8",
-  });
-
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  /*
+  FNXC:Onboarding 2026-07-18-03:20:
+  Route "git" through resolveGitBinary so a git installed AFTER the server
+  started (stale PATH snapshot — spawn git ENOENT during first-run project
+  setup) is found at its well-known install location; on ENOENT re-resolve
+  once so a mid-session install is picked up without restarting Fusion.
+  */
+  const binary = command === "git" ? await resolveGitBinary() : command;
+  try {
+    const result = await execFileAsync(binary, args, {
+      cwd: options.cwd,
+      timeout: options.timeout,
+      encoding: "utf-8",
+    });
+    return {
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  } catch (error) {
+    if (command !== "git" || !isSpawnGitEnoent(error)) throw error;
+    invalidateGitBinaryCache();
+    const retryBinary = await resolveGitBinary();
+    if (retryBinary === binary) throw error;
+    const result = await execFileAsync(retryBinary, args, {
+      cwd: options.cwd,
+      timeout: options.timeout,
+      encoding: "utf-8",
+    });
+    return {
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  }
 }
 
 function extractCommandErrorMessage(error: unknown): string {

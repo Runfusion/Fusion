@@ -203,6 +203,13 @@ export class CePipelineStore {
     return this.asyncLayer.db;
   }
 
+  /** FNXC:CePipelineProjectIsolation 2026-07-14-21:28: Pipeline links, state, and queue rows share one PostgreSQL schema, so every async read and mutation binds the owning AsyncDataLayer project. */
+  private projectId(): string {
+    const projectId = this.asyncLayer?.projectId?.trim();
+    if (!projectId) throw new Error("CePipelineStore: PostgreSQL backend requires asyncLayer.projectId");
+    return projectId;
+  }
+
   // ── Links (U7) ─────────────────────────────────────────────────────
 
   /** Record a task→pipeline/artifact link. */
@@ -234,6 +241,7 @@ export class CePipelineStore {
       createdAt: new Date().toISOString(),
     };
     await this.dbAsync().insert(cePipelineLinksTable).values({
+      projectId: this.projectId(),
       id: link.id,
       taskId: link.taskId,
       cePipelineId: link.cePipelineId,
@@ -256,7 +264,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listByPipeline(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
-      .where(eq(cePipelineLinksTable.cePipelineId, cePipelineId))
+      .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.cePipelineId, cePipelineId)))
       .orderBy(desc(cePipelineLinksTable.createdAt), cePipelineLinksTable.id);
     return rows.map((r) => rowToLink(r as CePipelineLinkRow));
   }
@@ -273,7 +281,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.findByTaskId(taskId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
-      .where(eq(cePipelineLinksTable.taskId, taskId))
+      .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.taskId, taskId)))
       .limit(1);
     return rows[0] ? rowToLink(rows[0] as CePipelineLinkRow) : undefined;
   }
@@ -293,7 +301,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.getState(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
-      .where(eq(cePipelineStateTable.cePipelineId, cePipelineId))
+      .where(and(eq(cePipelineStateTable.projectId, this.projectId()), eq(cePipelineStateTable.cePipelineId, cePipelineId)))
       .limit(1);
     return rows[0] ? rowToState(rows[0] as CePipelineStateRow) : undefined;
   }
@@ -310,6 +318,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listAllState();
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
+      .where(eq(cePipelineStateTable.projectId, this.projectId()))
       .orderBy(desc(cePipelineStateTable.updatedAt), cePipelineStateTable.cePipelineId);
     return rows.map((r) => rowToState(r as CePipelineStateRow));
   }
@@ -342,28 +351,30 @@ export class CePipelineStore {
   async upsertStateAsync(input: UpsertCePipelineStateInput): Promise<CePipelineState> {
     if (!this.asyncLayer) return this.upsertState(input);
     const now = new Date().toISOString();
-    const existing = await this.getStateAsync(input.cePipelineId);
-    const status = input.status ?? existing?.status ?? "running";
-    const lastArtifactPath =
-      input.lastArtifactPath !== undefined ? input.lastArtifactPath : existing?.lastArtifactPath ?? null;
-    if (existing) {
-      await this.dbAsync().update(cePipelineStateTable).set({
-        currentStage: input.currentStage,
-        status,
-        lastArtifactPath,
-        updatedAt: now,
-      }).where(eq(cePipelineStateTable.cePipelineId, input.cePipelineId));
-    } else {
-      await this.dbAsync().insert(cePipelineStateTable).values({
+    /*
+    FNXC:CompoundEngineeringConcurrency 2026-07-14-23:53:
+    Pipeline state writers may independently advance status or attach an artifact. A read-before-write upsert lets concurrent callers replace an omitted field with a stale snapshot, so PostgreSQL must resolve the composite-key conflict atomically and retain the stored column whenever the caller omitted it.
+    */
+    const rows = await this.dbAsync().insert(cePipelineStateTable).values({
+        projectId: this.projectId(),
         cePipelineId: input.cePipelineId,
         currentStage: input.currentStage,
-        status,
-        lastArtifactPath,
+        status: input.status ?? "running",
+        lastArtifactPath: input.lastArtifactPath ?? null,
         createdAt: now,
         updatedAt: now,
-      });
-    }
-    return (await this.getStateAsync(input.cePipelineId))!;
+      }).onConflictDoUpdate({
+        target: [cePipelineStateTable.projectId, cePipelineStateTable.cePipelineId],
+        set: {
+          currentStage: input.currentStage,
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.lastArtifactPath !== undefined
+            ? { lastArtifactPath: input.lastArtifactPath }
+            : {}),
+          updatedAt: now,
+        },
+      }).returning();
+    return rowToState(rows[0] as CePipelineStateRow);
   }
 
   /**
@@ -439,6 +450,7 @@ export class CePipelineStore {
       processedAt: null,
     };
     await this.dbAsync().insert(cePipelineSyncQueueTable).values({
+      projectId: this.projectId(),
       id: entry.id,
       cePipelineId: entry.cePipelineId,
       taskId: entry.taskId,
@@ -463,7 +475,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listPendingSync();
     const rows = await this.dbAsync().select()
       .from(cePipelineSyncQueueTable)
-      .where(isNull(cePipelineSyncQueueTable.processedAt))
+      .where(and(eq(cePipelineSyncQueueTable.projectId, this.projectId()), isNull(cePipelineSyncQueueTable.processedAt)))
       .orderBy(cePipelineSyncQueueTable.enqueuedAt, cePipelineSyncQueueTable.id);
     return rows.map((r) => rowToQueueEntry(r as CeSyncQueueRow));
   }
@@ -483,6 +495,7 @@ export class CePipelineStore {
     await this.dbAsync().update(cePipelineSyncQueueTable)
       .set({ processedAt: new Date().toISOString() })
       .where(and(
+        eq(cePipelineSyncQueueTable.projectId, this.projectId()),
         eq(cePipelineSyncQueueTable.id, id),
         isNull(cePipelineSyncQueueTable.processedAt),
       ));
@@ -496,15 +509,10 @@ export function getCePipelineStore(ctx: PluginContext): CePipelineStore {
   const key = ctx.taskStore as object;
   const cached = storeCache.get(key);
   if (cached) return cached;
-  // FNXC:PostgresCutover 2026-07-04-00:00 RESOLVED:
-  // In backend mode the sync SQLite Database is unavailable (getDatabase()
-  // throws), but the TaskStore's AsyncDataLayer is wired through. Pass both:
-  // the *Async() siblings use asyncLayer in backend mode; the sync methods
-  // remain as the SQLite fallback for non-backend callers/tests.
-  const backendMode = ctx.taskStore.isBackendMode();
-  const db = backendMode ? null : ctx.taskStore.getDatabase();
-  const asyncLayer = backendMode ? ctx.taskStore.getAsyncLayer() : null;
-  const store = new CePipelineStore(db, asyncLayer);
+  const asyncLayer = ctx.taskStore.getAsyncLayer();
+  if (!asyncLayer) throw new Error("Compound Engineering pipeline store requires the project PostgreSQL AsyncDataLayer");
+  /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Bundled CE pipeline state is PostgreSQL-only at runtime. */
+  const store = new CePipelineStore(null, asyncLayer);
   storeCache.set(key, store);
   return store;
 }

@@ -15,7 +15,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import { splitSettingsSave, MODEL_LANE_KEYS } from "../components/settings/save-split";
+import { resolveScopedMcpSettings, splitSettingsSave, MODEL_LANE_KEYS } from "../components/settings/save-split";
 
 // Sanity-anchor the scope of the concrete keys this test relies on, so the
 // assertions below remain meaningful if core's catalog ever shifts.
@@ -44,6 +44,49 @@ describe("scope anchors", () => {
     for (const key of MODEL_LANE_KEYS) {
       expect(isProjectSettingsKey(key)).toBe(true);
     }
+  });
+});
+
+describe("resolveScopedMcpSettings", () => {
+  const globalServer = { name: "global-docs", transport: "stdio", command: "global-mcp" } as const;
+  const projectServer = { name: "deepwiki", transport: "stdio", command: "project-mcp" } as const;
+  const scopedSettings = {
+    global: { mcpServers: { enabled: false, servers: [globalServer] } },
+    project: { mcpServers: { enabled: true, servers: [projectServer] } },
+  } as never;
+
+  it("shows raw global MCP state instead of the merged project-effective state", () => {
+    expect(resolveScopedMcpSettings("global", scopedSettings)).toEqual({
+      enabled: false,
+      servers: [globalServer],
+    });
+  });
+
+  it("shows raw project MCP state without duplicating inherited global servers", () => {
+    expect(resolveScopedMcpSettings("project", scopedSettings)).toEqual({
+      enabled: true,
+      servers: [projectServer],
+    });
+  });
+
+  it("preserves an absent project override so global MCP settings remain inherited", () => {
+    expect(resolveScopedMcpSettings("project", {
+      global: { mcpServers: { enabled: true, servers: [globalServer] } },
+      project: {},
+    } as never)).toBeUndefined();
+  });
+});
+
+describe("agent clarification notification ownership", () => {
+  it("persists the Notifications setting through the section save split", () => {
+    const result = splitSettingsSave({
+      payload: { agentClarificationEnabled: true },
+      initialValues: { agentClarificationEnabled: false } as never,
+      initialScopedValues: { global: { agentClarificationEnabled: false }, project: {} } as never,
+      activeSection: "notifications",
+    });
+
+    expect(result.globalPatch).toEqual({ agentClarificationEnabled: true });
   });
 });
 
@@ -238,14 +281,14 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" });
     expect(projectPatch).toEqual({});
   });
 
-  it("routes GitLab enable and token settings to project settings outside global general", () => {
+  it("routes GitLab enable and token settings to project settings outside the global source-control section", () => {
     const initialScopedValues = {
       global: { gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" },
       project: { gitlabEnabled: true },
@@ -261,7 +304,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "merge",
+      activeSection: "source-control",
     });
 
     expect(globalPatch).toEqual({});
@@ -289,7 +332,7 @@ describe("splitSettingsSave", () => {
       // genuine global edit.
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: true });
@@ -306,7 +349,7 @@ describe("splitSettingsSave", () => {
       payload: { gitlabEnabled: true },
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({});
@@ -324,7 +367,7 @@ describe("splitSettingsSave", () => {
       // is explicitly present-but-undefined (unset) — the edit must still land.
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: true });
@@ -345,7 +388,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "merge",
+      activeSection: "source-control",
     });
 
     expect(projectPatch).toEqual({ gitlabAuthToken: null, gitlabAuthTokenType: "personal" });
@@ -391,6 +434,68 @@ describe("splitSettingsSave", () => {
     });
     expect(projectResult.globalPatch).toEqual({});
     expect(projectResult.projectPatch).toEqual({ mcpServers: projectMcp });
+  });
+
+  it("persists changed MCP scopes after navigating away from the MCP sections", () => {
+    const initialGlobalMcp = { enabled: false, servers: [] } as const;
+    const initialProjectMcp = { enabled: true, servers: [{ name: "deepwiki", transport: "stdio", command: "docs" }] } as const;
+    const nextGlobalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const nextProjectMcp = { enabled: false, servers: [{ name: "deepwiki", transport: "stdio", command: "docs" }] } as const;
+
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: { mcpServers: initialProjectMcp, language: "en" },
+      initialValues: { language: "en", mcpServers: initialProjectMcp } as never,
+      initialScopedValues: {
+        global: { mcpServers: initialGlobalMcp },
+        project: { mcpServers: initialProjectMcp },
+      } as never,
+      activeSection: "global-general",
+      scopedMcpValues: {
+        global: nextGlobalMcp,
+        project: nextProjectMcp,
+      },
+    });
+
+    expect(globalPatch).toEqual({ mcpServers: nextGlobalMcp });
+    expect(projectPatch).toEqual({ mcpServers: nextProjectMcp });
+  });
+
+  it("does not materialize inherited global MCP settings as a project override on a no-op save", () => {
+    const globalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: { language: "en" },
+      initialValues: { language: "en", mcpServers: globalMcp } as never,
+      initialScopedValues: {
+        global: { mcpServers: globalMcp },
+        project: {},
+      } as never,
+      activeSection: "general",
+      scopedMcpValues: {
+        global: globalMcp,
+        project: undefined,
+      },
+    });
+
+    expect(globalPatch).toEqual({});
+    expect(projectPatch).toEqual({});
+  });
+
+  it("persists scoped MCP edits when the initial scoped snapshot is unavailable", () => {
+    const globalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const projectMcp = { enabled: true, servers: [{ name: "project-docs", transport: "stdio", command: "project-docs" }] } as const;
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: {},
+      initialValues: null,
+      initialScopedValues: null,
+      activeSection: "general",
+      scopedMcpValues: {
+        global: globalMcp,
+        project: projectMcp,
+      },
+    });
+
+    expect(globalPatch).toEqual({ mcpServers: globalMcp });
+    expect(projectPatch).toEqual({ mcpServers: projectMcp });
   });
 
   it("maps flattened remote access fields to the canonical global remoteAccess patch", () => {
@@ -556,6 +661,47 @@ describe("splitSettingsSave", () => {
     expect(projectClearResult.projectPatch).toEqual({ titleSummarizerFallbackThinkingLevel: null });
   });
 
+  it("emits set and null-cleared merger fallback lane values in the project patch", () => {
+    const setResult = splitSettingsSave({
+      payload: {
+        mergerFallbackProvider: "anthropic",
+        mergerFallbackModelId: "claude-sonnet-4-5",
+        mergerFallbackThinkingLevel: "high",
+      },
+      initialValues: {} as never,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "project-models",
+    });
+    expect(setResult.projectPatch).toEqual({
+      mergerFallbackProvider: "anthropic",
+      mergerFallbackModelId: "claude-sonnet-4-5",
+      mergerFallbackThinkingLevel: "high",
+    });
+
+    const clearResult = splitSettingsSave({
+      payload: {
+        mergerFallbackProvider: undefined,
+        mergerFallbackModelId: undefined,
+        mergerFallbackThinkingLevel: undefined,
+      },
+      initialValues: {} as never,
+      initialScopedValues: {
+        global: {},
+        project: {
+          mergerFallbackProvider: "anthropic",
+          mergerFallbackModelId: "claude-sonnet-4-5",
+          mergerFallbackThinkingLevel: "high",
+        },
+      } as never,
+      activeSection: "project-models",
+    });
+    expect(clearResult.projectPatch).toEqual({
+      mergerFallbackProvider: null,
+      mergerFallbackModelId: null,
+      mergerFallbackThinkingLevel: null,
+    });
+  });
+
   it("drops plain-undefined global keys that were never set", () => {
     const payload: Record<string, unknown> = {
       ntfyTopic: undefined, // never had a value → passed through as undefined
@@ -581,7 +727,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toMatchObject(payload);
     expect("gitlabInstanceUrl" in onGlobal.projectPatch).toBe(false);
@@ -591,7 +737,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect("gitlabInstanceUrl" in onProject.globalPatch).toBe(false);
     expect("gitlabApiBaseUrl" in onProject.globalPatch).toBe(false);
@@ -608,7 +754,7 @@ describe("splitSettingsSave", () => {
         global: { gitlabInstanceUrl: "https://global.example", gitlabApiBaseUrl: "https://global.example/api/v4" },
         project: {},
       } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toEqual({ gitlabInstanceUrl: null, gitlabApiBaseUrl: null });
 
@@ -619,18 +765,18 @@ describe("splitSettingsSave", () => {
         global: {},
         project: { gitlabInstanceUrl: "https://project.example", gitlabApiBaseUrl: "https://project.example/api/v4" },
       } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect(onProject.projectPatch).toEqual({ gitlabInstanceUrl: null, gitlabApiBaseUrl: null });
   });
 
-  it("routes githubTrackingDefaultRepo to global only on the global-general section", () => {
+  it("routes githubTrackingDefaultRepo to global only on the source-control-global section", () => {
     const payloadGlobal: Record<string, unknown> = { githubTrackingDefaultRepo: "org/repo" };
     const onGlobal = splitSettingsSave({
       payload: payloadGlobal,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toMatchObject({ githubTrackingDefaultRepo: "org/repo" });
     expect("githubTrackingDefaultRepo" in onGlobal.projectPatch).toBe(false);
@@ -639,11 +785,11 @@ describe("splitSettingsSave", () => {
       payload: { githubTrackingDefaultRepo: "org/repo" },
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect("githubTrackingDefaultRepo" in onProject.globalPatch).toBe(false);
     // ...and is instead routed to the project patch on the project-scoped
-    // "general" section, rather than being dropped or erroring.
+    // "source-control" section, rather than being dropped or erroring.
     expect(onProject.projectPatch).toMatchObject({ githubTrackingDefaultRepo: "org/repo" });
   });
 });

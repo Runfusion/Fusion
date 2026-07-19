@@ -29,6 +29,7 @@ import {
   DefaultPackageManager,
   discoverAndLoadExtensions,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -63,7 +64,7 @@ import {
 } from "./skill-resolver.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { applyClaudeAcpEnable } from "./claude-acp-enable.js";
-import { createFusionAuthStorage, getModelRegistryModelsPath } from "./auth-storage.js";
+import { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
 import { piLog, extensionsLog } from "./logger.js";
 import { readCustomProviders } from "./custom-providers.js";
 import { buildCustomProviderModels } from "./custom-provider-registry.js";
@@ -79,7 +80,7 @@ import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } f
 import { createStreamingDeltaNormalizer } from "./streaming-delta.js";
 import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./transient-error-detector.js";
 import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp-runtime-support.js";
-import { connectMcpSessionTools, McpSessionBootstrapError, type McpClientFactory, type McpSessionToolset } from "./mcp-session-tools.js";
+import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp-session-tools.js";
 export { isModelAuthTierIncompatibilityError } from "./transient-error-detector.js";
 
 const RTK_ACCEPTED_REWRITE_EXIT_CODES = new Set([0, 3]);
@@ -1012,6 +1013,12 @@ export interface AgentOptions {
   systemPromptLayers?: SystemPromptLayers;
   tools?: "coding" | "readonly";
   customTools?: ToolDefinition[];
+  /*
+  FNXC:MergeQueue 2026-07-15-11:08:
+  Merger sessions must not load host @runfusion/fusion extension tools. Extension fn_task_show boots a second PostgreSQL TaskStore (createTaskStoreForBackend) inside the engine process and can hang indefinitely without a tool timeout, wedging the single-flight merge pump (observed FN-7956).
+  */
+  /** Lane purpose for host-extension / tooling policy (e.g. "merger", "executor"). */
+  sessionPurpose?: string;
   /**
    * Optional resolved tool-name allowlist. Undefined preserves the selected tool mode; an empty array deliberately exposes no matched tools.
    *
@@ -1071,6 +1078,8 @@ export interface AgentOptions {
   allowMcpToolsInReadonly?: boolean;
   /** Test seam for MCP session tools; production uses the SDK client/transport factories. */
   mcpClientFactory?: McpClientFactory;
+  /** Test seam for MCP retry timing. */
+  mcpBootstrapRetryDelayMs?: number;
   /** Optional task-scoped env injected into this session's subprocess tools only. */
   taskEnv?: NodeJS.ProcessEnv;
   /** Last-chance abort hook fired immediately before `createAgentSession`.
@@ -1170,8 +1179,13 @@ export function isRetryableModelSelectionError(message: string): boolean {
   if (isProviderModelNotFoundError(message)) {
     return true;
   }
+  /*
+   * FNXC:ModelFallback 2026-07-16-11:00:
+   * A provider whose credential fails to resolve at prompt time surfaces from pi-ai as `Provider is not configured: <provider>` (ModelsError code "auth"). This is a provider/credential-availability problem a configured fallback model on a DIFFERENT provider can recover from, so treat it as retryable and enter the single-swap fallback path. Previously this string matched none of the substrings below, so a mis-resolved primary provider hard-failed the task instead of falling back. The `usingFallback` guard upstream keeps it to one swap.
+   */
   const normalized = message.toLowerCase();
-  return normalized.includes("rate limit")
+  return normalized.includes("not configured")
+    || normalized.includes("rate limit")
     || normalized.includes("too many requests")
     || normalized.includes("429")
     || normalized.includes("401")
@@ -1536,12 +1550,12 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => extensionsLog.warn(message));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => extensionsLog.warn(message));
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     extensionsLog.error(`Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   }
 }
 
@@ -2044,27 +2058,33 @@ export function buildSessionRoutingHeaders(sessionId: string): Record<string, st
  * Operating on the resolved output (rather than re-registering providers)
  * preserves provider-specific headers and never disturbs API-key resolution.
  */
-export function attachSessionRoutingHeaders(modelRegistry: ModelRegistry, sessionId: string): void {
-  // FNXC:SessionRouting 2026-06-23-16:46:
-  // Auxiliary feature: never let header injection break session creation. If a
-  // future pi-coding-agent rename removes getApiKeyAndHeaders, warn (rather than
-  // silently no-op) so the degraded routing/observability headers are detectable.
-  if (typeof modelRegistry.getApiKeyAndHeaders !== "function") {
-    piLog.warn("[pi] session-routing headers not attached: ModelRegistry.getApiKeyAndHeaders is not a function (pi API changed?)");
+export function attachSessionRoutingHeaders(modelRuntime: ModelRuntime, sessionId: string): void {
+  /*
+  FNXC:ModelCatalog 2026-07-16-17:45:
+  pi 0.80.8 routes session request auth through ModelRuntime.getAuth rather than
+  ModelRegistry.getApiKeyAndHeaders. Decorate the runtime seam so routing headers
+  still reach every SDK-dispatched request before createAgentSession receives it.
+
+  FNXC:SessionRouting 2026-07-16-19:05:
+  The FN-8142 migration to ModelRuntime.getAuth dropped the pre-migration defensive
+  invariant that a missing resolution method must NOT break session creation. Restore it:
+  no-op (warn) instead of throwing on `getAuth.bind` when the runtime lacks getAuth, so a
+  future pi rename removing the method degrades to un-tagged requests rather than a hard fail.
+  */
+  const runtimeWithAuth = modelRuntime as unknown as { getAuth?: ModelRuntime["getAuth"] };
+  if (typeof runtimeWithAuth.getAuth !== "function") {
+    piLog.warn("attachSessionRoutingHeaders: modelRuntime.getAuth missing; skipping session-routing header wiring");
     return;
   }
   const routingHeaders = buildSessionRoutingHeaders(sessionId);
-  const resolveAuth = modelRegistry.getApiKeyAndHeaders.bind(modelRegistry);
-  modelRegistry.getApiKeyAndHeaders = async (model) => {
-    const result = await resolveAuth(model);
-    if (!result.ok) {
-      return result;
-    }
-    return {
+  const resolveAuth = modelRuntime.getAuth.bind(modelRuntime) as ModelRuntime["getAuth"];
+  (modelRuntime as unknown as { getAuth: ModelRuntime["getAuth"] }).getAuth = (async (providerOrModel: Parameters<ModelRuntime["getAuth"]>[0], overrides?: Parameters<ModelRuntime["getAuth"]>[1]) => {
+    const result = await resolveAuth(providerOrModel as never, overrides);
+    return result ? {
       ...result,
-      headers: { ...result.headers, ...routingHeaders },
-    };
-  };
+      auth: { ...result.auth, headers: { ...result.auth.headers, ...routingHeaders } },
+    } : undefined;
+  }) as ModelRuntime["getAuth"];
 }
 
 /**
@@ -2092,7 +2112,8 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     logMcpForwardingSkipped({ runtimeId: "pi", provider: options.defaultProvider, skippedCount: requestedMcpServers.length, lane: "createFnAgent" });
   }
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+  const modelRegistry = await createFusionModelRegistry(authStorage);
+  const modelRuntime = modelRegistry.modelRuntime;
 
   // Resolve the project root early so extension providers, skill discovery,
   // and resource loading all use the correct root when cwd is a worktree,
@@ -2126,7 +2147,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       piLog.warn(`Failed to register custom provider "${provider.name}" (key=${registryKey}, id=${provider.id}, apiType=${provider.apiType}, baseUrl=${provider.baseUrl}): ${message}`);
     }
   }
-  modelRegistry.refresh();
+  await modelRegistry.refresh();
   mergeSupplementalAnthropicModels(modelRegistry, (message) => extensionsLog.warn(message));
   /*
    * FNXC:ModelCatalog 2026-07-09-00:00:
@@ -2268,9 +2289,21 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   // since heartbeat/reviewer flows explicitly provide engine-owned tools.
   // This keeps summarizer/compaction sessions safe while retaining intended
   // delegation/memory tools for readonly engine sessions.
-  const effectiveExtensionPaths = isReadonly ? [] : hostExtensionPaths;
-  if (isReadonly && hostExtensionPaths.length > 0) {
-    piLog.log(`readonly session — host extensions (${hostExtensionPaths.length}) skipped`);
+  /*
+  FNXC:MergeQueue 2026-07-15-11:08:
+  Also skip host extensions for sessionPurpose "merger". Merge agents only need coding builtins (git/bash); host fn_* tools open a second store and can wedge the merge on hung fn_task_show. Engine-owned customTools (if ever supplied) still pass through.
+  */
+  const skipHostExtensions = isReadonly || options.sessionPurpose === "merger";
+  const effectiveExtensionPaths = skipHostExtensions ? [] : hostExtensionPaths;
+  if (skipHostExtensions && hostExtensionPaths.length > 0) {
+    /*
+    FNXC:MergeQueue 2026-07-15-11:20:
+    Log the actual skip reason (readonly vs sessionPurpose) so future skip reasons do not mislabel as "merger".
+    */
+    const skipReason = isReadonly
+      ? "readonly"
+      : `sessionPurpose=${options.sessionPurpose ?? "unknown"}`;
+    piLog.log(`${skipReason} session — host extensions (${hostExtensionPaths.length}) skipped`);
   }
 
   const resourceLoader = new DefaultResourceLoader({
@@ -2304,7 +2337,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     : undefined;
   const sessionRoutingId = options.taskId ?? piSessionId;
   if (sessionRoutingId) {
-    attachSessionRoutingHeaders(modelRegistry, sessionRoutingId);
+    attachSessionRoutingHeaders(modelRuntime, sessionRoutingId);
   }
 
   const createSessionWithModel = async (modelOverride?: typeof selectedModel) => {
@@ -2327,18 +2360,17 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         cwd: options.cwd,
         clientFactory: options.mcpClientFactory,
         logger: piLog,
+        retryDelayMs: options.mcpBootstrapRetryDelayMs,
       });
       /*
-       * FNXC:McpConfig 2026-07-12-17:02:
-       * MAIN-008 requires a configured MCP bootstrap failure to be observably
-       * different from a genuine zero-server/tool catalog. Fail session creation
-       * using names plus coarse categories only, and dispose every partially
-       * connected client before the error crosses the runtime boundary.
+       * FNXC:McpConfig 2026-07-18-19:41:
+       * MCP integrations are auxiliary capabilities. Exhausted bootstrap retries
+       * remain observably different from a zero-server catalog, but must not
+       * terminate the owning agent session or discard unrelated task work.
        */
       const bootstrapFailures = mcpToolset.skipped.filter(({ reason }) => reason !== "disabled");
       if (bootstrapFailures.length > 0) {
-        await mcpToolset.dispose();
-        throw new McpSessionBootstrapError(bootstrapFailures);
+        piLog.warn(`MCP session continuing with unavailable servers: count=${bootstrapFailures.length}`);
       }
     } else if (forwardedMcpServers.length > 0 && isReadonly) {
       piLog.log(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
@@ -2415,10 +2447,15 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         throw error;
       }
     }
-    const createSessionOptions: Parameters<typeof createAgentSession>[0] = {
+    /*
+    FNXC:ModelCatalog 2026-07-16-18:00:
+    pi 0.80.10's createAgentSession accepts an optional options parameter, but Fusion
+    constructs and augments an options object before dispatch. Narrow away undefined so
+    the ModelRuntime-capable SDK contract remains type-safe as tool allowlists are added.
+    */
+    const createSessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]> = {
       cwd: options.cwd,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       resourceLoader,
       noTools: "builtin",
       customTools: customToolList,
@@ -2537,8 +2574,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   };
 
   /*
-   * FNXC:ModelFallback 2026-07-02-00:00:
-   * Planner and shared AI lanes may try one distinct fallback model for a logical model-selection failure, but they must then throw ModelFallbackExhaustedError instead of swapping back or relying on scheduler re-pick loops. This keeps transient fallback useful while making exhausted model configuration actionable for operators.
+   * FNXC:ModelFallback 2026-07-16-00:00:
+   * FN-8098 requires a distinct fallback failure to get one final primary retry before
+   * blocking. This bounded primary → fallback → primary sequence prevents fallback loops
+   * while still surfacing an operator-actionable ModelFallbackExhaustedError after three attempts.
    */
   let sessionResult;
   let usingFallback = false;
@@ -2554,8 +2593,14 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     usingFallback = true;
     try {
       sessionResult = await createSessionWithModel(fallbackModel);
-    } catch (fallbackErr: unknown) {
-      throw makeFallbackExhaustedError("session-creation", 2, fallbackErr);
+    } catch (_fallbackErr: unknown) {
+      // The final retry is intentionally primary and terminal even when fallback failed non-retryably.
+      usingFallback = false;
+      try {
+        sessionResult = await createSessionWithModel(selectedModel);
+      } catch (primaryRetryErr: unknown) {
+        throw makeFallbackExhaustedError("session-creation", 3, primaryRetryErr);
+      }
     }
     await emitFallbackUsed("session-creation", err);
     piLog.log("Fallback session created successfully");
@@ -2718,50 +2763,21 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       try {
         await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
         return;
-      } catch (fallbackErr: any) {
-        const fallbackErrorMessage = fallbackErr?.message || "";
-        if (isContextLimitError(fallbackErrorMessage)) {
-          const promptMemoryRetry = await retryWithCompactedPromptMemory(fallbackSession, prompt, effectivePromptOptions);
-          if (promptMemoryRetry.recovered) {
-            return;
-          }
-          if (promptMemoryRetry.error) {
-            const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
-            if (!isContextLimitError(retryMessage)) {
-              throw promptMemoryRetry.error;
-            }
-          }
-
-          const promptSectionRetry = await retryWithCompactedPromptSections(fallbackSession, prompt, effectivePromptOptions);
-          if (promptSectionRetry.recovered) {
-            return;
-          }
-          if (promptSectionRetry.error) {
-            const retryMessage = promptSectionRetry.error instanceof Error ? promptSectionRetry.error.message : String(promptSectionRetry.error);
-            if (!isContextLimitError(retryMessage)) {
-              throw promptSectionRetry.error;
-            }
-          }
-
-          piLog.warn("promptWithFallback: fallback session context limit error — attempting auto-compaction");
-          await flushMemoryBeforeSessionCompaction(fallbackSession);
-          const compactResult = await compactSessionContext(fallbackSession);
-          if (compactResult) {
-            piLog.log(`promptWithFallback: fallback compaction succeeded (${compactResult.tokensBefore} tokens) — retrying`);
-            try {
-              await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
-              return;
-            } catch (retryErr: any) {
-              const retryErrorMessage = retryErr?.message || "";
-              piLog.error(`promptWithFallback: fallback retry after auto-compaction failed: ${retryErrorMessage}`);
-              throw fallbackErr; // Throw original fallback error
-            }
-          } else {
-            piLog.error("promptWithFallback: fallback compaction unavailable — propagating original error");
-            throw fallbackErr;
-          }
+      } catch (_fallbackErr: unknown) {
+        /*
+         * FNXC:ModelFallback 2026-07-16-00:00:
+         * Once a distinct fallback has failed, retry the primary exactly once regardless
+         * of whether the fallback error is retryable or a context/compaction failure.
+         * Resetting `usingFallback` ensures the final primary receives primary thinking.
+         */
+        usingFallback = false;
+        try {
+          const primaryRetrySession = await swapPromptSession(selectedModel);
+          await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+          return;
+        } catch (primaryRetryErr: unknown) {
+          throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);
         }
-        throw makeFallbackExhaustedError("prompt-time", 2, fallbackErr);
       }
     }
   };

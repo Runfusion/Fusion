@@ -9,6 +9,7 @@ import {
   type TaskStore,
   type Task,
   type MissionStore,
+  type AsyncMissionStore,
   type MissionFeature,
   type PrInfo,
   type AgentStore,
@@ -19,13 +20,19 @@ import {
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { recoverIdleSemaphoreLeakCandidate, type AgentSemaphore } from "./concurrency.js";
+import {
+  computeTopLevelConcurrencyClaimed,
+  dropPreHeldExecutorSlot,
+  recoverIdleSemaphoreLeakCandidate,
+  registerPreHeldExecutorSlot,
+  type AgentSemaphore,
+} from "./concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
-import { resolveEffectiveNode } from "./effective-node.js";
+import { resolveEffectiveNode, type EffectiveNode } from "./effective-node.js";
 import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./node-routing-policy.js";
 import type { NodeDispatchValidationResult } from "./node-dispatch-validation.js";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
@@ -39,6 +46,20 @@ import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrFo
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./task-agent-sync.js";
+
+/*
+FNXC:WorkflowScheduling 2026-07-15-12:55:
+Every dispatch pass resolves a routing node, so logging each resolution at info level reprinted `routed to node=local (source=local)` for every task on every poll and buried real scheduler events in the TUI log pane.
+Local routing is the default nobody needs told about: it is debug-only (`FUSION_DEBUG=scheduler`). Remote routing stays at info because it explains where work actually went and is what an operator reaches for when a task runs on the wrong host.
+*/
+function logTaskRouting(taskId: string, node: EffectiveNode): void {
+  const message = `Task ${taskId} routed to node=${node.nodeId ?? "local"} (source=${node.source})`;
+  if (node.nodeId === undefined) {
+    schedulerLog.debug(message);
+    return;
+  }
+  schedulerLog.log(message);
+}
 
 function shouldRunWorkflowColumnScheduler(_settings: Settings): boolean {
   /*
@@ -371,16 +392,18 @@ function recoverIdleSemaphoreLeak(
   tasks: Task[],
   source: string,
   candidateSinceMs: number | null,
+  inFlightCount: number = 0,
 ): number | null {
   const result = recoverIdleSemaphoreLeakCandidate({
     semaphore,
     tasks,
     candidateSinceMs,
+    inFlightCount,
   });
   if (result.reconciliation?.changed) {
     schedulerLog.warn(
       `${source}: recovered stale semaphore active count ${result.reconciliation.before} -> ${result.reconciliation.after} ` +
-      "(no persisted in-progress/planning/review agent work)",
+      "(semaphore over-held vs persisted+in-flight top-level agent work)",
     );
   }
   return result.candidateSinceMs;
@@ -394,6 +417,12 @@ function computeConcurrencyGateDiagnostic(params: {
   semaphore?: AgentSemaphore;
   inProgressTaskIds: string[];
   startedThisTick?: number;
+  /**
+   * Live top-level running-agent claim (planning + in-progress + active in-review,
+   * optionally merged with semaphore.activeCount). When provided, the shared
+   * semaphore gate uses this instead of only in-progress agentSlots.
+   */
+  topLevelClaimedSlots?: number;
   /** U6: additive per-column capacity gates (flag-ON only). Omitted → the legacy
    *  three-gate report is byte-identical. */
   perColumnGates?: PerColumnCapacityGate[];
@@ -413,7 +442,13 @@ function computeConcurrencyGateDiagnostic(params: {
   };
   const semaphoreGate = params.semaphore
     ? (() => {
-      const used = Math.max(0, params.semaphore.activeCount, params.agentSlots) + startedThisTick;
+      /*
+      FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+      Global semaphore pressure must include every live top-level agent holder (planning triage and active in-review), not only in-progress WIP, otherwise the hold/release sweep can admit an executor on top of a full planner fleet and the footer shows running > cap.
+      */
+      const claimed = params.topLevelClaimedSlots
+        ?? Math.max(0, params.semaphore.activeCount, params.agentSlots);
+      const used = Math.max(0, claimed) + startedThisTick;
       return {
         used,
         limit: params.semaphore.limit,
@@ -499,7 +534,7 @@ export interface SchedulerOptions {
   /** Optional PR monitor for tracking in-review PRs */
   prMonitor?: PrMonitor;
   /** Optional MissionStore for slice activation and auto-advance */
-  missionStore?: MissionStore;
+  missionStore?: MissionStore | AsyncMissionStore;
   /** Optional lease manager used to recover stale checkout leases before scheduling. */
   leaseManager?: MeshLeaseManager;
   /** Optional MissionAutopilot for autonomous mission progression */
@@ -527,6 +562,18 @@ export interface SchedulerOptions {
   localNodeId?: string;
   /** Optional shared auto-claim snapshot manager for invalidation on task mutations. */
   snapshotManager?: AutoClaimSnapshotManager;
+  /**
+   * FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+   * Live count of top-level triage sessions that already hold a semaphore slot
+   * but have not yet persisted `status:"planning"` (pre-planning `processing`
+   * entries). Read lazily on each scheduling pass and fed into stale-semaphore
+   * recovery as `inFlightCount` so the scheduler's reclaim bound never undercounts
+   * a live triage acquire — otherwise a pre-planning triage slot would look like
+   * leaked excess (bound=0 → fast idle window) and get released, admitting an
+   * agent above the configured limit (Greptile PR #2265, "Scheduler Omits Live
+   * Triage Slots"). Matches the triage service's own `inFlightCount` semantics.
+   */
+  getInFlightTopLevelCount?: () => number;
 }
 
 /**
@@ -707,7 +754,6 @@ export class Scheduler {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
             const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
-            const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
             for (const dependent of todoTasks) {
               const mentionsCompletedTask = dependent.dependencies.includes(task.id);
               const currentlyBlockedByCompletedTask = dependent.blockedBy === task.id;
@@ -716,9 +762,16 @@ export class Scheduler {
               const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
                 ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
                 : undefined;
+              /*
+              FNXC:SchedulerArchiveReads 2026-07-14-19:10:
+              Dependency reconciliation is event-scoped. Resolve only the dependent's referenced IDs so one completed task cannot make the scheduler download and parse the entire cold archive.
+              */
+              const dependencyTasks = (await Promise.all(
+                dependent.dependencies.map((dependencyId) => this.store.getTask(dependencyId).catch(() => null)),
+              )).filter((candidate) => candidate !== null);
               const unresolvedDeps = getUnmetSchedulingDependencies(
                 dependent,
-                [dependent, ...allTasks],
+                [dependent, task, ...dependencyTasks],
                 markerAcceptedByTaskId
                   ? {
                     markerAcceptedByTaskId,
@@ -869,7 +922,6 @@ export class Scheduler {
           const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
           const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
           const dependents = [...todoTasks, ...inProgressTasks];
-          const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
 
           for (const dependent of dependents) {
             const mentionsDeletedTask = dependent.dependencies.includes(task.id);
@@ -879,9 +931,12 @@ export class Scheduler {
             const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
               ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
               : undefined;
+            const dependencyTasks = (await Promise.all(
+              dependent.dependencies.map((dependencyId) => this.store.getTask(dependencyId).catch(() => null)),
+            )).filter((candidate) => candidate !== null);
             const unresolvedDeps = getUnmetSchedulingDependencies(
               dependent,
-              [dependent, ...allTasks],
+              [dependent, ...dependencyTasks],
               markerAcceptedByTaskId
                 ? {
                   markerAcceptedByTaskId,
@@ -979,12 +1034,15 @@ export class Scheduler {
     // and start watching all missions with autopilotEnabled: true
     if (this.options.missionAutopilot && this.options.missionStore) {
       this.options.missionAutopilot.setScheduler(this);
-      const missions = this.options.missionStore.listMissions();
-      for (const mission of missions) {
-        if (mission.autopilotEnabled && mission.status !== "complete" && mission.status !== "archived") {
-          this.options.missionAutopilot.watchMission(mission.id);
+      const missionStore = this.options.missionStore;
+      const missionAutopilot = this.options.missionAutopilot;
+      void Promise.resolve(missionStore.listMissions()).then((missions) => {
+        for (const mission of missions) {
+          if (mission.autopilotEnabled && mission.status !== "complete" && mission.status !== "archived") {
+            missionAutopilot.watchMission(mission.id);
+          }
         }
-      }
+      }).catch((error) => schedulerLog.error("Failed to initialize mission autopilot watches:", error));
       this.options.missionAutopilot.start();
     }
   }
@@ -1261,6 +1319,7 @@ export class Scheduler {
         tasks,
         "scheduler",
         this.idleSemaphoreLeakCandidateSince,
+        this.options.getInFlightTopLevelCount?.() ?? 0,
       );
 
       // Refresh the poll interval if the persisted setting has changed
@@ -1398,6 +1457,10 @@ export class Scheduler {
           maxWorktrees,
           semaphore: this.options.semaphore,
           inProgressTaskIds,
+          topLevelClaimedSlots: computeTopLevelConcurrencyClaimed({
+            tasks,
+            semaphoreActiveCount: this.options.semaphore?.activeCount,
+          }),
           startedThisTick: started,
           perColumnGates,
         });
@@ -1438,11 +1501,11 @@ export class Scheduler {
         for (const t of todo) {
           if (t.sliceId && !blockedSliceIds.has(t.sliceId)) {
             try {
-              const slice = this.options.missionStore.getSlice(t.sliceId);
+              const slice = await this.options.missionStore.getSlice(t.sliceId);
               if (slice) {
-                const milestone = this.options.missionStore.getMilestone(slice.milestoneId);
+                const milestone = await this.options.missionStore.getMilestone(slice.milestoneId);
                 if (milestone) {
-                  const mission = this.options.missionStore.getMission(milestone.missionId);
+                  const mission = await this.options.missionStore.getMission(milestone.missionId);
                   if (mission && mission.status === "blocked") {
                     blockedSliceIds.add(t.sliceId);
                   }
@@ -1868,7 +1931,7 @@ export class Scheduler {
 
         // Resolve effective node for routing
         let effectiveNode = resolveEffectiveNode(freshTask, settings);
-        schedulerLog.log(`Task ${task.id} routed to node=${effectiveNode.nodeId ?? "local"} (source=${effectiveNode.source})`);
+        logTaskRouting(task.id, effectiveNode);
 
         // Enforce dispatch configuration validation before node-health fallback logic.
         if (effectiveNode.nodeId !== undefined && this.options.validateNodeDispatch) {
@@ -2314,9 +2377,9 @@ export class Scheduler {
 
           if (this.options.missionStore && task.sliceId) {
             try {
-              const slice = this.options.missionStore.getSlice(task.sliceId);
-              const milestone = slice ? this.options.missionStore.getMilestone(slice.milestoneId) : undefined;
-              const mission = milestone ? this.options.missionStore.getMission(milestone.missionId) : undefined;
+              const slice = await this.options.missionStore.getSlice(task.sliceId);
+              const milestone = slice ? await this.options.missionStore.getMilestone(slice.milestoneId) : undefined;
+              const mission = milestone ? await this.options.missionStore.getMission(milestone.missionId) : undefined;
               if (mission?.status === "blocked") {
                 await this.store.updateTask(task.id, { status: "queued" });
                 await this.logDispatchQueuedReason(task.id, "queued — mission is blocked");
@@ -2392,7 +2455,7 @@ export class Scheduler {
           }
 
           let effectiveNode = resolveEffectiveNode(freshTask, settings);
-          schedulerLog.log(`Task ${task.id} routed to node=${effectiveNode.nodeId ?? "local"} (source=${effectiveNode.source})`);
+          logTaskRouting(task.id, effectiveNode);
 
           if (effectiveNode.nodeId !== undefined && this.options.validateNodeDispatch) {
             const nodeValidation = await this.options.validateNodeDispatch(effectiveNode.nodeId);
@@ -2690,6 +2753,11 @@ export class Scheduler {
             }
           }
 
+          const topLevelClaimedSlots = computeTopLevelConcurrencyClaimed({
+            tasks,
+            // Prior tryAcquire reservations in this sweep already bump activeCount.
+            semaphoreActiveCount: this.options.semaphore?.activeCount,
+          });
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
             maxConcurrent,
@@ -2697,10 +2765,14 @@ export class Scheduler {
             maxWorktrees,
             semaphore: this.options.semaphore,
             inProgressTaskIds,
+            topLevelClaimedSlots,
           });
           /*
           FNXC:WorkflowScheduling 2026-06-23-20:58:
-          The workflow hold/release sweep is the only todo pickup path, so it must honor the same maxConcurrent, maxWorktrees, and shared semaphore pressure before releasing a task to in-progress. This is deliberately a non-mutating preflight: executor owns the actual semaphore acquire, and the scheduler only prevents capacity-obvious over-release without double-acquiring slots.
+          The workflow hold/release sweep is the only todo pickup path, so it must honor the same maxConcurrent, maxWorktrees, and shared semaphore pressure before releasing a task to in-progress.
+
+          FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+          Preflight is no longer non-mutating for the shared semaphore: tryAcquire reserves a real slot before the move so triage cannot fill the global cap while this card is already counted as an in-progress runner. On move failure the reservation is released; on success the pre-held slot is transferred to the executor/graph run.
           */
           if (concurrencyDiagnostic.available <= 0) {
             if (reservedScope) {
@@ -2711,6 +2783,25 @@ export class Scheduler {
             await this.store.updateTask(task.id, { status: "queued" });
             await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
             return null;
+          }
+
+          const sem = this.options.semaphore;
+          if (sem && !sem.tryAcquire()) {
+            if (reservedScope) {
+              activeScopes.delete(task.id);
+              activeScopeColumns.delete(task.id);
+            }
+            const reason = formatConcurrencyLimitReason({
+              ...concurrencyDiagnostic,
+              available: 0,
+              bindingGates: [...new Set([...concurrencyDiagnostic.bindingGates, "semaphore" as const])],
+            });
+            await this.store.updateTask(task.id, { status: "queued" });
+            await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
+            return null;
+          }
+          if (sem) {
+            registerPreHeldExecutorSlot(task.id);
           }
 
           dispatchPrepByTaskId.set(task.id, {
@@ -2736,6 +2827,7 @@ export class Scheduler {
               reservedWorktreeSlots = Math.max(0, reservedWorktreeSlots - 1);
               reservedConcurrentSlots = Math.max(0, reservedConcurrentSlots - 1);
               dispatchPrepByTaskId.delete(task.id);
+              dropPreHeldExecutorSlot(task.id, sem);
             },
           };
         },
@@ -2816,7 +2908,7 @@ export class Scheduler {
         return;
       }
 
-      const feature = this.resolveMissionFeatureForTask(missionStore, task);
+      const feature = await this.resolveMissionFeatureForTask(missionStore, task);
       if (!feature) {
         schedulerLog.log(`No linked feature found for task ${taskId} (sliceId=${task.sliceId ?? "none"}) — skipping mission status update`);
         return;
@@ -2829,9 +2921,7 @@ export class Scheduler {
         return;
       }
 
-      const hasLinkedAssertions = typeof missionStore.listAssertionsForFeature === "function"
-        ? missionStore.listAssertionsForFeature(feature.id).length > 0
-        : false;
+      const hasLinkedAssertions = (await missionStore.listAssertionsForFeature(feature.id)).length > 0;
 
       const reconciliation = await reconcileMissionFeatureState(
         this.store,
@@ -2853,7 +2943,7 @@ export class Scheduler {
       const sliceIdBeforeUpdate = feature.sliceId;
 
       if (reconciliation.kind === "update") {
-        missionStore.updateFeatureStatus(feature.id, reconciliation.status);
+        await missionStore.updateFeatureStatus(feature.id, reconciliation.status);
         schedulerLog.log(
           `Feature ${feature.id} marked ${reconciliation.status} (${reconciliation.reason})`,
         );
@@ -2867,8 +2957,8 @@ export class Scheduler {
     }
   }
 
-  private resolveMissionFeatureForTask(missionStore: MissionStore, task: Task): MissionFeature | undefined {
-    const linkedFeature = missionStore.getFeatureByTaskId(task.id);
+  private async resolveMissionFeatureForTask(missionStore: MissionStore | AsyncMissionStore, task: Task): Promise<MissionFeature | undefined> {
+    const linkedFeature = await missionStore.getFeatureByTaskId(task.id);
     if (linkedFeature) {
       return linkedFeature;
     }
@@ -2878,8 +2968,8 @@ export class Scheduler {
     }
 
     const normalizedTaskTitle = this.normalizeMissionFeatureTitle(task.title);
-    const matchingFeature = missionStore
-      .listFeatures(task.sliceId)
+    const matchingFeature = (await missionStore
+      .listFeatures(task.sliceId))
       .find((feature) =>
         !feature.taskId
         && this.normalizeMissionFeatureTitle(feature.title) === normalizedTaskTitle
@@ -2916,7 +3006,7 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const feature = missionStore.getFeatureByTaskId(taskId);
+      const feature = await missionStore.getFeatureByTaskId(taskId);
       if (!feature) return;
 
       if (feature.sliceId !== sliceId) {
@@ -2945,7 +3035,7 @@ export class Scheduler {
       }
 
       // Check if the slice became complete after the feature update
-      const slice = missionStore.getSlice(sliceIdBeforeUpdate);
+      const slice = await missionStore.getSlice(sliceIdBeforeUpdate);
       if (slice && slice.status === "complete") {
         // If MissionAutopilot is available AND actively watching this mission,
         // delegate progression to it. The autopilot handles: watching missions,
@@ -2956,7 +3046,7 @@ export class Scheduler {
         // autoAdvance=true but no autopilot instance, or autopilot unwatched),
         // fall back to onSliceComplete() which uses the compatibility rule.
         const autopilot = this.options.missionAutopilot;
-        const milestone = missionStore.getMilestone(slice.milestoneId);
+        const milestone = await missionStore.getMilestone(slice.milestoneId);
         const missionId = milestone?.missionId;
         const isWatching = autopilot && missionId ? autopilot.isWatching(missionId) : false;
 
@@ -2980,13 +3070,13 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const milestone = missionStore.getMilestone(slice.milestoneId);
+      const milestone = await missionStore.getMilestone(slice.milestoneId);
       if (!milestone) {
         schedulerLog.warn(`Milestone ${slice.milestoneId} not found for slice ${slice.id}`);
         return;
       }
 
-      const mission = missionStore.getMission(milestone.missionId);
+      const mission = await missionStore.getMission(milestone.missionId);
       // Use autopilotEnabled as canonical, fall back to autoAdvance for backward compat
       const shouldAutoAdvance =
         mission?.autopilotEnabled === true || mission?.autoAdvance === true;
@@ -2994,7 +3084,7 @@ export class Scheduler {
         return;
       }
 
-      const missionHierarchy = missionStore.getMissionWithHierarchy(mission.id);
+      const missionHierarchy = await missionStore.getMissionWithHierarchy(mission.id);
       const hasActiveSlice = missionHierarchy?.milestones.some((candidateMilestone) =>
         candidateMilestone.slices.some((candidateSlice) =>
           candidateSlice.id !== slice.id && candidateSlice.status === "active"
@@ -3028,7 +3118,7 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const mission = missionStore.getMissionWithHierarchy(missionId);
+      const mission = await missionStore.getMissionWithHierarchy(missionId);
       if (!mission || mission.status !== "active") {
         schedulerLog.log(`Mission ${missionId}: not active, skipping slice activation`);
         return null;
@@ -3084,7 +3174,7 @@ export class Scheduler {
     let totalFixed = 0;
 
     try {
-      const missions = missionStore.listMissions();
+      const missions = await missionStore.listMissions();
       const activeMissions = missions.filter((m) => m.status === "active");
       const activeMissionIds = new Set(activeMissions.map((mission) => mission.id));
       const taskBySliceAndTitle = new Map<string, Task | null>();
@@ -3103,7 +3193,7 @@ export class Scheduler {
       }
 
       for (const mission of activeMissions) {
-        const hierarchy = missionStore.getMissionWithHierarchy(mission.id);
+        const hierarchy = await missionStore.getMissionWithHierarchy(mission.id);
         if (!hierarchy) continue;
 
         const activeSlices = hierarchy.milestones
@@ -3112,8 +3202,7 @@ export class Scheduler {
 
         for (const slice of activeSlices) {
           const missionAutoTriageEnabled = mission.autopilotEnabled === true || mission.autoAdvance === true;
-          const supersededFixes = missionStore.reconcileSupersededGeneratedFixFeatures?.(slice.id)
-            ?? { supersededCount: 0, featureIds: [] };
+          const supersededFixes = await missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
           if (supersededFixes.supersededCount > 0) {
             totalFixed += supersededFixes.supersededCount;
             schedulerLog.warn(
@@ -3121,12 +3210,12 @@ export class Scheduler {
             );
           }
           const features = supersededFixes.supersededCount > 0
-            ? missionStore.listFeatures(slice.id)
+            ? await missionStore.listFeatures(slice.id)
             : slice.features;
           const supersededFeatureIds = new Set(supersededFixes.featureIds);
 
           if (supersededFixes.supersededCount > 0) {
-            const refreshedSlice = missionStore.getSlice?.(slice.id);
+            const refreshedSlice = await missionStore.getSlice(slice.id);
             if (refreshedSlice?.status === "complete") {
               /*
               FNXC:Missions 2026-07-11-12:35:
@@ -3167,7 +3256,7 @@ export class Scheduler {
                 schedulerLog.warn(
                   `Repairing one-way mission link during reconciliation: task ${matchedTask.id} matched unlinked feature ${feature.id}`,
                 );
-                featureForReconciliation = missionStore.linkFeatureToTask(feature.id, matchedTask.id);
+                featureForReconciliation = await missionStore.linkFeatureToTask(feature.id, matchedTask.id);
                 task = matchedTask;
                 totalFixed++;
                 await this.emitStrandedFeatureTriageAudit(mission.id, slice.id, feature.id, matchedTask.id);
@@ -3180,7 +3269,7 @@ export class Scheduler {
                     schedulerLog.warn(
                       `Blocking stranded generated fix feature ${feature.id}: no linked task and no title-matched task available`,
                     );
-                    missionStore.updateFeature(feature.id, {
+                    await missionStore.updateFeature(feature.id, {
                       status: "blocked",
                       loopState: "blocked",
                       taskId: undefined,
@@ -3195,7 +3284,7 @@ export class Scheduler {
                   try {
                     const featureToTriage = feature.status === "defined"
                       ? feature
-                      : missionStore.updateFeature(feature.id, {
+                      : await missionStore.updateFeature(feature.id, {
                         status: "defined",
                         loopState: "idle",
                         taskId: undefined,
@@ -3231,9 +3320,7 @@ export class Scheduler {
 
             if (!task) continue;
 
-            const hasLinkedAssertions = typeof missionStore.listAssertionsForFeature === "function"
-              ? missionStore.listAssertionsForFeature(featureForReconciliation.id).length > 0
-              : false;
+            const hasLinkedAssertions = (await missionStore.listAssertionsForFeature(featureForReconciliation.id)).length > 0;
             const reconciliation = await reconcileMissionFeatureState(this.store, task, featureForReconciliation, {
               hasLinkedAssertions,
             });
@@ -3254,7 +3341,7 @@ export class Scheduler {
             }
 
             if (reconciliation.kind === "update") {
-              missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
+              await missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
               totalFixed++;
             }
           }

@@ -24,7 +24,12 @@ import { OVERSEER_INTERVENTION_MUTATION } from "./types.js";
 /** Minimal store seam this module depends on (satisfied by `TaskStore`). */
 export interface PlannerInterventionStore {
   recordRunAuditEvent(input: RunAuditEventInput): RunAuditEvent | Promise<RunAuditEvent>;
-  getRunAuditEvents(options?: RunAuditEventFilter): RunAuditEvent[];
+}
+
+/** Read-capable seam used only by timeline queries. */
+export interface PlannerInterventionTimelineStore extends PlannerInterventionStore {
+  /* FNXC:PostgresStackSplit 2026-07-14-20:56: Keep event emitters compatible with write-only overseer adapters while requiring the asynchronous PostgreSQL reader only for timeline queries. */
+  getRunAuditEventsAsync(options?: RunAuditEventFilter): Promise<RunAuditEvent[]>;
 }
 
 /** Input for recording a planner-intervention timeline entry. */
@@ -43,6 +48,15 @@ export interface RecordPlannerInterventionInput {
   agentId?: string;
   /** ISO-8601 timestamp override. Defaults to now. */
   timestamp?: string;
+  /*
+  FNXC:PlannerOversight 2026-07-13-22:45:
+  Optional session-advisor metadata (severity/source/slug). Persisted in
+  run-audit metadata and rehydrated by parseInterventionEntry for the
+  task-detail Intervention Timeline.
+  */
+  severity?: "nit" | "concern" | "blocker";
+  source?: "lifecycle" | "session-advisor" | "manual";
+  advisorSlug?: string;
 }
 
 const KNOWN_STAGES: readonly PlannerOversightStage[] = ["executor", "reviewer", "merger", "pull-request", "workflow-gate"];
@@ -84,6 +98,16 @@ export function recordPlannerIntervention(
   if (typeof input.attemptCount === "number") metadata.attemptCount = input.attemptCount;
   if (typeof input.attemptLimit === "number") metadata.attemptLimit = input.attemptLimit;
   if (input.sourceLinks && input.sourceLinks.length > 0) metadata.sourceLinks = input.sourceLinks;
+  // FNXC:PlannerOversight 2026-07-13-22:45: pass through optional severity/source for session-advisor parity.
+  if (input.severity === "nit" || input.severity === "concern" || input.severity === "blocker") {
+    metadata.severity = input.severity;
+  }
+  if (input.source === "lifecycle" || input.source === "session-advisor" || input.source === "manual") {
+    metadata.source = input.source;
+  }
+  if (typeof input.advisorSlug === "string" && input.advisorSlug.trim()) {
+    metadata.advisorSlug = input.advisorSlug.trim();
+  }
 
   return store.recordRunAuditEvent({
     timestamp: input.timestamp,
@@ -149,6 +173,19 @@ export function parseInterventionEntry(event: RunAuditEvent): PlannerInterventio
   const attemptCount = typeof metadata.attemptCount === "number" ? metadata.attemptCount : undefined;
   const attemptLimit = typeof metadata.attemptLimit === "number" ? metadata.attemptLimit : undefined;
 
+  const severity =
+    metadata.severity === "nit" || metadata.severity === "concern" || metadata.severity === "blocker"
+      ? metadata.severity
+      : undefined;
+  const source =
+    metadata.source === "lifecycle" || metadata.source === "session-advisor" || metadata.source === "manual"
+      ? metadata.source
+      : undefined;
+  const advisorSlug =
+    typeof metadata.advisorSlug === "string" && metadata.advisorSlug.trim()
+      ? metadata.advisorSlug.trim()
+      : undefined;
+
   return {
     id: event.id,
     taskId: event.taskId ?? event.target,
@@ -162,16 +199,20 @@ export function parseInterventionEntry(event: RunAuditEvent): PlannerInterventio
     sourceLinks: toSafeSourceLinks(metadata.sourceLinks),
     runId: event.runId,
     agentId: event.agentId,
+    // FNXC:PlannerOversight 2026-07-13-22:45: rehydrate session-advisor metadata when present.
+    severity,
+    source,
+    advisorSlug,
   };
 }
 
 /** Reads the planner-intervention timeline for a task, newest-first. Returns `[]` when there are none. */
-export function getPlannerInterventionTimeline(
-  store: PlannerInterventionStore,
+export async function getPlannerInterventionTimeline(
+  store: PlannerInterventionTimelineStore,
   taskId: string,
   opts?: { limit?: number },
-): PlannerInterventionEntry[] {
-  const events = store.getRunAuditEvents({
+): Promise<PlannerInterventionEntry[]> {
+  const events = await store.getRunAuditEventsAsync({
     taskId,
     mutationType: OVERSEER_INTERVENTION_MUTATION,
     limit: opts?.limit,

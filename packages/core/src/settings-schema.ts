@@ -43,6 +43,9 @@ type MovedProjectSettingsKey =
   | "executionProvider"
   | "executionModelId"
   | "executionThinkingLevel"
+  | "executionFallbackProvider"
+  | "executionFallbackModelId"
+  | "executionFallbackThinkingLevel"
   | "planningProvider"
   | "planningModelId"
   | "planningThinkingLevel"
@@ -56,7 +59,8 @@ type MovedProjectSettingsKey =
   | "validatorFallbackModelId"
   | "validatorFallbackThinkingLevel";
 
-type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
+type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy";
+type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>; 
 
 /**
  * Settings schema source of truth.
@@ -68,6 +72,10 @@ type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
 
 /** Default values for global (user-level) settings. */
 export const DEFAULT_GLOBAL_SETTINGS = {
+  // Embedded PostgreSQL is shared by all local Fusion projects and processes.
+  // Keep this well above the conservative external-pool budget while still
+  // bounded for a local machine.
+  embeddedPostgresMaxConnections: 500,
   /*
   FNXC:DashboardTheming 2026-07-03-00:00:
   Fresh installs must follow the operating system theme until the user explicitly chooses Light, Dark, or System. Keep this global default aligned with dashboard and desktop pre-hydration fallbacks.
@@ -80,6 +88,21 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   colorTheme: "shadcn-ember",
   shadcnCustomColors: undefined,
   dashboardFontScalePct: 100,
+  /*
+  FNXC:SettingsBackups 2026-07-16-14:20:
+  PostgreSQL holds every project in one shared cluster, so database backup policy is global.
+  Memory snapshots remain project-scoped because their files live under each project’s .fusion directory.
+  */
+  autoBackupEnabled: false,
+  autoBackupSchedule: "0 2 * * *",
+  autoBackupRetention: 7,
+  autoBackupDir: ".fusion/backups",
+  backupSettingsMigrationConflicts: undefined,
+  /*
+  FNXC:NodeDiscovery 2026-07-17-12:00:
+  LAN discovery remains automatic for existing operators, while FN-8202 provides a global opt-out from dashboard and serve mDNS/DNS-SD auto-start.
+  */
+  localNetworkDiscoveryEnabled: true,
   /*
   FNXC:DashboardShortcuts 2026-07-04-00:00:
   Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. FN-7553 adds openFiles (Ctrl+E), openSettings (Ctrl+,), openCommandCenter (Ctrl+K), and newTask (Ctrl+Shift+N) — chosen to avoid colliding with the base two or each other. Empty strings are preserved so operators can disable an action.
@@ -97,6 +120,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Fixed dashboard modals must ignore backdrop clicks by default so accidental outside taps do not discard in-progress form state. Operators can globally opt in to the legacy outside-click dismissal behavior.
   */
   dismissModalsOnOutsideClick: false,
+  /*
+  FNXC:Settings 2026-07-16-05:30:
+  Critical-action confirmation dialogs stay enabled by default. This global-only preference may opt an operator into primary/default auto-approval, but project settings cannot enable it for collaborators.
+  */
+  skipConfirmationDialogs: false,
   language: undefined,
   defaultProvider: undefined,
   defaultModelId: undefined,
@@ -117,6 +145,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   fallbackThinkingLevel: undefined,
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
+  // FNXC:AgentClarification 2026-07-16-12:00: Planner clarification pauses are opt-in; disabled planners must complete a summary instead of waiting for proactive answers.
+  agentClarificationEnabled: false,
   ntfyTopic: undefined,
   ntfyBaseUrl: undefined,
   ntfyAccessToken: undefined,
@@ -205,6 +235,13 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   mergerGlobalProvider: undefined,
   mergerGlobalModelId: undefined,
   /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Global import-translate baseline lane. Undefined falls through to the summarization lane then defaultProvider/defaultModelId at resolve time.
+  */
+  importTranslateGlobalProvider: undefined,
+  importTranslateGlobalModelId: undefined,
+  importTranslateGlobalThinkingLevel: undefined,
+  /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
   Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
   */
@@ -234,6 +271,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
   */
   persistAgentToolOutput: false,
+  // Task chat remains an operator-directed conversation by default. Enable this
+  // explicitly to add engine-authored lifecycle narration to the transcript.
+  proactiveTaskChatEnabled: false,
   persistAgentThinkingLogPermanent: false,
   persistAgentThinkingLogEphemeral: false,
   persistAgentThinkingLog: false,
@@ -343,6 +383,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   enginePaused: false,
   engineLastActiveAt: undefined,
   maxConcurrent: 2,
+  /*
+  FNXC:VerificationConcurrency 2026-07-15-03:35:
+  Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings (clamped 1–8 at runtime).
+  */
+  maxConcurrentVerifications: 1,
   maxTriageConcurrent: 2,
   globalMaxConcurrent: 4,
   maxWorktrees: 4,
@@ -405,10 +450,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   openMobileTasksInPopup: false,
   /*
-  FNXC:TaskPopupViewGating 2026-07-13-00:00:
-  Default off preserves current always-visible task-detail popup behavior. When true, the dashboard render gate shows each open task-detail FloatingWindow only on the Board/List view where it was opened without clearing popup snapshots or their shared persisted geometry.
+  FNXC:TaskPopupViewGating 2026-07-15-15:20:
+  FN-8016 defaults task-detail popups to their opening view on every dashboard surface. Explicit false retains globally shared popup behavior for operators who need it; hidden popups preserve snapshots and shared persisted geometry.
   */
-  taskPopupsBoardListOnly: false,
+  taskPopupsBoardListOnly: true,
   /*
   FNXC:TaskCardCostBadge 2026-07-11-12:15:
   Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.
@@ -449,6 +494,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   modelPresets: [],
   autoSelectModelPreset: false,
   completionDocumentationMode: "off",
+  reviewArtifacts: "off",
   defaultPresetBySize: {},
   autoResolveConflicts: true,
   smartConflictResolution: true,
@@ -473,6 +519,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
    * Project settings own the auto-merge conflict retry cap because existing engine/dashboard consumers already resolve project settings; the default imports core's stall-detection fallback to keep every surface on the historical value of 3.
    */
   maxAutoMergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
+  executorToolFailureRetryCount: 2,
+  executorToolFailureRetryBackoffMs: 2000,
+  executorToolFailureThreshold: 3,
+  executorModelEscalationEnabled: false,
+  executorEscalationProvider: undefined,
+  executorEscalationModelId: undefined,
+  executorEscalationNodeId: undefined,
   /**
    * FNXC:Merge 2026-06-26-00:00:
    * New and unconfigured projects default AI merge to sync a dirty checked-out integration branch, restoring the legacy stash → fast-forward → restore landing behavior. Explicit persisted merger.allowDirtyLocalCheckoutSync values still win, and no existing-project migration stamps this default into storage.
@@ -574,14 +627,20 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // decide via the near-duplicate flag/UI instead of tasks silently vanishing
   // into `archived` during intake. Set true to restore the pre-FN-7658 behavior.
   autoArchiveDuplicateTasksEnabled: false,
+  triageDuplicateResolution: "prompt",
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,
   githubCommentTemplate: undefined,
   githubCloseSourceIssueOnDone: false,
   githubTrackingEnabledByDefault: false,
+  // FNXC:PlannerOversight 2026-07-14-18:11: session advisor (LLM overseer agent) off by default; operators opt in per project / task.
+  sessionAdvisorEnabledByDefault: false,
   githubLinkImportedIssuesToTracking: false,
   githubTrackingDefaultRepo: undefined,
+  reportMode: "draft-review" as const,
+  reportModeByAction: undefined,
+  reportRoadmapDedup: false,
   gitlabEnabled: undefined,
   gitlabInstanceUrl: undefined,
   gitlabApiBaseUrl: undefined,
@@ -593,16 +652,19 @@ export const DEFAULT_PROJECT_SETTINGS = {
   githubTrackingDedupEnabled: true,
   githubAuthMode: "gh-cli",
   githubAuthToken: undefined,
-  autoBackupEnabled: false,
-  autoBackupSchedule: "0 2 * * *",
-  autoBackupRetention: 7,
-  autoBackupDir: ".fusion/backups",
   memoryBackupEnabled: false,
   memoryBackupSchedule: "0 3 * * *",
   memoryBackupRetention: 14,
   memoryBackupDir: ".fusion/backups/memory",
   memoryBackupScope: "all" as const,
   autoSummarizeTitles: false,
+  /*
+  FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+  Default off preserves byte-faithful English task definitions unless operators opt into
+  prose localization for the detector's supported locales (en/es/fr/ko/zh-CN); zh-TW is
+  not variant-detected and unsupported input, including Japanese, remains English.
+  */
+  taskDefinitionInInputLanguage: false,
   useAiMergeCommitSummary: true,
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,
@@ -612,12 +674,25 @@ export const DEFAULT_PROJECT_SETTINGS = {
   titleSummarizerFallbackModelId: undefined,
   titleSummarizerFallbackThinkingLevel: undefined,
   /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Import auto-translation defaults OFF: operators who never opt in keep byte-faithful import provenance. Target locale undefined means "follow the active dashboard locale". Translate model lane stays project-scoped like the summarizer lane.
+  */
+  githubImportAutoTranslate: false,
+  importTranslateTargetLocale: undefined,
+  importTranslateProvider: undefined,
+  importTranslateModelId: undefined,
+  importTranslateThinkingLevel: undefined,
+  /*
   FNXC:Settings-MergerModel 2026-07-13-07:52:
   Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.
   */
   mergerProvider: undefined,
   mergerModelId: undefined,
   mergerThinkingLevel: undefined,
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: project merger fallback overrides shared global fallback only when its provider/model pair is complete.
+  mergerFallbackProvider: undefined,
+  mergerFallbackModelId: undefined,
+  mergerFallbackThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,
@@ -654,6 +729,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   quickChatButtonMode: "off",
+  mobileNavPrimaryItems: ["command-center", "tasks", "agents", "missions", "chat", "mailbox"],
   /*
   FNXC:ChatModal 2026-06-28-00:00:
   Quick Chat outside-click dismissal remains default-on for upgrades, but it is now a project setting so operators can disable accidental board-click closes.
@@ -743,10 +819,20 @@ export const GLOBAL_SETTINGS_KEYS = Object.freeze(
   Object.keys(DEFAULT_GLOBAL_SETTINGS) as Array<keyof GlobalSettings>,
 );
 
+/*
+FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
+The validation policy is persisted as a project setting but intentionally absent from defaults.
+The resolver owns fallback so a legacy-only explicit false remains deny after settings merge.
+*/
+export const NON_DEFAULT_PROJECT_SETTINGS_KEYS = Object.freeze([
+  "ephemeralAgentTaskCreationPolicy",
+] as const satisfies readonly NonDefaultProjectSettingsKey[]);
+
 /** Keys that belong to the project settings scope. */
-export const PROJECT_SETTINGS_KEYS = Object.freeze(
-  Object.keys(DEFAULT_PROJECT_SETTINGS) as Array<keyof ProjectSettings>,
-);
+export const PROJECT_SETTINGS_KEYS = Object.freeze([
+  ...Object.keys(DEFAULT_PROJECT_SETTINGS),
+  ...NON_DEFAULT_PROJECT_SETTINGS_KEYS,
+] as Array<keyof ProjectSettings>);
 
 export function isGlobalSettingsKey(key: string): key is keyof GlobalSettings {
   return (GLOBAL_SETTINGS_KEYS as readonly string[]).includes(key);

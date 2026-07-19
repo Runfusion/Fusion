@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import { openBackend } from "./lib/backend-db.mjs";
 
 export const RESTORATIONS = [
   { id: "FN-3794", canonicalSha: "7d20a348d82320bc57310169aaa2d3b3f0d5a946" },
@@ -133,16 +134,15 @@ export async function runRestoration({ store, git, restorations = RESTORATIONS, 
 export async function main(argv = process.argv.slice(2), deps = {}) {
   const dryRun = !argv.includes("--apply");
   const git = deps.git ?? createGitHelpers(process.cwd());
-  let store = deps.store;
-  if (!store) {
-    const { TaskStore } = await import("../packages/core/dist/index.js");
-    store = new TaskStore(process.cwd());
-    await store.init();
+  const backend = deps.store ? undefined : await openBackend(process.cwd());
+  try {
+    /* FNXC:PostgresOperationalScripts 2026-07-14-18:18: Merge-SHA restoration targets the authoritative PostgreSQL task history. */
+    const output = await runRestoration({ store: deps.store ?? backend.store, git, dryRun });
+    console.log(JSON.stringify(output.results, null, 2));
+    return output.hadValidationErrors ? 1 : 0;
+  } finally {
+    await backend?.shutdown();
   }
-
-  const output = await runRestoration({ store, git, dryRun });
-  console.log(JSON.stringify(output.results, null, 2));
-  return output.hadValidationErrors ? 1 : 0;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

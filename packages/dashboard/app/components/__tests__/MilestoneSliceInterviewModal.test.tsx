@@ -36,27 +36,11 @@ vi.mock("../../api", () => ({
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
 }));
 
-vi.mock("../../hooks/useSessionLock", () => ({
-  useSessionLock: vi.fn(() => ({
-    isLockedByOther: false,
-    takeControl: vi.fn(),
-    isLoading: false,
-  })),
-}));
-
 vi.mock("../../hooks/useAiSessionSync", () => ({
   useAiSessionSync: vi.fn(() => ({
-    activeTabMap: new Map(),
     broadcastUpdate: vi.fn(),
     broadcastCompleted: vi.fn(),
-    broadcastLock: vi.fn(),
-    broadcastUnlock: vi.fn(),
-    broadcastHeartbeat: vi.fn(),
   })),
-}));
-
-vi.mock("../../utils/getSessionTabId", () => ({
-  getSessionTabId: vi.fn(() => "test-tab-id"),
 }));
 
 const mockUseMobileKeyboard = vi.fn();
@@ -66,6 +50,8 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
   useViewportMode: () => "mobile",
@@ -91,6 +77,21 @@ const SAMPLE_QUESTION = {
     { id: "full", label: "Full" },
   ],
 };
+
+const MARKDOWN_QUESTION = {
+  id: "markdown-question",
+  type: "text" as const,
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
 
 describe("MilestoneSliceInterviewModal", () => {
   let streamHandlers: any;
@@ -409,6 +410,67 @@ describe("MilestoneSliceInterviewModal", () => {
         expect(screen.getByText("Pick the size for this feature.")).toBeDefined();
       });
     });
+
+    it("renders markdown formatting in AI milestone and slice interview questions", async () => {
+      mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Start Interview"));
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      act(() => {
+        streamHandlers.onQuestion(MARKDOWN_QUESTION);
+      });
+
+      await waitFor(expectMarkdownQuestionFormatting);
+    });
+
+    it("shows reconnecting only during active generation, not on persisted questions", async () => {
+      mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Start Interview"));
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("connected");
+        streamHandlers.onQuestion?.(SAMPLE_QUESTION);
+      });
+      expect(await screen.findByText("What is the target scope?")).toBeInTheDocument();
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+
+      expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
+      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+    });
   });
 
   describe("summary and apply", () => {
@@ -495,7 +557,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           { _other: "Split this differently" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -546,7 +607,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           { _other: "Define a custom scope" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -604,7 +664,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { priorities: ["speed"] },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -658,7 +717,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { _other: "Reframe around dependencies" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -709,7 +767,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { _other: "Ask customers first" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -762,7 +819,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { priorities: ["speed"], _other: "Preserve manual review" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -806,7 +862,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           expect.objectContaining({ scope: "mvp", _comment: "Keep this aligned with mission MVP" }),
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -819,7 +874,6 @@ describe("MilestoneSliceInterviewModal", () => {
       status: "awaiting_input" as const,
       title: "Plan milestone scope",
       projectId: "proj-1",
-      lockedByTab: null,
       updatedAt: new Date().toISOString(),
       inputPayload: JSON.stringify({
         targetType: "milestone",
@@ -834,7 +888,6 @@ describe("MilestoneSliceInterviewModal", () => {
       thinkingOutput: "",
       error: null,
       createdAt: new Date().toISOString(),
-      lockedAt: null,
     };
 
     const mockSessionGenerating = {
@@ -878,6 +931,43 @@ describe("MilestoneSliceInterviewModal", () => {
         expect(screen.getByText("What is the target scope?")).toBeDefined();
         expect(screen.getByText("Pick the size for this feature.")).toBeDefined();
       });
+    });
+
+    /*
+    FNXC:PlanningMultiTab 2026-07-16-17:35:
+    A legacy persisted lock holder must never gate either milestone or slice interview resumption.
+    The multi-tab contract opens the shared session directly without a Take Control affordance.
+    */
+    it.each([
+      ["milestone", "MS-001", "Test Milestone", "milestone_interview"],
+      ["slice", "SL-001", "Test Slice", "slice_interview"],
+    ] as const)("resumes a legacy other-tab-owned %s session without a lock affordance", async (targetType, targetId, targetTitle, type) => {
+      mockFetchAiSession.mockResolvedValue({
+        ...mockSessionAwaitingInput,
+        type,
+        lockedByTab: "tab-other",
+        lockedAt: new Date().toISOString(),
+      });
+      mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType={targetType}
+          targetId={targetId}
+          targetTitle={targetTitle}
+          projectId="test-project"
+          resumeSessionId="session-resume-123"
+        />,
+      );
+
+      expect(await screen.findByText("What is the target scope?")).toBeDefined();
+      expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
+      expect(screen.queryByText(/active in another tab|live heartbeat/i)).toBeNull();
+      expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+      expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
     });
 
     it("reconnects to stream for generating session when resumeSessionId is provided", async () => {

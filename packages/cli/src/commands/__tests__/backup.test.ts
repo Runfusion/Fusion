@@ -37,9 +37,18 @@ const {
 
 vi.mock("@fusion/core", () => ({
   BackupManager: vi.fn(),
+  /*
+  FNXC:CliTests 2026-07-17-10:56:
+  backup.ts resolves a global backup root through resolveGlobalBackupRoot(store),
+  which calls getGlobalSettingsDir before its global-directory fallback. Keep this
+  full module mock and every store shape truthful to that production contract.
+  */
+  resolveGlobalBackupRoot: (store: { getGlobalSettingsDir?: () => string | undefined }) =>
+    store.getGlobalSettingsDir?.() ?? "/fallback/.fusion",
   TaskStore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     getSettings: mockGetSettings,
+    getGlobalSettingsDir: () => "/cwd/.fusion",
     fusionDir: "/cwd/.fusion",
   })),
   createBackupManager: vi.fn(() => ({
@@ -99,7 +108,11 @@ describe("backup commands", () => {
       projectName: "demo-project",
       projectPath: "/projects/demo",
       isRegistered: true,
-      store: { getSettings: mockGetSettings, fusionDir: "/projects/demo/.fusion" },
+      store: {
+        getSettings: mockGetSettings,
+        getGlobalSettingsDir: () => "/projects/demo/.fusion",
+        fusionDir: "/projects/demo/.fusion",
+      },
     });
   });
 
@@ -154,6 +167,7 @@ describe("backup commands", () => {
     mockResolveProject.mockRejectedValueOnce(new Error("No fn project found"));
     mockCreateLocalStore.mockResolvedValueOnce({
       getSettings: mockGetSettings,
+      getGlobalSettingsDir: () => "/local/project/.fusion",
       fusionDir: "/local/project/.fusion",
     });
     await runBackupList();
@@ -167,6 +181,7 @@ describe("backup commands", () => {
     mockResolveProject.mockRejectedValue(new Error("Project 'missing' not found. Run 'fn project list' to see registered projects."));
     mockCreateLocalStore.mockResolvedValueOnce({
       getSettings: mockGetSettings,
+      getGlobalSettingsDir: () => "/fallback/project/.fusion",
       fusionDir: "/fallback/project/.fusion",
     });
 

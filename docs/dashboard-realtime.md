@@ -200,7 +200,7 @@ Client behavior (`useRemoteNodeEvents.ts`):
 3. **Project-switch stale callbacks not guarded**
    - old project events mutate current project state.
 4. **Store instance mismatch for project streams**
-   - same SQLite DB is not enough; EventEmitter instance identity matters for realtime propagation.
+   - sharing the same PostgreSQL database is not enough; EventEmitter instance identity matters for realtime propagation.
 5. **Background SSE when view does not need it**
    - unnecessary connection pressure and noisy updates.
 6. **Ambiguous stream ownership**

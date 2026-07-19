@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { SectionBaseProps } from "./context";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { ShortcutCaptureInput } from "./ShortcutCaptureInput";
 import {
   DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
@@ -12,15 +12,19 @@ import {
   type DashboardShortcutAction,
 } from "../../../utils/keyboardShortcuts";
 
-export interface KeyboardShortcutsSectionProps extends SectionBaseProps {
-  scopeBanner: ReactNode;
-}
+export type KeyboardShortcutsSectionProps = SectionBaseProps;
 
 /*
 FNXC:DashboardShortcuts 2026-07-04-00:00:
 FN-7553 promotes keyboard shortcuts from two bare inputs buried in Global General to their own dedicated settings section, grouped by category (Communication/Workspace/Navigation/Tasks from SHORTCUT_CATEGORIES) with a press-to-record capture control per row. `dashboardKeyboardShortcuts` ownership moved here from `global-general` (save-split.ts GLOBAL_SECTION_KEYS + section-keys.ts) so exactly one section owns the key for save/reset.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+This section stays off the shared settings row primitives, unlike its neighbors. It renders no plain setting: every row is a ShortcutCaptureInput bound to one action inside the single `dashboardKeyboardShortcuts` map. A descriptor row keys on a settings field name and there is no field per shortcut — so there is nothing here for a toggle/text/select row to own, and no `.search.ts` sibling. Shortcut discovery is served by the nav entry's `searchableText` in SettingsModal instead.
+
+FNXC:SettingsHelp 2026-07-16-12:45:
+Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The section description sits beside the heading; each row's static "Default: … Leave blank to disable." hint moved into a tip beside its label. The per-row `small` (still `aria-describedby` target via `hintId`) now carries ONLY live capture validation (`normalizeKeyboardShortcut` errors), and the conflict banner stays inline — validation feedback never hides behind a "?".
 */
-export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: KeyboardShortcutsSectionProps) {
+export function KeyboardShortcutsSection({ form, setForm }: KeyboardShortcutsSectionProps) {
   const { t } = useTranslation("app");
   const shortcutValues = resolveDashboardKeyboardShortcuts(form.dashboardKeyboardShortcuts);
   const shortcutValidationMessage = describeShortcutValidation(shortcutValues);
@@ -35,9 +39,10 @@ export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: Keyboar
 
   return (
     <>
-      {scopeBanner}
-      <h4 className="settings-section-heading">{t("settings.keyboardShortcuts.title", "Keyboard Shortcuts")}</h4>
-      <p className="settings-description">{t("settings.keyboardShortcuts.hint", "Configure global dashboard shortcuts. Click Record and press a combination, or type one manually. Shortcuts are ignored while typing in inputs, editors, chat composers, and terminal fields. Leave blank to disable an action.")}</p>
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.keyboardShortcuts.title", "Keyboard Shortcuts")}</h4>
+        <SettingsHelpTip settingKey="dashboardKeyboardShortcuts">{t("settings.keyboardShortcuts.hint", "Configure global dashboard shortcuts. Click Record and press a combination, or type one manually. Shortcuts are ignored while typing in inputs, editors, chat composers, and terminal fields. Leave blank to disable an action.")}</SettingsHelpTip>
+      </div>
       <div className="form-group settings-keyboard-shortcuts" data-testid="keyboard-shortcuts-settings">
         {SHORTCUT_CATEGORIES.map((category) => (
           <div className="shortcut-category" key={category.id}>
@@ -48,7 +53,10 @@ export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: Keyboar
               const hintId = `${inputId}Hint`;
               return (
                 <div className="shortcut-row" key={action}>
-                  <label htmlFor={inputId}>{t(`settings.keyboardShortcuts.action.${action}`, getShortcutActionLabel(action))}</label>
+                  <div className="settings-field-label-row">
+                    <label htmlFor={inputId}>{t(`settings.keyboardShortcuts.action.${action}`, getShortcutActionLabel(action))}</label>
+                    <SettingsHelpTip settingKey={inputId}>{t("settings.keyboardShortcuts.rowHint", "Default: {{default}}. Leave blank to disable.", { default: DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS[action] })}</SettingsHelpTip>
+                  </div>
                   <ShortcutCaptureInput
                     id={inputId}
                     value={shortcutValues[action]}
@@ -57,11 +65,8 @@ export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: Keyboar
                     describedById={hintId}
                     onChange={(value) => updateShortcut(action, value)}
                   />
-                  <small id={hintId}>
-                    {parsed.valid
-                      ? t("settings.keyboardShortcuts.rowHint", "Default: {{default}}. Leave blank to disable.", { default: DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS[action] })
-                      : parsed.error}
-                  </small>
+                  {/* FNXC:SettingsHelp 2026-07-16-12:45: The small keeps its hintId (aria-describedby target) but now carries only live validation errors; the static default hint moved behind the "?" above. */}
+                  <small id={hintId}>{parsed.valid ? null : parsed.error}</small>
                 </div>
               );
             })}

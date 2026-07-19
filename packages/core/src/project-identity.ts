@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { DatabaseSync } from "./sqlite-adapter.js";
 import { createLogger } from "./logger.js";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer } from "./postgres/data-layer.js";
 
 const log = createLogger("project-identity");
 const PROJECT_ID_RE = /^proj_[a-f0-9]{16}$/;
@@ -12,6 +12,7 @@ const PROJECT_ID_RE = /^proj_[a-f0-9]{16}$/;
 /** __meta keys backing the project identity stamp. */
 const META_KEY_PROJECT_ID = "projectId";
 const META_KEY_PROJECT_CREATED_AT = "projectCreatedAt";
+export const PROJECT_IDENTITY_FILENAME = "project.json";
 
 export type ProjectIdentity = { id: string; createdAt: string };
 
@@ -45,13 +46,38 @@ function readMeta(db: DatabaseSync, key: string): string | undefined {
 }
 
 export function readProjectIdentity(fusionDir: string): ProjectIdentity | null {
-  const dbPath = join(resolveFusionDir(fusionDir), "fusion.db");
+  const resolvedFusionDir = resolveFusionDir(fusionDir);
+  const markerPath = join(resolvedFusionDir, PROJECT_IDENTITY_FILENAME);
+  /*
+   * FNXC:ProjectIdentityMarker 2026-07-14-17:10:
+   * Project discovery and identity must not require opening fusion.db after the
+   * PostgreSQL cutover. Prefer a small filesystem marker; read the SQLite meta
+   * table only as a one-way compatibility path for pre-cutover projects.
+   */
+  if (existsSync(markerPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(markerPath, "utf8")) as Partial<ProjectIdentity>;
+      if (typeof parsed.id !== "string" || !PROJECT_ID_RE.test(parsed.id) || typeof parsed.createdAt !== "string" || !parsed.createdAt) {
+        log.warn(`Ignoring malformed project identity in ${markerPath}`);
+        return null;
+      }
+      return { id: parsed.id, createdAt: parsed.createdAt };
+    } catch (error) {
+      log.warn(`Unable to read project identity from ${markerPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  const dbPath = join(resolvedFusionDir, "fusion.db");
   if (!existsSync(dbPath)) return null;
 
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath);
-    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    /* FNXC:LegacySqliteBoundary 2026-07-14-18:42:
+     * This is a one-way identity import for projects without project.json.
+     * It must be read-only and must not materialize __meta in a legacy file.
+     */
+    db = new DatabaseSync(dbPath, { readOnly: true });
     const id = readMeta(db, "projectId");
     const createdAt = readMeta(db, "projectCreatedAt");
     if (!id || !createdAt) return null;
@@ -77,20 +103,19 @@ export function writeProjectIdentity(fusionDir: string, identity: ProjectIdentit
   if (!existsSync(resolvedFusionDir)) {
     mkdirSync(resolvedFusionDir, { recursive: true });
   }
-  const dbPath = join(resolvedFusionDir, "fusion.db");
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(dbPath);
-    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    const existingId = readMeta(db, "projectId");
-    if (existingId && existingId !== identity.id) {
-      throw new ProjectIdentityMismatchError(existingId, identity.id);
-    }
-    db.prepare("INSERT OR REPLACE INTO __meta (key, value) VALUES (?, ?)").run("projectId", identity.id);
-    db.prepare("INSERT OR REPLACE INTO __meta (key, value) VALUES (?, ?)").run("projectCreatedAt", identity.createdAt);
-  } finally {
-    db?.close();
+  const existing = readProjectIdentity(resolvedFusionDir);
+  if (existing && existing.id !== identity.id) {
+    throw new ProjectIdentityMismatchError(existing.id, identity.id);
   }
+  const markerPath = join(resolvedFusionDir, PROJECT_IDENTITY_FILENAME);
+  const temporaryPath = `${markerPath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(identity, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporaryPath, markerPath);
+}
+
+/** Return true when a PostgreSQL-era marker or a legacy SQLite identity exists. */
+export function hasProjectIdentity(fusionDir: string): boolean {
+  return readProjectIdentity(fusionDir) !== null;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -111,7 +136,7 @@ export function writeProjectIdentity(fusionDir: string, identity: ProjectIdentit
 // ─────────────────────────────────────────────────────────────────────
 
 async function readMetaAsync(layer: AsyncDataLayer, key: string): Promise<string | null> {
-  const projectId = layer.projectId ?? "";
+  const projectId = projectOwnershipPartition(layer.projectId);
   const rows = await layer.db
     .select({ value: schema.project.projectMeta.value })
     .from(schema.project.projectMeta)
@@ -123,7 +148,7 @@ async function readMetaAsync(layer: AsyncDataLayer, key: string): Promise<string
 }
 
 async function upsertMetaAsync(layer: AsyncDataLayer, key: string, value: string): Promise<void> {
-  const projectId = layer.projectId ?? "";
+  const projectId = projectOwnershipPartition(layer.projectId);
   /*
   FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
   Backend identity reads and writes must use the data layer's project binding so one registered project cannot inherit or overwrite another project's PostgreSQL __meta stamp.

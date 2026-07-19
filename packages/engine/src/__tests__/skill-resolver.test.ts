@@ -4,12 +4,21 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPiLog } = vi.hoisted(() => ({
+/*
+FNXC:EngineTests 2026-07-18-04:35:
+Hoist mock filesystem state used inside vi.mock factories. Without vi.hoisted,
+existsSync runs during module import (schema-applier path resolution) before
+const mockFiles initializes and throws TDZ "Cannot access before initialization".
+*/
+const { mockPiLog, mockFiles, mockDirs, mockDirCounter } = vi.hoisted(() => ({
   mockPiLog: {
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
+  mockFiles: new Map<string, string>(),
+  mockDirs: new Set<string>(),
+  mockDirCounter: { value: 0 },
 }));
 
 vi.mock("../logger.js", () => ({
@@ -25,18 +34,13 @@ import {
 
 // ── Mock Setup ───────────────────────────────────────────────────────────────
 
-// In-memory file system for tests - using a proxy to intercept fs calls
-const mockFiles = new Map<string, string>();
-const mockDirs = new Set<string>();
-let mockDirCounter = 0;
-
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
   return {
     ...actual,
     existsSync: (path: unknown) => mockFiles.has(String(path)) || mockDirs.has(String(path)),
     readFileSync: (path: unknown) => mockFiles.get(String(path)) ?? "{}",
-    mkdtempSync: () => `/tmp/skill-resolver-mock-${++mockDirCounter}`,
+    mkdtempSync: () => `/tmp/skill-resolver-mock-${++mockDirCounter.value}`,
     writeFileSync: (path: unknown, content: unknown) => mockFiles.set(String(path), String(content)),
     rmSync: (path: unknown) => {
       const pathStr = String(path);
@@ -50,7 +54,7 @@ vi.mock("node:fs", async () => {
 // ── Test Helpers ─────────────────────────────────────────────────────────────
 
 function createMockProjectDir(settings: Record<string, unknown> | null): string {
-  const dir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+  const dir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
   if (settings !== null) {
     mockDirs.add(`${dir}/.fusion`);
     mockFiles.set(`${dir}/.fusion/settings.json`, JSON.stringify(settings));
@@ -64,18 +68,18 @@ describe("resolveProjectRoot", () => {
   beforeEach(() => {
     mockFiles.clear();
     mockDirs.clear();
-    mockDirCounter = 0;
+    mockDirCounter.value = 0;
   });
 
   it("returns cwd directly when cwd contains .fusion", () => {
-    const dir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const dir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
     mockDirs.add(`${dir}/.fusion`);
 
     expect(resolveProjectRoot(dir)).toBe(dir);
   });
 
   it("prefers parent repo root for worktree paths when both parent and worktree have .fusion", () => {
-    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
     const worktreeDir = `${projectDir}/.worktrees/swift-falcon`;
     mockDirs.add(`${projectDir}/.fusion`);
     mockDirs.add(`${worktreeDir}/.fusion`);
@@ -84,7 +88,7 @@ describe("resolveProjectRoot", () => {
   });
 
   it("falls back to legacy walk when parent repo .fusion is missing", () => {
-    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
     const worktreeDir = `${projectDir}/.worktrees/swift-falcon`;
     mockDirs.add(`${worktreeDir}/.fusion`);
 
@@ -92,7 +96,7 @@ describe("resolveProjectRoot", () => {
   });
 
   it("walks up from deeply nested path", () => {
-    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
     const nestedDir = `${projectDir}/.worktrees/task-branch/src/components`;
     mockDirs.add(`${projectDir}/.fusion`);
 
@@ -100,14 +104,14 @@ describe("resolveProjectRoot", () => {
   });
 
   it("returns cwd when no .fusion directory found anywhere", () => {
-    const dir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const dir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
 
     // No .fusion set up anywhere
     expect(resolveProjectRoot(dir)).toBe(dir);
   });
 
   it("returns cwd when .fusion is in a sibling directory (not ancestor)", () => {
-    const parentDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+    const parentDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
     const dir = `${parentDir}/my-project`;
     const siblingDir = `${parentDir}/other-project`;
     mockDirs.add(`${siblingDir}/.fusion`);
@@ -121,7 +125,7 @@ describe("resolveSessionSkills", () => {
   beforeEach(() => {
     mockFiles.clear();
     mockDirs.clear();
-    mockDirCounter = 0;
+    mockDirCounter.value = 0;
   });
 
   describe("returns filterActive: false when no patterns and no requested names", () => {
@@ -385,7 +389,7 @@ describe("resolveSessionSkills", () => {
     });
 
     it("resolves project root from worktree path", () => {
-      const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+      const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
       const worktreeDir = `${projectDir}/.worktrees/branch-name`;
 
       // Set up project root with .fusion directory and settings
@@ -405,7 +409,7 @@ describe("resolveSessionSkills", () => {
     });
 
     it("resolves project root from deeply nested worktree subdirectory", () => {
-      const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter}`;
+      const projectDir = `/tmp/skill-resolver-mock-${++mockDirCounter.value}`;
       const worktreeSubdir = `${projectDir}/.worktrees/task-branch/src/components`;
 
       mockDirs.add(`${projectDir}/.fusion`);
@@ -1058,7 +1062,7 @@ describe("createSkillsOverrideFromSelection", () => {
   describe("end-to-end flow with project settings + agent metadata + discovered skills", () => {
     beforeEach(() => {
       mockFiles.clear();
-      mockDirCounter = 0;
+      mockDirCounter.value = 0;
     });
 
     it("full end-to-end flow: settings patterns + agent skills produce matching override", () => {

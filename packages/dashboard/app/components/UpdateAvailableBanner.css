@@ -53,7 +53,8 @@
   gap: var(--space-xs);
 }
 
-.update-available-banner__update-btn {
+.update-available-banner__update-btn,
+.update-available-banner__restart-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -63,7 +64,8 @@
   color: var(--color-warning);
 }
 
-.update-available-banner__update-btn svg.spinning {
+.update-available-banner__update-btn svg.spinning,
+.update-available-banner__restart-btn svg.spinning {
   animation: update-available-banner-spin 1s linear infinite;
 }
 
@@ -111,6 +113,10 @@
   .update-available-banner {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .update-available-banner__actions {
+    align-items: flex-start;
   }
 
   .update-available-banner__dismiss {

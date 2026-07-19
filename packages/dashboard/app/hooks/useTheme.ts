@@ -90,9 +90,8 @@ function readCachedThemeMode(): ThemeMode {
 function readCachedColorTheme(): ColorTheme {
   if (!isBrowser) return DEFAULT_COLOR_THEME;
   try {
-    let colorTheme = localStorage.getItem(COLOR_THEME_STORAGE_KEY);
-    // FNXC:DashboardTheming 2026-06-20-00:00: FN-6813 keeps existing shadcn-mono users on the renamed red mono variant before the validity guard would otherwise fall back to default.
-    if (colorTheme === 'shadcn-mono') colorTheme = 'shadcn-mono-red';
+    const colorTheme = localStorage.getItem(COLOR_THEME_STORAGE_KEY);
+    // FNXC:DashboardTheming 2026-07-16-14:30: FN-8146 restores Shadcn Mono as a persisted theme, so cached selections must pass validation without remapping to Mono Red.
     if (colorTheme && VALID_COLOR_THEMES.includes(colorTheme as ColorTheme)) {
       return colorTheme as ColorTheme;
     }
@@ -476,8 +475,7 @@ export function getThemeInitScript(): string {
         var colorTheme = localStorage.getItem('${COLOR_THEME_STORAGE_KEY}') || '${DEFAULT_COLOR_THEME}';
         var validThemes = ${JSON.stringify(VALID_COLOR_THEMES)};
         // FNXC:DashboardTheming 2026-06-30-00:00: Unset startup theme is Shadcn Ember; explicit stored legacy ids such as "default" and "ocean" remain valid and must not be migrated.
-        // FNXC:DashboardTheming 2026-06-20-00:00: FN-6813 remaps the legacy mono id before bootstrap validation so persisted users keep the red mono accent.
-        if (colorTheme === 'shadcn-mono') colorTheme = 'shadcn-mono-red';
+        // FNXC:DashboardTheming 2026-07-16-14:30: FN-8146 keeps Shadcn Mono's stored id intact so pre-hydration and React hydration select the same restored theme.
         if (!validThemes.includes(colorTheme)) {
           colorTheme = '${DEFAULT_COLOR_THEME}';
         }

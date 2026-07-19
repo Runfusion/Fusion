@@ -13,22 +13,28 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+const backupCommandState = vi.hoisted(() => ({
+  result: { success: true, output: "Backup created" },
+  error: null as Error | null,
+}));
 
-/**
- * Write a real SQLite database file so the production backup path's `PRAGMA quick_check`
- * verification passes (mirrors packages/core/src/__tests__/backup.test.ts's fixture helper).
- * Falls back to a placeholder file when the `sqlite3` CLI is unavailable — in that case
- * verification also no-ops so the backup still succeeds.
- */
-function writeTestDb(path: string): void {
-  const result = spawnSync("sqlite3", [path, "CREATE TABLE IF NOT EXISTS t(x); INSERT INTO t VALUES (1);"], {
-    encoding: "utf-8",
-  });
-  if (result.error || result.status !== 0) {
-    writeFileSync(path, "dummy database content");
-  }
-}
+vi.mock("@fusion/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fusion/core")>();
+  return {
+    ...actual,
+    runBackupCommand: vi.fn(async () => {
+      if (backupCommandState.error) throw backupCommandState.error;
+      return backupCommandState.result;
+    }),
+  };
+});
+
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-01:40:
+FN-8258 keeps RoutineRunner's cron/manual delegation assertions while replacing the removed
+SQLite-file fixture with the async PostgreSQL backup command boundary. Backup implementation
+is covered in core; this suite verifies routine dispatch, result persistence, and live output.
+*/
 
 // Default settings inline to avoid @fusion/core build dependency during tests
 const DEFAULT_SETTINGS: Settings = {
@@ -134,6 +140,8 @@ function createMockAgentStore(): AgentStore {
 function createMockTaskStore(overrides: { fusionDir?: string; settings?: Partial<Settings> } = {}): TaskStore {
   return {
     getFusionDir: vi.fn().mockReturnValue(overrides.fusionDir ?? "/tmp/.fusion"),
+    // FNXC:PgMigrationQuarantine 2026-07-18-01:35: backup routines resolve PostgreSQL settings through this async-era TaskStore accessor, so the fake must mirror the production contract.
+    getGlobalSettingsDir: vi.fn().mockReturnValue(overrides.fusionDir ?? "/tmp/.fusion"),
     getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS, ...overrides.settings }),
     on: vi.fn(),
     off: vi.fn(),
@@ -167,6 +175,11 @@ function createRoutineRunner(options?: Partial<RoutineRunnerOptions>): RoutineRu
 }
 
 describe("RoutineRunner", () => {
+  beforeEach(() => {
+    backupCommandState.result = { success: true, output: "Backup created" };
+    backupCommandState.error = null;
+  });
+
   describe("executeRoutine", () => {
     it("successfully executes a routine with trigger type 'cron'", async () => {
       const routine = createMockRoutine({ id: "routine-1", name: "Test Routine" });
@@ -273,13 +286,14 @@ describe("RoutineRunner", () => {
         routineStore,
         taskStore: createMockTaskStore({ fusionDir }),
       });
+      backupCommandState.error = new Error("backup command unavailable");
 
       try {
         const result = await runner.executeRoutine("routine-backup-missing-db", "cron");
 
         expect(result.success).toBe(false);
-        expect(result.error).toContain("project DB");
-        expect(result.error).toContain(`source: ${join(fusionDir, "fusion.db")}`);
+        expect(result.error).toContain("project PostgreSQL");
+        expect(result.error).toContain(`project state: ${fusionDir}`);
         expect(result.error).toContain("cause:");
         expect(result.error).not.toBe("");
         expect(routineStore.completeRoutineExecution).toHaveBeenCalledWith(
@@ -287,7 +301,7 @@ describe("RoutineRunner", () => {
           expect.objectContaining({
             success: false,
             error: result.error,
-            output: expect.stringContaining("project DB"),
+            output: "",
           }),
         );
       } finally {
@@ -446,7 +460,7 @@ describe("RoutineRunner", () => {
       const tempDir = mkdtempSync(join(tmpdir(), "routine-backup-parity-"));
       const fusionDir = join(tempDir, ".fusion");
       await mkdir(fusionDir, { recursive: true });
-      writeTestDb(join(fusionDir, "fusion.db"));
+      writeFileSync(join(fusionDir, "postgres-backed-fixture"), "routine backup dispatch fixture");
 
       try {
         for (const triggerType of ["cron", "api"] as const) {
@@ -477,7 +491,7 @@ describe("RoutineRunner", () => {
       const tempDir = mkdtempSync(join(tmpdir(), "routine-backup-live-"));
       const fusionDir = join(tempDir, ".fusion");
       await mkdir(fusionDir, { recursive: true });
-      writeTestDb(join(fusionDir, "fusion.db"));
+      writeFileSync(join(fusionDir, "postgres-backed-fixture"), "routine backup dispatch fixture");
 
       try {
         const routine = createMockRoutine({

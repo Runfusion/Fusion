@@ -17,11 +17,15 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { isTaskStuck } from "../utils/taskStuck";
+import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { isTaskAgentActive } from "../utils/taskActivity";
+import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
@@ -46,7 +50,6 @@ function columnColor(column: ColumnId): string {
   return (COLUMN_COLOR_MAP as Record<string, string>)[column] ?? "var(--accent)";
 }
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 const LIST_TOUCH_CONTEXT_MENU_DELAY_MS = 550;
 const LIST_TOUCH_MOVE_THRESHOLD = 10;
 const LIST_CONTEXT_MENU_VIEWPORT_MARGIN = 8;
@@ -62,9 +65,13 @@ function isListContextInteractiveTarget(target: EventTarget | null): boolean {
 
 type SortField = "title" | "status" | "column" | "retries";
 
+/*
+FNXC:MergeQueue 2026-07-15-10:45:
+List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
+*/
 function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
-  if (status === "merging-fix") return t("listView.statusMergingFix", "Merging fixes…");
-  return status;
+  if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
+  return getTaskStatusBadgeLabel(status, t);
 }
 type SortDirection = "asc" | "desc";
 
@@ -1698,14 +1705,7 @@ export function ListView({
   }, [addToast, onTasksUpdated, t]);
 
   const buildListContextMenuActions = useCallback((task: Task): TaskMenuActionDescriptor[] => {
-    const canRetryTask =
-      task.status === "failed" ||
-      task.status === "stuck-killed" ||
-      task.status === "planning" ||
-      task.status === "needs-replan" ||
-      (task.stuckKillCount ?? 0) > 0 ||
-      (task.recoveryRetryCount ?? 0) > 0 ||
-      Boolean(task.nextRecoveryAt);
+    const canRetryTask = isTaskManuallyRetryable(task, lastFetchTimeMs);
     const isTaskPaused = Boolean(task.paused || task.userPaused);
     const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMerge ?? false });
     const model = buildTaskActionMenuModel({
@@ -1761,11 +1761,21 @@ export function ListView({
           addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
         }
       } : undefined,
-      onReset: onResetTask ? () => {
-        if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
-        void onResetTask(task.id)
-          .then(() => addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success"))
-          .catch((err) => addToast(getErrorMessage(err), "error"));
+      onReset: onResetTask ? async () => {
+        const shouldReset = await confirm({
+          title: t("taskDetail.reset.btn", "Reset"),
+          message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
+          confirmLabel: t("taskDetail.reset.btn", "Reset"),
+          cancelLabel: t("common.cancel", "Cancel"),
+          danger: true,
+        });
+        if (!shouldReset) return;
+        try {
+          await onResetTask(task.id);
+          addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
+        } catch (err) {
+          addToast(getErrorMessage(err), "error");
+        }
       } : undefined,
       onTogglePause: (isTaskPaused ? onUnpauseTask : onPauseTask) ? async () => {
         try {
@@ -1830,7 +1840,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2655,16 +2665,19 @@ export function ListView({
                         columnTasks.map((task) => {
                           const isDoneColumn = isCompleteColumn(task.column);
                           const visualStatus = isDoneColumn ? "done" : task.status;
-                          const isFailed = !isDoneColumn && task.status === "failed";
+                          const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                          const isAgentActive =
-                            !globalPaused &&
-                            !isFailed &&
-                            !isPaused &&
-                            !isStuckState &&
-                            (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
-                          const hasStatus = typeof visualStatus === "string" && visualStatus.trim().length > 0;
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                          // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
+                          const isTransientPlannerActive = task.column === "triage"
+                            && !visualStatus
+                            && Boolean(task.recentAgentActivityAt)
+                            && isAgentActive;
+                          const hasStatus = (typeof visualStatus === "string" && visualStatus.trim().length > 0
+                            || isTransientPlannerActive)
+                            && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
+                          const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const planReviewRunning = isPlanReviewRunning(task);
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
@@ -2720,11 +2733,20 @@ export function ListView({
                                 ) : isStuckState ? (
                                   <span className="list-status-badge stuck">{t("listView.stuck", "Stuck")}</span>
                                 ) : hasStatus ? (
-                                  <span className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
-                                    {getTaskStatusLabel(visualStatus ?? "", t)}
+                                  <span
+                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
+                                    title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                    aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
+                                    data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
+                                  >
+                                    {isReviewBudgetExhausted
+                                      ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                                      : isTransientPlannerActive
+                                        ? t("tasks.statusPlanning", "Planning")
+                                        : getTaskStatusLabel(visualStatus ?? "", t)}
                                   </span>
                                 ) : null}
-                                {planReviewRunning && (
+                                {planReviewRunning && isAgentActive && (
                                   /*
                                   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:10:
                                   Grouped ListView cards must show the same active Plan Review "Reviewing" badge as TaskCard so board and list surfaces remain visually equivalent while the `plan-review` workflow step is running.
@@ -2866,15 +2888,17 @@ export function ListView({
                           columnTasks.map((task) => {
                             const isDoneColumn = isCompleteColumn(task.column);
                             const visualStatus = isDoneColumn ? "done" : task.status;
-                            const isFailed = !isDoneColumn && task.status === "failed";
+                            const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                            const isAgentActive =
-                              !globalPaused &&
-                              !isFailed &&
-                              !isPaused &&
-                              !isStuckState &&
-                              (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                            const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
+                            const isTransientPlannerActive = task.column === "triage"
+                              && !visualStatus
+                              && Boolean(task.recentAgentActivityAt)
+                              && isAgentActive;
+                            const showStatusBadge = (Boolean(visualStatus) || isTransientPlannerActive)
+                              && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                             const planReviewRunning = isPlanReviewRunning(task);
                             const isDragging = draggingTaskId === task.id;
 
@@ -2939,18 +2963,25 @@ export function ListView({
                                       <span className="list-status-badge stuck">
                                         {t("listView.stuck", "Stuck")}
                                       </span>
-                                    ) : visualStatus ? (
+                                    ) : showStatusBadge ? (
                                       <span
-                                        className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${
+                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
+                                        title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                        aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
+                                        data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >
-                                        {getTaskStatusLabel(visualStatus ?? "", t)}
+                                        {isReviewBudgetExhausted
+                                          ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                                          : isTransientPlannerActive
+                                            ? t("tasks.statusPlanning", "Planning")
+                                            : getTaskStatusLabel(visualStatus ?? "", t)}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>
                                     )}
-                                    {planReviewRunning && (
+                                    {planReviewRunning && isAgentActive && (
                                       /*
                                       FNXC:TaskCardPlanReviewBadge 2026-07-11-12:11:
                                       Ungrouped ListView table rows must render the same Reviewing badge from the shared predicate; this second status render path is easy to miss and must stay in parity with grouped rows.

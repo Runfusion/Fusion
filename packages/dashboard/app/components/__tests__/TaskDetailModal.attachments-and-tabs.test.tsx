@@ -933,7 +933,7 @@ describe("TaskDetailModal", () => {
       expect(activityOverlayRule).toContain("top: var(--space-md)");
       expect(activityOverlayRule).toContain("right: var(--space-md)");
       expect(activityOverlayRule).toContain("z-index: 3");
-      expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));\n  }");
+      expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
       expect(mobileCss).toContain("  .activity-expand-toggle--overlay {\n    top: var(--space-sm);\n    right: var(--space-sm);\n  }");
       expect(expandedTitleRule).not.toContain("display: none");
       expect(expandedMetaRule).toContain("display: none");

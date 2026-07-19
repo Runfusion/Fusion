@@ -38,11 +38,15 @@ import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/remaining-ops-8.j
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";
+import {applyOriginalDescription} from "../original-description-policy.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
 import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async-events.js";
 import type {GoalCitationRow, RunAuditEventRow} from "../task-store/row-types.js";
 
 export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer,): Promise<TaskStore> {
+    if (!asyncLayer) {
+      throw new Error("TaskStore.getOrCreateForProject requires a project-bound PostgreSQL AsyncDataLayer");
+    }
     /*
     FNXC:PostgresCutover 2026-07-13-20:05:
     The fallback CentralCore must be bound to the caller's AsyncDataLayer.
@@ -55,7 +59,7 @@ export async function getOrCreateForProjectImpl(store: typeof TaskStore, project
     dashboard project-store-resolver): dashboard UI came up but the engine
     never connected.
     */
-    const central = centralCore ?? new CentralCore(undefined, asyncLayer ? { asyncLayer } : {});
+    const central = centralCore ?? new CentralCore(undefined, { asyncLayer });
     let initializedHere = false;
 
     if (!centralCore) {
@@ -73,7 +77,7 @@ export async function getOrCreateForProjectImpl(store: typeof TaskStore, project
       const store = new TaskStore(
         context.workingDirectory,
         resolvedGlobalSettingsDir,
-        asyncLayer ? { asyncLayer } : undefined,
+        { asyncLayer },
       );
       await store.init();
       return store;
@@ -157,7 +161,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
     if (store.backendMode) {
       const layer = store.asyncLayer!;
       const existingRow = await layer.transactionImmediate(async (tx) => {
-        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
         if (row && row.deletedAt != null) {
           return { deletedAt: row.deletedAt as string };
         }
@@ -626,15 +630,15 @@ export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFi
     return rows.map((row) => store.rowToRunAuditEvent(row));
   }
 
-export function getWorkflowParitySummaryImpl(store: TaskStore, options: { since?: string; limit?: number } = {}): WorkflowParitySummary {
+export async function getWorkflowParitySummaryImpl(store: TaskStore, options: { since?: string; limit?: number } = {}): Promise<WorkflowParitySummary> {
     const limit = options.limit ?? 1000;
-    const observed = store.getRunAuditEvents({
+    const observed = await store.getRunAuditEventsAsync({
       domain: "database",
       mutationType: WORKFLOW_PARITY_OBSERVED_MUTATION as unknown as RunAuditEvent["mutationType"],
       startTime: options.since,
       limit,
     });
-    const driftEvents = store.getRunAuditEvents({
+    const driftEvents = await store.getRunAuditEventsAsync({
       domain: "database",
       mutationType: WORKFLOW_PARITY_DRIFT_MUTATION as unknown as RunAuditEvent["mutationType"],
       startTime: options.since,
@@ -774,21 +778,30 @@ export async function updateIssueInfoImpl(store: TaskStore, id: string, issueInf
 
 export async function listWorkflowStepsImpl(store: TaskStore): Promise<import("../types.js").WorkflowStep[]> {
     if (store.workflowStepsCache) return store.workflowStepsCache;
-    /*
-     * FNXC:SqliteFinalRemoval 2026-06-24-15:40:
-     * In backend mode (PostgreSQL), the workflow_steps table read path has not
-     * been converted to the async Drizzle helper yet. Return only the plugin-
-     * contributed steps (which are in-memory, not DB-backed) so task creation
-     * does not throw when auto-defaulting workflow steps. The stored steps are
-     * empty until the async workflow-step helper is implemented. This matches
-     * the existing fail-soft behavior (the catch block logged a warning and
-     * continued with no default steps).
-     */
     if (store.backendMode) {
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+      Backend mode reads stored steps from project.workflow_steps via the async
+      layer, replacing the SqliteFinalRemoval-era interim fail-soft that
+      returned plugin-contributed steps only (stored steps were dropped until
+      the async helper existed). Listing parity with the sync branch below:
+      compiled-step rows stay filtered out, plugin steps are appended.
+      */
+      const table = schema.project.workflowSteps;
+      const pgRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .orderBy(table.createdAt);
+      const storedPgSteps = pgRows
+        .map((row) => store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+          ...row,
+          migrated_fragment_id: row.migratedFragmentId,
+        } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0])))
+        .filter((step) => !step.templateId?.startsWith(WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX));
       const pluginSteps = store._pluginWorkflowStepTemplates
         .map(({ template }) => store.resolvePluginWorkflowStep(template.id))
         .filter((step): step is import("../types.js").WorkflowStep => Boolean(step));
-      store.workflowStepsCache = pluginSteps;
+      store.workflowStepsCache = [...storedPgSteps, ...pluginSteps];
       return store.workflowStepsCache;
     }
     const rows = store.db.prepare("SELECT * FROM workflow_steps ORDER BY createdAt ASC").all() as Array<{
@@ -828,6 +841,38 @@ export async function getWorkflowStepImpl(store: TaskStore, id: string): Promise
       if (pluginStep) {
         return pluginStep;
       }
+    }
+
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+    Backend mode previously fell through to the sync store.db read and threw
+    "SQLite Database is not available" (reachable via ensureWorkflowStepForTemplate
+    and the executor's workflow-step gate). Async lookup: by id, then by
+    templateId (earliest created), then built-in template — same resolution
+    order as the sync branch.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowSteps;
+      const mapRow = (row: typeof table.$inferSelect) =>
+        store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+          ...row,
+          migrated_fragment_id: row.migratedFragmentId,
+        } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0]));
+      const byIdRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .where(eq(table.id, id))
+        .limit(1);
+      if (byIdRows[0]) return mapRow(byIdRows[0]);
+      const byTemplateRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .where(eq(table.templateId, id))
+        .orderBy(table.createdAt)
+        .limit(1);
+      if (byTemplateRows[0]) return mapRow(byTemplateRows[0]);
+      const pgTemplate = store.getBuiltInWorkflowTemplate(id);
+      return pgTemplate ? store.toBuiltInWorkflowStep(pgTemplate) : undefined;
     }
 
     const byId = store.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
@@ -1061,6 +1106,12 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
   }
 
 export function generateSpecifiedPromptImpl(store: TaskStore, task: Task): string {
+    /*
+    FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+    Non-AI specified PROMPT.md (direct create into non-intake columns) must include the
+    operator's original description near the top, same contract as AI-planned specs.
+    Bootstrap stubs use buildBootstrapPrompt and intentionally skip this path.
+    */
     const deps =
       task.dependencies.length > 0
         ? task.dependencies.map((d) => `- **Task:** ${d}`).join("\n")
@@ -1074,7 +1125,7 @@ export function generateSpecifiedPromptImpl(store: TaskStore, task: Task): strin
         : "";
 
     const heading = task.title ? `${task.id}: ${task.title}` : task.id;
-    return `# ${heading}
+    const base = `# ${heading}
 
 **Created:** ${task.createdAt.split("T")[0]}
 **Size:** M
@@ -1110,6 +1161,7 @@ ${deps}
 - [ ] All steps complete
 - [ ] All tests passing
 ${notificationsSection}`;
+    return applyOriginalDescription(base, task.description ?? "");
   }
 
 export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityLogEntry, "id" | "timestamp">): Promise<ActivityLogEntry> {

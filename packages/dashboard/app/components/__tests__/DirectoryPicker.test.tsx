@@ -348,8 +348,19 @@ describe("DirectoryPicker", () => {
       expect(onChange).toHaveBeenCalledWith("/normalized/home/user/Fresh Project");
     });
     expect(mockCreateDirectory).toHaveBeenCalledWith("/home/user/fresh-project");
+    /*
+    FNXC:DirectoryPicker 2026-07-18-02:50:
+    The panel must navigate INTO the created folder (not refresh the parent):
+    the footer Select button commits browser.currentPath, so staying on the
+    parent let the next click overwrite the auto-selected new folder.
+    */
     await waitFor(() => {
-      expect(mockBrowseDirectory).toHaveBeenLastCalledWith("/home/user", false, undefined, undefined);
+      expect(mockBrowseDirectory).toHaveBeenLastCalledWith(
+        "/normalized/home/user/Fresh Project",
+        false,
+        undefined,
+        undefined,
+      );
     });
   });
 

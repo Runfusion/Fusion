@@ -10,8 +10,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PrEntity, Settings, TaskStore } from "@fusion/core";
-import { resolveAgentPrompt } from "@fusion/core";
-import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel } from "./agent-session-helpers.js";
+import { resolveAgentPrompt, resolveMergerFallbackModel } from "@fusion/core";
+import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
@@ -88,6 +88,11 @@ export function makePrResponseAgentRunner(
   taskId: string,
   cwd: string,
   store?: TaskStore,
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * PR-response createResolvedAgentSession must share chat/executor plugin-runtime injection so grok-cli/no-key merger models resolve via getRuntimeById("grok") instead of dual-remediation error or pi fallthrough.
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
 ): (input: {
   prompt: string;
   systemPrompt: string;
@@ -95,7 +100,10 @@ export function makePrResponseAgentRunner(
   threads: Array<{ id: string }>;
 }) => Promise<PrAgentRunResult> {
   return async ({ prompt, systemPrompt, signal, threads }) => {
-    const model = resolveMergerSessionModel(settings);
+    const task = store ? await store.getTask(taskId).catch(() => undefined) : undefined;
+    const model = resolveMergerSessionModel(settings, undefined, task);
+    // FNXC:Settings-MergerModel 2026-07-16-00:00: PR-response retries use the merger-only fallback lane, retaining shared fallback inheritance when unset.
+    const mergerFallbackModel = resolveMergerFallbackModel(settings);
     let captured = "";
     /*
      * FNXC:McpConfig 2026-06-26-00:00:
@@ -115,6 +123,7 @@ export function makePrResponseAgentRunner(
     ].join("\n");
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
+      pluginRunner,
       cwd,
       systemPrompt: fullSystem,
       tools: "coding",
@@ -123,9 +132,10 @@ export function makePrResponseAgentRunner(
       },
       defaultProvider: model.provider,
       defaultModelId: model.modelId,
-      fallbackProvider: settings.fallbackProvider,
-      fallbackModelId: settings.fallbackModelId,
-      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+      fallbackProvider: mergerFallbackModel.provider,
+      fallbackModelId: mergerFallbackModel.modelId,
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, task?.mergerThinkingLevel),
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings, task?.mergerThinkingLevel),
       settings,
       taskId,
       mcpServers,

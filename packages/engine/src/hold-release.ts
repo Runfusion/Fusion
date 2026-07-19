@@ -486,8 +486,13 @@ async function issueRelease(
   if (targetIsProcessing && deps.reserveSlot) {
     reservation = await deps.reserveSlot(task, target);
     if (!reservation) {
-      // Semaphore/worktree exhausted — reservation-first means no move at all.
-      schedulerLog.log(`Hold release for ${task.id} deferred — no reservable slot for ${target}`);
+      /*
+      Semaphore/worktree exhausted — reservation-first means no move at all.
+
+      FNXC:WorkflowScheduling 2026-07-15-12:55:
+      A held card re-attempts release on every sweep, so a full board reprinted this line per task per poll and buried real scheduler events. Being at capacity is the expected steady state, not an event: debug-only (`FUSION_DEBUG=scheduler`).
+      */
+      schedulerLog.debug(`Hold release for ${task.id} deferred — no reservable slot for ${target}`);
       return false;
     }
   }

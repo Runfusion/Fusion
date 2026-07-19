@@ -139,12 +139,13 @@ Chaque tâche affiche son plan, ses révisions, ses diffs et ses modifications d
 | 🧠 **Planification IA** | Décrivez une tâche en langage naturel. Les agents de planification la transforment en plan `PROMPT.md` avec étapes, périmètre des fichiers et critères d'acceptation. |
 | 🔁 **Workflows sélectionnables** | Les workflows intégrés couvrent le codage, les correctifs rapides, le travail à forte révision, l'exécution par étapes, le Compound Engineering activé par plugin et les fragments de cycle de vie de PR. Choisissez un workflow par tâche ou créez-en des personnalisés dans l'[Éditeur de workflows](./docs/workflow-editor.md). |
 | 🌳 **Isolation par worktree** | Chaque tâche s'exécute dans sa propre branche et son propre worktree (`fusion/{task-id}`). Tâches parallèles. Zéro conflit. Délégation [worktrunk](https://github.com/max-sixty/worktrunk) optionnelle via [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (voir [abstraction WorktreeBackend](./docs/architecture.md#worktreebackend-abstraction)). |
+| 🗄️ **PostgreSQL par défaut** | Fusion utilise PostgreSQL embarqué sans configuration pour les métadonnées d’exécution locales. Les fichiers SQLite hérités ne sont que des entrées de migration uniques ; utilisez une base de données externe partagée pour les déploiements [multi-projets et multi-nœuds](./docs/multi-project.md). ([Stockage](./docs/storage.md)) |
 | ⚡ **Fusion intelligente** | Toutes les portes franchies ? Fusion effectue un squash-merge et passe à la suite. Activez la validation manuelle où vous le souhaitez, héritez du défaut global d'auto-fusion en direct, ou définissez des remplacements auto/manuel explicites par tâche. |
 | 🛰️ **Maillage multi-nœuds** | Laptop, Mac mini, serveur Linux, VM cloud, téléphone — tout synchronisé. Bureau, mobile, web. |
-| 🧩 **N'importe quel modèle** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, runtimes locaux et [fournisseurs personnalisés](./docs/dashboard-guide.md#custom-providers) définis par l'utilisateur. Local et cloud coexistent, avec des voies de modèle/fallback de workflow configurables par projet. |
+| 🧩 **N'importe quel modèle** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, Kimi K3, runtimes locaux et [fournisseurs personnalisés](./docs/dashboard-guide.md#custom-providers) définis par l'utilisateur. Local et cloud coexistent, avec des voies de modèle/fallback de workflow configurables par projet. |
 | 🏢 **Entreprises d'agents** | Importez des équipes prédéfinies — plus de 440 agents répartis dans 16 entreprises — et faites-les fonctionner de façon autonome pendant des semaines. |
 | 📬 **Messagerie inter-agents** | Boîte aux lettres intégrée entre agents. Déléguer, clarifier, coordonner ; les agents au rôle d'ingénieur peuvent activer la réclamation automatique du backlog quand vous voulez de l'aide à l'implémentation au-delà du retrait réservé à l'exécuteur. |
-| 🗨️ **Chat d’agents** | Chat direct, chat de tâche, pièces jointes, cartes de questions, flux reprenables et salles multi-agents expérimentales où les membres mentionnés répondent directement et les membres ambiants peuvent participer jusqu’à un plafond. ([Docs Chat](./docs/dashboard-guide.md#chat-view)) |
+| 🗨️ **Chat d’agents** | Chat direct, chat de tâche qui raconte proactivement la progression des étapes, les échecs et les résultats de révision, pièces jointes, cartes de questions, flux reprenables et salles multi-agents expérimentales où les membres mentionnés répondent directement et les membres ambiants peuvent participer jusqu’à un plafond. ([Docs Chat](./docs/dashboard-guide.md#chat-view)) |
 | 🗺️ **Missions** | Planification hiérarchique (Mission → Jalon → Tranche → Fonctionnalité → Tâche) avec pilotage automatique et contrats de validation. |
 | 🔬 **Recherche** | Exécutions de recherche délimitées avec recherche web, GitHub, docs locaux et synthèse LLM (plus prise en charge intégrée de WebSearch/WebFetch dans les flux de planification et de synthèse lorsque disponible). Transformez les résultats en tâches. ([Docs](./docs/research.md)) |
 | 🧪 **Auto-amélioration** | Les agents réfléchissent à leurs propres résultats et mettent à jour leurs prompts au fur et à mesure qu'ils apprennent votre base de code. |
@@ -182,7 +183,7 @@ Un seul écran pour tout ce que font vos agents. Ajustez la capacité du planifi
 
 > Tokens · Outils · Activité · Productivité · Équipe · Écosystème · GitHub · Signaux · Système · Fiabilité · Mission Control — chaque onglet est un angle différent sur la même flotte en direct.
 
-**La même flotte, à votre façon** — Command Center (et tout le tableau de bord) se re-thématise en direct sur **plus de 70 thèmes de couleurs**. Le voici en Shadcn Light et Shadcn Dark Gray :
+**La même flotte, à votre façon** — Command Center (et tout le tableau de bord) se re-thématise en direct sur **plus de 70 thèmes de couleurs**, dont Cobalt, Clay et Moss. Le voici en Shadcn Light et Shadcn Dark Gray :
 
 <table>
 <tr>
@@ -425,6 +426,7 @@ npx companies.sh add paperclipai/companies/gstack
 | [Accès distant](./docs/remote-access.md) | Accès distant tokenisé, Tailscale/Cloudflare et dépannage |
 | [Multi-projet](./docs/multi-project.md) | Registre central, modes d’isolation et migrations |
 | [Docker](./docs/docker.md) | Déploiement conteneurisé |
+| [Stockage](./docs/storage.md) | Stockage d’exécution PostgreSQL, compatibilité de migration et charges utiles adossées à des fichiers |
 
 ---
 
@@ -437,8 +439,8 @@ npx companies.sh add paperclipai/companies/gstack
 - **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
 - **Workflow Steps** — Configurable quality gates (pre-merge blocks merge; post-merge informational), plus opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
 - **Workflow-native policy** — Fast-mode planning, typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings ([Settings Reference](./docs/settings-reference.md#workflow-settings))
-- **GitHub + PR lifecycle** — Import issues, create PRs, display live PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
-- **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, missions, chat, workflow editor, custom providers, and one-click updates
+- **GitHub + PR lifecycle** — Import issues with optional translation and screenshot attachments, skip previously imported issues even after edits or repository casing changes, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
+- **Dashboard** — Real-time kanban/list/graph views, a project Overview with local codebase token estimate and on-disk size, agent management, terminal, git manager, missions, chat, workflow editor, custom providers, and one-click updates
 - **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked handoffs
 - **Multi-Project** — Manage multiple projects from one installation with project isolation
 - **Custom Providers** — Add OpenAI-compatible, OpenAI Responses, Anthropic-compatible, or Google Generative AI providers; saved models appear in project and workflow model dropdowns ([Dashboard Guide](./docs/dashboard-guide.md#custom-providers))
@@ -470,7 +472,7 @@ Fusion utilise une hiérarchie de modèles à double portée avec cinq voies ind
 
 **Voies de workflow :** Le workflow par défaut expose les voies Plan/Triage, Executor, Reviewer et fallback dans **Paramètres → Modèles du projet**, et les workflows avancés peuvent déclarer d’autres valeurs typées ([Référence des paramètres](./docs/settings-reference.md#workflow-settings)).
 
-**Remplacements par tâche :** Les tâches peuvent remplacer les voies exécuteur, validateur et planification avec des champs de modèle par tâche (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`).
+**Remplacements par tâche :** Quick Add et Inline Create permettent aux tâches de remplacer les voies de planification, d’exécution, de validation et de fusion ; les sélections de planification, validation et fusion prennent aussi en charge des niveaux de réflexion propres à la tâche (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`, ainsi que les remplacements de modèle/réflexion de fusion).
 
 **Précédence :** Par tâche → Remplacement projet → Voie globale → `defaultProvider`/`defaultModelId` → Résolution automatique.
 
@@ -563,7 +565,7 @@ fn skills install firebase/agent-skills               # Installer des compétenc
 
 | Paquet | Description |
 |---------|-------------|
-| `@fusion/core` | Modèle de domaine — tâches, colonnes du tableau, store SQLite |
+| `@fusion/core` | Modèle de domaine — tâches, colonnes du tableau, stores PostgreSQL |
 | `@fusion/dashboard` | Interface web — serveur Express + tableau kanban avec SSE |
 | `@fusion/engine` | Moteur IA — planification, exécution, ordonnancement, étapes de workflow |
 | `@runfusion/fusion` | CLI + extension — publié sur npm |

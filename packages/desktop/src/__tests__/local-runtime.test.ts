@@ -132,7 +132,8 @@ describe("LocalRuntimeManager", () => {
     watch: vi.fn(async () => undefined),
     close: vi.fn(),
     getPluginStore: vi.fn(() => engineMocks.pluginStoreInstance),
-    getDatabase: vi.fn(() => ({ runPluginSchemaInits: engineMocks.runPluginSchemaInits })),
+    runPluginSchemaInits: engineMocks.runPluginSchemaInits,
+    getAsyncLayer: vi.fn(() => ({ projectId: "project-1" } as never)),
   };
 
   beforeEach(() => {
@@ -162,6 +163,57 @@ describe("LocalRuntimeManager", () => {
       baseUrl: "http://127.0.0.1:4545",
     });
     expect(manager.getServerPort()).toBe(4545);
+  });
+
+  /*
+  FNXC:MigrationHoldingPage 2026-07-17-13:40:
+  Pins the desktop migration-progress contract: while createStore (which runs the
+  one-time SQLite→PG migration) is in flight, progress published through the
+  createStore callback must be visible on getStatus() as
+  state:"starting" + migration, and a terminal "running" status must not carry it.
+  */
+  it("publishes migration progress while starting and clears it when running", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4550);
+    let releaseStore: () => void = () => {};
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async (_rootDir, onMigrationProgress) => {
+        onMigrationProgress?.({
+          active: true,
+          phase: "table-progress",
+          label: "[3/12] project.tasks — 500/2000 rows",
+        });
+        await storeGate;
+        return store;
+      },
+      createDashboardServer: async () => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      },
+    });
+
+    const startPromise = manager.startLocal();
+    await vi.waitFor(() => {
+      expect(manager.getStatus()).toMatchObject({
+        source: "embedded-local",
+        state: "starting",
+        migration: {
+          active: true,
+          phase: "table-progress",
+          label: "[3/12] project.tasks — 500/2000 rows",
+        },
+      });
+    });
+
+    releaseStore();
+    const status = await startPromise;
+    expect(status.state).toBe("running");
+    expect(status.migration).toBeUndefined();
+    expect(manager.getStatus().migration).toBeUndefined();
   });
 
   it("returns external-cli status without starting embedded runtime", async () => {
@@ -467,6 +519,8 @@ describe("LocalRuntimeManager", () => {
 
     await manager.startLocal();
 
+    expect(engineMocks.CentralCore).toHaveBeenCalledWith(undefined, { asyncLayer: store.getAsyncLayer() });
+
     expect(engineMocks.seedDashboardProviders).toHaveBeenCalledWith(
       expect.objectContaining({ authStorage: expect.anything(), modelRegistry: expect.anything() }),
     );
@@ -495,7 +549,6 @@ describe("LocalRuntimeManager", () => {
         return server as unknown as Server;
       }),
     });
-
     const manager = new LocalRuntimeManager({
       rootDir: "/repo",
       createStore: async () => store,
@@ -509,6 +562,8 @@ describe("LocalRuntimeManager", () => {
       expect.objectContaining({ pluginStore: engineMocks.pluginStoreInstance, taskStore: expect.anything() }),
     );
     expect(engineMocks.pluginLoaderInstance.loadAllPlugins).toHaveBeenCalledTimes(1);
+    /* FNXC:DesktopPluginSchema 2026-07-14-23:31: The host verifies single schema ownership by leaving execution to PluginLoader instead of replaying collected contracts. */
+    expect(engineMocks.runPluginSchemaInits).not.toHaveBeenCalled();
     expect(engineMocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

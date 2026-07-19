@@ -449,8 +449,17 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
         throw new Error("merge conflict");
       }
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return "src/file.ts";
-      // git diff-tree for trivial whitespace detection - return real changes (non-trivial)
-      if (cmdStr.includes("diff-tree")) {
+      /*
+      FNXC:MergeSafety 2026-07-16-08:10:
+      classifyConflict/isTrivialWhitespaceConflict now uses execFile
+      `git diff -p -w :2:path :3:path` (not shell git diff-tree). Mock that form
+      with substantive +/- lines so the conflict stays complex and the context-limit
+      AI path is exercised instead of trivial auto-resolve.
+      */
+      if (
+        cmdStr.includes("diff-tree")
+        || (cmdStr.includes("git diff") && cmdStr.includes("-w") && cmdStr.includes(":2:"))
+      ) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;

@@ -96,6 +96,13 @@ export type GitMutationType =
   | "worktree:remove-classification-probe-failed"
   | "worktree:remove-leaked-registered-worktree"
   | "worktree:reuse"
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   * Emitted when task-pinned acquisition (`worktreeNaming: "task-id"`) corrects a `task.worktree` cache that
+   * disagrees with the derived `<worktreesDir>/<task-id>` path (the FN-7996 stale/foreign-pointer shape).
+   * Metadata is ids/paths-only: `{ taskId, previous, derived, source }`.
+   */
+  | "worktree:pin-rederived"
   | "worktree:incomplete-detected"
   | "worktree:reanchored"
   | "worktree:auto-recovered"
@@ -152,6 +159,7 @@ export type GitMutationType =
   | "worktree:stale-registration-detected"
   | "worktree:stale-registration-recovered"
   | "worktree:stale-registration-recovery-failed"
+  | "worktree:branch-collision-recovery"
   | "branch:create"
   | "branch:delete"
   | "branch:checkout"
@@ -438,6 +446,11 @@ export type DatabaseMutationType =
   | "agent:reset-error-state-on-startup"
   | "agent:error-retry-exhausted"
   | "agent:error-parked-unrecoverable"
+  /*
+  FNXC:RunAudit 2026-07-15-00:00:
+  FN-8004 records a heartbeat move that lost a concurrent soft-delete using identifiers and timestamps only. Never place the failed run text or agent lastError in this event because the race is benign and audit metadata must remain structured.
+  */
+  | "agent:heartbeat-move-skipped-soft-delete"
   | "task:release"
   | "task:pause"
   | "task:unpause"
@@ -542,6 +555,14 @@ export type DatabaseMutationType =
    * Self-healing must leave file-scope lease queues intact while recording when stale durable Agent.taskId/state drift is cleared. Metadata: { agentId, taskId, taskColumn, agentState, status, blockedBy, overlapBlockedBy, hadFreshRun, hadActiveExecution, reason }.
    */
   | "task:reconcile-stale-agent-assignment"
+  /** Metadata: { taskId, canonicalId, canonicalColumn, canonicalDeleted, priorPausedReason } */
+  | "task:reconcile-stale-duplicate-decision"
+  /**
+   * FNXC:MergeQueue 2026-07-15-10:05:
+   * Wedged single-flight merge reclaim. Metadata ids/outcomes-only:
+   * { taskId, reason, silenceMs?, limitMs, status?, column? }.
+   */
+  | "task:reconcile-wedged-active-merge"
   /** Metadata: { taskId, branch, worktree, checkedOutBy, executionStartedAt, executionAgeMs, graceMs, liveWorktreeBoundBranch, reason } */
   | "task:reclaim-self-owned-branch-conflict-no-action"
   | "task:orphan-detected-no-action"
@@ -684,6 +705,14 @@ export type DatabaseMutationType =
    * Metadata: { reason, doneCount, incompleteCount, classification?, baseRef?, lane }
    */
   | "task:no-commits-finalize-blocked-incomplete-steps"
+  /**
+   * FNXC:Lifecycle 2026-07-16-00:00:
+   * FN-8141: the AI empty-merge lane refused to finalize a commit-expected task `done` because its
+   * branch had no net changes vs the integration tip AND no positive proof the work already landed
+   * (commits reverted/lost). The task is moved back to `todo` with progress preserved for operator review.
+   * Metadata: { reason, branch, integrationBranch, lane, baseCommitSha?, hadPriorNoOpProof? }
+   */
+  | "task:empty-merge-finalize-blocked-no-landed-proof"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */
@@ -780,7 +809,33 @@ export type DatabaseMutationType =
    * withheld state persists unchanged.
    * Metadata: { taskId: string; reason: "user-paused" | "auto-merge-off-human-review"; stage?: string; oversightLevel?: string }
    */
-  | "overseer:oversight-withheld-human-control";
+  | "overseer:oversight-withheld-human-control"
+  /**
+   * FNXC:Lifecycle 2026-07-16-10:30:
+   * FN-8141 no-action event: a stranded-completed promoter (`recoverCompletedTasks` stuck-in-progress
+   * sweep OR `recoverStrandedCompletedTodoTasks` stranded-todo sweep in self-healing.ts) withheld
+   * promotion of an all-steps-done/skipped task because its most recent execution-outcome in the
+   * durable task log was a failure/refusal park (`evaluateCompletedPromotionFailureProvenance`).
+   * Emitted at most once per taskId while the blocking provenance persists (deduped in-memory).
+   * Metadata: { taskId, reason: "failure-provenance", sweep: "stuck-in-progress" | "stranded-todo", marker?: string }
+   */
+  | "task:reconcile-stranded-completed-no-action"
+  /**
+   * FNXC:Lifecycle 2026-07-16-09:40:
+   * FN-8141 no-action lifecycle event: the AI empty-merge lane vetoed a
+   * zero-diff (no net changes) no-op finalize because the task's cross-stage
+   * overseer memory (derived from the durable `overseer:intervention` timeline)
+   * shows the MOST RECENT executor-stage signal was failed-with-incomplete-work
+   * with no subsequent green completion (`evaluateNoOpFinalizeExecutorVeto`).
+   * The task is moved back to `todo` with progress preserved instead of reaching
+   * `done` — mirroring the FN-6461 `task:no-commits-finalize-blocked-incomplete-steps`
+   * blocked lane. The move-to-todo transition takes the task out of the merge
+   * lane, so the event is not re-emitted every poll (equivalent to the
+   * `overseer:oversight-withheld-human-control` per-(taskId, reason) dedup).
+   * Metadata (ids/outcomes-only): { reason; branch; integrationBranch; lane:
+   * "ai-empty-merge"; executorSignal?; executorSignalObservedAt? }
+   */
+  | "overseer:no-op-finalize-vetoed-failed-executor";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────
 

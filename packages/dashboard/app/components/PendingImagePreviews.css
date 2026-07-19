@@ -1,0 +1,35 @@
+/*
+FNXC:QuickAddAttachments 2026-07-16-00:00:
+The open button fills the compact shared thumbnail shell while the remove button remains an independent layered control. The preview image deliberately retains its natural dimensions in the resizable FloatingWindow body, whose scroll area is governed by the user-selected window size.
+*/
+.pending-image-preview__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pending-image-preview__open:focus-visible {
+  outline: var(--focus-ring-width, thin) solid var(--focus-ring, var(--color-primary));
+  outline-offset: calc(var(--space-xs) * -1);
+}
+
+.pending-image-preview__modal-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 100%;
+  min-height: 100%;
+  padding: var(--space-md);
+}
+
+.pending-image-preview__modal-content img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}

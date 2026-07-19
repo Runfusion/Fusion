@@ -7,12 +7,18 @@
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import type { AsyncDataLayer } from "@fusion/core";
+import { cliPressPluginSchemaInit } from "../../../../packages/core/src/postgres/plugin-schema-hook.ts";
 import {
   createTaskStoreForTest,
   pgDescribe,
 } from "../../../../packages/core/src/__test-utils__/pg-test-harness.ts";
 import { createCliPressStore } from "../store/cli-press-store.ts";
 import { encodeCredentialValue } from "../store/credentials.ts";
+
+function projectLayer(layer: AsyncDataLayer, projectId = "cli-press-project-a"): AsyncDataLayer {
+  return { ...layer, projectId };
+}
 
 pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("materializes all five cli_press_* tables via the schema-init hook", async () => {
@@ -43,10 +49,44 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
     }
   });
 
+  it("backfills a complete sentinel-owned hierarchy under existing composite foreign keys", async () => {
+    const h = await createTaskStoreForTest({ prefix: "fusion_clipress_upgrade_single" });
+    try {
+      await h.adminDb.execute(sql.raw(`
+        /* FNXC:CliPressProjectIsolation 2026-07-14-22:48: Exercise the repeated-boot shape where composite foreign keys already exist and every preserved hierarchy row still carries the compatibility sentinel. */
+        INSERT INTO central.projects(id, name, path, created_at, updated_at)
+          VALUES ('cli-project-only', 'Only', '/only', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_services(project_id, id, slug, display_name, base_url, source_kind, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'svc-old', 'old', 'Old', 'https://old.example', 'manual', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_cli_specs(project_id, id, service_id, name, version, generator_version, spec_json, status, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'spec-old', 'svc-old', 'old-cli', '1.0.0', 'legacy', '{}', 'draft', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_artifacts(project_id, id, cli_spec_id, kind, path, executable, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'artifact-old', 'spec-old', 'script', 'old/bin', false, '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_credentials(project_id, id, service_id, name, kind, value, placement, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'credential-old', 'svc-old', 'token', 'header', '{}', '{}', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_service_settings(project_id, id, service_id, key, value, scope, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'setting-old', 'svc-old', 'region', 'west', 'runtime', '2026-07-14', '2026-07-14');
+      `));
+
+      await cliPressPluginSchemaInit.init(h.adminDb);
+
+      const ownership = await h.adminDb.execute(sql.raw(`
+        SELECT project_id FROM project.cli_press_services WHERE id='svc-old'
+        UNION ALL SELECT project_id FROM project.cli_press_cli_specs WHERE id='spec-old'
+        UNION ALL SELECT project_id FROM project.cli_press_artifacts WHERE id='artifact-old'
+        UNION ALL SELECT project_id FROM project.cli_press_credentials WHERE id='credential-old'
+        UNION ALL SELECT project_id FROM project.cli_press_service_settings WHERE id='setting-old'
+      `)) as unknown as Array<{ project_id: string }>;
+      expect(ownership.map((row) => row.project_id)).toEqual(Array(5).fill("cli-project-only"));
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("createService + getService + listServices round-trip", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_svc" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const created = await store.createService({
         slug: "acme",
         displayName: "Acme Service",
@@ -71,10 +111,40 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
     }
   });
 
+  it("isolates service definitions and credentials between two bound projects", async () => {
+    const h = await createTaskStoreForTest({ prefix: "fusion_clipress_isolation" });
+    try {
+      const projectA = createCliPressStore(null, projectLayer(h.layer, "cli-press-project-a"));
+      const projectB = createCliPressStore(null, projectLayer(h.layer, "cli-press-project-b"));
+      const serviceA = await projectA.createService({ slug: "shared", displayName: "A", baseUrl: "https://a.example", sourceKind: "manual" });
+      const serviceB = await projectB.createService({ slug: "shared", displayName: "B", baseUrl: "https://b.example", sourceKind: "manual" });
+      await projectA.createCredential({
+        serviceId: serviceA.id,
+        name: "token",
+        kind: "env_var",
+        placement: { kind: "env_var", envVar: "TOKEN" },
+        value: encodeCredentialValue("project-a-secret"),
+      });
+
+      expect((await projectA.listServices()).map((service) => service.id)).toEqual([serviceA.id]);
+      expect((await projectB.listServices()).map((service) => service.id)).toEqual([serviceB.id]);
+      expect(await projectB.listCredentials(serviceA.id)).toEqual([]);
+      await expect(projectB.createCredential({
+        serviceId: serviceA.id,
+        name: "stolen",
+        kind: "env_var",
+        placement: { kind: "env_var", envVar: "STOLEN" },
+        value: encodeCredentialValue("nope"),
+      })).rejects.toThrow();
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("updateService mutates only the allowed fields", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_svc_upd" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const created = await store.createService({
         slug: "beta",
         displayName: "Beta",
@@ -101,7 +171,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("spec, artifact, and setting CRUD round-trip with boolean executable", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_spec" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "gamma",
         displayName: "Gamma",
@@ -155,6 +225,35 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
       });
       const settingsAfterUpsert = await store.listSettings(service.id);
       expect(settingsAfterUpsert).toHaveLength(1);
+
+      const concurrent = await Promise.all(Array.from({ length: 8 }, (_, index) => store.setSetting({
+        serviceId: service.id,
+        key: "parallel",
+        value: String(index),
+        scope: "wizard",
+      })));
+      expect(new Set(concurrent.map((setting) => setting.id)).size).toBe(1);
+      expect((await store.listSettings(service.id)).filter((setting) => setting.key === "parallel")).toHaveLength(1);
+
+      const generated = await store.updateSpec(spec.id, { status: "generated", generatedAt: new Date().toISOString() });
+      await store.createSpec({
+        serviceId: service.id,
+        name: "draft-history",
+        version: "1.0.0",
+        generatorVersion: "cli-printing-press",
+        specJson: "{}",
+        status: "draft",
+      });
+      await store.createArtifact({
+        cliSpecId: generated.id,
+        kind: "metadata",
+        path: "plugins/cli-printing-press/artifacts/gamma/metadata.json",
+        executable: false,
+      });
+      expect((await store.listGeneratedSpecs()).map((row) => row.id)).toContain(generated.id);
+      expect((await store.listGeneratedSpecs()).some((row) => row.name === "draft-history")).toBe(false);
+      expect((await store.listExecutableArtifacts()).map((row) => row.id)).toContain(artifact.id);
+      expect((await store.listExecutableArtifacts()).every((row) => row.executable)).toBe(true);
     } finally {
       await h.teardown();
     }
@@ -163,7 +262,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("credential value/placement JSON round-trips and rejects oauth", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_cred" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "delta",
         displayName: "Delta",
@@ -212,7 +311,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("deleteService cascades to child specs, artifacts, credentials, and settings", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_cascade" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "epsilon",
         displayName: "Epsilon",
@@ -268,7 +367,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("updateSpec and deleteSpec operate on the spec row", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_spec_mut" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "zeta",
         displayName: "Zeta",

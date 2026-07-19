@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { TaskStore } from "@fusion/core";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
+import type { Task, TaskStep, TaskStore } from "@fusion/core";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:55:
@@ -17,6 +17,88 @@ function storeWithSelection(workflowId: string | undefined): TaskStore {
     moveTask: vi.fn().mockResolvedValue(undefined),
   } as unknown as TaskStore;
 }
+
+/*
+FNXC:WorkflowReplan 2026-07-16-05:35:
+Regression surfaces for the steps>0 planner wedge. A replan card retains the steps its
+previous planning pass materialized, so steps must never imply "advanced" while the card is
+parked in a planner lane. Enumerated surfaces: the "triage" column (with and without an
+explicit needs-replan status), the plan-in-place "todo" planner lane used by Coding (Ideas),
+every parked-for-planning status, and the advancement signals that must still fire
+(worktree, execution/terminal columns, planned-and-queued todo cards).
+*/
+type PlanningGuardCase = {
+  label: string;
+  task: Pick<Task, "column" | "worktree" | "steps" | "status">;
+  stillPlanning: boolean;
+};
+
+const planStep = (name: string): TaskStep => ({ name, status: "pending" });
+
+const planningGuardCases: PlanningGuardCase[] = [
+  { label: "empty triage task", task: { column: "triage", steps: [] }, stillPlanning: true },
+  { label: "unplanned todo seed", task: { column: "todo", steps: [] }, stillPlanning: true },
+  { label: "todo task with a worktree", task: { column: "todo", worktree: "/tmp/FN-1", steps: [] }, stillPlanning: false },
+  {
+    label: "planned-and-queued todo task with materialized steps",
+    task: { column: "todo", steps: [planStep("step-1")] },
+    stillPlanning: false,
+  },
+  { label: "in-progress task", task: { column: "in-progress", steps: [] }, stillPlanning: false },
+  { label: "in-review task", task: { column: "in-review", steps: [] }, stillPlanning: false },
+  { label: "completed task", task: { column: "done", steps: [] }, stillPlanning: false },
+  { label: "archived task", task: { column: "archived", steps: [] }, stillPlanning: false },
+
+  // A triage card sits in the planner column by definition — nothing executes out of triage,
+  // so steps materialized by its previous planning pass must never read as advancement.
+  {
+    label: "triage replan card carrying steps from its previous planning pass",
+    task: { column: "triage", steps: [planStep("step-1")], status: "needs-replan" },
+    stillPlanning: true,
+  },
+  {
+    label: "triage card carrying steps with no explicit status",
+    task: { column: "triage", steps: [planStep("step-1"), planStep("step-2")] },
+    stillPlanning: true,
+  },
+  {
+    label: "triage card parked by a reviewer outage",
+    task: { column: "triage", steps: [planStep("step-1")], status: "plan-review-unavailable" },
+    stillPlanning: true,
+  },
+
+  // Plan-in-place workflows (Coding (Ideas)) park replans in the merged "todo" planner lane,
+  // carrying a real spec — the planning status is what separates them from queued work.
+  {
+    label: "plan-in-place todo replan card carrying steps",
+    task: { column: "todo", steps: [planStep("step-1")], status: "needs-replan" },
+    stillPlanning: true,
+  },
+  {
+    label: "plan-in-place todo card parked by a reviewer outage",
+    task: { column: "todo", steps: [planStep("step-1")], status: "plan-review-unavailable" },
+    stillPlanning: true,
+  },
+
+  // FN-7977's protections must survive: real advancement still outranks a planning status.
+  {
+    label: "triage card an executor already claimed a worktree for",
+    task: { column: "triage", worktree: "/tmp/FN-1", steps: [planStep("step-1")], status: "needs-replan" },
+    stillPlanning: false,
+  },
+  {
+    label: "card that reached execution while a planning recovery was in flight",
+    task: { column: "in-progress", steps: [planStep("step-1")], status: "needs-replan" },
+    stillPlanning: false,
+  },
+];
+
+describe("planning-stage guard", () => {
+  it.each(planningGuardCases)("recognizes $label", ({ task, stillPlanning }) => {
+    expect(isTaskStillInPlanningStage(task)).toBe(stillPlanning);
+    expect(hasAdvancedPastPlanning(task)).toBe(!stillPlanning);
+  });
+});
 
 describe("resolveReplanTargetColumn", () => {
   it("targets triage for the default Coding workflow", async () => {

@@ -165,7 +165,13 @@ export class WebhookNotificationProvider implements NotificationProvider {
       case "failed":
         return `Task "${identifier}" has failed and needs attention`;
       case "awaiting-approval":
-        return `Task "${identifier}" needs your approval before it can proceed`;
+        /*
+        FNXC:PlanReviewReplan 2026-07-15-11:09:
+        Mirror ntfy: replan-cap holds must state that Plan Review did not converge.
+        */
+        return payload.metadata?.awaitingApprovalReason === "plan-review-replan-cap"
+          ? `Task "${identifier}" needs approval because Plan Review requested revisions repeatedly without converging. Approve the current plan or reject to regenerate.`
+          : `Task "${identifier}" needs your approval before implementation can start`;
       case "awaiting-user-review":
         return `Task "${identifier}" needs human review before it can proceed`;
       case "planning-awaiting-input":

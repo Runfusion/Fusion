@@ -58,6 +58,8 @@ function createMockCentralCore(projects: RegisteredProject[]): CentralCore {
     ),
     updateProject: vi.fn().mockResolvedValue(undefined),
     updateProjectHealth: vi.fn().mockResolvedValue(undefined),
+    stopDiscovery: vi.fn(),
+    markLocalNodeOffline: vi.fn().mockResolvedValue(undefined),
     resolveLocalProjectWorkingDirectory: vi
       .fn()
       .mockImplementation((projectId: string) => Promise.resolve(`/mapped/${projectId}`)),
@@ -105,6 +107,45 @@ describe("ProjectEngineManager", () => {
         }),
         centralCore,
         expect.any(Object),
+      );
+    });
+
+    it("injects externalTaskStore only when project working directory matches store root", async () => {
+      const sharedStore = {
+        getRootDir: () => "/mapped/proj_aaa",
+      } as any;
+      const manager = new ProjectEngineManager(centralCore, {
+        externalTaskStore: sharedStore,
+      });
+
+      await manager.ensureEngine("proj_aaa");
+      expect(ProjectEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workingDirectory: "/mapped/proj_aaa" }),
+        centralCore,
+        expect.objectContaining({ externalTaskStore: sharedStore }),
+      );
+
+      await manager.ensureEngine("proj_bbb");
+      expect(ProjectEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workingDirectory: "/mapped/proj_bbb" }),
+        centralCore,
+        expect.not.objectContaining({ externalTaskStore: sharedStore }),
+      );
+    });
+
+    it("shares externalTaskStore when roots differ only by trailing slash", async () => {
+      const sharedStore = {
+        getRootDir: () => "/mapped/proj_aaa/",
+      } as any;
+      const manager = new ProjectEngineManager(centralCore, {
+        externalTaskStore: sharedStore,
+      });
+
+      await manager.ensureEngine("proj_aaa");
+      expect(ProjectEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workingDirectory: "/mapped/proj_aaa" }),
+        centralCore,
+        expect.objectContaining({ externalTaskStore: sharedStore }),
       );
     });
 
@@ -266,6 +307,19 @@ describe("ProjectEngineManager", () => {
       expect(engineA.stop).toHaveBeenCalledOnce();
       expect(engineB.stop).toHaveBeenCalledOnce();
       expect(manager.getAllEngines().size).toBe(0);
+    });
+
+    it("persists the local node offline before engine backends stop", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+      await manager.startAll();
+      const engineA = manager.getEngine("proj_aaa")!;
+
+      await manager.stopAll();
+
+      expect(centralCore.markLocalNodeOffline).toHaveBeenCalledTimes(1);
+      const offlineOrder = (centralCore.markLocalNodeOffline as unknown as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const engineStopOrder = (engineA.stop as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(offlineOrder).toBeLessThan(engineStopOrder);
     });
 
     it("stopAll frees residual slots from each stopped project scope", async () => {

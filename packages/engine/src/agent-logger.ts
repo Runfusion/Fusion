@@ -145,7 +145,7 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
  *    When both are provided, both sinks receive every entry.
  */
 export interface AgentLoggerOptions {
-  /** When true, persist `detail` payloads for tool entries; default false preserves rows without verbose payloads. */
+  /** When true, persist `detail` payloads for `tool` and successful `tool_result` entries; failed `tool_error` details always persist. */
   persistAgentToolOutput?: boolean;
   /** When true, persist `thinking` rows. Default: false (skip thinking persistence). */
   persistAgentThinkingLog?: boolean;
@@ -165,6 +165,12 @@ export interface AgentLoggerOptions {
   onAgentText?: (taskId: string, delta: string) => void;
   /** Optional callback invoked alongside tool logging (e.g. for SSE streaming). */
   onAgentTool?: (taskId: string, toolName: string) => void;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:00:
+  Session-advisor seam: after durable entries flush, notify the overseer
+  advisor runtime with the batch. Must be fail-soft (never throw into flush).
+  */
+  onEntriesFlushed?: (taskId: string, entries: AgentLogEntry[]) => void | Promise<void>;
   /** Byte threshold for automatic flush. Defaults to 1024. */
   flushSizeBytes?: number;
   /** Timer interval (ms) for periodic flush. Defaults to 500. */
@@ -217,6 +223,7 @@ export class AgentLogger {
   private readonly agent?: AgentRole;
   private readonly externalTextCb?: (taskId: string, delta: string) => void;
   private readonly externalToolCb?: (taskId: string, toolName: string) => void;
+  private readonly onEntriesFlushedCb?: (taskId: string, entries: AgentLogEntry[]) => void | Promise<void>;
   private readonly log = createLogger("agent-logger");
   private readonly persistAgentToolOutput: boolean;
   private readonly persistAgentThinkingLog: boolean;
@@ -242,11 +249,12 @@ export class AgentLogger {
     this.agent = options.agent;
     this.externalTextCb = options.onAgentText;
     this.externalToolCb = options.onAgentTool;
+    this.onEntriesFlushedCb = options.onEntriesFlushed;
     this.flushSizeBytes = options.flushSizeBytes ?? FLUSH_SIZE_BYTES;
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
     /*
-    FNXC:AgentLogs 2026-06-23-00:00:
-    Direct logger construction must match global settings: verbose tool payload persistence is default-off and only explicit persistAgentToolOutput: true saves tool entry detail. Tool/tool_result/tool_error rows still persist so timelines and usage telemetry remain intact.
+    FNXC:AgentLogging 2026-07-15-16:00:
+    Verbose tool arguments and successful result payloads remain default-off unless persistAgentToolOutput is enabled. Failed tool_error detail is bounded diagnostic signal, so it must persist regardless of that setting for Activity-feed diagnosis (FN-7995).
     */
     this.persistAgentToolOutput = options.persistAgentToolOutput === true;
     this.persistAgentThinkingLog = options.persistAgentThinkingLog === true;
@@ -436,7 +444,8 @@ export class AgentLogger {
     timing?: Pick<AgentLogEntry, "durationMs" | "timeToFirstTokenMs">,
   ): void {
     const isToolEntry = type === "tool" || type === "tool_result" || type === "tool_error";
-    const includeDetail = !isToolEntry || this.persistAgentToolOutput;
+    // FNXC:AgentLogging 2026-07-15-16:00: Failed tool detail is diagnostic signal, unlike verbose arguments/success output, and must survive default-off tool-output persistence for FN-7995 Activity diagnosis.
+    const includeDetail = !isToolEntry || type === "tool_error" || this.persistAgentToolOutput;
     const entry: AgentLogEntry = {
       timestamp: new Date().toISOString(),
       taskId: this.taskId,
@@ -581,6 +590,21 @@ export class AgentLogger {
           }),
         ),
       );
+    }
+
+    // FNXC:PlannerOversight 2026-07-13-23:00: best-effort session-advisor notify after durable flush.
+    if (this.onEntriesFlushedCb && this.taskId && entries.length > 0) {
+      try {
+        await Promise.resolve(this.onEntriesFlushedCb(this.taskId, entries)).catch((err) => {
+          this.log.warn(
+            `onEntriesFlushed callback failed for ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      } catch (err) {
+        this.log.warn(
+          `onEntriesFlushed callback threw for ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 }

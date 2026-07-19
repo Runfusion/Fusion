@@ -54,6 +54,9 @@ describe("buildManualRetryResetPatch", () => {
       expect(patch[key]).toBe(0);
     }
     expect(patch.graphResumeRetryCount).toBe(0);
+    expect(patch.consecutiveToolFailureRetryCount).toBe(0);
+    expect(patch.toolFailureDetectorLogCursor).toBeNull();
+    expect(patch.toolFailureRetryExhaustedAuditEmitted).toBe(false);
   });
 
   it("includes all retry-summary counters in the reset key list", () => {
@@ -77,5 +80,11 @@ describe("buildManualRetryResetPatch", () => {
 
   it("clears nextRecoveryAt", () => {
     expect(buildManualRetryResetPatch()).toMatchObject({ nextRecoveryAt: null });
+  });
+
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — an operator manual retry is an honest exit
+  // that clears the skip-bypass taint marker so the retried task can promote on its skips.
+  it("clears the FN-8141 skip-bypass taint marker (bulkCompletionRefusalAt)", () => {
+    expect(buildManualRetryResetPatch()).toMatchObject({ bulkCompletionRefusalAt: null });
   });
 });

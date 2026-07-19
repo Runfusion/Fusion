@@ -1,42 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import kbExtension, { closeCachedStores } from "../extension.js";
+/**
+ * FNXC:PostgresCutover 2026-07-17-00:00:
+ * FN-8225 moves these goal-tool tests from a per-test temporary-root
+ * `getStore(cwd)` path, which booted embedded PostgreSQL, to the shared
+ * injected PostgreSQL harness. This prevents FN-8222's concurrent
+ * postmaster.pid locks, leaked initdb processes, and five-second timeouts.
+ */
 
-interface RegisteredTool {
-  name: string;
-  description: string;
-  parameters?: {
-    type: string;
-    properties?: Record<string, unknown>;
-    required?: string[];
-  };
-  execute: (
-    toolCallId: string,
-    params: any,
-    signal: AbortSignal | undefined,
-    onUpdate: ((update: any) => void) | undefined,
-    ctx: any,
-  ) => Promise<any>;
-}
-
-function createMockAPI() {
-  const tools = new Map<string, RegisteredTool>();
-
-  const api = {
-    registerTool(def: RegisteredTool) {
-      tools.set(def.name, def);
-    },
-    registerCommand() {},
-    registerShortcut() {},
-    registerFlag() {},
-    on() {},
-    tools,
-  };
-
-  return api as any;
-}
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+  registerExtension,
+} from "./pg-extension-harness.js";
 
 function makeCtx(cwd: string) {
   return { cwd } as any;
@@ -47,21 +23,18 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
   return first && first.type === "text" ? (first.text ?? "") : "";
 }
 
-describe("extension goal retrieval tools", () => {
-  let tmpDir: string;
-  let api: ReturnType<typeof createMockAPI>;
+pgDescribe("extension goal retrieval tools", () => {
+  const h = createPgExtensionHarness("fn-goal-tools");
+  let api: ReturnType<typeof createMockApi>;
 
+  beforeAll(h.beforeAll);
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "kb-goal-tools-"));
-    await mkdir(join(tmpDir, ".fusion"), { recursive: true });
-    api = createMockAPI();
-    kbExtension(api);
+    await h.beforeEach();
+    api = createMockApi();
+    registerExtension(api);
   });
-
-  afterEach(async () => {
-    await closeCachedStores();
-    await rm(tmpDir, { recursive: true, force: true });
-  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("registers fn_goal_show with expected schema", () => {
     const tool = api.tools.get("fn_goal_show");
@@ -92,11 +65,11 @@ describe("extension goal retrieval tools", () => {
       { title: "Improve reliability", description: "Reduce flaky test retries" },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
 
     const goalId = created.details.goalId as string;
-    const result = await tool!.execute("goal-show-1", { id: goalId }, undefined, undefined, makeCtx(tmpDir));
+    const result = await tool!.execute("goal-show-1", { id: goalId }, undefined, undefined, makeCtx(h.rootDir()));
 
     expect(result.isError).toBeUndefined();
     expect(result.details.goal).toMatchObject({
@@ -118,7 +91,7 @@ describe("extension goal retrieval tools", () => {
     const tool = api.tools.get("fn_goal_show");
     expect(tool).toBeDefined();
 
-    const result = await tool!.execute("goal-show-404", { id: "G-404" }, undefined, undefined, makeCtx(tmpDir));
+    const result = await tool!.execute("goal-show-404", { id: "G-404" }, undefined, undefined, makeCtx(h.rootDir()));
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toBe("Goal G-404 not found");
@@ -131,7 +104,7 @@ describe("extension goal retrieval tools", () => {
     expect(createTool).toBeDefined();
     expect(listTool).toBeDefined();
 
-    const emptyResult = await listTool!.execute("goal-list-empty", {}, undefined, undefined, makeCtx(tmpDir));
+    const emptyResult = await listTool!.execute("goal-list-empty", {}, undefined, undefined, makeCtx(h.rootDir()));
     expect(textOf(emptyResult)).toBe(["Goals (0) [filter: active]", "Active: 0/5", "", "No goals found."].join("\n"));
     expect(emptyResult.details).toEqual({ goals: [], activeCount: 0, softWarning: false, hardLimit: 5 });
 
@@ -140,10 +113,10 @@ describe("extension goal retrieval tools", () => {
       { title: "Ship slice 2" },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
     const goalId = created.details.goalId as string;
-    const result = await listTool!.execute("goal-list-single", { status: "active" }, undefined, undefined, makeCtx(tmpDir));
+    const result = await listTool!.execute("goal-list-single", { status: "active" }, undefined, undefined, makeCtx(h.rootDir()));
 
     expect(textOf(result)).toBe([
       "Goals (1) [filter: active]",
@@ -170,11 +143,11 @@ describe("extension goal retrieval tools", () => {
       },
       undefined,
       undefined,
-      makeCtx(tmpDir),
+      makeCtx(h.rootDir()),
     );
 
     const goalId = created.details.goalId as string;
-    const listResult = await listTool!.execute("goal-list-long", {}, undefined, undefined, makeCtx(tmpDir));
+    const listResult = await listTool!.execute("goal-list-long", {}, undefined, undefined, makeCtx(h.rootDir()));
     const listText = textOf(listResult);
 
     expect(listText).toContain(`- ${goalId} [active] Cite goals by ID — First line with extra spaces`);
@@ -189,7 +162,7 @@ describe("extension goal retrieval tools", () => {
       },
     ]);
 
-    const showResult = await showTool!.execute("goal-show-long", { id: goalId }, undefined, undefined, makeCtx(tmpDir));
+    const showResult = await showTool!.execute("goal-show-long", { id: goalId }, undefined, undefined, makeCtx(h.rootDir()));
     expect(textOf(showResult)).toContain("Description: First line with extra    spaces");
     expect(textOf(showResult)).toContain("Second line must never appear in fn_goal_list.");
     expect(showResult.details.goal.description).toContain("Second line must never appear in fn_goal_list.");
@@ -203,14 +176,14 @@ describe("extension goal retrieval tools", () => {
     expect(archiveTool).toBeDefined();
     expect(listTool).toBeDefined();
 
-    const archivedGoal = await createTool!.execute("goal-create-4", { title: "Archive me", description: "one line" }, undefined, undefined, makeCtx(tmpDir));
-    await archiveTool!.execute("goal-archive-1", { id: archivedGoal.details.goalId }, undefined, undefined, makeCtx(tmpDir));
-    await createTool!.execute("goal-create-5", { title: "One" }, undefined, undefined, makeCtx(tmpDir));
-    await createTool!.execute("goal-create-6", { title: "Two" }, undefined, undefined, makeCtx(tmpDir));
-    await createTool!.execute("goal-create-7", { title: "Three" }, undefined, undefined, makeCtx(tmpDir));
+    const archivedGoal = await createTool!.execute("goal-create-4", { title: "Archive me", description: "one line" }, undefined, undefined, makeCtx(h.rootDir()));
+    await archiveTool!.execute("goal-archive-1", { id: archivedGoal.details.goalId }, undefined, undefined, makeCtx(h.rootDir()));
+    await createTool!.execute("goal-create-5", { title: "One" }, undefined, undefined, makeCtx(h.rootDir()));
+    await createTool!.execute("goal-create-6", { title: "Two" }, undefined, undefined, makeCtx(h.rootDir()));
+    await createTool!.execute("goal-create-7", { title: "Three" }, undefined, undefined, makeCtx(h.rootDir()));
 
-    const archivedResult = await listTool!.execute("goal-list-archived", { status: "archived" }, undefined, undefined, makeCtx(tmpDir));
-    const allResult = await listTool!.execute("goal-list-all", { status: "all" }, undefined, undefined, makeCtx(tmpDir));
+    const archivedResult = await listTool!.execute("goal-list-archived", { status: "archived" }, undefined, undefined, makeCtx(h.rootDir()));
+    const allResult = await listTool!.execute("goal-list-all", { status: "all" }, undefined, undefined, makeCtx(h.rootDir()));
 
     expect(textOf(archivedResult)).toBe([
       "Goals (1) [filter: archived]",
@@ -232,14 +205,14 @@ describe("extension goal retrieval tools", () => {
     expect(listTool).toBeDefined();
     expect(showTool).toBeDefined();
 
-    await createTool!.execute("goal-create-8", { title: "Ship slice 2" }, undefined, undefined, makeCtx(tmpDir));
+    await createTool!.execute("goal-create-8", { title: "Ship slice 2" }, undefined, undefined, makeCtx(h.rootDir()));
 
-    const listResult = await listTool!.execute("goal-list-1", { status: "active" }, undefined, undefined, makeCtx(tmpDir));
+    const listResult = await listTool!.execute("goal-list-1", { status: "active" }, undefined, undefined, makeCtx(h.rootDir()));
     expect(Array.isArray(listResult.details.goals)).toBe(true);
     expect(listResult.details.goals.length).toBeGreaterThan(0);
 
     const listedGoal = listResult.details.goals[0] as { id: string };
-    const showResult = await showTool!.execute("goal-show-2", { id: listedGoal.id }, undefined, undefined, makeCtx(tmpDir));
+    const showResult = await showTool!.execute("goal-show-2", { id: listedGoal.id }, undefined, undefined, makeCtx(h.rootDir()));
 
     expect(showResult.details.goal.id).toBe(listedGoal.id);
     expect(showResult.details.goal).toMatchObject({

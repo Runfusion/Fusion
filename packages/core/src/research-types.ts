@@ -122,7 +122,28 @@ export interface ResearchEvent {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * FNXC:ResearchMissionBridge 2026-07-18-12:00:
+ * A finding identity must be stable when providers reorder synthesis output. It
+ * is intentionally derived from finding-owned content and cited URLs, never an
+ * array position, so every promotion surface can reuse the same roadmap work.
+ */
+export function resolveResearchFindingId(finding: Pick<ResearchFinding, "heading" | "content" | "sources"> & { id?: unknown }): string {
+  const explicitId = typeof finding.id === "string" ? finding.id.trim() : "";
+  if (explicitId) return explicitId;
+  const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+  const canonical = [normalize(finding.heading ?? ""), normalize(finding.content ?? ""), ...[...(finding.sources ?? [])].map(normalize).filter(Boolean).sort()].join("\n");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `finding-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 export interface ResearchFinding {
+  /** Optional provider-persisted identity; legacy findings use resolveResearchFindingId. */
+  id?: string;
   heading: string;
   content: string;
   sources: string[];

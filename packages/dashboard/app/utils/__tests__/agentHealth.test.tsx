@@ -245,6 +245,35 @@ describe("getAgentHealthStatus", () => {
       });
       expect(getAgentHealthStatus(agent).label).toBe("Healthy");
     });
+
+    it("FN-8190: applies the project multiplier once before classifying long-cadence agents", () => {
+      // Field configuration: raw 3h cadence with a 7.5x project multiplier.
+      // At 13h, raw 4x grace would falsely label this agent Unresponsive; the
+      // 22h30m effective cadence has a 90h dashboard grace window instead.
+      const agent = makeAgent({
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW - 13 * 3_600_000).toISOString(),
+        runtimeConfig: { heartbeatIntervalMs: 3 * 3_600_000 },
+      });
+
+      expect(getAgentHealthStatus(agent, 7.5).label).toBe("Healthy");
+    });
+
+    it("FN-8190: preserves strict dashboard boundaries for sub-one, default, and field multipliers", () => {
+      const rawIntervalMs = 3 * 3_600_000;
+      for (const multiplier of [0.5, 1, 7.5]) {
+        const thresholdMs = rawIntervalMs * multiplier * 4;
+        const agent = (ageMs: number) => makeAgent({
+          state: "active",
+          lastHeartbeatAt: new Date(FIXED_NOW - ageMs).toISOString(),
+          runtimeConfig: { heartbeatIntervalMs: rawIntervalMs },
+        });
+
+        expect(getAgentHealthStatus(agent(thresholdMs - 1), multiplier).label).toBe("Healthy");
+        expect(getAgentHealthStatus(agent(thresholdMs), multiplier).label).toBe("Healthy");
+        expect(getAgentHealthStatus(agent(thresholdMs + 1), multiplier).label).toBe("Unresponsive");
+      }
+    });
   });
 
   // ── Agents without explicit heartbeatIntervalMs ───────────────────────────
@@ -270,6 +299,34 @@ describe("getAgentHealthStatus", () => {
         runtimeConfig: {},
       });
       expect(getAgentHealthStatus(agent).label).toBe("Unresponsive");
+    });
+
+    it("reproduces the FN-8018 field ages against the default 4h grace boundary", () => {
+      const fieldAgents = [
+        { name: "Backend Engineer", ageMs: 6 * 3_600_000 + 32 * 60_000 },
+        { name: "Frontend Engineer", ageMs: 5 * 3_600_000 + 59 * 60_000 },
+        { name: "Technical Writer", ageMs: 6 * 3_600_000 + 34 * 60_000 },
+      ];
+
+      for (const fieldAgent of fieldAgents) {
+        expect(getAgentHealthStatus(makeAgent({
+          name: fieldAgent.name,
+          state: "active",
+          lastHeartbeatAt: new Date(FIXED_NOW - fieldAgent.ageMs).toISOString(),
+          runtimeConfig: {},
+        })).label).toBe("Unresponsive");
+      }
+
+      expect(getAgentHealthStatus(makeAgent({
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW - 4 * 3_600_000).toISOString(),
+        runtimeConfig: {},
+      })).label).toBe("Healthy");
+      expect(getAgentHealthStatus(makeAgent({
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW - 4 * 3_600_000 - 1).toISOString(),
+        runtimeConfig: {},
+      })).label).toBe("Unresponsive");
     });
 
     it("clamps invalid intervals (0/negative) to the dashboard minimum (5m)", () => {
@@ -403,8 +460,26 @@ describe("getAgentHealthStatus", () => {
       expect(status.stateDerived).toBe(false);
     });
 
+    it("treats an unparseable persisted heartbeat as Unresponsive instead of Healthy", () => {
+      const status = getAgentHealthStatus(makeAgent({
+        state: "active",
+        lastHeartbeatAt: "not-a-timestamp",
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      }));
+      expect(status.label).toBe("Unresponsive");
+      expect(status.reason).toBe("Last heartbeat timestamp is invalid");
+    });
+
+    it("clamps a future heartbeat timestamp to fresh rather than stale", () => {
+      expect(getAgentHealthStatus(makeAgent({
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW + 24 * 60 * 60_000).toISOString(),
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      })).label).toBe("Healthy");
+    });
+
     it("100s stale heartbeat with no explicit interval → Healthy (default 1h applies)", () => {
-      // 1h default interval → 2h threshold, so 100s is well within range.
+      // 1h default interval → 4h threshold, so 100s is well within range.
       const agent = makeAgent({
         state: "active",
         lastHeartbeatAt: new Date(FIXED_NOW - 100_000).toISOString(),

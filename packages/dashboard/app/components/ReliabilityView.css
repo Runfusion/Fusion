@@ -59,9 +59,13 @@
   font-weight: 700;
 }
 
+/*
+FNXC:Reliability 2026-07-15-00:00:
+FN-8036 requires metric cards to size from the Command Center content column rather than the raw viewport. Auto-fit preserves the three-card desktop layout when space permits while widening cards by reflowing them on narrow embedded and mobile surfaces.
+*/
 .reliability-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-2xl) * 12)), 1fr));
   gap: var(--space-lg);
 }
 

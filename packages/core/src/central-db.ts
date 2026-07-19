@@ -7,10 +7,9 @@
  * BEGIN IMMEDIATE + SAVEPOINT nested transactions, task-claim mutex) was the
  * central-project-registry data layer. The runtime CentralCore now delegates
  * ALL central data access to PostgreSQL via the async `AsyncDataLayer`
- * (Drizzle, central schema) — see `async-central-core.ts`. The SQLite path is
- * only reachable in non-backend mode (FUSION_NO_EMBEDDED_PG test/migrator
- * fallback), and the mesh lease recovery path that constructed it in
- * `in-process-runtime.ts` now skips construction in backend mode.
+ * (Drizzle, central schema) — see `async-central-core.ts`. The removed
+ * `FUSION_NO_EMBEDDED_PG` runtime fallback is rejected by startup; only the
+ * throwing compatibility type and explicit legacy migration readers remain.
  *
  * This module now re-exports the JSON utilities and `getDefaultCentralDbPath`
  * (still used by backup.ts and the onboard CLI), and provides a stub
@@ -56,8 +55,7 @@ function throwSqliteRemoved(): never {
  * FNXC:SqliteFinalRemoval 2026-06-26-09:45:
  * The ~1090-line SQLite CentralDatabase body is DELETED. This stub preserves
  * the public method signatures (and the CentralClaimStore interface contract)
- * so consumers (plugin-store.ts sync else-branch, in-process-runtime mesh
- * lease fallback, quarantined tests) continue to type-check. Every method
+ * so legacy API consumers and migration-oriented tests continue to type-check. Every method
  * throws because the SQLite runtime is gone; production CentralCore runs in
  * backend mode and never reaches these.
  */

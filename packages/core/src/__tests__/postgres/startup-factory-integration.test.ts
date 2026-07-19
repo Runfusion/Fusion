@@ -81,6 +81,41 @@ function seedLegacyRegistry(globalDir: string, projects: Array<{ id: string; pat
   }
 }
 
+function seedLegacyPlugin(root: string): void {
+  const fusionDir = join(root, ".fusion");
+  mkdirSync(fusionDir, { recursive: true });
+  const legacy = new DatabaseSync(join(fusionDir, "fusion.db"));
+  try {
+    legacy.exec(`CREATE TABLE plugins (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
+      description TEXT, author TEXT, homepage TEXT, path TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1, state TEXT NOT NULL DEFAULT 'installed',
+      settings TEXT DEFAULT '{}', settingsSchema TEXT, error TEXT,
+      dependencies TEXT DEFAULT '[]', aiScanOnLoad INTEGER NOT NULL DEFAULT 0,
+      lastSecurityScan TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    )`);
+    legacy.prepare(`INSERT INTO plugins (
+      id, name, version, path, enabled, state, settings, dependencies,
+      aiScanOnLoad, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        "legacy-startup-plugin",
+        "Legacy startup plugin",
+        "1.0.0",
+        "/plugins/legacy-startup-plugin",
+        1,
+        "installed",
+        "{}",
+        "[]",
+        0,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+  } finally {
+    legacy.close();
+  }
+}
+
 pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
   let rootDir: string;
   let dbName: string;
@@ -141,6 +176,69 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
     });
     expect(second).not.toBeNull();
     await second!.shutdown();
+  });
+
+  /*
+  FNXC:PluginLegacyMigration 2026-07-15-02:09:
+  Steady-state startup must finish the retained-SQLite plugin bridge through the privileged migration connection before returning a project-scoped runtime store. Dashboard, serve, desktop, and engine startup all initialize PluginStore after the runtime role is active, so PluginStore.init must remain DDL-free and must not crash with "permission denied for schema public".
+  */
+  it("migrates retained plugin rows before returning the restricted runtime store", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-plugin-bridge-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+
+    const first = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    const projectId = first.taskStore.getAsyncLayer()!.projectId!;
+    await first.shutdown();
+
+    const admin = postgres(testUrl, { max: 1 });
+    try {
+      await admin`CREATE TABLE public.fusion_sqlite_migrations (
+        migration_key text PRIMARY KEY,
+        project_id text,
+        status text NOT NULL CHECK (status IN ('running', 'complete', 'failed')),
+        last_error text,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+      await admin`
+        INSERT INTO public.fusion_sqlite_migrations
+          (migration_key, project_id, status, last_error, updated_at)
+        VALUES (${`project:${projectId}`}, ${projectId}, 'complete', NULL, now())
+      `;
+    } finally {
+      await admin.end();
+    }
+    seedLegacyPlugin(rootDir);
+
+    const second = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    try {
+      await expect(second.taskStore.getPluginStore().init()).resolves.toBeUndefined();
+      const client = postgres(testUrl, { max: 1 });
+      try {
+        const installs = await client<{ id: string }[]>`
+          SELECT id FROM central.plugin_installs WHERE id = 'legacy-startup-plugin'
+        `;
+        const states = await client<{ plugin_id: string }[]>`
+          SELECT plugin_id FROM central.project_plugin_states
+          WHERE project_path = ${rootDir} AND plugin_id = 'legacy-startup-plugin'
+        `;
+        expect(installs).toEqual([{ id: "legacy-startup-plugin" }]);
+        expect(states).toEqual([{ plugin_id: "legacy-startup-plugin" }]);
+      } finally {
+        await client.end();
+      }
+    } finally {
+      await second.shutdown();
+    }
   });
 
   /*
@@ -412,6 +510,7 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
     const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
     const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
     const { stampMigratedProjectRows } = await import("../../postgres/migration-stamping.js");
+    const { recordSqliteMigrationComplete } = await import("../../postgres/sqlite-migrator.js");
     const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
 
     const connections = await createConnectionSetFromUrl(
@@ -422,11 +521,14 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       await applySchemaBaseline(connections.migration);
       const db = connections.migration;
 
-      // Current migrators stamp task ownership during copy; the helper still
-      // re-keys historical config/workflow identities.
+      /*
+      FNXC:ProjectMigrationStamping 2026-07-14-16:50:
+      Migration 0006 rewrites explicit empty ownership to the quarantine before this post-copy helper runs. A unique migration-ledger owner makes those freshly quarantined rows safe to claim; a second project marker must leave later quarantine rows untouched.
+      */
+      await recordSqliteMigrationComplete(db, "project:proj_help", "proj_help");
       await db.execute(
         `INSERT INTO project.tasks (project_id, id, description, "column", created_at, updated_at)
-         VALUES ('proj_help', 'FN-HELP-1', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+         VALUES ('', 'FN-HELP-1', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
       );
       await db.execute(
         `INSERT INTO project.config (project_id, settings, updated_at)
@@ -450,6 +552,32 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
         `INSERT INTO project.workflow_prompt_overrides (workflow_id, project_id, overrides, updated_at)
          VALUES ('wf_a', '${fakeRootDir}', '{"executor":"x"}'::jsonb, '2026-06-01T00:00:00Z')`,
       );
+
+      /*
+      FNXC:ProjectMigrationStamping 2026-07-14-21:55:
+      Force the last table promotion to fail and prove earlier task/config/workflow updates roll back with it; a retry after removing the fault must then stamp the complete project.
+      */
+      await db.execute(`
+        CREATE FUNCTION public.fail_migration_stamp_for_test() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced migration stamp failure'; END $$;
+        CREATE TRIGGER fail_migration_stamp_for_test
+        BEFORE UPDATE ON project.workflow_prompt_overrides
+        FOR EACH ROW EXECUTE FUNCTION public.fail_migration_stamp_for_test();
+      `);
+      await expect(stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir }))
+        .rejects.toThrow("Failed query: UPDATE project.workflow_prompt_overrides");
+      const rolledBackTask = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-HELP-1'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackTask[0]?.project_id).toBe("__legacy_unscoped__");
+      const rolledBackWorkflow = (await db.execute(
+        `SELECT project_id FROM project.workflow_settings WHERE workflow_id = 'wf_a'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackWorkflow[0]?.project_id).toBe(fakeRootDir);
+      await db.execute(`
+        DROP TRIGGER fail_migration_stamp_for_test ON project.workflow_prompt_overrides;
+        DROP FUNCTION public.fail_migration_stamp_for_test();
+      `);
 
       const result = await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
       expect(result.stamped).toBe(true);
@@ -485,6 +613,17 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
         `SELECT project_id FROM project.workflow_prompt_overrides WHERE workflow_id = 'wf_a'`,
       )) as unknown as Array<{ project_id: string }>;
       expect(overrides[0]?.project_id).toBe("proj_help");
+
+      await recordSqliteMigrationComplete(db, "project:other", "other");
+      await db.execute(
+        `INSERT INTO project.tasks (project_id, id, description, "column", created_at, updated_at)
+         VALUES ('', 'FN-AMBIGUOUS', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+      );
+      await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
+      const ambiguous = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-AMBIGUOUS'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(ambiguous[0]?.project_id, "multi-project quarantine must not be claimed").toBe("__legacy_unscoped__");
 
       // No-op when projectId is empty.
       const noop = await stampMigratedProjectRows(db, { projectId: "", rootDir: fakeRootDir });

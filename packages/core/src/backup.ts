@@ -1,9 +1,21 @@
 import { join } from "node:path";
+import { resolveGlobalDir } from "./global-settings.js";
 import { CronExpressionParser } from "cron-parser";
 import { getDefaultCentralDbPath } from "./central-db.js";
 import { PgBackupManager, type PgBackupPair, type PgDumpResult } from "./postgres/pg-backup.js";
 import { resolveBackend } from "./postgres/backend-resolver.js";
-import type { ProjectSettings } from "./types.js";
+import { getActiveEmbeddedRuntimeUrl } from "./postgres/active-backend-registry.js";
+import type { Settings } from "./types.js";
+
+/**
+ * FNXC:SettingsBackups 2026-07-16-14:50:
+ * Database dumps represent the shared PostgreSQL cluster. Resolve their root once from
+ * the global settings directory, falling back to the canonical global directory so no
+ * caller can accidentally create per-project retention sets when that directory is unset.
+ */
+export function resolveGlobalBackupRoot(store: { getGlobalSettingsDir(): string | undefined }): string {
+  return store.getGlobalSettingsDir() ?? resolveGlobalDir();
+}
 
 export interface BackupFileInfo {
   filename: string;
@@ -217,7 +229,7 @@ export function validateBackupDir(dir: string): boolean {
 
 export function createBackupManager(
   fusionDir: string,
-  settings?: Partial<ProjectSettings>,
+  settings?: Partial<Settings>,
   connectionString?: string,
 ): BackupManager {
   let centralDbPath: string;
@@ -247,20 +259,18 @@ export function createBackupManager(
 }
 
 /**
- * FNXC:BackendFlip 2026-06-26-14:35:
- * Resolve the PostgreSQL connection string for backup operations from the
- * runtime backend. Returns the runtime URL when the backend is external
- * (DATABASE_URL set). Returns undefined for embedded mode (the default
- * production path since flip-embedded-pg-default when DATABASE_URL is unset),
- * because the embedded lifecycle provides its URL asynchronously at startup
- * and cannot be resolved synchronously here.
+ * FNXC:PostgresBackup 2026-07-16-12:40:
+ * External deployments resolve directly from DATABASE_URL. Embedded PostgreSQL
+ * learns its URL only during asynchronous startup, so use the active lifecycle
+ * registry as the synchronous fallback. It is intentionally undefined before
+ * boot or after owner shutdown, preserving BackupManager's actionable error.
  */
-function resolveBackendConnectionString(): string | undefined {
+export function resolveBackendConnectionString(): string | undefined {
   const backend = resolveBackend();
   if (backend.mode === "external" && backend.runtimeUrl) {
     return backend.runtimeUrl;
   }
-  return undefined;
+  return getActiveEmbeddedRuntimeUrl();
 }
 
 /*
@@ -298,7 +308,7 @@ function canonicalizeBackupDir(dir: string | undefined): string | undefined {
 
 export async function runBackupCommand(
   fusionDir: string,
-  settings: ProjectSettings
+  settings: Settings
 ): Promise<{ success: boolean; output: string; backupPath?: string; deletedCount?: number }> {
   if (settings.autoBackupSchedule && !validateBackupSchedule(settings.autoBackupSchedule)) {
     return {
@@ -357,7 +367,7 @@ export const BACKUP_SCHEDULE_NAME = "Database Backup";
 
 export async function syncBackupAutomation(
   automationStore: import("./automation-store.js").AutomationStore,
-  settings: ProjectSettings
+  settings: Settings
 ): Promise<import("./automation.js").ScheduledTask | undefined> {
   const { AutomationStore } = await import("./automation-store.js");
 
@@ -399,43 +409,45 @@ export async function syncBackupAutomation(
 
 export async function syncBackupRoutine(
   routineStore: import("./routine-store.js").RoutineStore,
-  settings: ProjectSettings,
+  settings: Settings,
 ): Promise<import("./routine.js").Routine | undefined> {
   const { RoutineStore } = await import("./routine-store.js");
-
-  const routines = await routineStore.listRoutines();
-  const existingRoutine = routines.find((routine) => routine.name === BACKUP_SCHEDULE_NAME);
-
-  if (!settings.autoBackupEnabled) {
-    if (existingRoutine) {
-      await routineStore.deleteRoutine(existingRoutine.id);
-    }
-    return undefined;
-  }
-
   const schedule = settings.autoBackupSchedule || "0 2 * * *";
   if (!RoutineStore.isValidCron(schedule)) {
     throw new Error(`Invalid backup schedule: ${schedule}`);
   }
 
-  const command = "fn backup --create";
-  const input = {
-    name: BACKUP_SCHEDULE_NAME,
-    description: "Automatic database backup based on project settings",
-    agentId: "",
-    trigger: { type: "cron" as const, cronExpression: schedule },
-    command,
-    enabled: true,
-    scope: "project" as const,
-  };
-
-  if (existingRoutine) {
-    return await routineStore.updateRoutine(existingRoutine.id, {
-      trigger: input.trigger,
-      command,
+  /* FNXC:SettingsBackups 2026-07-16-16:20: backend-mode routines are central so
+     independently opened projects cannot each schedule a dump of the shared cluster. */
+  if (routineStore.asyncLayer) {
+    const { GlobalRoutineStore } = await import("./global-routine-store.js");
+    const globalRoutines = new GlobalRoutineStore(routineStore.asyncLayer);
+    if (!settings.autoBackupEnabled) {
+      await globalRoutines.deleteByName(BACKUP_SCHEDULE_NAME);
+      return undefined;
+    }
+    return globalRoutines.syncBackup({
+      name: BACKUP_SCHEDULE_NAME,
+      description: "Automatic backup of the shared global PostgreSQL cluster",
+      agentId: "",
+      trigger: { type: "cron", cronExpression: schedule },
+      command: "fn backup --create",
       enabled: true,
     });
   }
 
-  return await routineStore.createRoutine(input);
+  const routines = await routineStore.listRoutines();
+  const existingRoutine = routines.find((routine) => routine.name === BACKUP_SCHEDULE_NAME);
+  if (!settings.autoBackupEnabled) {
+    if (existingRoutine) await routineStore.deleteRoutine(existingRoutine.id);
+    return undefined;
+  }
+  const input = {
+    name: BACKUP_SCHEDULE_NAME,
+    description: "Automatic backup of the shared global PostgreSQL cluster",
+    agentId: "", trigger: { type: "cron" as const, cronExpression: schedule },
+    command: "fn backup --create", enabled: true, scope: "project" as const,
+  };
+  if (existingRoutine) return routineStore.updateRoutine(existingRoutine.id, { trigger: input.trigger, command: input.command, enabled: true });
+  return routineStore.createRoutine(input);
 }

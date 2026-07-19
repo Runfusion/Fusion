@@ -1,10 +1,18 @@
+import { ACTIVE_MERGE_PIPELINE_STATUSES } from "./active-merge-status.js";
 import type { Task } from "./types.js";
 
 export type RunningAgentCountSource = (projectIds: readonly string[]) => Promise<Record<string, number>> | Record<string, number>;
 
 type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused">;
 
-const ACTIVE_IN_REVIEW_AGENT_STATUSES = new Set(["merging", "merging-pr", "merging-fix", "reviewing", "fixing"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+In-review live agents include the full AI merge pipeline (merging/reviewing/landing) plus fix-pass and generic fixing statuses so utilization counts stay honest during clean-room review and land.
+*/
+const ACTIVE_IN_REVIEW_AGENT_STATUSES = new Set([
+  ...ACTIVE_MERGE_PIPELINE_STATUSES,
+  "fixing",
+]);
 
 let runningAgentCountSource: RunningAgentCountSource | undefined;
 

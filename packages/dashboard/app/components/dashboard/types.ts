@@ -84,6 +84,7 @@ export interface MainContentProps {
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
   setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
+  setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
   projects: ProjectInfoWithSource[];
@@ -100,6 +101,8 @@ export interface MainContentProps {
   isRemote: boolean;
   remoteData: UseRemoteNodeDataResult;
   tasks: Task[];
+  /** Active planning sessions loaded by App before the Planning view mounts. */
+  bgPlanningSessions: AiSessionSummary[];
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (
     pluginId: string,
@@ -121,6 +124,9 @@ export interface MainContentProps {
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
   setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
+  /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
+  chatComposerPrefill?: { text: string; nonce: number } | null;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   setMailboxUnreadCount: (count: number) => void;
   setMissionTargetId: Dispatch<SetStateAction<string | undefined>>;
   setMissionResumeSessionId: Dispatch<SetStateAction<string | undefined>>;
@@ -141,6 +147,7 @@ export interface MainContentProps {
   openSettingsWithNav: (section?: SectionId) => void;
   researchReadinessVersion: number;
   evalsEnabled: boolean;
+  ideationEnabled: boolean;
   memoryEnabled: boolean;
   goalsEnabled: boolean;
   handleOpenMission: (missionId: string) => void;

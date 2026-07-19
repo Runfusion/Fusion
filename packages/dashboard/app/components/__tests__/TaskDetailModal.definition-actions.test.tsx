@@ -459,6 +459,42 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByText("Approve Plan")).toBeTruthy();
       expect(screen.getByText("Reject Plan")).toBeTruthy();
+      const banner = screen.getByTestId("detail-plan-approval-banner");
+      expect(banner.getAttribute("data-awaiting-approval-reason")).toBe("manual");
+      expect(screen.getByText("Approval needed before implementation")).toBeTruthy();
+      expect(screen.getByText(/require a human decision before work starts/i)).toBeTruthy();
+    });
+
+    /*
+     * FNXC:PlanReviewReplan 2026-07-15-11:09:
+     * Replan-cap escalations must explain that Plan Review did not converge so the
+     * operator knows why approval is required (not a generic require-all gate).
+     */
+    it("explains Plan Review non-convergence when awaitingApprovalReason is plan-review-replan-cap", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            awaitingApprovalReason: "plan-review-replan-cap",
+            prompt: "# Task Spec",
+          })}
+          initialTab="definition"
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Approve Plan")).toBeTruthy();
+      expect(screen.getByText("Reject Plan")).toBeTruthy();
+      const banner = screen.getByTestId("detail-plan-approval-banner");
+      expect(banner.getAttribute("data-awaiting-approval-reason")).toBe("plan-review-replan-cap");
+      expect(screen.getByText("Approval needed: Plan Review did not converge")).toBeTruthy();
+      expect(screen.getByText(/exhausted|without approving|stopped the replan loop/i)).toBeTruthy();
     });
 
     /*

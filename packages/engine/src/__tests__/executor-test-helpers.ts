@@ -190,6 +190,7 @@ vi.mock("../worktree-stale-registration.js", async () => {
 vi.mock("node:child_process", async () => {
   const { promisify } = await import("node:util");
   const { EventEmitter } = await import("node:events");
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   const execSyncFn = vi.fn();
   const spawnFn = vi.fn((cmd: string, opts?: any) => {
     const child = new EventEmitter() as any;
@@ -220,6 +221,12 @@ vi.mock("node:child_process", async () => {
   });
 
   const execFn: any = vi.fn((cmd: string, opts: any, cb: any) => {
+    /*
+    FNXC:PgMigrationQuarantine 2026-07-18-01:30:
+    FN-8258's PG-backed executor audit suite shares this helper. Let its harness run
+    psql for isolated fixture DDL while retaining mocked executor subprocess commands.
+    */
+    if (/^psql\s/.test(cmd.trim())) return actual.exec(cmd, opts as any, cb as any);
     const callback = typeof opts === "function" ? opts : cb;
     const forwardedOpts = typeof opts === "function" ? undefined : opts;
     try {
@@ -322,7 +329,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
         refresh: vi.fn(),
       };
     }),
-    AuthStorage: {
+    LegacyCredentialStorage: {
       create: vi.fn().mockReturnValue({}),
     },
     getAgentDir: vi.fn().mockReturnValue("/tmp/agent-dir"),
@@ -467,6 +474,15 @@ export function createMockStore() {
     // test tasks carrying a branchContext group are live by construction; group
     // staleness is unit-tested against the real store, not here.
     getBranchGroup: vi.fn().mockReturnValue({ id: "BG-test", status: "open", branchName: "fusion/bg-test" }),
+    /*
+    FNXC:EngineTests 2026-07-17-06:00:
+    Executor graph path and backup dispatch now call getAgentLogCount / getGlobalSettingsDir
+    on TaskStore. Without these stubs, nearly every execute()-path test rejects with
+    "is not a function" and the full-suite engine shards go red.
+    */
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
   };
   return store as any;
 }

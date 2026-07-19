@@ -16,8 +16,29 @@ import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import type {ArtifactRow} from "../task-store/row-types.js";
 import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import * as schema from "../postgres/schema/index.js";
 
-export function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): void {
+export async function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:15:
+    Backend mode previously swallowed the sync throw, so parallel-branch
+    checkpoints were never persisted on PostgreSQL. ON CONFLICT targets the PK
+    by constraint name because project-schema PKs lead with project_id (which
+    itself comes from the column's current_setting default under RLS).
+    */
+    if (store.backendMode) {
+      await store.asyncLayer!.db.execute(sql`
+        INSERT INTO project.workflow_run_branches
+          (task_id, run_id, branch_id, current_node_id, status, updated_at)
+        VALUES (${state.taskId}, ${state.runId}, ${state.branchId}, ${state.currentNodeId}, ${state.status}, ${new Date().toISOString()})
+        ON CONFLICT ON CONSTRAINT workflow_run_branches_pkey DO UPDATE SET
+          current_node_id = EXCLUDED.current_node_id,
+          status = EXCLUDED.status,
+          updated_at = EXCLUDED.updated_at
+      `);
+      return;
+    }
     try {
       store.db
         .prepare(
@@ -47,18 +68,42 @@ export async function clearNearDuplicateReferencesToImpl(store: TaskStore, canon
       return [];
     }
 
-    /*
-     * FNXC:SqliteFinalRemoval 2026-06-24-15:35:
-     * In backend mode (PostgreSQL), the near-duplicate reference cleanup is a
-     * best-effort optimization that uses SQLite-specific json_extract(). Skip
-     * it in backend mode rather than throwing — the async archive/delete paths
-     * already complete the core operation; this is a post-hoc cleanup of stale
-     * duplicate flags on OTHER tasks, not a correctness requirement. The
-     * PostgreSQL equivalent would use a jsonb path query; deferred to a future
-     * enhancement since clearNearDuplicateReferencesToFailSoft swallows errors.
-     */
     if (store.backendMode) {
-      return [];
+      /*
+       * FNXC:PostgresNearDuplicateCleanup 2026-07-14-18:30:
+       * Archiving, deleting, or completing a canonical task must clear every
+       * live duplicate marker in the same project. Stale JSONB markers alter
+       * operator decisions, so PostgreSQL applies the same cleanup and audit
+       * behavior as the legacy store instead of treating it as optional.
+       */
+      const layer = store.asyncLayer!;
+      const table = schema.project.tasks;
+      const conditions = [
+        isNull(table.deletedAt),
+        ne(table.column, "archived"),
+        ne(table.column, "done"),
+        sql`${table.sourceMetadata}->>'nearDuplicateOf' = ${canonicalId}`,
+      ];
+      if (layer.projectId) conditions.push(eq(table.projectId, layer.projectId));
+      const rows = await layer.db
+        .update(table)
+        .set({
+          sourceMetadata: sql`COALESCE(${table.sourceMetadata}, '{}'::jsonb) - 'nearDuplicateOf' - 'nearDuplicateScore' - 'nearDuplicateSharedTokens' - 'nearDuplicateDismissed'`,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(and(...conditions))
+        .returning({ id: table.id });
+
+      const updatedTasks: Task[] = [];
+      for (const row of rows) {
+        await store.logEntry(
+          row.id,
+          `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
+        );
+        const task = await store.getTask(row.id);
+        if (task) updatedTasks.push(task);
+      }
+      return updatedTasks;
     }
 
     const selectClause = store.getTaskSelectClause(false, "t");
@@ -365,7 +410,18 @@ export async function listArtifactsImpl(store: TaskStore, options?: { type?: Art
   }
 
 export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>,): Promise<void> {
-    const current = store.readTaskFromDb(taskId, { includeDeleted: false });
+    /*
+    FNXC:PostgresWorkflowEvacuation 2026-07-14-17:49:
+    Re-homing is an async workflow mutation and must read its current task through the authoritative PostgreSQL path; otherwise ON→OFF evacuation discovers custom-column cards but the SQLite-only read prevents every move.
+    */
+    let current: Task | undefined;
+    try {
+      current = store.backendMode
+        ? await store.getTask(taskId, { includeDeleted: false })
+        : store.readTaskFromDb(taskId, { includeDeleted: false });
+    } catch {
+      current = undefined;
+    }
     if (!current) return;
     const fromColumn = current.column;
     if (fromColumn === targetColumn) {
@@ -412,4 +468,3 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
       metadata: { ...metadata, reason, fromColumn, toColumn: targetColumn, abortRan, moved, error },
     });
   }
-

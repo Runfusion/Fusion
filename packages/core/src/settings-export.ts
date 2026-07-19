@@ -217,7 +217,7 @@ export async function exportSettings(
       ) as Partial<ProjectSettings>;
     }
 
-    const workflowSettings = store.listWorkflowSettingValuesForProject();
+    const workflowSettings = await store.listWorkflowSettingValuesForProject();
     // Only attach non-empty rows; an empty table omits the section entirely.
     const nonEmpty: WorkflowSettingsExportSection = {};
     for (const [workflowId, values] of Object.entries(workflowSettings)) {

@@ -13,6 +13,21 @@ export const MOBILE_MEDIA_QUERY = "(max-width: 768px), (max-height: 480px)";
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
 const MOBILE_HEIGHT_MEDIA_QUERY = "(max-height: 480px)";
 
+/*
+FNXC:ModalGeometryPersistence 2026-07-15-19:30:
+Full-screen FloatingWindow sheets use only the CSS width breakpoint. This deliberately diverges from
+`isMobileViewport()`: its short landscape-phone clause still renders movable windows, whose desktop
+geometry must continue to restore and persist.
+*/
+export function isFullScreenSheetViewport(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches;
+}
+
+/** Returns whether the CSS short-viewport breakpoint is active. */
+export function isShortViewport(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(MOBILE_HEIGHT_MEDIA_QUERY).matches;
+}
+
 function hasTouchScreen(): boolean {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
   return "ontouchstart" in window || navigator.maxTouchPoints > 0;

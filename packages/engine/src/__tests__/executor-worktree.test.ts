@@ -878,6 +878,40 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
+  it("reclaims an inactive same-task conflict when the branch preserves task commits", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const conflictPath = "/tmp/test/.worktrees/light-cedar";
+    vi.spyOn(executor as any, "shouldGenerateNewWorktreeName").mockResolvedValue(false);
+    const cleanup = vi.spyOn(executor as any, "cleanupConflictingWorktree").mockResolvedValue(true);
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: conflictPath,
+      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+      taskAttributedCommitCount: 10,
+      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8288): preserve implementation" }],
+    } as any);
+
+    const result = await (executor as any).handleWorktreeConflict(
+      conflictPath,
+      "fusion/fn-8288",
+      "/tmp/test/.worktrees/pearl-otter",
+      "FN-8288",
+      "main",
+      0,
+      false,
+      {},
+    );
+
+    expect(result).toEqual({ path: conflictPath, branch: "fusion/fn-8288" });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8288",
+      expect.stringContaining("10 commits preserved"),
+      "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+    );
+  });
+
   it("records recovery context when handling a branch conflict (FN-4847: now discards + requeues instead of pausing)", async () => {
     // FN-4847: branch-conflict-unrecoverable previously paused the task with
     // status=failed + pausedReason="branch-conflict-unrecoverable". The user has

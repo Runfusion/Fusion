@@ -257,6 +257,32 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     setup();
   });
 
+  it.each([
+    ["desktop", () => mockDesktopViewport(), {}],
+    ["mobile/narrow", () => mockMobileViewport(), {}],
+    ["floating/compact", () => mockDesktopViewport(), { floating: true, compactLayout: true }],
+  ])("renders normalized room transcript oldest-first in the %s host", async (_host, setViewport, hostProps) => {
+    setViewport();
+    // This state is the ascending result of the newest-first API fixture covered by useChatRooms.
+    setup({}, {
+      messages: [
+        { id: "room-user-hi", roomId: roomA.id, role: "user", content: "Old user Hi", createdAt: "2026-04-08T00:00:00.000Z", senderAgentId: null, mentions: [] },
+        { id: "room-cto-reply", roomId: roomA.id, role: "assistant", content: "Newer CTO reply", createdAt: "2026-04-08T00:02:00.000Z", senderAgentId: "cto", mentions: [] },
+        { id: "room-pm-reply", roomId: roomA.id, role: "assistant", content: "Newest PM reply", createdAt: "2026-04-08T00:02:01.000Z", senderAgentId: "pm", mentions: [] },
+      ],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} {...hostProps} />);
+
+    const rendered = [
+      screen.getByText("Old user Hi"),
+      screen.getByText("Newer CTO reply"),
+      screen.getByText("Newest PM reply"),
+    ];
+    expect(rendered[0]!.compareDocumentPosition(rendered[1]!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(rendered[1]!.compareDocumentPosition(rendered[2]!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("renders Direct/Rooms toggle and allows room selection without message leakage", async () => {
     const selectRoom = vi.fn();
     const roomB = { ...roomA, id: "room-b", name: "Room B", slug: "room-b" };
@@ -367,25 +393,81 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
   });
 
-  it("renders room header thinking picker and updates room settings", async () => {
+  it("renders the room composer thinking control beside attach and updates room settings", async () => {
     const updateRoomSettings = vi.fn().mockResolvedValue({ ...roomA, thinkingLevel: "high" });
     setup({}, { activeRoom: { ...roomA, thinkingLevel: "medium" }, updateRoomSettings });
 
     const { container } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
-    const select = screen.getByTestId("chat-room-thinking-level") as HTMLSelectElement;
-    expect(select.value).toBe("medium");
-    expect(within(select).getByRole("option", { name: "Use default" })).toBeDefined();
-    for (const label of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
-      expect(within(select).getByRole("option", { name: label })).toBeDefined();
-    }
+    const header = container.querySelector(".chat-room-thread-header");
+    expect(header?.querySelector("[data-testid='chat-room-thinking-level']")).toBeNull();
+    expect(header?.querySelector("label[for='chat-room-thinking-level']")).toBeNull();
+    expect(header?.querySelector(".chat-room-thinking-level-field")).toBeNull();
 
-    await userEvent.selectOptions(select, "high");
+    const attachButton = screen.getByTestId("chat-attach-btn");
+    const thinkingButton = screen.getByTestId("chat-thinking-btn");
+    expect(attachButton.nextElementSibling).toContainElement(thinkingButton);
+
+    await userEvent.click(thinkingButton);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-thinking-option-default")).toHaveTextContent(/Default/);
+    for (const label of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    }
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("chat-thinking-option-high"));
     expect(updateRoomSettings).toHaveBeenCalledWith("room-a", { thinkingLevel: "high" });
 
-    await userEvent.selectOptions(select, "");
+    await userEvent.click(thinkingButton);
+    await userEvent.click(screen.getByTestId("chat-thinking-option-default"));
     expect(updateRoomSettings).toHaveBeenCalledWith("room-a", { thinkingLevel: null });
-    expect(container.querySelector(".chat-input-area [data-testid='chat-room-thinking-level']")).toBeNull();
+  });
+
+  it("shows a room thinking update failure toast", async () => {
+    const addToast = vi.fn();
+    const updateRoomSettings = vi.fn().mockRejectedValue(new Error("update failed"));
+    setup({}, { updateRoomSettings });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} experimentalFeatures={{ chatRooms: true }} />);
+
+    await userEvent.click(screen.getByTestId("chat-thinking-btn"));
+    await userEvent.click(screen.getByTestId("chat-thinking-option-high"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Failed to update room thinking effort", "error");
+    });
+  });
+
+  it("keeps the level-only thinking control reachable beside attach on mobile", async () => {
+    const viewportSpy = mockMobileViewport();
+
+    const { container } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const header = container.querySelector(".chat-room-thread-header");
+    expect(header).toBeNull();
+    expect(container.querySelector("[data-testid='chat-room-thinking-level']")).toBeNull();
+    expect(container.querySelector("label[for='chat-room-thinking-level']")).toBeNull();
+    expect(container.querySelector(".chat-room-thinking-level-field")).toBeNull();
+
+    const attachButton = screen.getByTestId("chat-attach-btn");
+    const thinkingButton = screen.getByTestId("chat-thinking-btn");
+    expect(attachButton.nextElementSibling).toContainElement(thinkingButton);
+    await userEvent.click(thinkingButton);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
+
+    viewportSpy.mockRestore();
+  });
+
+  it("omits the room composer thinking control when no room is active", async () => {
+    setup({}, { activeRoom: null });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    expect(screen.queryByTestId("chat-thinking-btn")).toBeNull();
   });
 
   it("passes attachment file list shape to room sends", async () => {

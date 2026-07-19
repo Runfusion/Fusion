@@ -45,7 +45,26 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
       sourceLabel = firstLine ? firstLine.replace(/\s+/g, " ") : sourceTask.id;
     }
 
-    return store.createTaskWithDistributedReservation({ description: feedback.trim() }, {
+    /*
+     * FNXC:WorkflowOptionalSteps 2026-07-16-00:00:
+     * FN-8188 requires refinements to inherit create-time default-workflow seeding so
+     * default-on optional groups, including plan-review and code-review, gate them
+     * exactly as they gate newly created tasks.
+     */
+    let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
+    try {
+      const inherited = await store.materializeDefaultWorkflowSteps();
+      if (inherited) {
+        pendingWorkflowSelection = inherited;
+      }
+    } catch (err) {
+      storeLog.warn("Failed to apply default workflow during refinement task creation", {
+        phase: "refineTask:default-workflow",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const newTask = await store.createTaskWithDistributedReservation({ description: feedback.trim() }, {
       createTaskWithId: async (newId) => {
         // FN-5077: keep deterministic "Refinement" fallback when normalized refinement label is unusable (null).
         const normalizedTitle = normalizeTitleForTaskId(`Refinement: ${sourceLabel}`, newId);
@@ -82,6 +101,9 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
           createdAt: now,
           updatedAt: now,
           attachments: sourceTask.attachments ? [...sourceTask.attachments] : undefined,
+          ...(pendingWorkflowSelection
+            ? { enabledWorkflowSteps: pendingWorkflowSelection.stepIds }
+            : {}),
         };
 
         await store.maybeResolveTombstonedTaskId(newId, {}, "refineTask");
@@ -116,6 +138,24 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
         return newTask;
       },
     });
+
+    // Record the inherited selection only after its task row exists, matching createTask.
+    if (pendingWorkflowSelection) {
+      try {
+        await store.writeTaskWorkflowSelection(
+          newTask.id,
+          pendingWorkflowSelection.workflowId,
+          pendingWorkflowSelection.stepIds,
+        );
+      } catch (err) {
+        storeLog.warn("Failed to record inherited workflow selection", {
+          taskId: newTask.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return newTask;
   }
 
 export async function updateTaskDependenciesImpl(store: TaskStore, id: string, mutation: TaskDependencyMutation, runContext?: RunMutationContext,): Promise<Task> {

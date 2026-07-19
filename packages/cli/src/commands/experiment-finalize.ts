@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { TaskStore, createTaskStoreForBackend } from "@fusion/core";
+import { createTaskStoreForBackend } from "@fusion/core";
 import {
   defaultGitOps,
   ExperimentFinalizeBranchExistsError,
@@ -12,7 +12,7 @@ import {
   ExperimentFinalizeStateError,
   type FinalizePlanOverride,
 } from "@fusion/engine";
-import { resolveProject } from "../project-context.js";
+import { closeProjectStore, resolveProject, type ProjectContext } from "../project-context.js";
 
 interface ExperimentFinalizeOptions {
   sessionId: string;
@@ -50,7 +50,11 @@ async function parsePlanOverride(path: string): Promise<FinalizePlanOverride> {
   return JSON.parse(content) as FinalizePlanOverride;
 }
 
-function exitWithError(error: unknown): never {
+async function exitWithError(error: unknown, shutdown?: () => Promise<void>): Promise<never> {
+  /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Experiment-finalize must attempt backend teardown before exit without allowing a shutdown rejection to replace its established typed error code. */
+  await shutdown?.().catch((cleanupError) => {
+    console.error(`Cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+  });
   if (error instanceof ExperimentFinalizeCherryPickConflictError) {
     console.error(`Error: ${error.message}`);
     console.error(JSON.stringify({ groupId: error.groupId, commit: error.commit, stderr: error.stderr }));
@@ -66,17 +70,27 @@ function exitWithError(error: unknown): never {
 }
 
 export async function runExperimentFinalize(options: ExperimentFinalizeOptions): Promise<void> {
+  let backendShutdown: (() => Promise<void>) | undefined;
+  const shutdownBackend = async (): Promise<void> => {
+    const shutdown = backendShutdown;
+    backendShutdown = undefined;
+    await shutdown?.();
+  };
   try {
-    const project = options.projectName ? await resolveProject(options.projectName) : undefined;
-    const projectRoot = project?.projectPath ?? process.cwd();
-    // FNXC:PostgresCutover 2026-07-04: boot the PostgreSQL backend via the startup
-    // factory instead of a legacy SQLite TaskStore whose runtime was removed
-    // (VAL-REMOVAL-005). Falls back to legacy only on FUSION_NO_EMBEDDED_PG=1.
-    const boot = await createTaskStoreForBackend({ rootDir: projectRoot });
-    const taskStore: TaskStore = boot ? boot.taskStore : new TaskStore(projectRoot);
-    if (!boot) {
-      await taskStore.init();
+    let project: ProjectContext | undefined;
+    let projectRoot = process.cwd();
+    try {
+      project = options.projectName ? await resolveProject(options.projectName) : undefined;
+      projectRoot = project?.projectPath ?? projectRoot;
+    } finally {
+      /* FNXC:PostgresCliLifecycle 2026-07-14-21:20: Experiment finalization boots its own backend after path resolution, so always close and evict the resolver-owned project context before parsing or Git work can succeed or fail. */
+      if (project) await closeProjectStore(project);
     }
+    // FNXC:PostgresFinalCutover 2026-07-14-17:20: Experiment finalization has one
+    // authoritative PostgreSQL store path; the startup factory is non-nullable.
+    const boot = await createTaskStoreForBackend({ rootDir: projectRoot });
+    backendShutdown = boot.shutdown;
+    const taskStore = boot.taskStore;
     const sessionStore = taskStore.getExperimentSessionStore();
     const service = new ExperimentFinalizeService({
       store: sessionStore,
@@ -95,6 +109,7 @@ export async function runExperimentFinalize(options: ExperimentFinalizeOptions):
       } else {
         printPlan(plan);
       }
+      await shutdownBackend();
       return;
     }
 
@@ -107,6 +122,7 @@ export async function runExperimentFinalize(options: ExperimentFinalizeOptions):
 
     if (options.json) {
       printJson({ result });
+      await shutdownBackend();
       return;
     }
 
@@ -114,6 +130,7 @@ export async function runExperimentFinalize(options: ExperimentFinalizeOptions):
     for (const branch of result.branches) {
       console.log(`- ${branch.name} (${branch.tipCommit})`);
     }
+    await shutdownBackend();
   } catch (error) {
     if (
       error instanceof ExperimentFinalizeStateError
@@ -123,8 +140,8 @@ export async function runExperimentFinalize(options: ExperimentFinalizeOptions):
       || error instanceof ExperimentFinalizeBranchExistsError
       || error instanceof ExperimentFinalizeCherryPickConflictError
     ) {
-      exitWithError(error);
+      await exitWithError(error, shutdownBackend);
     }
-    exitWithError(error);
+    await exitWithError(error, shutdownBackend);
   }
 }

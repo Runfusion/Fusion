@@ -51,9 +51,9 @@ export {
   type VerificationResult,
 } from "./verification-utils.js";
 
-import { existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, dirname, basename } from "node:path";
+import { join } from "node:path";
 import {
   computeLockfileHash,
   getConfiguredWorktreeInitCommand,
@@ -104,9 +104,10 @@ import {
   type AutostashOrphanRecord,
   normalizeMergeAdvanceAutoSyncMode,
   isMergeRequestContractShadowEnabled,
+  resolveMergerFallbackModel,
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
-import { resolveMergePolicy, type MergeFileScopeMode } from "./merge-trait.js";
+import { resolveMergePolicy } from "./merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
@@ -117,6 +118,131 @@ import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, Re
 import { activeSessionRegistry } from "./active-session-registry.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
+
+// FNXC:CodeOrganization 2026-07-15-12:00:
+// Domain satellites re-exported so existing merger.js import paths stay stable.
+export {
+  LOCKFILE_PATTERNS,
+  GENERATED_PATTERNS,
+  matchGlob,
+} from "./merger-glob.js";
+export type { ConflictType } from "./merger-glob.js";
+import { matchGlob, LOCKFILE_PATTERNS, GENERATED_PATTERNS } from "./merger-glob.js";
+import type { ConflictType } from "./merger-glob.js";
+
+export {
+  parsePnpmWorkspaceGlobs,
+  resolveWorkspacePackageRoots,
+  mapChangedFilesToPackageNames,
+  packageNamesForFiles,
+  deriveScopedPnpmTestCommand,
+  deriveFileScopedPnpmTestCommand,
+  inferDefaultTestCommand,
+} from "./merger-workspace-test-commands.js";
+export type { InferredTestCommand } from "./merger-workspace-test-commands.js";
+import {
+  packageNamesForFiles,
+  inferDefaultTestCommand,
+} from "./merger-workspace-test-commands.js";
+
+export {
+  parseDiffStat,
+  extractFileScope,
+  matchesScope,
+  partitionConflictsByFileScope,
+  FileScopeViolationError,
+  assertSquashOverlapsFileScope,
+  formatFileScopeViolationAgentLog,
+  enforceSquashFileScopeInvariant,
+} from "./merger-file-scope.js";
+export type { DiffFileEntry, DiffScopeResult, StagedFilesReader } from "./merger-file-scope.js";
+import {
+  parseDiffStat,
+  extractFileScope,
+  matchesScope,
+  partitionConflictsByFileScope,
+  FileScopeViolationError,
+  enforceSquashFileScopeInvariant,
+} from "./merger-file-scope.js";
+import type { DiffScopeResult } from "./merger-file-scope.js";
+
+export {
+  VerificationError,
+  MergeAbortedError,
+  OutOfScopeVerificationError,
+  throwIfAborted,
+} from "./merger-errors.js";
+import {
+  VerificationError,
+  OutOfScopeVerificationError,
+  throwIfAborted,
+} from "./merger-errors.js";
+
+export {
+  FUSION_TASK_ID_TRAILER_KEY,
+  toTaskToken,
+  classifyOwnedLandedEvidence,
+} from "./merger-owned-landed.js";
+export type { OwnedLandedClassification } from "./merger-owned-landed.js";
+import {
+  FUSION_TASK_ID_TRAILER_KEY,
+  classifyOwnedLandedEvidence,
+} from "./merger-owned-landed.js";
+
+export {
+  getConflictedFiles,
+  isTrivialWhitespaceConflict,
+  classifyConflict,
+  resolveWithOurs,
+  resolveWithTheirs,
+  resolveTrivialWhitespace,
+  detectResolvableConflicts,
+  autoResolveFile,
+  resolveConflicts,
+} from "./merger-conflict-resolution.js";
+export type { ConflictResolution, ConflictCategory } from "./merger-conflict-resolution.js";
+import {
+  getConflictedFiles,
+  classifyConflict,
+  resolveWithOurs,
+  resolveWithTheirs,
+  resolveTrivialWhitespace,
+} from "./merger-conflict-resolution.js";
+
+export {
+  parseFailingFilesFromOutput,
+  parsePorcelainZ,
+  parseShortstatSummary,
+  getBranchChangedFiles,
+  quoteArg,
+} from "./merger-git-parse.js";
+import {
+  parseFailingFilesFromOutput,
+  parsePorcelainZ,
+  parseShortstatSummary,
+  getBranchChangedFiles,
+  quoteArg,
+} from "./merger-git-parse.js";
+
+export {
+  AUTOSTASH_LABEL_PREFIX,
+  LEGACY_AI_SYNC_LABEL_PREFIX,
+  AUTOSTASH_TIMESTAMP_RE,
+  buildAutostashLabel,
+  parseAutostashTaskId,
+  parseAutostashCreatedAt,
+  parseAutostashSourcePhase,
+} from "./merger-autostash-labels.js";
+import {
+  AUTOSTASH_LABEL_PREFIX,
+  LEGACY_AI_SYNC_LABEL_PREFIX,
+  AUTOSTASH_TIMESTAMP_RE,
+  parseAutostashTaskId,
+  parseAutostashCreatedAt,
+  parseAutostashSourcePhase,
+} from "./merger-autostash-labels.js";
+
+
 import { regenerateBareMergeSubject } from "./merger-bare-subject.js";
 export { regenerateBareMergeSubject, BARE_MERGE_SUBJECT_RE } from "./merger-bare-subject.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
@@ -135,7 +261,16 @@ import {
   type SquashAuditFindings,
 } from "./merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
-import { checkDiffVolume, DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
+import {
+  checkDiffVolume,
+  DiffVolumeRegressionError,
+  resolveDiffVolumeGateSettings,
+  formatDiffVolumeFindings,
+} from "./merger-diff-volume-gate.js";
+export {
+  resolveDiffVolumeGateSettings,
+  formatDiffVolumeFindings,
+} from "./merger-diff-volume-gate.js";
 import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./already-merged-detector.js";
 import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merger-auto-prerebase.js";
 import {
@@ -157,6 +292,17 @@ import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merger
 
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
+
+/*
+FNXC:MergeReliability 2026-07-15-14:55:
+`smartConflictResolution` was introduced as an alias, not a second enablement gate. Preserve an operator's legacy `autoResolveConflicts: false` choice even when stored defaults include the newer alias.
+*/
+function isSmartConflictResolutionEnabled(settings: {
+  autoResolveConflicts?: boolean;
+  smartConflictResolution?: boolean;
+}): boolean {
+  return settings.autoResolveConflicts !== false && settings.smartConflictResolution !== false;
+}
 
 async function resolveMergerMcpServers(store?: TaskStore, agentId?: string | null) {
   // FNXC:McpConfig 2026-06-25-22:27:
@@ -298,42 +444,6 @@ export async function runMergeAdvanceAutoSync(input: {
   }
 }
 
-/** Conflict type classification for merge conflict resolution */
-export type ConflictType =
-  | "lockfile-ours"
-  | "generated-theirs"
-  | "trivial-whitespace"
-  | "complex";
-
-/** Lock file patterns that should auto-resolve using "ours" (keep current branch's version) */
-export const LOCKFILE_PATTERNS = [
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "Gemfile.lock",
-  "composer.lock",
-  "poetry.lock",
-  "bun.lockb",
-  "go.sum",
-];
-
-/** Generated file patterns that should auto-resolve using "theirs" (keep branch's fresh generation) */
-export const GENERATED_PATTERNS = [
-  "*.gen.ts",
-  "*.gen.js",
-  "*.min.js",
-  "*.min.css",
-  "dist/*",
-  "build/*",
-  "coverage/*",
-  ".next/*",
-  ".nuxt/*",
-  ".output/*",
-  ".cache/*",
-  "out/*",
-  "__generated__/*",
-  "generated/*",
-];
 
 const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
   "package.json",
@@ -396,74 +506,6 @@ const MERGE_USER_COMMENTS_MAX_CHARS = 4000;
  */
 export const summarizeVerificationOutputLocal = summarizeVerificationOutput;
 
-/** Check if a path matches a glob pattern (simple glob support: * and **) */
-export function matchGlob(path: string, pattern: string): boolean {
-  // Handle ** which matches across directory boundaries (must do before single *)
-  if (pattern.includes("**")) {
-    // Convert ** to match any characters including /
-    const regexPattern = pattern
-      .replace(/\./g, "\\.")
-      .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
-      .replace(/\*/g, "[^/]*")
-      .replace(/<<<DOUBLESTAR>>>/g, ".*");
-    const regex = new RegExp(`^${regexPattern}$`);
-    return regex.test(path);
-  }
-  
-  // Handle patterns with single directory wildcards (e.g., "src/*.ts")
-  const lastSlash = pattern.lastIndexOf("/");
-  if (lastSlash !== -1) {
-    const patternDir = pattern.slice(0, lastSlash);
-    const patternFile = pattern.slice(lastSlash + 1);
-    const pathDir = path.lastIndexOf("/") !== -1 ? path.slice(0, path.lastIndexOf("/")) : "";
-    const pathFile = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/")) : path;
-    
-    // Check if directories match
-    if (patternDir.includes("*")) {
-      const dirRegex = new RegExp(`^${patternDir.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`);
-      if (!dirRegex.test(pathDir)) return false;
-    } else if (!pathDir.endsWith(patternDir) && patternDir !== pathDir) {
-      return false;
-    }
-    
-    // Match filename pattern
-    return matchGlob(pathFile, patternFile);
-  }
-  
-  // Simple pattern without directory - match against filename only or full path
-  const fileName = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/") + 1) : path;
-  
-  // Convert glob to regex
-  const regexPattern = pattern
-    .replace(/\./g, "\\.")
-    .replace(/\*/g, "[^/]*");
-  const regex = new RegExp(`^${regexPattern}$`);
-  return regex.test(fileName) || regex.test(path);
-}
-
-interface DiffVolumeGateSettings {
-  minLines: number;
-  threshold: number;
-  allowlistGlobs: string[];
-}
-
-function resolveDiffVolumeGateSettings(settings?: Settings): DiffVolumeGateSettings {
-  const minLinesRaw = settings?.mergeDiffVolumeMinLines ?? 20;
-  const thresholdRaw = settings?.mergeDiffVolumeThreshold ?? 0.2;
-  return {
-    minLines: Math.max(1, Math.trunc(Number.isFinite(minLinesRaw) ? minLinesRaw : 20)),
-    threshold: Math.min(1, Math.max(0, Number.isFinite(thresholdRaw) ? thresholdRaw : 0.2)),
-    allowlistGlobs: Array.isArray(settings?.mergeDiffVolumeAllowlist)
-      ? settings.mergeDiffVolumeAllowlist.filter((glob): glob is string => typeof glob === "string" && glob.trim().length > 0)
-      : [],
-  };
-}
-
-function formatDiffVolumeFindings(findings: ReadonlyArray<{ file: string; branchNet: number; staged: number; ratio: number }>): string {
-  return findings
-    .map((finding) => `${finding.file} (branchNet=${finding.branchNet}, staged=${finding.staged}, ratio=${finding.ratio.toFixed(3)})`)
-    .join("\n");
-}
 
 async function resetToIntegrationTarget(rootDir: string, integrationTargetSha: string): Promise<void> {
   await execAsync(`git reset --hard ${quoteArg(integrationTargetSha)}`, {
@@ -566,897 +608,8 @@ async function syncDependenciesForMerge(
   });
 }
 
-// ── Default test command inference ────────────────────────────────────
 
-/** Result of inferring a default test command */
-interface InferredTestCommand {
-  command: string;
-  /** Source indicates whether this was explicitly configured or inferred from project files */
-  testSource: "explicit" | "inferred" | "inferred-scoped";
-  buildSource?: "explicit" | "inferred";
-}
 
-interface OwnedLandedCommit {
-  sha: string;
-  subject?: string;
-  filesChanged?: number;
-  insertions?: number;
-  deletions?: number;
-}
-
-export type OwnedLandedClassification =
-  | { kind: "owned-commit"; commit: OwnedLandedCommit }
-  | { kind: "proven-no-op"; baseRef: string; ownDiffEmpty: true }
-  | {
-    kind: "no-changes-finalized";
-    baseRef: string;
-    details: {
-      branchExists: boolean;
-      aheadCount: number | null;
-      baseReachableFromTarget: boolean;
-    };
-  }
-  | {
-    kind: "unproven";
-    reason: "foreign-start-point" | "no-owned-commit-foreign-deltas" | "missing-evidence";
-    details: Record<string, unknown>;
-  };
-
-function escapeRegexForOwnership(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Decide whether a git commit belongs to a given task. Line-anchored trailers
- * and subject-anchored conventional commits only — prose mentions never count.
- * Mirrors `commitOwnedByTask` in self-healing.ts (FN-5441/FN-5446 regression).
- */
-function commitOwnedByTask(taskId: string, subject: string, body: string): boolean {
-  if (new RegExp(`(?:^|\\n)${escapeRegexForOwnership(FUSION_TASK_ID_TRAILER_KEY)}: ${escapeRegexForOwnership(taskId)}\\s*(?:\\n|$)`).test(body)) {
-    return true;
-  }
-  const subjectAnchor = new RegExp(
-    `^(?:[A-Za-z]+(?:\\([^)]*\\b${escapeRegexForOwnership(taskId)}\\b[^)]*\\))?:|${escapeRegexForOwnership(taskId)}:)`,
-  );
-  return subjectAnchor.test(subject);
-}
-
-async function findOwnedLandedCommitForTask(rootDir: string, task: Task): Promise<OwnedLandedCommit | null> {
-  const tryHydrate = async (sha: string): Promise<OwnedLandedCommit | null> => {
-    try {
-      await execFileAsync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: rootDir });
-      const { stdout } = await execFileAsync("git", ["log", "-1", "--format=%H%x1f%s%x1f%b", sha], {
-        cwd: rootDir,
-        encoding: "utf-8",
-      });
-      const [resolvedSha, subject = "", body = ""] = stdout.trim().split("\x1f");
-      if (!resolvedSha || !commitOwnedByTask(task.id, subject, body)) return null;
-      const owned: OwnedLandedCommit = { sha: resolvedSha, subject };
-      try {
-        const { stdout: statsOut } = await execFileAsync("git", ["show", "--shortstat", "--format=", resolvedSha], {
-          cwd: rootDir,
-          encoding: "utf-8",
-        });
-        Object.assign(owned, parseDiffStat(statsOut));
-      } catch {
-        // stats optional
-      }
-      return owned;
-    } catch {
-      return null;
-    }
-  };
-
-  if (task.mergeDetails?.commitSha) {
-    const ownedStored = await tryHydrate(task.mergeDetails.commitSha);
-    if (ownedStored) return ownedStored;
-  }
-
-  const trailer = `${FUSION_TASK_ID_TRAILER_KEY}: ${task.id}`;
-  const searches: string[][] = [
-    ["log", "--format=%H%x1f%s", "--max-count=20", "--fixed-strings", `--grep=${trailer}`, "HEAD"],
-    ["log", "--format=%H%x1f%s", "--max-count=20", "--fixed-strings", `--grep=${task.id}`, "HEAD"],
-  ];
-
-  for (const args of searches) {
-    try {
-      const { stdout } = await execFileAsync("git", args, { cwd: rootDir, encoding: "utf-8" });
-      const first = stdout.trim().split("\n").find(Boolean);
-      if (!first) continue;
-      const [sha] = first.split("\x1f");
-      if (!sha) continue;
-      const owned = await tryHydrate(sha);
-      if (owned) return owned;
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
-}
-
-export function toTaskToken(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-export async function classifyOwnedLandedEvidence(
-  rootDir: string,
-  task: Task,
-  opts: { mergeTargetBranch: string },
-): Promise<OwnedLandedClassification> {
-  const branch = resolveTaskWorkingBranch(task);
-  const mergeTargetBranch = opts.mergeTargetBranch;
-
-  const ownedCommit = await findOwnedLandedCommitForTask(rootDir, task);
-  if (ownedCommit) {
-    try {
-      await execFileAsync("git", ["merge-base", "--is-ancestor", ownedCommit.sha, mergeTargetBranch], { cwd: rootDir });
-      return { kind: "owned-commit", commit: ownedCommit };
-    } catch {
-      // fall through
-    }
-  }
-
-  let aheadCount: number | null = null;
-  try {
-    const { stdout } = await execFileAsync("git", ["rev-list", "--count", `${mergeTargetBranch}..${branch}`], {
-      cwd: rootDir,
-      encoding: "utf-8",
-    });
-    aheadCount = Number.parseInt(stdout.trim(), 10);
-    if (!Number.isFinite(aheadCount)) aheadCount = null;
-  } catch {
-    aheadCount = null;
-  }
-
-  let baseReachableFromTarget = false;
-  if (task.baseCommitSha) {
-    try {
-      await execFileAsync("git", ["merge-base", "--is-ancestor", task.baseCommitSha, mergeTargetBranch], { cwd: rootDir });
-      baseReachableFromTarget = true;
-    } catch {
-      baseReachableFromTarget = false;
-    }
-  }
-
-  if (aheadCount === 0 && (baseReachableFromTarget || !task.baseCommitSha)) {
-    return { kind: "proven-no-op", baseRef: mergeTargetBranch, ownDiffEmpty: true };
-  }
-
-  // FN-5345/FN-5377: empty-own-diff detection.
-  //
-  // A branch with one or more own commits whose net tree change vs its own
-  // merge-base with the integration branch is empty (e.g. a verification-only
-  // task that produced a `git commit --allow-empty` handoff commit) is
-  // logically equivalent to `proven-no-op` — there is nothing to land.
-  //
-  // We require the merge-base to be reachable from the integration target so
-  // we never claim no-op for a branch rooted off some other ref. This pairs
-  // with the FN-5345/FN-5377 pre-commit empty-commit refusal hook (which
-  // prevents the bad state from being created going forward) and recovers
-  // any tasks already wedged in this state.
-  if (aheadCount !== null && aheadCount > 0) {
-    try {
-      const { stdout: mergeBaseOut } = await execFileAsync(
-        "git",
-        ["merge-base", mergeTargetBranch, branch],
-        { cwd: rootDir, encoding: "utf-8" },
-      );
-      const mergeBase = mergeBaseOut.trim();
-      if (mergeBase) {
-        let ownDiffEmpty = false;
-        try {
-          await execFileAsync(
-            "git",
-            ["diff", "--quiet", `${mergeBase}..${branch}`],
-            { cwd: rootDir },
-          );
-          ownDiffEmpty = true;
-        } catch {
-          // exit non-zero — net diff exists, NOT empty-own-diff
-          ownDiffEmpty = false;
-        }
-        if (ownDiffEmpty) {
-          let mergeBaseReachable = baseReachableFromTarget;
-          if (!mergeBaseReachable) {
-            try {
-              await execFileAsync(
-                "git",
-                ["merge-base", "--is-ancestor", mergeBase, mergeTargetBranch],
-                { cwd: rootDir },
-              );
-              mergeBaseReachable = true;
-            } catch {
-              mergeBaseReachable = false;
-            }
-          }
-          if (mergeBaseReachable) {
-            return { kind: "proven-no-op", baseRef: mergeTargetBranch, ownDiffEmpty: true };
-          }
-        }
-      }
-    } catch {
-      // merge-base lookup failed — fall through to existing classifications
-    }
-  }
-
-  let branchExists = false;
-  try {
-    await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: rootDir });
-    branchExists = true;
-  } catch {
-    branchExists = false;
-  }
-
-  if (!ownedCommit && !branchExists && aheadCount === null && (baseReachableFromTarget || !task.baseCommitSha)) {
-    return {
-      kind: "no-changes-finalized",
-      baseRef: mergeTargetBranch,
-      details: {
-        branchExists,
-        aheadCount,
-        baseReachableFromTarget,
-      },
-    };
-  }
-
-  if (task.baseCommitSha && !baseReachableFromTarget) {
-    try {
-      const { stdout } = await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads/fusion"], {
-        cwd: rootDir,
-        encoding: "utf-8",
-      });
-      const refs = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-      for (const ref of refs) {
-        if (ref === branch) continue;
-        try {
-          await execFileAsync("git", ["merge-base", "--is-ancestor", task.baseCommitSha, ref], { cwd: rootDir });
-          return {
-            kind: "unproven",
-            reason: "foreign-start-point",
-            details: { branch, mergeTargetBranch, baseCommitSha: task.baseCommitSha, foreignRef: ref, aheadCount },
-          };
-        } catch {
-          // continue
-        }
-      }
-    } catch {
-      // continue to missing evidence
-    }
-  }
-
-  if (aheadCount !== null && aheadCount > 0) {
-    try {
-      const { stdout } = await execFileAsync("git", ["log", "--format=%s%x1f%b", `${mergeTargetBranch}..${branch}`], {
-        cwd: rootDir,
-        encoding: "utf-8",
-      });
-      const currentToken = toTaskToken(task.id);
-      const lines = stdout.split("\n").filter(Boolean);
-      let foreignCount = 0;
-      for (const line of lines) {
-        const [subject = "", body = ""] = line.split("\x1f");
-        const trailerMatch = body.match(/Fusion-Task-Id:\s*([^\n\r]+)/i);
-        const trailerToken = trailerMatch ? toTaskToken(trailerMatch[1] || "") : "";
-        const subjectTokenMatch = subject.match(/\((FN-[^)]+)\)/i);
-        const subjectToken = subjectTokenMatch ? toTaskToken(subjectTokenMatch[1] || "") : "";
-        if ((trailerToken && trailerToken !== currentToken) || (subjectToken && subjectToken !== currentToken)) {
-          foreignCount += 1;
-        }
-      }
-      if (foreignCount > 0) {
-        return {
-          kind: "unproven",
-          reason: "no-owned-commit-foreign-deltas",
-          details: { branch, mergeTargetBranch, aheadCount, foreignCommitCount: foreignCount },
-        };
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  return {
-    kind: "unproven",
-    reason: "missing-evidence",
-    details: {
-      branch,
-      mergeTargetBranch,
-      aheadCount,
-      branchExists,
-      baseCommitShaPresent: Boolean(task.baseCommitSha),
-      baseReachableFromTarget,
-      hasOwnedCommit: Boolean(ownedCommit),
-    },
-  };
-}
-
-/**
- * Parse a pnpm-workspace.yaml file and return the list of package glob patterns.
- * Handles only the `packages:` list format used in pnpm workspace configs.
- * Returns an empty array on any parse failure (best-effort).
- *
- * @internal Exported for testing only.
- */
-export function parsePnpmWorkspaceGlobs(workspaceYamlContent: string): string[] {
-  const globs: string[] = [];
-  let inPackages = false;
-  for (const rawLine of workspaceYamlContent.split("\n")) {
-    const line = rawLine.trimEnd();
-    if (/^packages\s*:/.test(line)) {
-      inPackages = true;
-      continue;
-    }
-    if (inPackages) {
-      // A new top-level key ends the packages block
-      if (/^\S/.test(line) && line.trim() !== "") {
-        break;
-      }
-      // List item: "  - 'some/glob'" or `  - "some/glob"` or `  - some/glob`
-      const match = line.match(/^\s+-\s+['"]?([^'"#\s]+)['"]?/);
-      if (match && match[1]) {
-        globs.push(match[1]);
-      }
-    }
-  }
-  return globs;
-}
-
-/**
- * Given a list of workspace package globs (e.g. "packages/*") and a rootDir,
- * return all package root directories (dirs that contain a package.json) that
- * match at least one glob.
- *
- * Glob matching: only simple single-star patterns at the last path segment are
- * supported (covering the `packages/*` and `plugins/examples/*` patterns used
- * in practice). Literal paths (no glob) are treated as direct package roots.
- *
- * @internal Exported for testing only.
- */
-export function resolveWorkspacePackageRoots(
-  rootDir: string,
-  globs: string[],
-): string[] {
-  const roots: string[] = [];
-  for (const glob of globs) {
-    const starIdx = glob.indexOf("*");
-    if (starIdx === -1) {
-      // Literal path — treat the glob itself as a package root
-      const candidate = join(rootDir, glob);
-      if (existsSync(join(candidate, "package.json"))) {
-        roots.push(glob); // Store relative to rootDir
-      }
-      continue;
-    }
-    // Pattern like "packages/*" or "plugins/examples/*"
-    // The prefix is everything before the last slash before the star
-    const prefix = glob.slice(0, starIdx);
-    const parentDir = join(rootDir, prefix.replace(/\/$/, ""));
-    let entries: string[];
-    try {
-      entries = readdirSync(parentDir, { withFileTypes: true })
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const relPath = `${prefix.replace(/\/$/, "")}/${entry}`;
-      const absPath = join(rootDir, relPath);
-      if (existsSync(join(absPath, "package.json"))) {
-        roots.push(relPath); // Store relative to rootDir
-      }
-    }
-  }
-  return roots;
-}
-
-/**
- * Given a list of changed files (relative to rootDir) and a list of package
- * root paths (relative to rootDir), return the unique package names (from each
- * package.json's "name" field) whose root is the longest prefix-match for at
- * least one changed file.
- *
- * @internal Exported for testing only.
- */
-export function mapChangedFilesToPackageNames(
-  changedFiles: string[],
-  packageRoots: string[],
-  rootDir: string,
-): string[] {
-  const nameSet = new Set<string>();
-  for (const file of changedFiles) {
-    // Find the longest package root that is a prefix of this file
-    let bestRoot: string | null = null;
-    let bestLen = -1;
-    for (const pkgRoot of packageRoots) {
-      const prefix = pkgRoot.endsWith("/") ? pkgRoot : `${pkgRoot}/`;
-      if (file === pkgRoot || file.startsWith(prefix)) {
-        if (pkgRoot.length > bestLen) {
-          bestLen = pkgRoot.length;
-          bestRoot = pkgRoot;
-        }
-      }
-    }
-    if (bestRoot !== null) {
-      // Read the package name from package.json
-      try {
-        const pkgJsonPath = join(rootDir, bestRoot, "package.json");
-        const raw = readFileSync(pkgJsonPath, "utf-8");
-        const parsed = JSON.parse(raw) as { name?: string };
-        if (parsed.name) {
-          nameSet.add(parsed.name);
-        }
-      } catch {
-        // If we can't read the package name, use the relative root path
-        nameSet.add(bestRoot);
-      }
-    }
-  }
-  return Array.from(nameSet);
-}
-
-/**
- * Best-effort: map a list of repo-relative file paths to the pnpm package
- * names they belong to. Returns an empty array if pnpm-workspace.yaml is
- * missing or unparseable — callers fall back to a directory-based heuristic.
- *
- * @internal Exported for testing only.
- */
-export function packageNamesForFiles(rootDir: string, files: string[]): string[] {
-  if (files.length === 0) return [];
-  let workspaceContent: string;
-  try {
-    workspaceContent = readFileSync(join(rootDir, "pnpm-workspace.yaml"), "utf-8");
-  } catch {
-    return [];
-  }
-  const globs = parsePnpmWorkspaceGlobs(workspaceContent);
-  if (globs.length === 0) return [];
-  const packageRoots = resolveWorkspacePackageRoots(rootDir, globs);
-  if (packageRoots.length === 0) return [];
-  return mapChangedFilesToPackageNames(files, packageRoots, rootDir);
-}
-
-/**
- * Attempt to derive the set of pnpm package names touched by the branch.
- * Returns null when scoping cannot be determined (missing git context, no
- * workspace file, root-only changes, etc.) — callers fall back to `pnpm test`.
- *
- * @internal Exported for testing only.
- */
-export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string, branch: string): string | null {
-  // 1. Read and parse pnpm-workspace.yaml
-  const workspacePath = join(rootDir, "pnpm-workspace.yaml");
-  let workspaceContent: string;
-  try {
-    workspaceContent = readFileSync(workspacePath, "utf-8");
-  } catch {
-    return null;
-  }
-  const globs = parsePnpmWorkspaceGlobs(workspaceContent);
-  if (globs.length === 0) return null;
-
-  // 2. Resolve actual package roots
-  const packageRoots = resolveWorkspacePackageRoots(rootDir, globs);
-  if (packageRoots.length === 0) return null;
-
-  // 3. Get the changed files between base and the branch tip passed by caller.
-  let changedFilesOutput: string;
-  try {
-    changedFilesOutput = execSync(
-      `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
-    ).toString();
-  } catch {
-    return null;
-  }
-  const changedFiles = changedFilesOutput
-    .split("\n")
-    .map((f) => f.trim())
-    .filter(Boolean);
-  if (changedFiles.length === 0) return null;
-
-  // 4. Map changed files to package names
-  const packageNames = mapChangedFilesToPackageNames(changedFiles, packageRoots, rootDir);
-  if (packageNames.length === 0) {
-    // All changes are at the root (e.g. workspace config) — fall back to full suite
-    return null;
-  }
-
-  // 5. Compose the scoped pnpm command
-  // `...^` includes dependents (packages that import the changed packages).
-  // Package names come from workspace package.json files (potentially
-  // untrusted) so we quote each filter argument via `quoteArg` to prevent
-  // shell interpolation if a name contains metacharacters.
-  const filters = packageNames.map((name) => `--filter ${quoteArg(`${name}...^`)}`).join(" ");
-  return `pnpm ${filters} test`;
-}
-
-/**
- * Matches a Vitest/Jest-style test or spec file by extension.
- * @internal
- */
-const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
-
-/**
- * Derive a verification command that runs ONLY the test files implicated by the
- * branch diff, so merge verification scales with the change instead of the
- * repository.
- *
- * For each file changed between `baseBranch` and `branch`:
- *  - A changed test/spec file (`*.test.ts` / `*.spec.tsx` / …) is run directly.
- *  - A changed source file resolves to its co-located test, if one exists on
- *    disk: `<dir>/__tests__/<name>.test.{ts,tsx}` or the sibling
- *    `<dir>/<name>.test.{ts,tsx}`.
- * Resolved test files are grouped by their owning pnpm workspace package and run
- * via `pnpm --filter <pkg> exec vitest run <relPaths…> --silent=passed-only
- * --reporter=dot`. Multiple packages are joined with ` && `.
- *
- * Returns `null` when scoping can't be established (no workspace, no git
- * context, or — importantly — when NO test files resolve from the diff). The
- * caller treats `null` as "fall back to the broader command".
- *
- * FNXC:Verification 2026-06-25-00:00:
- * Merge/executor verification must complete in seconds-to-<2min by running only
- * the diff's own tests, not a whole-package or full-suite command. This relies
- * on the thin, trusted merge gate (`pnpm test:gate`) to carry cross-cutting
- * coverage; per-branch verification only needs to prove the branch's own tests
- * still pass. When a diff touches source with no co-located test (or only
- * non-source files), file-scoping yields nothing and we deliberately return
- * null so the caller falls back to the existing package-scoped/explicit command
- * rather than verifying nothing. Package names come from workspace package.json
- * files and test paths come from `git diff`, so every shell argument is quoted
- * via `quoteArg`.
- *
- * @internal Exported for testing only.
- */
-export function deriveFileScopedPnpmTestCommand(
-  rootDir: string,
-  baseBranch: string,
-  branch: string,
-): string | null {
-  // 1. Read and parse pnpm-workspace.yaml + resolve package roots.
-  let workspaceContent: string;
-  try {
-    workspaceContent = readFileSync(join(rootDir, "pnpm-workspace.yaml"), "utf-8");
-  } catch {
-    return null;
-  }
-  const globs = parsePnpmWorkspaceGlobs(workspaceContent);
-  if (globs.length === 0) return null;
-  const packageRoots = resolveWorkspacePackageRoots(rootDir, globs);
-  if (packageRoots.length === 0) return null;
-
-  // 2. Get the changed files between base and the branch tip.
-  let changedFilesOutput: string;
-  try {
-    changedFilesOutput = execSync(
-      `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
-    ).toString();
-  } catch {
-    return null;
-  }
-  const changedFiles = changedFilesOutput
-    .split("\n")
-    .map((f) => f.trim())
-    .filter(Boolean);
-  if (changedFiles.length === 0) return null;
-
-  // 3. Resolve a set of repo-relative test files from the diff.
-  const resolvedTests = new Set<string>();
-  for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file)) {
-      // A changed test/spec file is run directly.
-      resolvedTests.add(file);
-      continue;
-    }
-    // A changed source file maps to a co-located test if one exists on disk.
-    const dir = dirname(file);
-    const stem = basename(file).replace(/\.(ts|tsx|js|jsx)$/, "");
-    if (!stem) continue;
-    const candidates = [
-      `${dir}/__tests__/${stem}.test.ts`,
-      `${dir}/__tests__/${stem}.test.tsx`,
-      `${dir}/${stem}.test.ts`,
-      `${dir}/${stem}.test.tsx`,
-    ];
-    for (const candidate of candidates) {
-      // dirname("foo.ts") === "." → normalize the leading "./".
-      const normalized = candidate.startsWith("./") ? candidate.slice(2) : candidate;
-      if (existsSync(join(rootDir, normalized))) {
-        resolvedTests.add(normalized);
-      }
-    }
-  }
-  if (resolvedTests.size === 0) return null;
-
-  // 4. Group resolved test files by their owning workspace package.
-  const byPackage = new Map<string, { name: string; tests: Set<string> }>();
-  for (const testFile of resolvedTests) {
-    // Find the longest package root that is a prefix of this test file.
-    let bestRoot: string | null = null;
-    let bestLen = -1;
-    for (const pkgRoot of packageRoots) {
-      const prefix = pkgRoot.endsWith("/") ? pkgRoot : `${pkgRoot}/`;
-      if (testFile === pkgRoot || testFile.startsWith(prefix)) {
-        if (pkgRoot.length > bestLen) {
-          bestLen = pkgRoot.length;
-          bestRoot = pkgRoot;
-        }
-      }
-    }
-    if (bestRoot === null) continue;
-    const relPath = testFile.slice(bestRoot.length + 1);
-    if (!relPath) continue;
-    // Defensively skip any path quoting can't safely contain.
-    if (relPath.includes("\n") || relPath.includes("\0")) continue;
-    let entry = byPackage.get(bestRoot);
-    if (!entry) {
-      // Read the package name from package.json (fall back to the root path).
-      let name = bestRoot;
-      try {
-        const parsed = JSON.parse(
-          readFileSync(join(rootDir, bestRoot, "package.json"), "utf-8"),
-        ) as { name?: string };
-        if (parsed.name) name = parsed.name;
-      } catch {
-        // keep the relative root path as the filter
-      }
-      entry = { name, tests: new Set<string>() };
-      byPackage.set(bestRoot, entry);
-    }
-    entry.tests.add(relPath);
-  }
-  if (byPackage.size === 0) return null;
-
-  // 5. Compose one scoped vitest invocation per package, joined with ` && `.
-  const segments: string[] = [];
-  for (const root of Array.from(byPackage.keys()).sort()) {
-    const entry = byPackage.get(root);
-    if (!entry) continue;
-    const quotedPaths = Array.from(entry.tests)
-      .sort()
-      .map((p) => quoteArg(p));
-    if (quotedPaths.length === 0) continue;
-    segments.push(
-      `pnpm --filter ${quoteArg(entry.name)} exec vitest run ${quotedPaths.join(" ")} --silent=passed-only --reporter=dot`,
-    );
-  }
-  if (segments.length === 0) return null;
-  return segments.join(" && ");
-}
-
-/**
- * Infer a default test command based on project files.
- * Returns the command and whether it was explicitly configured or inferred.
- *
- * Inference rules:
- * - pnpm-lock.yaml → "pnpm test" (or scoped when monorepo + git context available)
- * - yarn.lock → "yarn test"
- * - bun.lock/bun.lockb → "bun test"
- * - package-lock.json → "npm test"
- *
- * When a pnpm workspace is detected and git context (baseBranch + branch) is
- * provided, the command is automatically scoped to the packages touched by the
- * branch diff. testSource will be "inferred-scoped" in that case.
- *
- * FNXC:Verification 2026-06-25-00:00:
- * When `scopeToChangedFiles` is true (project setting
- * `scopeVerificationToChangedFiles`, default true) AND git context is present,
- * verification is first narrowed to the diff's own test FILES via
- * `deriveFileScopedPnpmTestCommand` — for BOTH explicit and inferred commands,
- * so even a configured whole-package `testCommand` gets file-scoped. This keeps
- * per-branch verification proportional to the change; cross-cutting coverage is
- * owned by the thin merge gate. If file-scoping yields nothing (no resolvable
- * tests) or the setting is off, the original behavior is preserved exactly:
- * explicit command as-is, else package-scoped inference, else unscoped fallback.
- *
- * Returns null if no test command can be inferred.
- */
-export function inferDefaultTestCommand(
-  rootDir: string,
-  explicitTestCommand?: string,
-  explicitBuildCommand?: string,
-  baseBranch?: string,
-  branch?: string,
-  scopeToChangedFiles?: boolean,
-): InferredTestCommand | null {
-  // File-scoped verification: try first for BOTH explicit and inferred cases.
-  // Only narrows when the setting is on, git context exists, and at least one
-  // test file resolves from the diff; otherwise falls through to existing logic.
-  if (scopeToChangedFiles && baseBranch?.trim() && branch?.trim()) {
-    try {
-      const fileScoped = deriveFileScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
-      if (fileScoped) {
-        mergerLog.log(`Scoped verification to changed test files: ${fileScoped}`);
-        const fileScopedBuildSource = explicitBuildCommand?.trim() ? "explicit" : undefined;
-        return { command: fileScoped, testSource: "inferred-scoped", buildSource: fileScopedBuildSource };
-      }
-    } catch {
-      // Fall through to existing explicit/inferred behavior.
-    }
-  }
-
-  // If explicit test command is set, use it (no inference needed)
-  if (explicitTestCommand?.trim()) {
-    return {
-      command: explicitTestCommand.trim(),
-      testSource: "explicit",
-      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
-    };
-  }
-
-  const buildSource = explicitBuildCommand?.trim() ? "explicit" : undefined;
-
-  // Infer test command from lock files
-  if (existsSync(join(rootDir, "pnpm-lock.yaml"))) {
-    // Monorepo heuristic: if pnpm-workspace.yaml exists and we have git context,
-    // scope the command to only the packages touched by this branch's diff.
-    if (existsSync(join(rootDir, "pnpm-workspace.yaml"))) {
-      if (baseBranch?.trim() && branch?.trim()) {
-        try {
-          const scoped = deriveScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
-          if (scoped) {
-            mergerLog.log(
-              `Scoped inferred test command to changed packages: ${scoped}`,
-            );
-            return { command: scoped, testSource: "inferred-scoped", buildSource };
-          }
-        } catch {
-          // Fall through to unscoped fallback
-        }
-      }
-      // No git context or scoping failed — warn and use unscoped
-      mergerLog.warn(
-        `Inferred test command "pnpm test" in a pnpm workspace (${rootDir}). ` +
-        `This runs the full monorepo suite on every merge. Consider setting an explicit ` +
-        `scoped testCommand in project settings, e.g. \`pnpm -r --filter "...[main]" test\`.`,
-      );
-    }
-    return { command: "pnpm test", testSource: "inferred", buildSource };
-  }
-
-  if (existsSync(join(rootDir, "yarn.lock"))) {
-    return { command: "yarn test", testSource: "inferred", buildSource };
-  }
-
-  if (existsSync(join(rootDir, "bun.lock")) || existsSync(join(rootDir, "bun.lockb"))) {
-    return { command: "bun test", testSource: "inferred", buildSource };
-  }
-
-  if (existsSync(join(rootDir, "package-lock.json"))) {
-    return { command: "npm test", testSource: "inferred", buildSource };
-  }
-
-  // No inference possible — return null, letting the caller decide what to do
-  return null;
-}
-
-// ── Deterministic merge verification ──────────────────────────────────
-
-/**
- * Run verification commands deterministically in the engine.
- * Executes testCommand first, then buildCommand (when both are configured).
- * Returns structured results so failures are logged with actionable detail.
- * Throws VerificationError on failure with command details.
- */
-export class VerificationError extends Error {
-  constructor(
-    message: string,
-    public readonly verificationResult: VerificationResult,
-  ) {
-    super(message);
-    this.name = "VerificationError";
-  }
-}
-
-/** Raised when a merge is explicitly cancelled (for example engine shutdown). */
-export class MergeAbortedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "MergeAbortedError";
-  }
-}
-
-/**
- * Raised when fix agent made no changes and the failing test files are all
- * outside the branch's diff. This signals that the failure is pre-existing on
- * the base branch (e.g. a flaky engine test) and retrying cannot help.
- *
- * The merger catches this and marks the task `failed` with a clear error
- * message, bypassing limbo recovery so the user sees an actionable status.
- */
-export class OutOfScopeVerificationError extends Error {
-  constructor(
-    message: string,
-    public readonly failingFiles: string[],
-    public readonly branchFiles: string[],
-  ) {
-    super(message);
-    this.name = "OutOfScopeVerificationError";
-  }
-}
-
-export class SquashAuditError extends Error {
-  constructor(
-    taskId: string,
-    public readonly squashSha: string,
-    public readonly findings: SquashAuditFindings,
-  ) {
-    super(buildPostMergeAuditBlockingMessage(taskId, findings));
-    this.name = "SquashAuditError";
-  }
-}
-
-export function throwIfAborted(signal: AbortSignal | undefined, taskId: string): void {
-  if (!signal?.aborted) return;
-  throw new MergeAbortedError(`Merge aborted for ${taskId}: engine shutdown requested`);
-}
-
-/**
- * Parse failing test file paths from vitest/jest output.
- *
- * Looks for lines matching:
- *   - `FAIL <path>` (jest/vitest)
- *   - ` × <path>` / ` ✕ <path>` (vitest unicode markers)
- *   - `● <test suite> › <test name>` is NOT a file path — skip those
- *
- * Returns an array of unique relative file paths. Returns an empty array when
- * no file paths can be parsed (callers treat this as "unknown", not "in-scope").
- *
- * @internal Exported for testing only.
- */
-export function parseFailingFilesFromOutput(output: string): string[] {
-  const paths = new Set<string>();
-  for (const line of output.split("\n")) {
-    // jest/vitest: "FAIL packages/engine/src/__tests__/foo.test.ts"
-    const failMatch = line.match(/^FAIL\s+(\S+)/);
-    if (failMatch && failMatch[1]) {
-      paths.add(failMatch[1]);
-      continue;
-    }
-    // vitest summary: " ❯ packages/engine/src/__tests__/foo.test.ts (2 tests | 1 failed)"
-    const vitestSummaryMatch = line.match(/^\s*[❯>]\s+(\S+\.(?:test|spec)\.[jt]sx?)\s/);
-    if (vitestSummaryMatch && vitestSummaryMatch[1]) {
-      paths.add(vitestSummaryMatch[1]);
-      continue;
-    }
-    // vitest: " × src/__tests__/foo.test.ts > some test name"
-    const crossMatch = line.match(/^\s*[×✕✗]\s+(\S+\.(?:test|spec)\.[jt]sx?)\s/);
-    if (crossMatch && crossMatch[1]) {
-      paths.add(crossMatch[1]);
-    }
-  }
-  return Array.from(paths);
-}
-
-/**
- * Get the set of files changed in the branch relative to the base branch.
- * Uses `git diff --name-only <baseBranch>...HEAD` (three-dot range so it
- * computes the diff from the merge-base, not the current HEAD of baseBranch).
- *
- * Returns an empty array on git errors (callers treat this as "unknown").
- *
- * @internal Exported for testing only.
- */
-export function getBranchChangedFiles(rootDir: string, baseBranch: string, branch: string): string[] {
-  try {
-    // Quote both refs — branch names can legally contain `/` and other
-    // characters that, while harmless to git, would expose us to shell
-    // injection if a caller ever passed an unsanitized branch string.
-    const baseRef = quoteArg(baseBranch);
-    const headRef = branch === "HEAD" ? "HEAD" : quoteArg(branch);
-    const output = execSync(
-      `git diff --name-only ${baseRef}...${headRef}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
-    ).toString();
-    return output.split("\n").map((f) => f.trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
 
 /**
  * Return the union of all dirty paths in `rootDir`:
@@ -1602,13 +755,13 @@ async function runDeterministicVerification(
   }
 
   if (treeSha) {
-    const cacheHit = store.getVerificationCacheHit(treeSha, effectiveTestCommand, effectiveBuildCommand);
+    const cacheHit = await store.getVerificationCacheHit(treeSha, effectiveTestCommand, effectiveBuildCommand);
     if (cacheHit) {
       const sha7 = treeSha.slice(0, 7);
       const msg = `Skipping deterministic verification — cached pass for tree ${sha7} (recorded at ${cacheHit.recordedAt}, by ${cacheHit.taskId ?? "unknown"})`;
       mergerLog.log(`${taskId}: ${msg}`);
       await store.logEntry(taskId, msg);
-      await store.appendAgentLog(taskId, msg, "text", undefined, "merger");
+      await store.appendAgentLog(taskId, msg, "status", undefined, "merger");
       const syntheticResult: VerificationCommandResult = {
         command: "",
         exitCode: 0,
@@ -1639,7 +792,7 @@ async function runDeterministicVerification(
     (hasTestCommand ? ` (test${testSourceDisplayLabel}: ${normalizedTestCommand})` : "") +
     (hasBuildCommand ? ` (build${buildSource === "inferred" ? " [inferred]" : ""}: ${normalizedBuildCommand})` : "");
   await store.logEntry(taskId, deterministicVerificationMessage);
-  await store.appendAgentLog(taskId, deterministicVerificationMessage, "text", undefined, "merger");
+  await store.appendAgentLog(taskId, deterministicVerificationMessage, "status", undefined, "merger");
 
   const bootstrapScriptPath = join(rootDir, "scripts/ensure-test-artifacts.mjs");
   if (hasTestCommand || hasBuildCommand) {
@@ -1647,7 +800,7 @@ async function runDeterministicVerification(
       const bootstrapMissingMessage = `${taskId}: [verification:bootstrap] script missing at scripts/ensure-test-artifacts.mjs — skipping preamble`;
       mergerLog.warn(bootstrapMissingMessage);
       await store.logEntry(taskId, bootstrapMissingMessage);
-      await store.appendAgentLog(taskId, bootstrapMissingMessage, "text", undefined, "merger");
+      await store.appendAgentLog(taskId, bootstrapMissingMessage, "status", undefined, "merger");
     } else {
       const bootstrapCommand = "node scripts/ensure-test-artifacts.mjs";
       await store.logEntry(taskId, `[verification:bootstrap] running: ${bootstrapCommand}`);
@@ -1827,12 +980,12 @@ async function runDeterministicVerification(
 
   mergerLog.log(`${taskId}: deterministic verification passed`);
   await store.logEntry(taskId, "Deterministic merge verification passed");
-  await store.appendAgentLog(taskId, "Deterministic merge verification passed", "text", undefined, "merger");
+  await store.appendAgentLog(taskId, "Deterministic merge verification passed", "status", undefined, "merger");
 
   // ── Record cache pass ──────────────────────────────────────────────────
   if (treeSha) {
     try {
-      store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
+      await store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
       mergerLog.log(`${taskId}: Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
       await store.logEntry(taskId, `Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
     } catch (err) {
@@ -1942,8 +1095,13 @@ async function attemptInMergeVerificationFix(
       ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
       : null;
     const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
-    // FN-5279: verification-fix sessions run in the resolved integration root,
+    const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
+
+    // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+    const mergerFallbackModel = resolveMergerFallbackModel(settings);
+      // FN-5279: verification-fix sessions run in the resolved integration root,
     // which is the reused task worktree in handoff mode.
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
@@ -1973,10 +1131,10 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       onToolEnd: logger.onToolEnd,
       defaultProvider: mergerSessionModel.provider,
       defaultModelId: mergerSessionModel.modelId,
-      fallbackProvider: settings.fallbackProvider,
-      fallbackModelId: settings.fallbackModelId,
-      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+      fallbackProvider: mergerFallbackModel.provider,
+      fallbackModelId: mergerFallbackModel.modelId,
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
       runAuditor: createRunAuditor(store, {
         runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
         agentId: mergeRunContext?.agentId ?? "merger",
@@ -2013,7 +1171,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
     await store.appendAgentLog(
       taskId,
       `Fix agent started (model: ${describeModel(session)})`,
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -2080,7 +1238,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         await store.appendAgentLog(
           taskId,
           `Fix agent made no changes — skipping verification re-run`,
-          "text",
+          "status",
           undefined,
           "merger",
         );
@@ -2114,7 +1272,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
                   `Failing files: [${failingFiles.join(", ")}]. Branch diff files: [${branchFiles.slice(0, 10).join(", ")}${branchFiles.length > 10 ? ", ..." : ""}].`;
                 mergerLog.warn(`${taskId}: ${msg}`);
                 await store.logEntry(taskId, msg);
-                await store.appendAgentLog(taskId, "Out-of-scope verification failure detected — not retrying", "text", undefined, "merger");
+                await store.appendAgentLog(taskId, "Out-of-scope verification failure detected — not retrying", "status", undefined, "merger");
                 throw new OutOfScopeVerificationError(msg, failingFiles, branchFiles);
               }
             }
@@ -2132,7 +1290,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       await store.appendAgentLog(
         taskId,
         `Re-running verification (attempt ${fixAttemptNumber ?? "unknown"})`,
-        "text",
+        "status",
         undefined,
         "merger",
       );
@@ -2217,30 +1375,81 @@ export interface AutostashHandle {
   rescueShas?: { sha: string; label: string }[];
 }
 
-const AUTOSTASH_LABEL_PREFIX = "fusion-merger-autostash:";
-const AUTOSTASH_TIMESTAMP_RE = /^fusion-merger-autostash:[A-Za-z]+-\d+:(?:(?:[a-z0-9-]+:)?(?:\d+:)?)?(\d+)$/;
+
+
 
 /** Return the set of paths a stash commit recorded as changed against its
  *  parent (HEAD-at-stash-time). Used to compare a new dirty snapshot against
  *  the primary autostash and avoid producing duplicate race-rescue stashes
  *  for the same paths the primary already captured. */
-async function listStashChangedPaths(rootDir: string, stashSha: string): Promise<Set<string>> {
-  const out = new Set<string>();
+/*
+FNXC:MergeAutostash 2026-07-15-13:20:
+A stash created with `--include-untracked` stores its untracked files in a THIRD
+parent commit (`<sha>^3`) whose paths `git stash show` does not list — it reports
+the tracked side only. Reading just that side makes an untracked-only stash look
+EMPTY, and every "does this stash still hold work?" caller reads empty as
+"subsumed → safe to drop". That silently destroys untracked work: new tests, plan
+docs, and changesets are exactly what the ai-local-sync stashes carry.
+Enumerate both sides, and keep them distinguishable — the two sides must be
+diffed against different commits (see `classifyStashContent`).
+
+`null` means "could not read", which is NOT the same as "holds nothing". Callers
+must treat null as unknown and refuse to drop; collapsing the two is the bug
+above.
+*/
+async function listStashTrackedPaths(rootDir: string, stashSha: string): Promise<Set<string> | null> {
   try {
     const { stdout } = await execAsync(
       `git stash show -z --name-only ${quoteArg(stashSha)}`,
       { cwd: rootDir, encoding: "utf-8" },
     );
-    for (const entry of stdout.split("\0")) {
+    const out = new Set<string>();
+    for (const entry of String(stdout).split("\0")) {
       const p = entry.trim();
       if (p) out.add(p);
     }
+    return out;
   } catch {
-    // Best-effort: an empty set means we'll be slightly more aggressive
-    // about rescuing (everything dirty gets rescued), which is the safe
-    // direction — false positives are noise, false negatives are data loss.
+    return null;
   }
-  return out;
+}
+
+/** Paths held in a stash's untracked third parent. An empty set (not null) is
+ *  returned when the stash simply has no `^3` — i.e. it was created without
+ *  `--include-untracked`, which is a legitimate "no untracked files" answer. */
+async function listStashUntrackedPaths(rootDir: string, stashSha: string): Promise<Set<string> | null> {
+  try {
+    await execAsync(`git rev-parse -q --verify ${quoteArg(`${stashSha}^3`)}`, { cwd: rootDir, encoding: "utf-8" });
+  } catch {
+    return new Set<string>();
+  }
+  try {
+    const { stdout } = await execAsync(
+      `git ls-tree -r -z --name-only ${quoteArg(`${stashSha}^3`)}`,
+      { cwd: rootDir, encoding: "utf-8" },
+    );
+    const out = new Set<string>();
+    for (const entry of String(stdout).split("\0")) {
+      const p = entry.trim();
+      if (p) out.add(p);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Every path a stash holds, tracked and untracked. Used for display and for
+ *  rescue-scope decisions; `classifyStashContent` is the drop-safety authority. */
+async function listStashChangedPaths(rootDir: string, stashSha: string): Promise<Set<string>> {
+  const [tracked, untracked] = await Promise.all([
+    listStashTrackedPaths(rootDir, stashSha),
+    listStashUntrackedPaths(rootDir, stashSha),
+  ]);
+  // Best-effort union: an empty set means we'll be slightly more aggressive
+  // about rescuing (everything dirty gets rescued), which is the safe
+  // direction — false positives are noise, false negatives are data loss.
+  return new Set<string>([...(tracked ?? []), ...(untracked ?? [])]);
 }
 
 /** True iff two stash commits point to the exact same tree object. Cheap
@@ -2385,34 +1594,6 @@ function runObservedDestructiveSyncOp(
   }
 }
 
-/** Parse `git status -z --porcelain` into a Set of paths.
- *
- *  Format per entry: `XY <space> <path>\0` where X = staged status, Y =
- *  unstaged status. Renames and copies are special: they emit TWO
- *  NUL-separated entries, `R  <new>\0<old>\0` (or `C  <new>\0<old>\0`).
- *  We must consume the trailing `<old>` entry without treating it as a
- *  separate path, otherwise observability code over-reports "cleared
- *  paths" with the historical names of renames. */
-export function parsePorcelainZ(raw: string): Set<string> {
-  const paths = new Set<string>();
-  const entries = raw.split("\0");
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    if (!entry) continue;
-    if (entry.length < 4) continue;
-    const status = entry.slice(0, 2);
-    const path = entry.slice(3);
-    if (!path) continue;
-    paths.add(path);
-    // Rename/copy: the very next entry is the old path — skip it so it
-    // isn't mistaken for an independent dirty path.
-    if (status.charAt(0) === "R" || status.charAt(0) === "C") {
-      i++;
-    }
-  }
-  return paths;
-}
-
 /** Find autostashes from PRIOR runs that are still sitting in the stash list.
  *  These are leftovers from past merges whose pop/apply conflicted — under the
  *  old code path the warning was logged once and then forgotten, and the
@@ -2431,7 +1612,10 @@ async function listOrphanedAutostashes(
     const orphans: Array<{ sha: string; ref: string; label: string }> = [];
     for (const line of lines) {
       // Format: "<sha> stash@{N} <subject including label>"
-      const idx = line.indexOf(AUTOSTASH_LABEL_PREFIX);
+      // Match the canonical label, or the legacy merger-ai one so already-leaked
+      // entries are reclaimed too (see LEGACY_AI_SYNC_LABEL_PREFIX).
+      let idx = line.indexOf(AUTOSTASH_LABEL_PREFIX);
+      if (idx === -1) idx = line.indexOf(LEGACY_AI_SYNC_LABEL_PREFIX);
       if (idx === -1) continue;
       const parts = line.split(/\s+/);
       const sha = parts[0] ?? "";
@@ -2445,42 +1629,60 @@ async function listOrphanedAutostashes(
   }
 }
 
-function parseAutostashTaskId(label: string): string | null {
-  const match = /^fusion-merger-autostash:([A-Za-z]+-\d+):/.exec(label.trim());
-  return match?.[1] ?? null;
-}
 
+/*
+FNXC:MergeAutostash 2026-07-15-13:20:
+The single drop-safety authority: may this stash be discarded without losing work?
 
-function parseAutostashCreatedAt(label: string): string | null {
-  const match = AUTOSTASH_TIMESTAMP_RE.exec(label.trim());
-  if (!match) return null;
-  const ts = Number.parseInt(match[1] ?? "", 10);
-  if (!Number.isFinite(ts)) return null;
-  return new Date(ts).toISOString();
-}
+  - `subsumed` — every path it holds is already byte-identical to HEAD. Safe to drop.
+  - `live`     — at least one path still differs from HEAD. Real work; never drop.
+  - `unknown`  — we could not prove either. Never drop (false positives are noise,
+                 false negatives are data loss).
 
-function parseAutostashSourcePhase(label: string): string | null {
-  const trimmed = label.trim();
-  const phaseMatch = /^fusion-merger-autostash:[A-Za-z]+-\d+:([a-z-]+):\d+$/.exec(trimmed);
-  if (phaseMatch?.[1]) return phaseMatch[1];
-  if (/^fusion-merger-autostash:[A-Za-z]+-\d+:race-rescue-\d+:\d+$/.test(trimmed)) return "race-rescue";
-  if (/^fusion-merger-autostash:[A-Za-z]+-\d+:\d+$/.test(trimmed)) return "pre-merge";
-  return null;
+The tracked and untracked sides must be diffed against DIFFERENT commits: the
+stash commit's tree holds only tracked content, while untracked files live in
+`<sha>^3`. Diffing an untracked path against `<sha>` compares HEAD to a tree that
+never contained it, which reports no difference and misreads live work as
+subsumed — the data-loss path this replaces.
+
+Previously this logic existed in three near-identical copies (orphan
+classification, the per-merge sweep, and the liveness probe), all sharing that
+bug. One authority, one behavior.
+*/
+async function classifyStashContent(rootDir: string, sha: string): Promise<"subsumed" | "live" | "unknown"> {
+  const [tracked, untracked] = await Promise.all([
+    listStashTrackedPaths(rootDir, sha),
+    listStashUntrackedPaths(rootDir, sha),
+  ]);
+  // Unreadable side → cannot prove the stash is redundant.
+  if (tracked === null || untracked === null) return "unknown";
+  if (tracked.size === 0 && untracked.size === 0) return "subsumed";
+
+  const differsFromHead = async (paths: Set<string>, against: string): Promise<boolean | null> => {
+    if (paths.size === 0) return false;
+    try {
+      const pathsArg = [...paths].map(quoteArg).join(" ");
+      const { stdout } = await execAsync(
+        `git diff --name-only HEAD ${quoteArg(against)} -- ${pathsArg}`,
+        { cwd: rootDir, encoding: "utf-8" },
+      );
+      return String(stdout).trim() !== "";
+    } catch {
+      return null;
+    }
+  };
+
+  const trackedLive = await differsFromHead(tracked, sha);
+  if (trackedLive === null) return "unknown";
+  if (trackedLive) return "live";
+
+  const untrackedLive = await differsFromHead(untracked, `${sha}^3`);
+  if (untrackedLive === null) return "unknown";
+  return untrackedLive ? "live" : "subsumed";
 }
 
 async function classifyAutostashOrphan(rootDir: string, sha: string): Promise<"subsumed" | "live" | "unknown"> {
-  try {
-    const stashFiles = await listStashChangedPaths(rootDir, sha);
-    if (stashFiles.size === 0) return "subsumed";
-    const pathsArg = [...stashFiles].map(quoteArg).join(" ");
-    const { stdout: pathDiffOut } = await execAsync(
-      `git diff --name-only HEAD ${quoteArg(sha)} -- ${pathsArg}`,
-      { cwd: rootDir, encoding: "utf-8" },
-    );
-    return pathDiffOut.trim() === "" ? "subsumed" : "live";
-  } catch {
-    return "unknown";
-  }
+  return classifyStashContent(rootDir, sha);
 }
 
 export async function listAutostashOrphans(rootDir: string): Promise<AutostashOrphanRecord[]> {
@@ -2626,20 +1828,19 @@ async function sweepAutostashOrphans(
 
   for (const orphan of orphans) {
     try {
-      const stashFiles = await listStashChangedPaths(rootDir, orphan.sha);
-      if (stashFiles.size === 0) {
-        // Empty stash — nothing to lose by dropping.
+      /*
+      FNXC:MergeAutostash 2026-07-15-13:20:
+      Delegates to the shared drop-safety authority so tracked-only and
+      untracked-only stashes are judged identically. `unknown` is treated as
+      live: an unprovable stash is warned about, never dropped.
+      */
+      const classification = await classifyStashContent(rootDir, orphan.sha);
+      if (classification === "subsumed") {
         subsumed.push(orphan);
         continue;
       }
-      const pathsArg = [...stashFiles].map(quoteArg).join(" ");
-      const { stdout: pathDiffOut } = await execAsync(
-        `git diff --name-only HEAD ${quoteArg(orphan.sha)} -- ${pathsArg}`,
-        { cwd: rootDir, encoding: "utf-8" },
-      );
-      const isPathSubsumed = pathDiffOut.trim() === "";
-      if (isPathSubsumed) {
-        subsumed.push(orphan);
+      if (classification === "unknown") {
+        live.push(orphan);
         continue;
       }
 
@@ -2741,6 +1942,16 @@ export async function sweepStaleAutostashes(
     const entries = await listOrphanedAutostashes(rootDir);
     let dropped = 0;
 
+    /*
+    FNXC:MergeAutostash 2026-07-15-13:20:
+    Age-based dropping is deliberate bounded retention, not a safety gap: it is
+    the backstop that stops autostashes accumulating forever when a restore
+    failed and nobody recovered the work. It intentionally drops by timestamp
+    alone, without consulting stash content — do not add a liveness check here.
+    Entries carrying a timestamp (every canonical label) age out; the legacy
+    `fusion-ai-merge-sync-<id>` labels carry none, so they are reachable only via
+    the subsumed check in `sweepAutostashOrphans`.
+    */
     for (const entry of entries) {
       const match = AUTOSTASH_TIMESTAMP_RE.exec(entry.label.trim());
       if (!match) continue;
@@ -2989,16 +2200,11 @@ export async function dropAutostashBySha(
   return { dropped: false, reason: "exhausted retry attempts" };
 }
 
+/** True when the stash still holds work not present on HEAD. An unprovable
+ *  (`unknown`) stash counts as live so callers never discard it. */
 async function isAutostashLive(rootDir: string, sha: string): Promise<boolean> {
   try {
-    const stashFiles = await listStashChangedPaths(rootDir, sha);
-    if (stashFiles.size === 0) return false;
-    const pathsArg = [...stashFiles].map(quoteArg).join(" ");
-    const { stdout: pathDiffOut } = await execAsync(
-      `git diff --name-only HEAD ${quoteArg(sha)} -- ${pathsArg}`,
-      { cwd: rootDir, encoding: "utf-8" },
-    );
-    return pathDiffOut.trim().length > 0;
+    return (await classifyStashContent(rootDir, sha)) !== "subsumed";
   } catch {
     return true;
   }
@@ -3123,7 +2329,12 @@ async function runAiAgentForAutostashConflict(params: {
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
+
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
 
   const systemPrompt = `You are an autostash-conflict resolution agent running after a Fusion merge has already committed on the main branch.
 
@@ -3169,10 +2380,10 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -3201,7 +2412,7 @@ ${fileList}
     await store.appendAgentLog(
       taskId,
       `Autostash conflict agent started (model: ${describeModel(session)}, files: ${conflictedFiles.length})`,
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -3296,8 +2507,7 @@ async function tryRecoverHardFailApply(params: {
 }): Promise<AutostashOutcome> {
   const { rootDir, taskId, sha, applyErrorMsg, applyStderr, ctx } = params;
   const stashFiles = [...await listStashChangedPaths(rootDir, sha)];
-  const smartConflictResolution =
-    (ctx.settings.smartConflictResolution ?? ctx.settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(ctx.settings);
 
   // Step 1: try `git apply --3way`. This pulls the diff out of the stash and
   // applies it as a regular patch with three-way merging, which behaves
@@ -3533,7 +2743,12 @@ async function runAiAgentForAutostashHardFail(params: {
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
+
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
 
   const systemPrompt = `You are an autostash hard-failure recovery agent for the Fusion merger.
 
@@ -3589,10 +2804,10 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -3621,7 +2836,7 @@ ${fileList}
     await store.appendAgentLog(
       taskId,
       `Autostash hard-fail recovery agent started (model: ${describeModel(session)}, files: ${stashFiles.length})`,
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -3813,8 +3028,7 @@ export async function restoreUnrelatedRootDirChanges(
   });
   const aiConflictedFiles = partitioned.inScopeConflicts;
 
-  const smartConflictResolution =
-    (ctx.settings.smartConflictResolution ?? ctx.settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(ctx.settings);
 
   if (!smartConflictResolution) {
     const message = `Autostash apply conflicted in ${aiConflictedFiles.length} file(s) and smartConflictResolution is disabled. Stash ${sha.slice(0, 7)} left intact; resolve manually with: cd ${rootDir} && # edit files, then git stash drop <ref>`;
@@ -4823,113 +4037,6 @@ export async function commitOrAmendMergeWithFixes(
 
 // ── Pre-merge diffstat scope validation ──────────────────────────────
 
-interface DiffFileEntry {
-  file: string;
-  insertions: number;
-  deletions: number;
-}
-
-interface DiffScopeResult {
-  warnings: string[];
-  outOfScopeFiles: string[];
-  largeOutOfScopeDeletions: { file: string; deletions: number }[];
-}
-
-/**
- * Parse git `--stat` output into per-file insertion/deletion counts.
- *
- * Example line: ` packages/core/src/types.ts | 9 ++--`
- * Binary line:  ` some/image.png            | Bin 0 -> 1234 bytes`
- */
-export function parseDiffStat(diffStat: string): DiffFileEntry[] {
-  const entries: DiffFileEntry[] = [];
-  for (const line of diffStat.split("\n")) {
-    // Skip the summary line ("5 files changed, 10 insertions(+), 3 deletions(-)")
-    if (line.includes("files changed") || line.includes("file changed")) continue;
-    // Match: " path/to/file | 42 +++---" or " path/to/file | Bin ..."
-    const match = line.match(/^\s*(.+?)\s+\|\s+(\d+)\s+(\+*)(-*)\s*$/);
-    if (!match) continue;
-    const file = match[1].trim();
-    const plusses = match[3].length;
-    const minuses = match[4].length;
-    // The number is total changes; +/- chars show the ratio
-    const total = parseInt(match[2], 10);
-    if (total === 0) continue;
-    const ratio = plusses + minuses > 0 ? plusses / (plusses + minuses) : 0.5;
-    entries.push({
-      file,
-      insertions: Math.round(total * ratio),
-      deletions: Math.round(total * (1 - ratio)),
-    });
-  }
-  return entries;
-}
-
-/**
- * Extract the `## File Scope` section from a PROMPT.md string.
- * Returns an array of file/glob patterns (lines starting with `- \``).
- */
-export function extractFileScope(promptContent: string): string[] {
-  const lines = promptContent.split("\n");
-  const patterns: string[] = [];
-  let inScope = false;
-  for (const line of lines) {
-    if (/^##\s+File Scope/.test(line)) {
-      inScope = true;
-      continue;
-    }
-    if (inScope && /^##\s/.test(line)) break; // next section
-    if (inScope) {
-      // Match "- `path/to/file`" or "- path/to/file"
-      const m = line.match(/^-\s+`?([^`\s]+)`?\s*(?:\(.*\))?\s*$/);
-      if (m) patterns.push(m[1]);
-    }
-  }
-  return patterns;
-}
-
-/**
- * Check whether a file path matches any of the declared scope patterns.
- * Reuses the existing `matchGlob` helper. Also matches if the file is
- * inside a directory that's in scope (e.g., scope has `src/utils/*` and
- * file is `src/utils/helpers.ts`).
- */
-export function matchesScope(filePath: string, scopePatterns: string[]): boolean {
-  for (const pattern of scopePatterns) {
-    if (matchGlob(filePath, pattern)) return true;
-    // Directory match: if pattern ends with /* or /**, check prefix
-    const dirPattern = pattern.replace(/\/\*+$/, "");
-    if (dirPattern !== pattern && filePath.startsWith(dirPattern + "/")) return true;
-    // Exact directory match: scope says `src/foo/` and file is inside it
-    if (pattern.endsWith("/") && filePath.startsWith(pattern)) return true;
-    // Also match if both share the same directory
-    const patternDir = pattern.lastIndexOf("/") >= 0 ? pattern.slice(0, pattern.lastIndexOf("/")) : "";
-    const fileDir = filePath.lastIndexOf("/") >= 0 ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
-    if (patternDir && fileDir === patternDir) return true;
-  }
-  return false;
-}
-
-export function partitionConflictsByFileScope(params: {
-  conflictFiles: string[];
-  declaredScope: string[];
-}): { inScope: string[]; outOfScope: string[] } {
-  const { conflictFiles, declaredScope } = params;
-  if (declaredScope.length === 0) {
-    return { inScope: [...conflictFiles], outOfScope: [] };
-  }
-
-  const inScope: string[] = [];
-  const outOfScope: string[] = [];
-  for (const file of conflictFiles) {
-    if (matchesScope(file, declaredScope)) {
-      inScope.push(file);
-    } else {
-      outOfScope.push(file);
-    }
-  }
-  return { inScope, outOfScope };
-}
 
 export async function applyLayer3ConflictScopePartition(params: {
   store: TaskStore;
@@ -4949,7 +4056,7 @@ export async function applyLayer3ConflictScopePartition(params: {
   const declaredScope = await store.parseFileScopeFromPrompt(taskId);
   if (task.scopeOverride === true) {
     const reasonSuffix = task.scopeOverrideReason?.trim() ? ` — reason: ${task.scopeOverrideReason.trim()}` : "";
-    await store.appendAgentLog(taskId, `Layer 3 arbiter scope partition bypassed via scopeOverride${reasonSuffix}`, "text", undefined, "merger");
+    await store.appendAgentLog(taskId, `Layer 3 arbiter scope partition bypassed via scopeOverride${reasonSuffix}`, "status", undefined, "merger");
     if (auditor) {
       await auditor.git({
         type: "merge:layer3:scope-override-bypass",
@@ -5014,7 +4121,7 @@ export async function applyLayer3ConflictScopePartition(params: {
           await store.appendAgentLog(
             taskId,
             `Layer 2.5 auto-widened File Scope: ${widenedFiles.join(", ")}`,
-            "text",
+            "status",
             undefined,
             "merger",
           );
@@ -5046,7 +4153,7 @@ export async function applyLayer3ConflictScopePartition(params: {
 
   if (outOfScope.length > 0) {
     const summary = `Layer 3 arbiter: skipped ${outOfScope.length} foreign file(s) — took main's version for: ${outOfScope.join(", ")}`;
-    await store.appendAgentLog(taskId, summary, "text", undefined, "merger");
+    await store.appendAgentLog(taskId, summary, "status", undefined, "merger");
     await store.logEntry(taskId, summary, "Layer3AIArbiterScopeSkip");
     if (auditor) {
       await auditor.git({
@@ -5076,199 +4183,6 @@ export async function applyLayer3ConflictScopePartition(params: {
  * just returning warnings (hard guardrail that blocks merge).
  */
 
-export class FileScopeViolationError extends Error {
-  taskId: string;
-  stagedFiles: string[];
-  declaredScope: string[];
-
-  constructor(taskId: string, stagedFiles: string[], declaredScope: string[]) {
-    const stagedList = stagedFiles.length > 0 ? stagedFiles.join(", ") : "<none outside .changeset/>";
-    const scopeList = declaredScope.join(", ");
-    super(
-      `File-scope invariant violation for ${taskId}: staged files [${stagedList}] have zero overlap with declared File Scope [${scopeList}]. Refile genuinely out-of-scope work as a follow-up task via fn_task_create before retrying this merge.`,
-    );
-    this.name = "FileScopeViolationError";
-    this.taskId = taskId;
-    this.stagedFiles = stagedFiles;
-    this.declaredScope = declaredScope;
-  }
-}
-
-export type StagedFilesReader = (cwd: string) => Promise<string[]>;
-
-async function readStagedFileNames(cwd: string): Promise<string[]> {
-  const { stdout } = await execAsync("git diff --cached --name-only", {
-    cwd,
-    encoding: "utf-8",
-  });
-  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-}
-
-export async function assertSquashOverlapsFileScope(params: {
-  store: TaskStore;
-  taskId: string;
-  rootDir: string;
-  task: Task;
-  /** Test seam for deterministic file-scope invariant coverage. Production
-   * callers use the default real-git staged-file reader. */
-  stagedFilesReader?: StagedFilesReader;
-  /** U7 (R10): when the merge trait's `fileScope: "custom"` mode is active,
-   *  these glob/path rules replace the task's File Scope section as the
-   *  declared scope. `scopeOverride` is a documented no-op only under
-   *  `fileScope: "off"` (handled by the caller, which skips this assert). */
-  customScopeRules?: string[];
-}): Promise<void> {
-  const { store, taskId, rootDir, task, customScopeRules, stagedFilesReader = readStagedFileNames } = params;
-  const hasCustomRules = Array.isArray(customScopeRules) && customScopeRules.length > 0;
-
-  if (!hasCustomRules && task.scopeOverride === true) {
-    const reasonSuffix = task.scopeOverrideReason?.trim()
-      ? ` — reason: ${task.scopeOverrideReason.trim()}`
-      : "";
-    await store.appendAgentLog(
-      taskId,
-      `file-scope invariant bypassed via scopeOverride${reasonSuffix}`,
-      "text",
-      undefined,
-      "merger",
-    );
-    return;
-  }
-
-  let declaredScope: string[];
-  if (hasCustomRules) {
-    // Custom rules replace the parsed File Scope section entirely.
-    declaredScope = customScopeRules;
-  } else {
-    if (typeof (store as Partial<TaskStore>).parseFileScopeFromPrompt !== "function") {
-      return;
-    }
-    declaredScope = await store.parseFileScopeFromPrompt(taskId);
-  }
-  if (declaredScope.length === 0) {
-    return;
-  }
-
-  const stagedFiles = await stagedFilesReader(rootDir);
-  const hasOverlap = stagedFiles.some((file) => matchesScope(file, declaredScope));
-  if (!hasOverlap) {
-    throw new FileScopeViolationError(taskId, stagedFiles, declaredScope);
-  }
-}
-
-export function formatFileScopeViolationAgentLog(error: FileScopeViolationError): string {
-  const stagedFiles = error.stagedFiles.length > 0 ? error.stagedFiles.join("\n") : "<none>";
-  return [
-    `taskId: ${error.taskId}`,
-    "declaredScope:",
-    ...error.declaredScope.map((entry) => `- ${entry}`),
-    "stagedFiles:",
-    ...stagedFiles.split("\n").map((entry) => `- ${entry}`),
-  ].join("\n");
-}
-
-export async function enforceSquashFileScopeInvariant(params: {
-  store: TaskStore;
-  taskId: string;
-  rootDir: string;
-  task: Task;
-  resetLabel: string;
-  stagedFilesReader?: StagedFilesReader;
-  auditor?: RunAuditor;
-}): Promise<void> {
-  // U7 (R10): resolve the file-scope enforcement mode from the merge trait
-  // (flag ON) or settings (back-compat). The lost-work guard trio is NOT gated
-  // by this mode — it lives elsewhere in the mechanics and stays enforced for
-  // every mode (KTD-6).
-  const policy = await resolveMergePolicy(params.store, params.task);
-  const mode: MergeFileScopeMode = policy.fileScope;
-
-  if (mode === "off") {
-    // Skip the violation throw, but emit exactly one per-merge audit event
-    // recording that scope enforcement was disabled by workflow config. Per-task
-    // `scopeOverride` is a documented no-op in this mode (the scope check itself
-    // is disabled, so there is nothing to override).
-    if (params.auditor) {
-      try {
-        await params.auditor.git({
-          type: "merge:file-scope-enforcement-disabled",
-          target: params.taskId,
-          metadata: {
-            resetLabel: params.resetLabel,
-            mode: "off",
-            disabledByWorkflowConfig: true,
-            scopeOverrideIsNoOp: params.task.scopeOverride === true,
-          },
-        });
-      } catch (auditErr) {
-        mergerLog.warn(`${params.taskId}: failed to emit run_audit event for file-scope-enforcement-disabled: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
-      }
-    }
-    return;
-  }
-
-  const customScopeRules = mode === "custom" ? policy.fileScopeRules : undefined;
-
-  try {
-    await assertSquashOverlapsFileScope({ ...params, customScopeRules });
-  } catch (error: unknown) {
-    if (!(error instanceof FileScopeViolationError)) {
-      throw error;
-    }
-    // `strict` re-throws the violation (hard guardrail that blocks the merge);
-    // `warn`/`custom` log + proceed, with the audit carrying the violating file
-    // list (same payload as the error).
-    if (mode === "strict") {
-      if (params.auditor) {
-        try {
-          await params.auditor.git({
-            type: "merge:file-scope-violation",
-            target: params.taskId,
-            metadata: {
-              resetLabel: params.resetLabel,
-              mode: "strict",
-              stagedFiles: error.stagedFiles,
-              declaredScope: error.declaredScope,
-              stagedFileCount: error.stagedFiles.length,
-              declaredScopeCount: error.declaredScope.length,
-              warningOnly: false,
-            },
-          });
-        } catch (auditErr) {
-          mergerLog.warn(`${params.taskId}: failed to emit run_audit event for FileScopeViolationError (strict): ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
-        }
-      }
-      throw error;
-    }
-    const warningMessage = `${error.message} Warning only — continuing merge.`;
-    await params.store.appendAgentLog(
-      params.taskId,
-      warningMessage,
-      "text",
-      formatFileScopeViolationAgentLog(error),
-      "merger",
-    );
-    mergerLog.warn(`${params.taskId}: ${warningMessage}`);
-    if (params.auditor) {
-      try {
-        await params.auditor.git({
-          type: "merge:file-scope-violation",
-          target: params.taskId,
-          metadata: {
-            resetLabel: params.resetLabel,
-            stagedFiles: error.stagedFiles,
-            declaredScope: error.declaredScope,
-            stagedFileCount: error.stagedFiles.length,
-            declaredScopeCount: error.declaredScope.length,
-            warningOnly: true,
-          },
-        });
-      } catch (auditErr) {
-        mergerLog.warn(`${params.taskId}: failed to emit run_audit event for FileScopeViolationError: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
-      }
-    }
-  }
-}
 
 export async function validateDiffScope(
   store: TaskStore,
@@ -5487,204 +4401,6 @@ export async function resolveTaskDiffBaseRef({
  * Get list of conflicted files from git.
  * Runs `git diff --name-only --diff-filter=U` and returns array of file paths.
  */
-export async function getConflictedFiles(cwd: string): Promise<string[]> {
-  try {
-    const { stdout } = await execAsync("git diff --name-only --diff-filter=U", {
-      cwd,
-      encoding: "utf-8",
-    });
-    const output = stdout.trim();
-
-    if (!output) return [];
-    return output.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Check if a file has only trivial whitespace conflicts using git.
- * Compares ours (:2) and theirs (:3) versions with whitespace ignored.
- */
-export async function isTrivialWhitespaceConflict(filePath: string, cwd: string): Promise<boolean> {
-  try {
-    // Use git diff-tree to compare index entries with whitespace ignored
-    // :2 = ours (current branch), :3 = theirs (incoming branch)
-    // -w flag ignores whitespace
-    const { stdout } = await execAsync(
-      `git diff-tree -p -w -- :2:"${filePath}" :3:"${filePath}"`,
-      { cwd, encoding: "utf-8" }
-    );
-
-    // If the diff output is empty or contains no actual changes, it's trivial
-    // The diff output will have headers but no +/- content lines for whitespace-only changes
-    const lines = stdout.split("\n");
-    const contentChanges = lines.filter(
-      (line: string) => (line.startsWith("+") || line.startsWith("-")) &&
-                !line.startsWith("+++") && !line.startsWith("---")
-    );
-    return contentChanges.length === 0;
-  } catch (error: any) {
-    // git diff-tree may exit with code 1 when there are differences
-    // Check if the error output indicates substantive changes
-    if (error.stdout && typeof error.stdout === "string") {
-      const lines = error.stdout.split("\n");
-      const contentChanges = lines.filter(
-        (line: string) => (line.startsWith("+") || line.startsWith("-")) &&
-                  !line.startsWith("+++") && !line.startsWith("---")
-      );
-      return contentChanges.length === 0;
-    }
-    // On other errors, assume complex conflict (don't fallback to isTrivialConflict
-    // which reads working directory files with conflict markers)
-    return false;
-  }
-}
-
-/**
- * Classify a single conflicted file for auto-resolution.
- * Returns one of: 'lockfile-ours', 'generated-theirs', 'trivial-whitespace', 'complex'
- */
-export async function classifyConflict(filePath: string, cwd: string): Promise<ConflictType> {
-  // Check for lock files - always take "ours" (current branch's version)
-  if (LOCKFILE_PATTERNS.some((pattern) => matchGlob(filePath, pattern))) {
-    return "lockfile-ours";
-  }
-
-  // Check for generated files - take "theirs" (keep branch's fresh generation)
-  if (GENERATED_PATTERNS.some((pattern) => matchGlob(filePath, pattern))) {
-    return "generated-theirs";
-  }
-
-  // Check for trivial conflicts (whitespace-only)
-  if (await isTrivialWhitespaceConflict(filePath, cwd)) {
-    return "trivial-whitespace";
-  }
-
-  // Complex conflicts require AI intervention
-  return "complex";
-}
-
-/**
- * Resolve a conflicted file using "ours" (current branch's version).
- * Runs `git checkout --ours` and `git add`.
- */
-export async function resolveWithOurs(filePath: string, cwd: string): Promise<void> {
-  try {
-    await execFileAsync("git", ["checkout", "--ours", "--", filePath], { cwd });
-    await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} using --ours`);
-  } catch (error) {
-    throw new Error(`Failed to auto-resolve ${filePath} with ours: ${error}`);
-  }
-}
-
-/**
- * Resolve a conflicted file using "theirs" (incoming branch's version).
- * Runs `git checkout --theirs` and `git add`.
- */
-export async function resolveWithTheirs(filePath: string, cwd: string): Promise<void> {
-  try {
-    await execFileAsync("git", ["checkout", "--theirs", "--", filePath], { cwd });
-    await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} using --theirs`);
-  } catch (error) {
-    throw new Error(`Failed to auto-resolve ${filePath} with theirs: ${error}`);
-  }
-}
-
-/**
- * Resolve a trivial whitespace conflict.
- * For trivial conflicts, we can just stage the file (git considers it resolved).
- */
-export async function resolveTrivialWhitespace(filePath: string, cwd: string): Promise<void> {
-  try {
-    await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} (trivial whitespace)`);
-  } catch (error) {
-    throw new Error(`Failed to auto-resolve ${filePath} trivial conflict: ${error}`);
-  }
-}
-
-// Legacy types re-exported for backward compatibility (tests may reference them)
-/** @deprecated Use ConflictType instead */
-export type ConflictResolution = "ours" | "theirs";
-
-/** @deprecated Use classifyConflict + getConflictedFiles instead */
-export interface ConflictCategory {
-  filePath: string;
-  autoResolvable: boolean;
-  strategy?: ConflictResolution;
-  reason: "lock-file" | "generated-file" | "trivial" | "complex";
-}
-
-/**
- * Detect and categorize merge conflicts. Delegates to the new classifyConflict API.
- * @deprecated Use getConflictedFiles() + classifyConflict() instead.
- */
-export async function detectResolvableConflicts(rootDir: string): Promise<ConflictCategory[]> {
-  const files = await getConflictedFiles(rootDir);
-  const results: ConflictCategory[] = [];
-  for (const filePath of files) {
-    const type = await classifyConflict(filePath, rootDir);
-    switch (type) {
-      case "lockfile-ours":
-        results.push({ filePath, autoResolvable: true, strategy: "ours", reason: "lock-file" });
-        break;
-      case "generated-theirs":
-        results.push({ filePath, autoResolvable: true, strategy: "theirs", reason: "generated-file" });
-        break;
-      case "trivial-whitespace":
-        results.push({ filePath, autoResolvable: true, strategy: "ours", reason: "trivial" });
-        break;
-      case "complex":
-        results.push({ filePath, autoResolvable: false, reason: "complex" });
-        break;
-    }
-  }
-  return results;
-}
-
-/**
- * Auto-resolve a single file using git checkout --ours or --theirs.
- * @deprecated Use resolveWithOurs() or resolveWithTheirs() instead.
- */
-export async function autoResolveFile(
-  filePath: string,
-  resolution: ConflictResolution,
-  rootDir: string,
-): Promise<void> {
-  if (resolution === "ours") {
-    await resolveWithOurs(filePath, rootDir);
-  } else {
-    await resolveWithTheirs(filePath, rootDir);
-  }
-}
-
-/**
- * Auto-resolve all resolvable conflicts from the categorization.
- * @deprecated Use classifyConflict + resolveWithOurs/resolveWithTheirs instead.
- */
-export async function resolveConflicts(
-  categories: ConflictCategory[],
-  rootDir: string,
-): Promise<string[]> {
-  const remainingComplex: string[] = [];
-  for (const category of categories) {
-    if (category.autoResolvable && category.strategy) {
-      await autoResolveFile(category.filePath, category.strategy, rootDir);
-    } else {
-      remainingComplex.push(category.filePath);
-    }
-  }
-  return remainingComplex;
-}
-
-/** Trailer key written into every Fusion-managed merge commit body. Used by
- *  recovery (findLandedTaskCommit) to identify a task's commit even when the
- *  configured commit subject doesn't include the task ID
- *  (`includeTaskIdInCommit: false`). */
-export const FUSION_TASK_ID_TRAILER_KEY = "Fusion-Task-Id";
 
 /** Build the `-m "Fusion-Task-Id: <id>"` arg fragment used in fallback commit
  *  invocations. Returns a leading space + quoted -m arg. */
@@ -6212,21 +4928,6 @@ export interface MergerOptions {
   onGroupPrSyncSettled?: (settled: Promise<void>) => void;
 }
 
-function quoteArg(value: string): string {
-  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
-}
-
-export function parseShortstatSummary(statsOutput: string): { filesChanged: number; insertions: number; deletions: number } {
-  const normalized = statsOutput.trim().replace(/\n/g, " ");
-  const filesMatch = normalized.match(/(\d+) files? changed/);
-  const insertionsMatch = normalized.match(/(\d+) insertions?\(\+\)/);
-  const deletionsMatch = normalized.match(/(\d+) deletions?\(-\)/);
-  return {
-    filesChanged: filesMatch ? Number.parseInt(filesMatch[1], 10) : 0,
-    insertions: insertionsMatch ? Number.parseInt(insertionsMatch[1], 10) : 0,
-    deletions: deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0,
-  };
-}
 
 export async function captureSingleCommitLandedMetadata(
   rootDir: string,
@@ -6578,7 +5279,7 @@ export async function resolvePostMergeAuditInvocation(
 
     const infoMessage = `${opts.taskId}: post-merge audit using rebase range base from ${candidate.source} (${resolved.slice(0, 8)}..${opts.auditSha.slice(0, 8)})`;
     opts.mergerLog.log(infoMessage);
-    await opts.store.appendAgentLog(opts.taskId, infoMessage, "text", undefined, "merger");
+    await opts.store.appendAgentLog(opts.taskId, infoMessage, "status", undefined, "merger");
     return {
       rootDir: opts.rootDir,
       strategy: "rebase",
@@ -6608,7 +5309,7 @@ export async function resolvePostMergeAuditInvocation(
   if (mergeBaseSha) {
     const infoMessage = `${opts.taskId}: post-merge audit using rebase range base from merge-base (${mergeBaseSha.slice(0, 8)}..${opts.auditSha.slice(0, 8)})`;
     opts.mergerLog.log(infoMessage);
-    await opts.store.appendAgentLog(opts.taskId, infoMessage, "text", undefined, "merger");
+    await opts.store.appendAgentLog(opts.taskId, infoMessage, "status", undefined, "merger");
     return {
       rootDir: opts.rootDir,
       strategy: "rebase",
@@ -6619,7 +5320,7 @@ export async function resolvePostMergeAuditInvocation(
 
   const degradedMessage = `${opts.taskId}: post-merge audit degraded to single-commit squash fallback (multi-commit branch, no usable rangeBase)`;
   opts.mergerLog.warn(degradedMessage);
-  await opts.store.appendAgentLog(opts.taskId, degradedMessage, "text", undefined, "merger");
+  await opts.store.appendAgentLog(opts.taskId, degradedMessage, "status", undefined, "merger");
   return {
     rootDir: opts.rootDir,
     strategy: "squash",
@@ -6736,7 +5437,7 @@ export async function handleDirtyPostMergeAuditOutcome(opts: {
   await opts.store.appendAgentLog(
     opts.taskId,
     passLabel,
-    "text",
+    "status",
     formatSquashAuditAgentLog(opts.findings),
     "merger",
   );
@@ -6755,6 +5456,17 @@ function buildPostMergeAuditBlockingMessage(taskId: string, findings: SquashAudi
   const summary = riskParts.length > 0 ? riskParts.join(", ") : `${findings.issueCount} audit finding(s)`;
   const label = findings.strategy === "rebase" ? "post-rebase range audit" : "post-squash audit";
   return `${taskId}: ${label} blocked auto-completion for ${findings.auditTargetLabel.slice(0, 8)} (${summary})`;
+}
+
+export class SquashAuditError extends Error {
+  constructor(
+    taskId: string,
+    public readonly squashSha: string,
+    public readonly findings: SquashAuditFindings,
+  ) {
+    super(buildPostMergeAuditBlockingMessage(taskId, findings));
+    this.name = "SquashAuditError";
+  }
 }
 
 function formatSquashAuditAgentLog(findings: SquashAuditFindings): string {
@@ -7094,7 +5806,12 @@ You are assisting with a paused \`git pull --rebase\`.
   });
 
   throwIfAborted(options?.signal, taskId);
-  const mergerSessionModel = resolveMergerSessionModel(settings, options?.assignedAgentRuntimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+  const mergerSessionModel = resolveMergerSessionModel(settings, options?.assignedAgentRuntimeConfig, mergerTask);
+
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: options?.runtimeHint,
@@ -7108,10 +5825,10 @@ You are assisting with a paused \`git pull --rebase\`.
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -8840,8 +7557,7 @@ export async function aiMergeTask(
 
   // 2. Read settings
   const includeTaskId = settings.includeTaskIdInCommit !== false;
-  // Support both setting names: smartConflictResolution (new) and autoResolveConflicts (legacy)
-  const smartConflictResolution = (settings.smartConflictResolution ?? settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(settings);
   const mergeConflictStrategy: CanonicalMergeConflictStrategy = normalizeMergeConflictStrategy(
     settings.mergeConflictStrategy,
   );
@@ -9127,7 +7843,7 @@ export async function aiMergeTask(
             await store.appendAgentLog(
               taskId,
               `Pre-merge auto-prerebase: ${branch} → local HEAD ${mainHead.slice(0, 8)} (${prerebaseDecision.reason})`,
-              "text",
+              "status",
               undefined,
               "merger",
             );
@@ -9222,7 +7938,7 @@ export async function aiMergeTask(
       await store.appendAgentLog(
         taskId,
         `Pre-merge rebase: ${branch} → local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`,
-        "text",
+        "status",
         undefined,
         "merger",
       );
@@ -9262,7 +7978,7 @@ export async function aiMergeTask(
           await store.appendAgentLog(
             taskId,
             `Pre-merge rebase: ${branch} → ${remoteRef}`,
-            "text",
+            "status",
             undefined,
             "merger",
           );
@@ -9595,7 +8311,7 @@ export async function aiMergeTask(
         `Overlap guard detected ${overlap.overlappingFiles.length} recent-main overlap file(s) ` +
         `for smart-prefer-main (${mergeStrategyOverlapBehavior}): ${overlapSummary}`;
       mergerLog.warn(`${taskId}: ${overlapMessage}`);
-      await store.appendAgentLog(taskId, overlapMessage, "text", undefined, "merger");
+      await store.appendAgentLog(taskId, overlapMessage, "status", undefined, "merger");
       await store.logEntry(taskId, overlapMessage);
 
       if (mergeStrategyOverlapBehavior === "flip-to-prefer-branch") {
@@ -9665,7 +8381,7 @@ export async function aiMergeTask(
       `Direct merge commit routing: ${selectedPostMergeAuditStrategy} ` +
       `(setting ${configuredRoute.strategy} from ${configuredRoute.source})${classificationSummary}`;
     mergerLog.log(`${taskId}: ${routeMessage}`);
-    await store.appendAgentLog(taskId, routeMessage, "text", undefined, "merger");
+    await store.appendAgentLog(taskId, routeMessage, "status", undefined, "merger");
   }
 
   const [aiMergeSummary, aiMergeBody, aiMergeSubject] = settings.useAiMergeCommitSummary
@@ -9746,7 +8462,7 @@ export async function aiMergeTask(
     await store.appendAgentLog(
       taskId,
       `Starting merge ${attemptLabel}`,
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -9885,7 +8601,7 @@ export async function aiMergeTask(
           await store.appendAgentLog(
             taskId,
             `Verification failed — attempting in-merge fix (up to ${maxFixRetries} attempts)`,
-            "text",
+            "status",
             undefined,
             "merger",
           );
@@ -9910,7 +8626,7 @@ export async function aiMergeTask(
               await store.appendAgentLog(
                 taskId,
                 `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`,
-                "text",
+                "status",
                 undefined,
                 "merger",
               );
@@ -10045,7 +8761,7 @@ export async function aiMergeTask(
           await store.appendAgentLog(
             taskId,
             "Build verification failed — attempting in-merge fix",
-            "text",
+            "status",
             undefined,
             "merger",
           );
@@ -10064,7 +8780,7 @@ export async function aiMergeTask(
             await store.appendAgentLog(
               taskId,
               `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`,
-              "text",
+              "status",
               undefined,
               "merger",
             );
@@ -10394,7 +9110,7 @@ export async function aiMergeTask(
             });
             const treeSha = treeOut.trim();
             if (!treeSha) continue;
-            const cacheHit = store.getVerificationCacheHit(treeSha, effectiveTestCommand ?? "", effectiveBuildCommand ?? "");
+            const cacheHit = await store.getVerificationCacheHit(treeSha, effectiveTestCommand ?? "", effectiveBuildCommand ?? "");
             if (cacheHit) {
               verificationPassed = true;
               break;
@@ -10419,13 +9135,13 @@ export async function aiMergeTask(
         await store.appendAgentLog(
           taskId,
           selectedPostMergeAuditStrategy === "rebase" ? "post-rebase range audit clean" : "post-squash audit clean",
-          "text",
+          "status",
           undefined,
           "merger",
         );
       }
     } else if (auditSha && postMergeAuditMode === "off") {
-      await store.appendAgentLog(taskId, "post-merge audit skipped (mode=off)", "text", undefined, "merger");
+      await store.appendAgentLog(taskId, "post-merge audit skipped (mode=off)", "status", undefined, "merger");
       mergerLog.log(`${taskId}: post-merge audit skipped (mode=off)`);
     }
     if (isEmptyCommit) {
@@ -10460,7 +9176,7 @@ export async function aiMergeTask(
               await store.appendAgentLog(
                 taskId,
                 `merger: landed-files attribution failed, falling back to full-range capture (${message})`,
-                "text",
+                "status",
                 undefined,
                 "merger",
               );
@@ -10605,7 +9321,7 @@ export async function aiMergeTask(
     await store.appendAgentLog(
       taskId,
       summaryParts.join(" · "),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -10757,7 +9473,7 @@ export async function aiMergeTask(
     // conflict-suffixed branch), null it so the dependent task doesn't
     // hard-fail at worktree creation once this branch is gone.
     try {
-      const cleared = store.clearStaleExecutionStartBranchReferences([branch], taskId);
+      const cleared = await store.clearStaleExecutionStartBranchReferences([branch], taskId);
       if (cleared.length > 0) {
         mergerLog.log(`${taskId}: cleared stale baseBranch on ${cleared.length} dependent task(s): ${cleared.join(", ")}`);
       }
@@ -12056,7 +10772,12 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
+
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
 
   // FN-5279: Layer 3 / merge-authoring AI runs in the resolved integration
   // root so arbiter edits land in the reused task worktree when handoff mode
@@ -12075,10 +10796,10 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",

@@ -48,6 +48,21 @@ describe("skill-settings", () => {
     }, "fusion-plugin", "default-on", true)).toBe(false);
   });
 
+  it("matches custom plugin skill paths only when the resolved path is supplied", () => {
+    const settings = {
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/data/ef-core/SKILL.md"] }],
+    };
+
+    expect(resolvePluginSkillEnabled(settings, "fusion-plugin", "ef-core", false, "skills/data/ef-core/SKILL.md")).toBe(true);
+    expect(resolvePluginSkillEnabled(settings, "fusion-plugin", "ef-core", false)).toBe(false);
+  });
+
+  it("preserves name-derived lookup when no resolved plugin skill path is supplied", () => {
+    expect(resolvePluginSkillEnabled({
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/ef-core/SKILL.md"] }],
+    }, "fusion-plugin", "ef-core", false)).toBe(true);
+  });
+
   it("falls back to static defaults when settings omit the plugin skill", () => {
     expect(resolvePluginSkillEnabled({}, "fusion-plugin", "default-on", undefined)).toBe(true);
     expect(resolvePluginSkillEnabled({}, "fusion-plugin", "default-off", false)).toBe(false);

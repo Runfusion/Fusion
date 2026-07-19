@@ -120,7 +120,7 @@ export function categorizeToolName(toolName: string | null | undefined): string 
   if (name.startsWith("fn_skills_")) return "skills";
   if (name.startsWith("fn_memory_")) return "memory";
   if (name === "fn_list_agents" || name === "fn_agent_org_chart") return "read";
-  if (name.startsWith("fn_agent_") || name === "fn_delegate_task") return "agents";
+  if (name.startsWith("fn_agent_") || name === "fn_delegate_task" || name === "fn_task_assign") return "agents";
   if (
     name.startsWith("fn_mission_") ||
     name.startsWith("fn_milestone_") ||

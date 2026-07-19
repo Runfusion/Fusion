@@ -220,6 +220,22 @@ FN-7231 requires task-detail chat text, user, tool, and thinking blocks to keep 
   overflow-wrap: anywhere;
 }
 
+/*
+FNXC:ProactiveChatStatus 2026-07-16-12:05:
+FN-8064 makes engine status rows a real-time task-progress report. Give complete status
+messages a tokenized warning-toned distinction and reuse the shared status-dot convention;
+the existing compact padding rule keeps the affordance usable below the mobile breakpoint.
+*/
+.task-chat-entry--status {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
+}
+
+.task-chat-entry--status .task-chat-entry-label-row {
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
 .task-chat-entry--user {
   max-width: min(100%, calc(var(--space-2xl) * 18));
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -254,11 +270,25 @@ FN-7207 makes the right-side dock and narrow desktop detail hosts use the same r
   }
 }
 
-.task-chat-tool-group,
-.task-chat-thinking {
+.task-chat-tool-group {
   box-sizing: border-box;
   min-width: 0;
   padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:TaskChat 2026-07-15-11:00:
+FN-8029 keeps collapsed thinking blocks compact like tool-call summaries by using smaller container and summary padding. Preserve tokenized inner-body padding so expanded reasoning remains comfortably readable.
+*/
+.task-chat-thinking {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-sm);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -266,16 +296,11 @@ FN-7207 makes the right-side dock and narrow desktop detail hosts use the same r
   overflow-wrap: anywhere;
 }
 
-.task-chat-tool-group {
-  background: color-mix(in srgb, var(--surface) 35%, transparent);
-}
-
 .task-chat-tool-group-summary,
 .task-chat-thinking-summary {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
   cursor: pointer;
   list-style: none;
 }
@@ -348,12 +373,15 @@ FN-7240 raises the FN-7225 follow-up tool-call typography to the readable base s
 .task-chat-thinking-body {
   display: flex;
   flex-direction: column;
-  padding: 0 var(--space-md) var(--space-md);
 }
 
 .task-chat-tool-group-entries {
   gap: var(--space-xs);
   padding: 0 var(--space-xs) var(--space-xs);
+}
+
+.task-chat-thinking-body {
+  padding: 0 var(--space-sm) var(--space-sm);
 }
 
 .task-chat-tool-entry {
@@ -378,6 +406,7 @@ FN-7240 raises the FN-7225 follow-up tool-call typography to the readable base s
 }
 
 .task-chat-thinking-summary {
+  padding: var(--space-xs);
   color: var(--color-warning);
   font-weight: 600;
 }
@@ -604,9 +633,12 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
   }
 
   .task-chat-entry,
-  .task-chat-tool-group,
-  .task-chat-thinking {
+  .task-chat-tool-group {
     padding: var(--space-sm);
+  }
+
+  .task-chat-thinking {
+    padding: var(--space-xs);
   }
 
   .task-chat-tool-group-summary {

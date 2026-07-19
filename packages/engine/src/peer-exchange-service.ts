@@ -51,8 +51,9 @@ export interface SyncResult {
 /**
  * Background service that implements the peer gossip protocol.
  *
- * Periodically exchanges peer information with connected remote nodes
- * to keep the mesh state up-to-date across all nodes.
+ * Periodically exchanges peer membership with connected remote nodes.
+ * Under shared PostgreSQL, this is membership (+ optional auth material) only —
+ * not a task/settings multi-leader replication engine.
  */
 export class PeerExchangeService {
   private centralCore: CentralCore;
@@ -60,7 +61,7 @@ export class PeerExchangeService {
   private interval: ReturnType<typeof setInterval> | null = null;
   private activeSync: Promise<void> | null = null;
   private running = false;
-  /** Whether settings sync is enabled. Default: false. */
+  /** Whether settings sync is enabled. Default: false. Forced false under Postgres. */
   private settingsSyncEnabled: boolean;
   /** Minimum interval between settings syncs with the same node in ms. Default: 5 minutes. */
   private settingsSyncThrottleMs: number;
@@ -92,12 +93,21 @@ export class PeerExchangeService {
     the same shared PostgreSQL database, so gossip-level settings replication is
     redundant. Force-disable regardless of the caller's option when the central
     core runs in backend mode.
+
+    FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+    Shared Postgres is the durable SoT. Mesh HTTP stays for membership (+ optional
+    auth.json sync). meshWriteQueue is topology/auth-only — never a task multi-master log.
     */
     this.settingsSyncEnabled = centralCore.backendMode ? false : (options.settingsSyncEnabled ?? false);
     this.settingsSyncThrottleMs = options.settingsSyncThrottleMs ?? 300_000; // 5 minutes default
     this.globalSettings = options.globalSettings;
     this.settingsSyncAuth = options.settingsSyncAuth ?? false;
     this.providerAuth = options.providerAuth;
+  }
+
+  /** True when durable state is shared Postgres (no multi-leader task/settings mesh). */
+  private get sharedPostgresMode(): boolean {
+    return this.centralCore.backendMode === true;
   }
 
   /**
@@ -289,7 +299,13 @@ export class PeerExchangeService {
         timestamp: new Date().toISOString(),
       };
 
-      // ── Settings sync: decide whether to include settings in request ──
+      // ── Settings sync (legacy) + auth material (independent of settings gossip) ──
+      /*
+      FNXC:SharedPostgresMultiNode 2026-07-15-00:15:
+      Auth material lives in per-machine auth.json and must still sync when
+      settings gossip is force-disabled under shared Postgres. Attach auth-only
+      sharedState whenever settingsSyncAuth is on, without requiring settingsSyncEnabled.
+      */
       let shouldIncludeSettings = false;
 
       if (this.settingsSyncEnabled) {
@@ -333,12 +349,23 @@ export class PeerExchangeService {
 
           if (shouldIncludeSettings) {
             request.settings = this.cachedSettingsPayload;
-            request.sharedState = await this.getSharedStateSettingsBundle();
           }
         } catch (err) {
           // Log error but continue with peer sync
           const error = err instanceof Error ? err : String(err);
           peerExchangeLog.warn(`Failed to get settings for sync with ${node.name}: ${error}`);
+        }
+      }
+
+      if (shouldIncludeSettings || this.settingsSyncAuth) {
+        try {
+          const sharedState = await this.getSharedStateSettingsBundle();
+          if (sharedState) {
+            request.sharedState = sharedState;
+          }
+        } catch (err) {
+          const error = err instanceof Error ? err : String(err);
+          peerExchangeLog.warn(`Failed to build shared-state bundle for ${node.name}: ${error}`);
         }
       }
 
@@ -386,7 +413,7 @@ export class PeerExchangeService {
         // This ensures we get updates for existing peers too
         const mergeResult = await this.centralCore.mergePeers(peerResponse.knownPeers);
 
-        // ── Process remote settings if included in response ──
+        // ── Process remote settings (legacy) and/or auth sharedState ──
         if (this.settingsSyncEnabled && (peerResponse.sharedState || peerResponse.settings)) {
           const remoteChecksum =
             peerResponse.sharedState?.projectSettings?.checksum ??
@@ -426,6 +453,23 @@ export class PeerExchangeService {
               version: remoteChecksum,
               timestamp: Date.now(),
             });
+          }
+        } else if (this.settingsSyncAuth && peerResponse.sharedState?.authMaterial) {
+          // Auth-only path when settings gossip is disabled (shared Postgres default).
+          try {
+            const applyResult = await this.applyRemoteSharedState(peerResponse.sharedState, undefined);
+            if (applyResult.success && applyResult.authCount > 0) {
+              settingsApplied = true;
+              this.cachedSharedStatePayload = null;
+              peerExchangeLog.log(
+                `Applied remote auth material from ${node.name} (auth providers: ${applyResult.authCount})`,
+              );
+            } else if (!applyResult.success) {
+              peerExchangeLog.warn(`Failed to apply remote auth material from ${node.name}: ${applyResult.error}`);
+            }
+          } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            peerExchangeLog.warn(`Auth material sync error with ${node.name}: ${error}`);
           }
         }
 
@@ -470,40 +514,92 @@ export class PeerExchangeService {
     }
 
     const pending = await this.centralCore.listPendingMeshWrites({ targetNodeId, status: "pending" });
+    /*
+    FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+    Under shared Postgres only topology/auth mesh queue scopes are replayable.
+    Legacy task/settings queue rows (if any) are marked failed instead of
+    reintroducing multi-leader task writes over HTTP.
+    */
+    const eligible = this.sharedPostgresMode
+      ? pending.filter((entry) => this.isTopologyOrAuthMeshScope(entry.scope, entry.entityType))
+      : pending;
+    if (this.sharedPostgresMode) {
+      for (const entry of pending) {
+        if (this.isTopologyOrAuthMeshScope(entry.scope, entry.entityType)) continue;
+        await this.centralCore.markMeshWriteFailed(entry.id, {
+          lastError: "Skipped: task/settings mesh write queues are retired under shared PostgreSQL",
+        });
+      }
+    }
+
     let applied = 0;
     let failed = 0;
 
-    for (const entry of pending) {
+    for (const entry of eligible) {
       await this.centralCore.markMeshWriteReplayStarted(entry.id);
       try {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (node.apiKey) headers.Authorization = `Bearer ${node.apiKey}`;
-        const response = await fetch(`${node.url}/api/mesh/sync`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(entry.payload?.request ?? {}),
-        });
-        if (!response.ok) {
-          await this.centralCore.markMeshWriteFailed(entry.id, { lastError: `HTTP ${response.status}: ${response.statusText}` });
-          failed += 1;
-          continue;
+        // Strip legacy settings payloads before replay under shared Postgres.
+        const rawRequest = (entry.payload?.request ?? {}) as PeerSyncRequest;
+        const body: PeerSyncRequest = this.sharedPostgresMode
+          ? {
+              senderNodeId: rawRequest.senderNodeId,
+              senderNodeUrl: rawRequest.senderNodeUrl,
+              knownPeers: rawRequest.knownPeers ?? [],
+              timestamp: rawRequest.timestamp ?? new Date().toISOString(),
+              sharedState: rawRequest.sharedState?.authMaterial
+                ? { authMaterial: rawRequest.sharedState.authMaterial }
+                : undefined,
+            }
+          : rawRequest;
+        // FNXC:SharedPostgresMultiNode 2026-07-15-00:15: Replay uses the same 10s abort as live peer sync so stop() cannot hang on a stalled peer.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+        try {
+          const response = await fetch(`${node.url}/api/mesh/sync`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            await this.centralCore.markMeshWriteFailed(entry.id, { lastError: `HTTP ${response.status}: ${response.statusText}` });
+            failed += 1;
+            continue;
+          }
+          await this.centralCore.markMeshWriteApplied(entry.id, {});
+          applied += 1;
+        } finally {
+          clearTimeout(timeoutId);
         }
-        await this.centralCore.markMeshWriteApplied(entry.id, {});
-        applied += 1;
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         await this.centralCore.markMeshWriteFailed(entry.id, {
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: message.includes("abort") ? "Timeout (10s)" : message,
         });
         failed += 1;
       }
     }
 
     return {
-      replayed: pending.length,
+      replayed: eligible.length,
       applied,
       failed,
-      queuedWriteIds: pending.map((entry) => entry.id),
+      queuedWriteIds: eligible.map((entry) => entry.id),
     };
+  }
+
+  private isTopologyOrAuthMeshScope(scope: string | null | undefined, entityType: string | null | undefined): boolean {
+    const s = (scope ?? "").toLowerCase();
+    const e = (entityType ?? "").toLowerCase();
+    if (s === "mesh.sync" || s === "mesh.topology" || s === "mesh.auth") return true;
+    if (e === "peer-sync" || e === "topology-sync" || e === "auth-material-sync") return true;
+    // Legacy generic "shared-state-sync" rows are membership retries only when
+    // we re-enqueue them under shared Postgres with topology scope; treat them
+    // as eligible so pre-cutover peer-sync rows still retry once as membership.
+    if (e === "shared-state-sync" && (s === "mesh.sync" || s === "mesh.topology")) return true;
+    return false;
   }
 
   private async enqueueRetryableSyncWrite(
@@ -521,16 +617,33 @@ export class PeerExchangeService {
       return undefined;
     }
 
+    /*
+    FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+    Prefer topology/auth-only queue rows. Under shared Postgres, strip settings
+    and non-auth sharedState so a later replay cannot reapply DB-backed domains.
+    */
+    const queueRequest: PeerSyncRequest | Record<string, unknown> = this.sharedPostgresMode
+      ? {
+          senderNodeId: request?.senderNodeId ?? localNode.id,
+          senderNodeUrl: request?.senderNodeUrl ?? localNode.url ?? "",
+          knownPeers: request?.knownPeers ?? [],
+          timestamp: request?.timestamp ?? new Date().toISOString(),
+          ...(request?.sharedState?.authMaterial
+            ? { sharedState: { authMaterial: request.sharedState.authMaterial } }
+            : {}),
+        }
+      : (request ?? {});
+
     const entry = await this.centralCore.enqueueMeshWrite({
       originNodeId: localNode.id,
       targetNodeId: node.id,
       projectId: null,
-      scope: "mesh.sync",
-      entityType: "shared-state-sync",
+      scope: this.sharedPostgresMode ? "mesh.topology" : "mesh.sync",
+      entityType: this.sharedPostgresMode ? "topology-sync" : "shared-state-sync",
       entityId: node.id,
       operation: "sync",
       payload: {
-        request: request ?? {},
+        request: queueRequest,
         error: message,
       },
       intentVersion: "1.0",
@@ -550,11 +663,21 @@ export class PeerExchangeService {
         providerAuth?: Record<string, { type: "api_key" | "oauth"; key?: string; accessToken?: string; authenticated?: boolean }>,
       ) => SharedMeshStatePayload["authMaterial"];
     };
-    if (!core.getProjectSettingsSnapshot || !core.getAuthMaterialSnapshot) {
+    if (!core.getAuthMaterialSnapshot && !core.getProjectSettingsSnapshot) {
       return undefined;
     }
-    const projectSettings = await core.getProjectSettingsSnapshot(globalSettings);
-    const authMaterial = this.settingsSyncAuth ? core.getAuthMaterialSnapshot(this.providerAuth) : undefined;
+    // Shared Postgres: never ship projectSettings over mesh (already in DB).
+    const projectSettings =
+      !this.sharedPostgresMode && core.getProjectSettingsSnapshot
+        ? await core.getProjectSettingsSnapshot(globalSettings)
+        : undefined;
+    const authMaterial =
+      this.settingsSyncAuth && core.getAuthMaterialSnapshot
+        ? core.getAuthMaterialSnapshot(this.providerAuth)
+        : undefined;
+    if (!projectSettings && !authMaterial) {
+      return undefined;
+    }
     this.cachedSharedStatePayload = { projectSettings, authMaterial };
     return this.cachedSharedStatePayload;
   }
@@ -567,6 +690,29 @@ export class PeerExchangeService {
       applyProjectSettingsSnapshot?: (snapshot: NonNullable<SharedMeshStatePayload["projectSettings"]>) => Promise<{ success: boolean; globalCount: number; projectCount: number; authCount: number; error?: string }>;
       applyAuthMaterialSnapshot?: (snapshot: NonNullable<SharedMeshStatePayload["authMaterial"]>) => { success?: boolean; authCount?: number; error?: string; providerAuth?: Record<string, unknown> };
     };
+
+    // Auth-only apply is always allowed (auth.json is not the shared DB).
+    if (this.sharedPostgresMode) {
+      if (this.settingsSyncAuth && sharedState?.authMaterial && core.applyAuthMaterialSnapshot) {
+        try {
+          const authResult = core.applyAuthMaterialSnapshot(sharedState.authMaterial);
+          const authCount =
+            typeof authResult.authCount === "number"
+              ? authResult.authCount
+              : Object.keys(sharedState.authMaterial.payload.providerAuth ?? {}).length;
+          return { success: true, globalCount: 0, projectCount: 0, authCount };
+        } catch (err) {
+          return {
+            success: false,
+            globalCount: 0,
+            projectCount: 0,
+            authCount: 0,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      return { success: true, globalCount: 0, projectCount: 0, authCount: 0 };
+    }
 
     if (sharedState?.projectSettings && core.applyProjectSettingsSnapshot) {
       const result = await core.applyProjectSettingsSnapshot(sharedState.projectSettings);

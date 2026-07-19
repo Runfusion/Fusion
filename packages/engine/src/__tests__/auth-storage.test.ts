@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFusionAuthStorage, getFusionAuthPath } from "../auth-storage.js";
+import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth-storage.js";
 
 function encodeBase64Url(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url");
@@ -60,7 +60,7 @@ describe("createFusionAuthStorage", () => {
     );
 
     const authStorage = createFusionAuthStorage();
-    authStorage.set("openrouter", { type: "api_key", key: "fusion-openrouter-key" });
+    await authStorage.set("openrouter", { type: "api_key", key: "fusion-openrouter-key" });
 
     expect(await authStorage.getApiKey("openrouter")).toBe("fusion-openrouter-key");
     expect(await authStorage.getApiKey("minimax")).toBe("legacy-minimax-key");
@@ -200,7 +200,7 @@ describe("createFusionAuthStorage", () => {
 
       expect(await authStorage.getApiKey("anthropic")).toBe("fallback-anthropic-runtime-key");
 
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       expect(authStorage.hasAuth("anthropic")).toBe(false);
       expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
@@ -216,6 +216,63 @@ describe("createFusionAuthStorage", () => {
       expect(await authStorage.getApiKey("anthropic")).toBe("sk-ant-api03-runtime-key");
       expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "sk-ant-api03-runtime-key" });
       expect(authStorage.hasAuth("anthropic")).toBe(true);
+    });
+
+    // FNXC:ProviderAuth 2026-07-17-06:30 — Symptom Verification for the pi >=0.80.8 ModelRuntime.getAuth
+    // regression. Original symptom: a subscription-only Anthropic login (stored only under
+    // `anthropic-subscription`) failed every task with "Provider is not configured: anthropic" and then
+    // fell back, because pi-ai's resolveProviderAuth reads credentials.read("anthropic") directly and
+    // refreshes an OAuth credential via credentials.modify("anthropic") — but fusion has no raw
+    // `anthropic` row, so the refresh callback saw `current === undefined` and bailed. Fix: read("anthropic")
+    // resolves through fusion's getApiKey (refresh + subscription/raw precedence) and returns a ready
+    // api_key credential carrying the OAuth token (which pi-ai routes as OAuth by its sk-ant-oat prefix).
+    it("resolves Anthropic subscription auth into a ready api_key credential via read('anthropic')", async () => {
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "sk-ant-oat01-subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      const credentialStore = createFusionCredentialStore(authStorage);
+
+      // pi-ai's resolveProviderAuth reads provider `anthropic` directly; it must get a usable credential
+      // whose token still carries the sk-ant-oat prefix so the anthropic-messages layer routes it as OAuth.
+      expect(await credentialStore.read("anthropic")).toEqual({
+        type: "api_key",
+        key: "sk-ant-oat01-subscription-access-token",
+      });
+    });
+
+    it("prefers a raw Anthropic credential over the subscription alias in read('anthropic')", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "sk-ant-oat01-subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      const credentialStore = createFusionCredentialStore(authStorage);
+
+      // Raw api_key wins (getApiKey precedence); the subscription token only fills the gap otherwise.
+      expect(await credentialStore.read("anthropic")).toEqual({
+        type: "api_key",
+        key: "sk-ant-api03-runtime-key",
+      });
+    });
+
+    it("read('anthropic') is undefined when no Anthropic credential of any kind exists", async () => {
+      const authStorage = createFusionAuthStorage();
+      const credentialStore = createFusionCredentialStore(authStorage);
+
+      expect(await credentialStore.read("anthropic")).toBeUndefined();
     });
 
     it("uses Anthropic subscription OAuth for direct model runtime auth when no raw API key exists", async () => {
@@ -270,11 +327,11 @@ describe("createFusionAuthStorage", () => {
       // reporting "Login did not complete" despite a valid stored credential.
       const authStorage = createFusionAuthStorage();
 
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
       expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
 
       // `set` under the legacy id mirrors what interactive login persists.
-      authStorage.set("anthropic", {
+      await authStorage.set("anthropic", {
         type: "oauth",
         access: "relogin-access-token",
         refresh: "relogin-refresh-token",
@@ -288,10 +345,10 @@ describe("createFusionAuthStorage", () => {
     it("restores the subscription card when re-auth writes under the subscription id", async () => {
       const authStorage = createFusionAuthStorage();
 
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
       expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
 
-      authStorage.set("anthropic-subscription", {
+      await authStorage.set("anthropic-subscription", {
         type: "oauth",
         access: "subscription-relogin-token",
         refresh: "subscription-relogin-refresh",
@@ -306,8 +363,8 @@ describe("createFusionAuthStorage", () => {
       // the subscription's logged-out state — only OAuth credentials do.
       const authStorage = createFusionAuthStorage();
 
-      authStorage.logout("anthropic-subscription");
-      authStorage.set("anthropic", { type: "api_key", key: "sk-ant-api03-raw-key" });
+      await authStorage.logout("anthropic-subscription");
+      await authStorage.set("anthropic", { type: "api_key", key: "sk-ant-api03-raw-key" });
 
       expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
     });
@@ -427,6 +484,12 @@ describe("createFusionAuthStorage", () => {
           body: expect.not.stringContaining("\"scope\""),
         }),
       );
+      const refreshRequest = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(JSON.parse(String(refreshRequest?.body))).toMatchObject({
+        grant_type: "refresh_token",
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        refresh_token: "subscription-refresh-token",
+      });
       expect(authStorage.get("anthropic-subscription")).toEqual({
         type: "oauth",
         access: "refreshed-subscription-access-token",
@@ -546,7 +609,7 @@ describe("createFusionAuthStorage", () => {
       });
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       // Raw-key logout removes only the raw slot; subscription OAuth still powers
       // the direct `anthropic` runtime provider.
@@ -564,10 +627,10 @@ describe("createFusionAuthStorage", () => {
       });
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
       expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
 
-      authStorage.set("anthropic-subscription", {
+      await authStorage.set("anthropic-subscription", {
         type: "oauth",
         access: "subscription-access-token",
         refresh: "subscription-refresh-token",
@@ -591,7 +654,7 @@ describe("createFusionAuthStorage", () => {
       });
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
 
       expect(authStorage.get("anthropic-subscription")).toBeUndefined();
       expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "sk-ant-api03-runtime-key" });
@@ -612,7 +675,7 @@ describe("createFusionAuthStorage", () => {
       // Before logout the legacy OAuth row drives direct runtime auth…
       expect(await authStorage.getApiKey("anthropic")).toBe("legacy-subscription-access-token");
 
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
 
       // …and subscription logout suppresses the legacy OAuth alias everywhere.
       expect(authStorage.get("anthropic")).toBeUndefined();
@@ -642,7 +705,7 @@ describe("createFusionAuthStorage", () => {
       expect(authStorage.hasAuth("anthropic")).toBe(true);
       expect(authStorage.list()).toContain("anthropic");
 
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
 
       expect(authStorage.get("anthropic")).toBeUndefined();
       expect(authStorage.has("anthropic")).toBe(false);
@@ -669,7 +732,7 @@ describe("createFusionAuthStorage", () => {
       });
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic-subscription");
+      await authStorage.logout("anthropic-subscription");
 
       expect(authStorage.has("anthropic")).toBe(true);
       expect(authStorage.hasAuth("anthropic")).toBe(true);
@@ -690,7 +753,7 @@ describe("createFusionAuthStorage", () => {
       expect(authStorage.has("anthropic")).toBe(true);
       expect(await authStorage.getApiKey("anthropic")).toBe("models-runtime-key");
 
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       expect(authStorage.has("anthropic")).toBe(false);
       expect(authStorage.hasAuth("anthropic")).toBe(false);
@@ -901,7 +964,7 @@ describe("createFusionAuthStorage", () => {
     const pendingRefresh = authStorage.getApiKey("anthropic");
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    authStorage.set("anthropic", {
+    await authStorage.set("anthropic", {
       type: "oauth",
       access: "fresh-login-access-token",
       refresh: "fresh-login-refresh-token",
@@ -1178,7 +1241,7 @@ describe("createFusionAuthStorage", () => {
       expect(await authStorage.getApiKey("anthropic")).toBe("claude-access-token");
 
       // Log out
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       // After logout, supplemental credentials are hidden
       expect(authStorage.has("anthropic")).toBe(false);
@@ -1202,7 +1265,7 @@ describe("createFusionAuthStorage", () => {
       );
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       // reload() should NOT bring back the supplemental credential
       authStorage.reload();
@@ -1227,7 +1290,7 @@ describe("createFusionAuthStorage", () => {
       );
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       const all = authStorage.getAll();
       expect("anthropic" in all).toBe(false);
@@ -1248,7 +1311,7 @@ describe("createFusionAuthStorage", () => {
       );
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       expect(authStorage.list()).not.toContain("anthropic");
     });
@@ -1268,10 +1331,10 @@ describe("createFusionAuthStorage", () => {
       );
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       // Re-authenticate
-      authStorage.set("anthropic", { type: "api_key", key: "new-key" });
+      await authStorage.set("anthropic", { type: "api_key", key: "new-key" });
 
       // Provider is visible again
       expect(authStorage.has("anthropic")).toBe(true);
@@ -1302,7 +1365,7 @@ describe("createFusionAuthStorage", () => {
       );
 
       const authStorage = createFusionAuthStorage();
-      authStorage.logout("anthropic");
+      await authStorage.logout("anthropic");
 
       // anthropic is hidden
       expect(authStorage.hasAuth("anthropic")).toBe(false);

@@ -36,10 +36,11 @@ import {
   shouldUseHybridExecutor,
   setHostExtensionPaths,
   createFusionAuthStorage,
+  createFusionModelRegistry,
 } from "@fusion/engine";
+import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import {
   DefaultPackageManager,
-  ModelRegistry,
   SettingsManager,
   discoverAndLoadExtensions,
   createExtensionRuntime,
@@ -75,7 +76,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
-import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
+import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
@@ -462,6 +463,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   );
 
   const store = primaryEngine.getTaskStore();
+  /*
+  FNXC:MergeQueue 2026-07-15-11:40:
+  Share the daemon primary TaskStore with the host pi extension so agent fn_* tools reuse the engine pool (no dual-boot).
+  */
+  setHostTaskStore(primaryCwd, store);
 
   const getGlobalSettingsStore = () => {
     const candidate = store as { getGlobalSettingsStore?: () => { getSettings: () => Promise<unknown> } };
@@ -544,28 +550,12 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
   try {
+    /*
+    FNXC:PluginPostgresSchema 2026-07-14-21:48:
+    PluginLoader initializes each plugin's schema before publishing that plugin as loaded. Daemon startup must not replay every loaded schema contract as a second batch after loadAllPlugins.
+    */
     const { loaded, errors } = await pluginLoader.loadAllPlugins();
     console.log(`[plugins] Loaded ${loaded} plugins (${errors} errors)`);
-
-    const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-    if (schemaHooks.length > 0) {
-      try {
-        /*
-         * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
-         * Skip SQLite-specific plugin schema init in backend mode (PostgreSQL
-         * uses Drizzle migrations for schema management).
-         */
-        if (store.isBackendMode()) {
-          console.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
-        } else {
-          await store.getDatabase().runPluginSchemaInits(schemaHooks);
-        }
-      } catch (err) {
-        console.error(
-          `[plugins] Schema initialization failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
   } catch (err) {
     console.error(
       `[plugins] Failed to load plugins: ${err instanceof Error ? err.message : err}`
@@ -579,7 +569,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const automationStore = primaryEngine.getAutomationStore();
 
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+  const modelRegistry = await createFusionModelRegistry(authStorage);
   registerBuiltInZaiProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   registerBuiltInGrokProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
@@ -698,11 +688,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
-      registerCustomProviders(
+      await registerCustomProviders(
         modelRegistry,
         globalSettings.customProviders,
         (message) => console.log(`[custom-providers] ${message}`),
@@ -715,7 +705,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   }
 
   void syncStartupModels({
@@ -732,12 +722,15 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       return;
     }
 
-    reregisterCustomProviders(
+    void reregisterCustomProviders(
       modelRegistry,
       previousProviders,
       currentProviders,
       (message) => console.log(`[custom-providers] ${message}`),
-    );
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[custom-providers] Failed to refresh custom providers: ${message}`);
+    });
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
@@ -837,7 +830,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       : undefined,
     pluginStore,
     pluginLoader,
-    pluginRunner: pluginLoader,
+    /*
+    FNXC:GrokCliRouting 2026-07-15-10:17:
+    Pass the engine PluginRunner (getRuntimeById), not the bare PluginLoader, so chat/merge/PR routes can resolve grok-cli/no-key via the Grok runtime. PluginLoader stays on pluginLoader for install/load APIs.
+    */
+    pluginRunner: primaryEngine.getPluginRunner?.(),
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     onProjectRegistered: ({ path }) => {
       maybeInstallClaudeSkillForNewProject(path);
@@ -941,14 +938,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       centralCore = null;
     }
   }
-  let localNodeId: string | undefined;
-
   try {
     if (centralCore) {
       const nodes = await centralCore.listNodes();
       const localNode = nodes.find((node) => node.type === "local");
       if (localNode) {
-        localNodeId = localNode.id;
         await centralCore.updateNode(localNode.id, { status: "online" });
       }
     }
@@ -993,12 +987,32 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     if (shuttingDown) return;
     shuttingDown = true;
 
-    // Stop all project engines uniformly
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-21:48:
+    CentralCore adopts an engine TaskStore layer but retains ownership of its original embedded backend lifecycle. Persist the local-node offline state while the adopted pool is live, then stop engine-owned stores, and only then close CentralCore so its retained backend lifecycle cannot terminate PostgreSQL under a live engine.
+    */
+    if (centralCore) {
+      try {
+        await centralCore.markLocalNodeOffline();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] Failed to set local node offline: ${message}`);
+      }
+    }
+
+    // Stop all project engines uniformly; their runtimes own their TaskStores.
     if (hybridExecutor) {
       await hybridExecutor.shutdown();
     }
 
     await engineManager.stopAll();
+
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-22:07:
+    Preserve the command-level TaskStore close barrier before CentralCore releases its retained backend. Runtime shutdown normally closes this store first; the idempotent explicit close also covers partial-start and test-owned runtimes.
+    */
+    clearHostTaskStores();
+    await store.close();
 
     // Stop peer exchange service
     if (peerExchangeService) {
@@ -1007,15 +1021,6 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[daemon] Failed to stop peer exchange service: ${message}`);
-      }
-    }
-
-    if (centralCore && localNodeId) {
-      try {
-        await centralCore.updateNode(localNodeId, { status: "offline" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[daemon] Failed to set local node offline: ${message}`);
       }
     }
 
@@ -1032,7 +1037,6 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       // best-effort
     }
 
-    store.close();
     process.exit(signal ? (SIGNAL_EXIT_CODES[signal] ?? 128) : 0);
   };
 

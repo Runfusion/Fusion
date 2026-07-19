@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
 import {
   activeSessionFixture,
@@ -55,6 +56,17 @@ function expectNoContextWindowShell() {
   expect(document.querySelector(".chat-thread-header-context")).not.toBeInTheDocument();
 }
 
+/*
+FNXC:ChatHeader 2026-07-16-00:00:
+The mobile and floating-narrow session switcher is rendered only in the direct-thread pane. Tests exercising its header must select the session from the list first, matching the mobile drill-in flow.
+*/
+async function openMobileDirectThread(sessionId = "session-001") {
+  await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
+  await waitFor(() => {
+    expect(screen.getByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
+  });
+}
+
 function setupDirectChat(options: { content?: string; streamingText?: string } = {}) {
   const content = options.content ?? "abcd";
   setupMockChat({
@@ -92,8 +104,13 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
-      expect(screen.getByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
+      /*
+      FNXC:DashboardTests 2026-07-14-20:15:
+      Mobile Direct chat uses the narrow layout shell; restored sessions stay on the list/header surface (no automatic mobile-direct-thread trigger). The invariant under test is no context-window chrome in constrained mobile Direct.
+      */
+      expect(document.querySelector(".chat-view--narrow")).toBeTruthy();
       expectNoContextWindowShell();
     } finally {
       restoreViewport.mockRestore();
@@ -127,8 +144,13 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} floating />);
+      await openMobileDirectThread();
 
-      expect(screen.getByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
+      /*
+      FNXC:DashboardTests 2026-07-14-20:15:
+      Floating narrow chat is marked chat-view--floating + --narrow; do not require the mobile session trigger (only present after explicit mobile-direct-thread entry).
+      */
+      expect(document.querySelector(".chat-view--floating.chat-view--narrow")).toBeTruthy();
       expectNoContextWindowShell();
     } finally {
       globalThis.ResizeObserver = originalResizeObserver;

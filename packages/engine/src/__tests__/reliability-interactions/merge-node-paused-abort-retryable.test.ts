@@ -84,9 +84,10 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
   Surface Enumeration coverage:
   - Merge seam node ids: legacy `merge`, `requestMerge`, primitive merge-region ids, and historical aliases all route through the same classifier.
   - Auto-merge paths: autopilot autoMerge:true and shared-branch local integration are both exercised.
-  - Pause sources: benign hard-cancel/undefined-like generic pause is retried; global/user pause controls remain terminal.
+  - Pause sources: benign hard-cancel/undefined-like generic pause is retried; global/user pause controls remain terminal; system pause (`paused` without userPaused/global-pause) still classifies implementation-incomplete fail-closed/resumable.
   - Retry/data states: retry budget, mergeConfirmed partial landing, conflict, foreign/contamination, and pre-existing failure all avoid retry.
   - FN-5147/FN-7749: autoMerge:false human-gated in-review tasks preserve the manual merge hold cleanly without failed parking or requeueing.
+  - Worktree tracking: resumable implementation-incomplete requeue keeps activeWorktrees registration when a worktree is preserved; fail-closed releases it.
   */
   it.each([
     "merge",
@@ -275,4 +276,203 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
       expect.objectContaining({ status: null, error: null, paused: false }),
     );
   });
+
+  const implementationIncompleteMergeNodes = [
+    "merge",
+    "requestMerge",
+    "merge-gate",
+    "merge-attempt",
+    "manual-merge-hold",
+    "merge-manual-hold",
+    "retry-backoff",
+    "merge-retry",
+  ] as const;
+
+  it.each(implementationIncompleteMergeNodes)("fails implementation-incomplete no-proof merge pause abort at node %s without requesting no-op merge", async (nodeId) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [],
+      currentStep: 0,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+    mergeRequester.mockImplementation(async () => {
+      await store.updateTask(task.id, {
+        mergeDetails: {
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason: "no-branch",
+        },
+      });
+      return {
+        task,
+        branch: null,
+        merged: true,
+        noOp: true,
+        mergeConfirmed: true,
+        reason: "no-branch",
+        worktreeRemoved: false,
+        branchDeleted: false,
+      } as any;
+    });
+
+    await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        mergeDetails: expect.objectContaining({ noOpMerge: true, noOpReason: "no-branch" }),
+      }),
+      expect.anything(),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
+      }),
+      undefined,
+    );
+    const messages = logText(store);
+    expect(messages).toContain(`Workflow graph merge blocked at node '${nodeId}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`);
+    expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
+  });
+
+  it.each(implementationIncompleteMergeNodes)("requeues resumable implementation-incomplete parsed steps at node %s without requesting merge", async (nodeId) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "pending" },
+      ],
+      currentStep: 1,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+
+    await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+      preserveProgress: true,
+      moveSource: "engine",
+      recoveryRehome: true,
+    }));
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    const messages = logText(store);
+    expect(messages).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume`);
+    expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
+  });
+
+  /*
+  FNXC:WorkflowMerge 2026-07-14-18:20:
+  Greptile P1 regressions for FN-1165: system-paused rows must still classify, and resumable requeue must not drop active worktree tracking while preserving a persisted worktree.
+  */
+  it("classifies system-paused implementation-incomplete merge failures fail-closed instead of pause-abort parking", async () => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [],
+      currentStep: 0,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      // System pause park (not userPaused / not global-pause provenance).
+      paused: true,
+      userPaused: false,
+      pausedReason: "awaiting-engine-recovery",
+    } as Partial<TaskDetail>);
+    (executor as any).addActiveWorktree(task.id, "/tmp/fusion-fn-1165-fail-closed");
+
+    await invokeGraphFailure(executor, task, "merge", "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
+      }),
+      undefined,
+    );
+    const messages = logText(store);
+    expect(messages).toContain("Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge");
+    expect(messages).not.toContain("operator action required");
+    expect(messages).not.toContain("benign, paused awaiting explicit unpause");
+    // Fail-closed may release tracking — no second worktree will be allocated for a terminal row.
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+  });
+
+  it("requeues system-paused implementation-incomplete incomplete steps and keeps active worktree tracking", async () => {
+    const worktreePath = "/tmp/fusion-fn-1165-resumable-wt";
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "pending" },
+      ],
+      currentStep: 1,
+      branch: "fusion/fn-1165-resumable",
+      worktree: worktreePath,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: true,
+      userPaused: false,
+      pausedReason: "system-pause-park",
+    } as Partial<TaskDetail>);
+    (executor as any).addActiveWorktree(task.id, worktreePath);
+
+    await invokeGraphFailure(executor, task, "merge", "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    // System pause park must be cleared so the requeued todo row is dispatchable.
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ paused: false, pausedReason: null }),
+      undefined,
+    );
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+      preserveProgress: true,
+      moveSource: "engine",
+      recoveryRehome: true,
+    }));
+    const messages = logText(store);
+    expect(messages).toContain("Workflow graph failed at node 'merge' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume");
+    expect(messages).not.toContain("operator action required");
+    // Resumable path keeps active registration so the preserved worktree stays counted.
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
+    expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
+  });
+
+  it("keeps active worktree tracking on non-paused resumable implementation-incomplete requeue", async () => {
+    const worktreePath = "/tmp/fusion-fn-1165-unpaused-resumable-wt";
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "pending" },
+      ],
+      currentStep: 1,
+      branch: "fusion/fn-1165-unpaused",
+      worktree: worktreePath,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+    (executor as any).addActiveWorktree(task.id, worktreePath);
+
+    await invokeGraphFailure(executor, task, "merge-gate", "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({ preserveProgress: true }));
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
+    expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
+  });
+
 });

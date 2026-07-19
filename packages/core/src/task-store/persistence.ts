@@ -42,11 +42,17 @@ export interface TaskRow {
   validatorModelId: string | null;
   planningModelProvider: string | null;
   planningModelId: string | null;
+  mergerModelProvider: string | null;
+  mergerModelId: string | null;
   mergeRetries: number | null;
   workflowStepRetries: number | null;
   stuckKillCount: number | null;
   resumeLimboCount: number | null;
   graphResumeRetryCount: number | null;
+  consecutiveToolFailureRetryCount: number | null;
+  executorEscalationAttempted: number | null;
+  toolFailureDetectorLogCursor: number | null;
+  toolFailureRetryExhaustedAuditEmitted: number | null;
   resumeLimboTipSha: string | null;
   resumeLimboStepSignature: string | null;
   executeRequeueLoopCount: number | null;
@@ -55,6 +61,8 @@ export interface TaskRow {
   planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
   taskDoneRetryCount: number | null;
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
+  bulkCompletionRefusalAt: string | null;
   worktreeSessionRetryCount: number | null;
   completionHandoffLimboRecoveryCount: number | null;
   verificationFailureCount: number | null;
@@ -70,7 +78,10 @@ export interface TaskRow {
   thinkingLevel: string | null;
   validatorThinkingLevel: string | null;
   planningThinkingLevel: string | null;
+  mergerThinkingLevel: string | null;
   executionMode: string | null;
+  /** FNXC:PlannerOversight 2026-07-14-18:11: null = inherit project; 0 = off; 1 = on (autoMerge pattern). */
+  sessionAdvisorEnabled: number | null;
   tokenUsageInputTokens: number | null;
   tokenUsageOutputTokens: number | null;
   tokenUsageCachedTokens: number | null;
@@ -110,6 +121,7 @@ export interface TaskRow {
   prInfos: string | null;
   issueInfo: string | null;
   githubTracking: string | null;
+  gitlabTracking: string | null;
   sourceIssueProvider: string | null;
   sourceIssueRepository: string | null;
   sourceIssueExternalIssueId: string | null;
@@ -140,6 +152,7 @@ export interface TaskRow {
   sourceMessageId: string | null;
   sourceParentTaskId: string | null;
   sourceMetadata: string | null;
+  proposalClaimId: string | null;
   checkedOutBy: string | null;
   checkedOutAt: string | null;
   checkoutNodeId: string | null;
@@ -167,7 +180,7 @@ PostgreSQL task JSONB conversion must use one registry for both descriptor write
 export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
-  "issueInfo", "githubTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
+  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
   "modifiedFiles", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
 ]);
@@ -182,6 +195,9 @@ export function defineTaskColumn(
 
 const serializeTaskAutoMerge: TaskColumnDescriptor["serialize"] = (task) => task.autoMerge === undefined ? null : (task.autoMerge ? 1 : 0);
 const serializeTaskAutoMergeProvenance: TaskColumnDescriptor["serialize"] = (task) => task.autoMergeProvenance ?? null;
+// FNXC:PlannerOversight 2026-07-14-18:11: three-state like autoMerge — null inherits project default.
+const serializeTaskSessionAdvisorEnabled: TaskColumnDescriptor["serialize"] = (task) =>
+  task.sessionAdvisorEnabled === undefined ? null : (task.sessionAdvisorEnabled ? 1 : 0);
 
 // Keep this descriptor order in lockstep with the named-column INSERT/UPSERT
 // clauses we generate below. SQLite binds by the explicit column list we emit,
@@ -217,11 +233,18 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("validatorModelId", (task) => task.validatorModelId ?? null),
   defineTaskColumn("planningModelProvider", (task) => task.planningModelProvider ?? null),
   defineTaskColumn("planningModelId", (task) => task.planningModelId ?? null),
+  defineTaskColumn("mergerModelProvider", (task) => task.mergerModelProvider ?? null),
+  defineTaskColumn("mergerModelId", (task) => task.mergerModelId ?? null),
   defineTaskColumn("mergeRetries", (task) => task.mergeRetries ?? null),
   defineTaskColumn("workflowStepRetries", (task) => task.workflowStepRetries ?? null),
   defineTaskColumn("stuckKillCount", (task) => task.stuckKillCount ?? 0),
   defineTaskColumn("resumeLimboCount", (task) => task.resumeLimboCount ?? 0),
   defineTaskColumn("graphResumeRetryCount", (task) => task.graphResumeRetryCount === undefined ? 0 : task.graphResumeRetryCount),
+  defineTaskColumn("consecutiveToolFailureRetryCount", (task) => task.consecutiveToolFailureRetryCount ?? 0),
+  defineTaskColumn("executorEscalationAttempted", (task) => task.executorEscalationAttempted ? 1 : 0),
+  defineTaskColumn("toolFailureDetectorLogCursor", (task) => task.toolFailureDetectorLogCursor ?? null),
+  // FNXC:ExecutorToolFailureRetry 2026-07-16-13:30: PostgreSQL stores this CAS marker as integer (0/1), matching its schema and legacy SQLite flag representation.
+  defineTaskColumn("toolFailureRetryExhaustedAuditEmitted", (task) => task.toolFailureRetryExhaustedAuditEmitted ? 1 : 0),
   defineTaskColumn("resumeLimboTipSha", (task) => task.resumeLimboTipSha ?? null),
   defineTaskColumn("resumeLimboStepSignature", (task) => task.resumeLimboStepSignature ?? null),
   // FNXC:WorkflowLifecycle 2026-07-12 (merge port from main): FN-7863 progress-anchored execute self-requeue streak.
@@ -231,6 +254,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
+  defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
   defineTaskColumn("completionHandoffLimboRecoveryCount", (task) => task.completionHandoffLimboRecoveryCount ?? 0),
   defineTaskColumn("verificationFailureCount", (task) => task.verificationFailureCount ?? 0),
@@ -247,7 +272,9 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): per-task validator/planning reasoning-effort overrides.
   defineTaskColumn("validatorThinkingLevel", (task) => task.validatorThinkingLevel ?? null),
   defineTaskColumn("planningThinkingLevel", (task) => task.planningThinkingLevel ?? null),
+  defineTaskColumn("mergerThinkingLevel", (task) => task.mergerThinkingLevel ?? null),
   defineTaskColumn("executionMode", (task) => task.executionMode ?? null),
+  defineTaskColumn("sessionAdvisorEnabled", serializeTaskSessionAdvisorEnabled),
   defineTaskColumn("tokenUsageInputTokens", (task) => task.tokenUsage?.inputTokens ?? null),
   defineTaskColumn("tokenUsageOutputTokens", (task) => task.tokenUsage?.outputTokens ?? null),
   defineTaskColumn("tokenUsageCachedTokens", (task) => task.tokenUsage?.cachedTokens ?? null),
@@ -291,6 +318,12 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("prInfos", (task) => toJson(task.prInfos || [])),
   defineTaskColumn("issueInfo", (task) => toJsonNullable(task.issueInfo)),
   defineTaskColumn("githubTracking", (task) => toJsonNullable(task.githubTracking)),
+  /*
+  FNXC:GitLabTracking 2026-07-16-05:34:
+  GitLab import provenance must use the shared task persistence registry like GitHub tracking.
+  This closes the partial-feature gap so create and update writes retain metadata for live reads.
+  */
+  defineTaskColumn("gitlabTracking", (task) => toJsonNullable(task.gitlabTracking)),
   defineTaskColumn("sourceIssueProvider", (task) => task.sourceIssue?.provider ?? null),
   defineTaskColumn("sourceIssueRepository", (task) => task.sourceIssue?.repository ?? null),
   defineTaskColumn("sourceIssueExternalIssueId", (task) => task.sourceIssue?.externalIssueId ?? null),
@@ -321,7 +354,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("sourceMessageId", (task) => task.sourceMessageId ?? null),
   defineTaskColumn("sourceParentTaskId", (task) => task.sourceParentTaskId ?? null),
   defineTaskColumn("sourceMetadata", (task) => toJsonNullable(task.sourceMetadata)),
-  defineTaskColumn("checkedOutBy", (task) => task.checkedOutBy ?? null),
+  defineTaskColumn("proposalClaimId", (task) => task.proposalClaimId ?? null),
+  defineTaskColumn("checkedOutBy",  (task) => task.checkedOutBy ?? null),
   defineTaskColumn("checkedOutAt", (task) => task.checkedOutAt ?? null),
   defineTaskColumn("checkoutNodeId", (task) => task.checkoutNodeId ?? null),
   defineTaskColumn("checkoutRunId", (task) => task.checkoutRunId ?? null),

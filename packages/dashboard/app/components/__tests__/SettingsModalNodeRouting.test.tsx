@@ -159,10 +159,17 @@ describe("SettingsModal Node Routing section", () => {
     expect(screen.getByText(/Configure how tasks are routed to execution nodes/)).toBeInTheDocument();
   });
 
-  it("shows project scope banner", async () => {
+  /*
+  FNXC:SettingsScope 2026-07-15-18:52:
+  Was "shows project scope banner". The section-level banner is removed — it asserted one scope for a whole section, which was false wherever a section mixed them — so scope now rides on each row's badge.
+  The requirement is unchanged (an operator can tell these settings are project-scoped); only the element carrying it moved.
+  */
+  it("marks its settings as project-scoped", async () => {
     renderModal();
     await openNodeRouting();
-    expect(screen.getByText(/These settings only affect this project\./i)).toBeInTheDocument();
+    const badges = screen.getAllByTestId("settings-field-row-scope");
+    expect(badges.length).toBeGreaterThan(0);
+    expect(badges.map((b) => b.textContent)).toContain("project");
   });
 
   it("shows local execution selected when no default node is set", async () => {
@@ -245,7 +252,7 @@ describe("SettingsModal Node Routing section", () => {
   it("removes routing controls from scheduling section", async () => {
     renderModal();
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: "Scheduling & Capacity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Scheduling" })).toBeInTheDocument();
     });

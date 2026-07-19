@@ -140,7 +140,7 @@ export class RoutineRunner {
     const startedAt = new Date().toISOString();
 
     // Set in-flight BEFORE starting execution to prevent race conditions
-    const executionPromise = this.runExecution(routine, triggerType, context, startedAt, liveCallbacks);
+    const executionPromise = this.runExecution(routine, triggerType, context, startedAt, liveCallbacks, true);
     this.inFlightExecutions.set(routineId, executionPromise);
 
     try {
@@ -157,6 +157,26 @@ export class RoutineRunner {
   }
 
   /**
+   * Execute an already-claimed central global routine.
+   * The scheduler owns central run-state persistence because project RoutineStore
+   * cannot address central.global_routines.
+   */
+  async executeGlobalRoutine(
+    routine: Routine,
+    triggerType: "cron" | "webhook" | "api",
+    context?: Record<string, unknown>,
+  ): Promise<RoutineExecutionResult> {
+    const startedAt = new Date().toISOString();
+    const executionPromise = this.runExecution(routine, triggerType, context, startedAt, undefined, false);
+    this.inFlightExecutions.set(routine.id, executionPromise);
+    try {
+      return await executionPromise;
+    } finally {
+      this.inFlightExecutions.delete(routine.id);
+    }
+  }
+
+  /**
    * Internal execution logic for a routine.
    */
   private async runExecution(
@@ -164,7 +184,8 @@ export class RoutineRunner {
     triggerType: string,
     context: Record<string, unknown> | undefined,
     startedAt: string,
-    liveCallbacks?: RoutineLiveRunCallbacks,
+    liveCallbacks: RoutineLiveRunCallbacks | undefined,
+    persistProjectRunState: boolean,
   ): Promise<RoutineExecutionResult> {
     const routineId = routine.id;
 
@@ -173,15 +194,17 @@ export class RoutineRunner {
         ? await this.executeRoutineAction(routine, startedAt, liveCallbacks)
         : await this.executeAgentRoutine(routine, triggerType, context);
 
-      await this.options.routineStore.completeRoutineExecution(routineId, {
-        completedAt: actionResult.completedAt,
-        success: actionResult.success,
-        resultJson: actionResult.success ? { output: actionResult.output } : undefined,
-        output: actionResult.output,
-        error: actionResult.error,
-        triggerType: triggerType as RoutineExecutionResult["triggerType"],
-        stepResults: actionResult.stepResults,
-      });
+      if (persistProjectRunState) {
+        await this.options.routineStore.completeRoutineExecution(routineId, {
+          completedAt: actionResult.completedAt,
+          success: actionResult.success,
+          resultJson: actionResult.success ? { output: actionResult.output } : undefined,
+          output: actionResult.output,
+          error: actionResult.error,
+          triggerType: triggerType as RoutineExecutionResult["triggerType"],
+          stepResults: actionResult.stepResults,
+        });
+      }
 
       return {
         routineId,
@@ -198,14 +221,16 @@ export class RoutineRunner {
       log.error(`Routine ${routineId} execution failed: ${errorMessage}`);
 
       // Record failure
-      try {
-        await this.options.routineStore.completeRoutineExecution(routineId, {
-          completedAt: new Date().toISOString(),
-          success: false,
-          error: errorMessage,
-        });
-      } catch (persistError) {
-        log.error(`[${routineId}] Failed to persist error state: ${persistError}`);
+      if (persistProjectRunState) {
+        try {
+          await this.options.routineStore.completeRoutineExecution(routineId, {
+            completedAt: new Date().toISOString(),
+            success: false,
+            error: errorMessage,
+          });
+        } catch (persistError) {
+          log.error(`[${routineId}] Failed to persist error state: ${persistError}`);
+        }
       }
 
       return {
@@ -302,10 +327,10 @@ export class RoutineRunner {
     // the nested `.fusion/.fusion/` directory). Mirrors cron-runner.ts.
     if (isInProcessBackupCommand(command) && this.options.taskStore) {
       try {
-        const { runBackupCommand } = await import("@fusion/core");
+        const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
         const fusionDir = this.options.taskStore.getFusionDir();
         const settings = await this.options.taskStore.getSettings();
-        const result = await runBackupCommand(fusionDir, settings);
+        const result = await runBackupCommand(resolveGlobalBackupRoot(this.options.taskStore), settings);
         const output = truncateOutput(result.output ?? "", "");
         return {
           success: result.success,
@@ -653,7 +678,7 @@ function formatInProcessBackupError(err: unknown, fusionDir: string): string {
   if (cause.includes("project DB") || cause.includes("central DB")) {
     return cause;
   }
-  return `project DB run backup command failed; source: ${fusionDir}/fusion.db; cause: ${cause}`;
+  return `project PostgreSQL run backup command failed; project state: ${fusionDir}; cause: ${cause}`;
 }
 
 function truncateOutput(stdout: string, stderr: string): string {

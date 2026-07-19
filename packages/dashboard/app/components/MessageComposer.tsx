@@ -2,12 +2,23 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { X, Send, Loader2, Bot, AlertCircle } from "lucide-react";
-import type { ParticipantType, MessageType } from "@fusion/core";
+import type { DragEvent } from "react";
+import type { NativeStructureEmbed, NativeStructureRef, ParticipantType, MessageType } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import { sendMessage } from "../api";
 import type { Agent } from "../api";
+import { NativeStructurePreview } from "./NativeStructurePreview";
+import { ComposeChatPanel } from "./ComposeChatPanel";
+import { openNativeStructure } from "./nativeStructureNavigation";
+import { hasNativeStructureDrag, readNativeStructureRef } from "../utils/nativeStructureDrag";
+import "./MessageComposer.css";
 
 // ── Types ─────────────────────────────────────────────────────────────────
+
+export interface NativeStructureCandidate {
+  ref: NativeStructureRef;
+  label: string;
+}
 
 interface MessageComposerProps {
   /** Pre-fill recipient (e.g. when replying) */
@@ -26,6 +37,8 @@ interface MessageComposerProps {
   addToast?: (msg: string, type?: "success" | "error") => void;
   /** Loading state for agents (shows placeholder) */
   isLoadingAgents?: boolean;
+  /** Project-scoped structures the mail parent makes available for attachment. */
+  nativeStructureCandidates?: NativeStructureCandidate[];
 }
 
 const MAX_CONTENT_LENGTH = 2000;
@@ -41,12 +54,14 @@ export function MessageComposer({
   onCancel,
   addToast,
   isLoadingAgents = false,
+  nativeStructureCandidates = [],
 }: MessageComposerProps) {
   const { t } = useTranslation("app");
   const [toId, setToId] = useState(recipient?.id ?? "");
   const [toType, setToType] = useState<ParticipantType>(recipient?.type ?? "agent");
   const [content, setContent] = useState("");
   const [wakeRecipient, setWakeRecipient] = useState(false);
+  const [nativeStructures, setNativeStructures] = useState<NativeStructureEmbed[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -82,10 +97,11 @@ export function MessageComposer({
 
     try {
       const messageType: MessageType = toType === "agent" ? "user-to-agent" : "system";
-      const metadata =
-        replyContext
-          ? { replyTo: { messageId: replyContext.messageId } }
-          : undefined;
+      const metadata = {
+        ...(replyContext ? { replyTo: { messageId: replyContext.messageId } } : {}),
+        ...(nativeStructures.length > 0 ? { nativeStructures } : {}),
+      };
+      const hasMetadata = Object.keys(metadata).length > 0;
       const sendWakeImmediately = wakeImmediately;
       await sendMessage(
         {
@@ -93,7 +109,7 @@ export function MessageComposer({
           toType,
           content: content.trim(),
           type: messageType,
-          ...(metadata ? { metadata } : {}),
+          ...(hasMetadata ? { metadata } : {}),
           ...(sendWakeImmediately ? { wakeImmediately: true } : {}),
         },
         projectId,
@@ -106,12 +122,53 @@ export function MessageComposer({
     } finally {
       setIsSending(false);
     }
-  }, [isValid, isSending, toId, toType, content, wakeImmediately, replyContext, projectId, onSend, addToast]);
+  }, [isValid, isSending, toId, toType, content, wakeImmediately, replyContext, nativeStructures, projectId, onSend, addToast]);
 
   const handleAgentSelect = useCallback((agentId: string) => {
     setToId(agentId);
     setToType("agent");
   }, []);
+
+  const addNativeStructure = useCallback((ref: NativeStructureRef, label?: string) => {
+    setNativeStructures((current) => (
+      current.some((embed) => embed.kind === ref.kind && embed.id === ref.id)
+        ? current
+        : [...current, { ...ref, ...(label ? { label } : {}) }]
+    ));
+  }, []);
+
+  const attachNativeStructure = useCallback((candidateIndex: string) => {
+    const candidate = nativeStructureCandidates[Number(candidateIndex)];
+    if (candidate) addNativeStructure(candidate.ref, candidate.label);
+  }, [addNativeStructure, nativeStructureCandidates]);
+
+  const [isNativeStructureDragOver, setIsNativeStructureDragOver] = useState(false);
+  const [isComposeChatOpen, setIsComposeChatOpen] = useState(false);
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-22-10:30:
+  Desktop drags attach the same deduplicated embed state as the keyboard/mobile picker below.
+  Non-native payloads are deliberately not prevented so file and other browser drops retain their behavior.
+  */
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasNativeStructureDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsNativeStructureDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setIsNativeStructureDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasNativeStructureDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    setIsNativeStructureDragOver(false);
+    const ref = readNativeStructureRef(event.dataTransfer);
+    if (ref) addNativeStructure(ref);
+  }, [addNativeStructure]);
 
   const scrollTextareaIntoView = useCallback(() => {
     if (typeof textareaRef.current?.scrollIntoView !== "function") {
@@ -140,7 +197,14 @@ export function MessageComposer({
   }, [scrollTextareaIntoView]);
 
   return (
-    <div className="message-composer" data-testid="message-composer">
+    <div
+      className={`message-composer${isNativeStructureDragOver ? " message-composer--native-structure-drag-over" : ""}`}
+      data-testid="message-composer"
+      aria-label="Message composer; drop a structure to attach it"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="message-composer-header">
         <span>{replyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message")}</span>
         <button
@@ -221,6 +285,63 @@ export function MessageComposer({
               {content.length}/{MAX_CONTENT_LENGTH}
             </span>
           </div>
+        </div>
+
+        {/*
+        FNXC:NativeStructureEmbed 2026-07-20-12:00:
+        The picker is the accessible keyboard/mobile fallback for the desktop drag protocol.
+        Both paths append only a reference plus captured label, dedupe by kind/id, and share the
+        persisted message metadata so reports carry first-class, independently reviewable embeds.
+        */}
+        <div className="message-composer-field message-composer-field--structures">
+          <label className="message-composer-label" htmlFor="message-native-structure">Attach structure</label>
+          <div className="message-composer-structure-controls">
+            <select
+              id="message-native-structure"
+              className="message-composer-select"
+              value=""
+              disabled={nativeStructureCandidates.length === 0}
+              onChange={(event) => attachNativeStructure(event.target.value)}
+              data-testid="message-composer-attach-structure"
+            >
+              <option value="">{nativeStructureCandidates.length === 0 ? "No structures available" : "Select structure…"}</option>
+              {nativeStructureCandidates.map((candidate, index) => (
+                <option key={`${candidate.ref.kind}:${candidate.ref.id}`} value={index}>{candidate.ref.kind}: {candidate.label}</option>
+              ))}
+            </select>
+            {nativeStructures.length > 0 && (
+              <ul className="message-composer-structure-list" data-testid="message-composer-attached-structures">
+                {nativeStructures.map((embed) => (
+                  <li key={`${embed.kind}:${embed.id}`}>
+                    <NativeStructurePreview
+                      ref={{ kind: embed.kind, id: embed.id, projectId: embed.projectId }}
+                      capturedLabel={embed.label}
+                      onOpen={openNativeStructure}
+                    />
+                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => setNativeStructures((current) => current.filter((currentEmbed) => currentEmbed.kind !== embed.kind || currentEmbed.id !== embed.id))} aria-label={`Remove ${embed.label ?? embed.id}`}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <div className="message-composer-field">
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => setIsComposeChatOpen((open) => !open)} aria-expanded={isComposeChatOpen} aria-controls="compose-chat-panel">
+            {isComposeChatOpen ? "Hide compose chat" : "Draft with AI"}
+          </button>
+          {isComposeChatOpen && (
+            <ComposeChatPanel
+              projectId={projectId}
+              embeds={nativeStructures}
+              draftBody={content}
+              onUseDraft={(draft) => {
+                if (content.trim() && !window.confirm("Replace the message you have already typed with this draft?")) return;
+                setContent(draft);
+              }}
+              onClose={() => setIsComposeChatOpen(false)}
+            />
+          )}
         </div>
 
         {/* Wake recipient toggle (agents only) */}

@@ -387,7 +387,7 @@ export async function aggregateTokenAnalytics(
             chat_session_id    AS "chatSessionId",
             room_id            AS "roomId",
             message_id         AS "messageId",
-            project_id         AS "projectId",
+            owner_project_id   AS "projectId",
             agent_id           AS "agentId",
             input_tokens       AS "inputTokens",
             output_tokens      AS "outputTokens",

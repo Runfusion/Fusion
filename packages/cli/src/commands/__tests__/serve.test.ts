@@ -95,6 +95,7 @@ const mocks = vi.hoisted(() => {
   const pluginLoaderInstances: any[] = [];
   const projectEngineInstances: any[] = [];
   const listenCalls: ListenCall[] = [];
+  const backendShutdowns: Array<ReturnType<typeof vi.fn>> = [];
   const globalSettingsGetSettings = vi.fn().mockResolvedValue({});
 
   function createTaskStoreMock(projectId = "") {
@@ -155,6 +156,23 @@ const mocks = vi.hoisted(() => {
     const store = createTaskStoreMock();
     taskStores.push(store);
     return store;
+  });
+
+  /*
+   * FNXC:PostgresServeLifecycle 2026-07-14-22:20:
+   * Serve's authoritative TaskStore is initialized by createTaskStoreForBackend and then injected into ProjectEngineManager. The test factory must model that single owner instead of leaving the engine mock to construct and initialize a second store.
+   */
+  const createTaskStoreForBackendMock = vi.fn(async ({ rootDir }: { rootDir: string }) => {
+    const taskStore = taskStoreCtor(rootDir);
+    await taskStore.init();
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    backendShutdowns.push(shutdown);
+    return {
+      taskStore,
+      asyncLayer: {},
+      backend: { mode: "embedded" },
+      shutdown,
+    };
   });
 
   const automationStoreCtor = vi.fn().mockImplementation(function () {
@@ -364,6 +382,10 @@ const mocks = vi.hoisted(() => {
     return pluginLoader;
   });
 
+  const pluginRunner = {
+    getRuntimeById: vi.fn(),
+  };
+
   const authStorage = {
     getApiKey: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn(),
@@ -374,6 +396,7 @@ const mocks = vi.hoisted(() => {
     set: vi.fn(),
     remove: vi.fn(),
     get: vi.fn(),
+    setModelRuntime: vi.fn(),
   };
 
   const modelRegistry = {
@@ -381,6 +404,13 @@ const mocks = vi.hoisted(() => {
     registerProvider: vi.fn(),
     refresh: vi.fn(),
   };
+  /*
+  FNXC:CliTests 2026-07-16-10:10:
+  pi 0.80.8 moved model initialization into async ModelRuntime, so the real
+  registry factory calls authStorage.setModelRuntime. Stub that factory here to
+  keep provider-registration assertions bound to the shared mock registry.
+  */
+  const createFusionModelRegistryMock = vi.fn(async () => modelRegistry);
 
   const refreshAllCustomProviderModels = vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
   const createSkillsAdapterMock = vi.fn().mockReturnValue(undefined);
@@ -423,8 +453,13 @@ const mocks = vi.hoisted(() => {
     pruning: { applied: false },
   });
 
-  const projectEngineCtor = vi.fn().mockImplementation(function (runtimeConfig: { workingDirectory: string }, _centralCore: unknown, options: { onInsightRunProcessed?: unknown }) {
-    const store = taskStoreCtor(runtimeConfig.workingDirectory);
+  const projectEngineCtor = vi.fn().mockImplementation(function (
+    runtimeConfig: { workingDirectory: string },
+    _centralCore: unknown,
+    options: { onInsightRunProcessed?: unknown; externalTaskStore?: ReturnType<typeof createTaskStoreMock> },
+  ) {
+    const store = options.externalTaskStore ?? taskStoreCtor(runtimeConfig.workingDirectory);
+    const ownsStoreInitialization = options.externalTaskStore === undefined;
     const automationStore = automationStoreCtor(runtimeConfig.workingDirectory);
     const agentStore = agentStoreCtor();
     const semaphore = agentSemaphoreCtor();
@@ -454,7 +489,7 @@ const mocks = vi.hoisted(() => {
 
     const engine = {
       start: vi.fn(async () => {
-        await store.init();
+        if (ownsStoreInitialization) await store.init();
         await automationStore.init();
         await agentStore.init();
         const settings = await store.getSettings();
@@ -513,6 +548,11 @@ const mocks = vi.hoisted(() => {
         at: new Date().toISOString(),
         provider: null,
       })),
+      /*
+      FNXC:FasterStartup 2026-07-15-12:41:
+      Keep the serve startup fixture aligned with the HTTP host contract: createServer receives the engine PluginRunner so model routes can resolve runtime-backed providers while startup remains non-blocking.
+      */
+      getPluginRunner: vi.fn(() => pluginRunner),
       startRemoteTunnel: vi.fn(async () => remoteStatus),
       stopRemoteTunnel: vi.fn(async () => ({ ...remoteStatus, state: "stopped" as const, provider: null, pid: null, url: null })),
       onMerge: vi.fn().mockResolvedValue(undefined),
@@ -538,7 +578,9 @@ const mocks = vi.hoisted(() => {
     pluginLoaderInstances,
     projectEngineInstances,
     listenCalls,
+    backendShutdowns,
     taskStoreCtor,
+    createTaskStoreForBackendMock,
     automationStoreCtor,
     agentStoreCtor,
     centralCoreCtor,
@@ -563,6 +605,7 @@ const mocks = vi.hoisted(() => {
     processAndAuditInsightExtractionMock,
     authStorage,
     modelRegistry,
+    createFusionModelRegistryMock,
     refreshAllCustomProviderModels,
     createSkillsAdapterMock,
     globalSettingsGetSettings,
@@ -584,6 +627,7 @@ const mocks = vi.hoisted(() => {
       pluginLoaderInstances.length = 0;
       projectEngineInstances.length = 0;
       listenCalls.length = 0;
+      backendShutdowns.length = 0;
       syncInsightExtractionAutomationMock.mockReset();
       syncInsightExtractionAutomationMock.mockResolvedValue(undefined);
       processAndAuditInsightExtractionMock.mockClear();
@@ -603,6 +647,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const { createCliCoreMock } = await import("../../test/mockCoreEngine");
   return createCliCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
   TaskStore: mocks.taskStoreCtor,
+  createTaskStoreForBackend: mocks.createTaskStoreForBackendMock,
   AutomationStore: mocks.automationStoreCtor,
   AgentStore: mocks.agentStoreCtor,
   CentralCore: mocks.centralCoreCtor,
@@ -651,20 +696,52 @@ vi.mock("@fusion/engine", async (importOriginal) => {
   const { createCliEngineMock } = await import("../../test/mockCoreEngine");
   return createCliEngineMock(() => importOriginal<typeof import("@fusion/engine")>(), {
     createFusionAuthStorage: vi.fn(() => mocks.authStorage),
+    createFusionModelRegistry: mocks.createFusionModelRegistryMock,
     ProjectEngine: mocks.projectEngineCtor,
     ProjectEngineManager: vi.fn().mockImplementation(function (centralCore: any, options: any) {
     const engines = new Map<string, any>();
+    const starting = new Map<string, Promise<any>>();
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Serve no longer awaits startAll before primary ensureEngine. The mock must
+    create-on-ensure (matching real ProjectEngineManager) so primary resolution
+    works when background startAll has not finished yet.
+    */
+    const ensureEngine = async (id: string) => {
+      const existing = engines.get(id);
+      if (existing) return existing;
+      const pending = starting.get(id);
+      if (pending) return pending;
+      const promise = (async () => {
+        // Prefer listProjects path (authoritative registry fixture) over getProject,
+        // which some multi-project suite stubs invent as `/repo/${id}`.
+        const listed = await centralCore.listProjects();
+        const fromList = listed.find((p: { id: string }) => p.id === id);
+        const project = fromList ?? (await centralCore.getProject(id));
+        const engine = mocks.projectEngineCtor(
+          {
+            projectId: id,
+            workingDirectory: project?.path ?? `/tmp/${id}`,
+            isolationMode: "in-process",
+            maxConcurrent: 4,
+            maxWorktrees: 10,
+          },
+          centralCore,
+          { ...options, projectId: id },
+        );
+        await engine.start();
+        engines.set(id, engine);
+        starting.delete(id);
+        return engine;
+      })();
+      starting.set(id, promise);
+      return promise;
+    };
     return {
       startAll: vi.fn(async () => {
         const projects = await centralCore.listProjects();
         for (const project of projects) {
-          const engine = mocks.projectEngineCtor(
-            { projectId: project.id, workingDirectory: project.path, isolationMode: "in-process", maxConcurrent: 4, maxWorktrees: 10 },
-            centralCore,
-            { ...options, projectId: project.id },
-          );
-          await engine.start();
-          engines.set(project.id, engine);
+          await ensureEngine(project.id);
         }
       }),
       // Track which engine is used to verify correct cwd/default routing
@@ -674,11 +751,12 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       }),
       getAllEngines: vi.fn(() => engines),
       getStore: vi.fn((id: string) => engines.get(id)?.getTaskStore()),
-      has: vi.fn((id: string) => engines.has(id)),
-      ensureEngine: vi.fn(async (id: string) => engines.get(id)),
+      has: vi.fn((id: string) => engines.has(id) || starting.has(id)),
+      ensureEngine: vi.fn(async (id: string) => ensureEngine(id)),
       stopAll: vi.fn(async () => {
         for (const engine of engines.values()) await engine.stop();
         engines.clear();
+        starting.clear();
       }),
       onProjectAccessed: vi.fn(),
       startReconciliation: vi.fn(),
@@ -729,7 +807,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
   });
 });
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: vi.fn(() => mocks.authStorage),
   },
   DefaultPackageManager: vi.fn().mockImplementation(function () {
@@ -903,7 +981,8 @@ describe("runServe", () => {
   it("initializes stores, starts engine services, and creates a headless server", async () => {
     await runServe(4040, {});
 
-    expect(mocks.taskStoreCtor).toHaveBeenCalledWith("/repo");
+    expect(mocks.createTaskStoreForBackendMock).toHaveBeenCalledWith({ rootDir: "/repo" });
+    expect(mocks.taskStoreCtor).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].init).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].watch).toHaveBeenCalledTimes(1);
     expect(mocks.automationStoreCtor).toHaveBeenCalledWith("/repo");
@@ -1020,7 +1099,8 @@ describe("runServe", () => {
     expect(mocks.cronRunnerInstances[0].stop).toHaveBeenCalledTimes(1);
     expect(mocks.notifierInstances[0].stop).toHaveBeenCalledTimes(1);
     expect(listenCall.server.close).toHaveBeenCalledTimes(1);
-    expect(mocks.taskStores[0].close).toHaveBeenCalledTimes(1);
+    expect(mocks.taskStores[0].close).not.toHaveBeenCalled();
+    expect(mocks.backendShutdowns[0]).toHaveBeenCalledTimes(1);
   });
 
   it("enables HybridExecutor when env override is set and shuts it down before engine stop", async () => {
@@ -1154,6 +1234,15 @@ describe("runServe — Plugin wiring", () => {
     await triggerSignal("SIGINT");
   });
 
+  it("shuts down the single shared PostgreSQL boot on graceful serve shutdown", async () => {
+    await runServe(4040, {});
+    expect(mocks.backendShutdowns).toHaveLength(1);
+
+    await triggerSignal("SIGINT");
+
+    expect(mocks.backendShutdowns[0]).toHaveBeenCalledTimes(1);
+  });
+
   it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {
     const { createServer } = await import("@fusion/dashboard");
 
@@ -1164,7 +1253,7 @@ describe("runServe — Plugin wiring", () => {
     expect(serverOpts).toHaveProperty("pluginStore");
     expect(serverOpts).toHaveProperty("pluginLoader");
     expect(serverOpts).toHaveProperty("pluginRunner");
-    expect(serverOpts.pluginRunner).toBe(serverOpts.pluginLoader);
+    expect(serverOpts.pluginRunner).toBe(mocks.projectEngineInstances[0].getPluginRunner());
 
     await triggerSignal("SIGINT");
   });
@@ -1703,6 +1792,18 @@ describe("runServe — Peer exchange and discovery", () => {
         staleTimeoutMs: 300_000,
       }),
     );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("skips automatic discovery when local network discovery is disabled", async () => {
+    mocks.globalSettingsGetSettings.mockResolvedValue({ localNetworkDiscoveryEnabled: false });
+
+    await runServe(4040, {});
+
+    const nodeCentral = mocks.centralInstances.find((instance) => instance.listNodes.mock.calls.length > 0);
+    expect(nodeCentral).toBeDefined();
+    expect(nodeCentral.startDiscovery).not.toHaveBeenCalled();
 
     await triggerSignal("SIGINT");
   });

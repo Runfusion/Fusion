@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workflowAuthoringEngineMock } from "./helpers/engine-workflow-authoring-mock.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
@@ -34,6 +34,19 @@ const mockErrors = vi.hoisted(() => ({
 }));
 
 vi.mock("@fusion/core", () => ({
+  /*
+  FNXC:CliTests 2026-07-17-10:56:
+  The extension experiment-finalize path now boots its store through
+  createTaskStoreForBackend. Keep this full-replacement mock aligned with that
+  module export so mock-completeness drift cannot block the tool before its assertions run.
+  */
+  createTaskStoreForBackend: vi.fn(async () => ({
+    taskStore: {
+      init: vi.fn().mockResolvedValue(undefined),
+      getExperimentSessionStore: vi.fn(() => ({})),
+    },
+    shutdown: vi.fn().mockResolvedValue(undefined),
+  })),
   TaskStore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     getExperimentSessionStore: vi.fn(() => ({})),
@@ -62,8 +75,10 @@ vi.mock("@fusion/dashboard", () => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   ...workflowAuthoringEngineMock,
   createFnAgent: vi.fn(),
+  createAgentTask: vi.fn(),
   fetchWebContent: vi.fn(),
   emitGoalRetrievalAudit: vi.fn(),
   createWorkflowAuthoringTools: vi.fn(() => ({})),
@@ -76,6 +91,8 @@ vi.mock("@fusion/engine", () => ({
   workflowDeleteParams: {},
   workflowSettingsParams: {},
   traitListParams: {},
+  normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
+  renderAgentLogEntries: vi.fn(() => ""),
   defaultGitOps: vi.fn(() => ({})),
   ExperimentFinalizeService: makeConstructibleMock(() => ({ previewPlan: previewPlanMock, finalize: finalizeMock })),
   ExperimentFinalizeStateError: mockErrors.StateError,
@@ -86,11 +103,28 @@ vi.mock("@fusion/engine", () => ({
   ExperimentFinalizeCherryPickConflictError: mockErrors.CherryPickError,
 }));
 
-import kbExtension from "../extension.js";
+import kbExtension, {
+  __setCachedStoreForTesting,
+  closeCachedStores,
+} from "../extension.js";
 
 describe("extension fn_experiment_finalize", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:CliTests 2026-07-16-08:58:
+    FN-8102 injects the experiment-session store through the extension cache so
+    the test reaches ExperimentFinalizeService instead of booting a real store.
+    The mocked engine error classes therefore remain the exact identities used
+    by the extension's instanceof error-to-code mapping.
+    */
+    __setCachedStoreForTesting(process.cwd(), {
+      getExperimentSessionStore: vi.fn(() => ({})),
+    } as any);
+  });
+
+  afterEach(async () => {
+    await closeCachedStores();
   });
 
   function getTool() {

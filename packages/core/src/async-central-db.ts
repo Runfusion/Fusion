@@ -46,7 +46,7 @@
 import { and, eq } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
-import type { TaskClaimRow } from "./types.js";
+import type { CentralClaimStore, TaskClaimRow } from "./types.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
@@ -172,6 +172,10 @@ export async function tryClaimTask(
     const now = input.renewedAt;
 
     if (!existing) {
+      /*
+      FNXC:AsyncCentralClaims 2026-07-16-10:55:
+      FN-8047 requires concurrent first claims from separate nodes to produce one winner and a normal conflict for the loser. PostgreSQL transactions can both observe an absent row, so make the unique-key collision non-throwing and classify the persisted winner below instead of leaking a database constraint error through AgentStore checkout.
+      */
       await tx.insert(schema.central.taskClaims).values({
         projectId: input.projectId,
         taskId: input.taskId,
@@ -182,10 +186,13 @@ export async function tryClaimTask(
         leaseRenewedAt: now,
         createdAt: now,
         updatedAt: now,
-      });
+      }).onConflictDoNothing();
       const claim = await getTaskClaim(tx, input.projectId, input.taskId);
       if (!claim) {
         throw new Error("Task claim insert succeeded but row could not be read back");
+      }
+      if (claim.ownerNodeId !== input.nodeId || claim.ownerAgentId !== input.agentId) {
+        return { ok: false, reason: "conflict", current: claim };
       }
       return { ok: true, claim };
     }
@@ -351,4 +358,25 @@ export async function releaseClaimsForNode(
     .where(eq(schema.central.taskClaims.ownerNodeId, ownerNodeId))
     .returning({ projectId: schema.central.taskClaims.projectId });
   return deleted.length;
+}
+
+/** Awaitable CentralClaimStore adapter used by the PostgreSQL engine runtime. */
+export class AsyncCentralClaimStore implements CentralClaimStore {
+  constructor(private readonly layer: AsyncDataLayer) {}
+
+  tryClaimTask(input: TryClaimInput): Promise<TryClaimResult> {
+    return tryClaimTask(this.layer, input);
+  }
+
+  renewTaskClaim(input: RenewClaimInput): Promise<RenewClaimResult> {
+    return renewTaskClaim(this.layer, input);
+  }
+
+  releaseTaskClaim(input: ReleaseClaimInput): Promise<ReleaseClaimResult> {
+    return releaseTaskClaim(this.layer, input);
+  }
+
+  getTaskClaim(projectId: string, taskId: string): Promise<TaskClaimRow | null> {
+    return getTaskClaim(this.layer.db, projectId, taskId);
+  }
 }

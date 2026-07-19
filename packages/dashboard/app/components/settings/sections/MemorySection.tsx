@@ -1,8 +1,11 @@
-import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { MemoryBackendCapabilities, MemoryBackendStatus, MemoryFileInfo, MemoryRetrievalTestResult, } from "../../../api";
 import { FileEditor } from "../../FileEditor";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 const MEMORY_FILE_OPTION_LABEL_MAX_CHARS = 72;
@@ -46,10 +49,9 @@ export interface MemorySectionMemoryProps {
     onSaveMemory: () => void;
 }
 export interface MemorySectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     memory: MemorySectionMemoryProps;
 }
-export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySectionProps) {
+export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
     const { t } = useTranslation("app");
     const { memoryCapabilities: capabilities, memoryBackendStatus: backendStatus, memoryBackendLoading: backendLoading, memoryBackendError: backendError, memoryFiles, selectedMemoryPath, setSelectedMemoryPath, memoryContent, setMemoryContent, memoryLoading, memoryDirty, setMemoryDirty, memoryTestQuery, setMemoryTestQuery, memoryTestLoading, memoryTestResult, qmdInstallLoading, dreamRunning, memoryCompactLoading, onInstallQmd, onTestMemoryRetrieval, onDreamNow, onCompactMemory, onSaveMemory, } = memory;
     // Determine if editing is allowed
@@ -64,17 +66,25 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
         dreams: "Dreams",
     };
     return (<>
-      {scopeBanner}
-      <h4 className="settings-section-heading">{t("settings.memory.memory", "Memory")}</h4>
-      <div className="form-group">
-        <small className="settings-muted">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</small>
+      {/*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      Section intro moved behind the shared "?" beside the heading — operator requirement: no inline description paragraphs in Settings.
+      */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.memory.memory", "Memory")}</h4>
+        <SettingsHelpTip settingKey="memory-section">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</SettingsHelpTip>
       </div>
 
-      <div className="form-group">
-        <label htmlFor="memoryEnabled" className="checkbox-label">
-          <input id="memoryEnabled" type="checkbox" checked={form.memoryEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))}/>{t("settings.memory.enableMemoryTools", " Enable memory tools ")}</label>
-        <small>{t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled.")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryEnabled",
+          label: t("settings.memory.enableMemoryTools", " Enable memory tools "),
+          help: t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.memoryEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
+      />
 
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
@@ -90,69 +100,127 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
           </button>
         </div>)}
 
-      <div className="form-group">
-        <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
-          <input id="memoryAutoSummarizeEnabled" type="checkbox" checked={form.memoryAutoSummarizeEnabled || false} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))}/>{t("settings.memory.autoSummarizeMemory", " Auto-Summarize Memory ")}</label>
-        <small>{t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule. Default: disabled.")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryAutoSummarizeEnabled",
+          label: t("settings.memory.autoSummarizeMemory", " Auto-Summarize Memory "),
+          help: t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.memoryAutoSummarizeEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: v === true }))}
+      />
 
       {(form.memoryAutoSummarizeEnabled || false) && (<>
-          <div className="form-group">
-            <label htmlFor="memoryAutoSummarizeThresholdChars">{t("settings.memory.compactionThresholdChars", "Compaction Threshold (chars)")}</label>
-            <input id="memoryAutoSummarizeThresholdChars" type="number" className="input" value={form.memoryAutoSummarizeThresholdChars ?? 50000} onChange={(e) => setForm((f) => ({
-                ...f,
-                memoryAutoSummarizeThresholdChars: parseInt(e.target.value, 10) || 50000,
-            }))} min={1000}/>
-            <small>{t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count. Default: 50000.")}</small>
-          </div>
-          <div className="form-group">
-            <label htmlFor="memoryAutoSummarizeSchedule">{t("settings.memory.scheduleCron", "Schedule (cron)")}</label>
-            <input id="memoryAutoSummarizeSchedule" type="text" className="input" value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))} placeholder={t("settings.memory.03", "0 3 * * *")}/>
-            <small>{t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule. Default: 0 3 * * * (daily at 3 AM).")}</small>
-          </div>
+          {/*
+          FNXC:MemoryCompaction 2026-07-15-17:35:
+          An empty or unparseable threshold falls back to the 50000 schema default rather than persisting undefined: the auto-summarize scheduler reads this value directly, so a blank field must still compact at the documented default instead of disabling compaction silently.
+          */}
+          <SettingsNumberRow
+            descriptor={{
+              key: "memoryAutoSummarizeThresholdChars",
+              label: t("settings.memory.compactionThresholdChars", "Compaction Threshold (chars)"),
+              help: t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count. Default: 50000."),
+              scope: "project",
+              min: 1000,
+            }}
+            value={form.memoryAutoSummarizeThresholdChars ?? 50000}
+            onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeThresholdChars: v || 50000 }))}
+          />
+          <SettingsTextRow
+            descriptor={{
+              key: "memoryAutoSummarizeSchedule",
+              label: t("settings.memory.scheduleCron", "Schedule (cron)"),
+              help: t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule. Default: 0 3 * * * (daily at 3 AM)."),
+              scope: "project",
+              placeholder: t("settings.memory.03", "0 3 * * *"),
+            }}
+            value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: v ?? "" }))}
+          />
         </>)}
 
-      <div className="form-group">
-        <label htmlFor="insightExtractionEnabled" className="checkbox-label">
-          <input id="insightExtractionEnabled" type="checkbox" checked={form.insightExtractionEnabled || false} onChange={(e) => setForm((f) => ({ ...f, insightExtractionEnabled: e.target.checked }))}/>{t("settings.memory.enableInsightExtraction", " Enable Insight Extraction ")}</label>
-        <small>{t("settings.memory.periodicallyExtractDurableInsightsFromCompletedTasks", "Periodically extract durable insights/learnings from completed tasks into memory")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "insightExtractionEnabled",
+          label: t("settings.memory.enableInsightExtraction", " Enable Insight Extraction "),
+          help: t("settings.memory.periodicallyExtractDurableInsightsFromCompletedTasks", "Periodically extract durable insights/learnings from completed tasks into memory"),
+          scope: "project",
+        }}
+        value={form.insightExtractionEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, insightExtractionEnabled: v === true }))}
+      />
 
       {(form.insightExtractionEnabled || false) && (
-          <div className="form-group">
-            <label htmlFor="insightExtractionSchedule">{t("settings.memory.scheduleCron", "Schedule (cron)")}</label>
-            <input id="insightExtractionSchedule" type="text" className="input" value={form.insightExtractionSchedule ?? "0 2 * * *"} onChange={(e) => setForm((f) => ({ ...f, insightExtractionSchedule: e.target.value }))} placeholder={t("settings.memory.02", "0 2 * * *")}/>
-            <small>{t("settings.memory.cronExpressionForInsightExtractionScheduleDefaultDaily", "Cron expression for insight extraction schedule (default: daily at 2 AM)")}</small>
-          </div>)}
+          <SettingsTextRow
+            descriptor={{
+              key: "insightExtractionSchedule",
+              label: t("settings.memory.scheduleCron", "Schedule (cron)"),
+              help: t("settings.memory.cronExpressionForInsightExtractionScheduleDefaultDaily", "Cron expression for insight extraction schedule (default: daily at 2 AM)"),
+              scope: "project",
+              placeholder: t("settings.memory.02", "0 2 * * *"),
+            }}
+            value={form.insightExtractionSchedule ?? "0 2 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, insightExtractionSchedule: v ?? "" }))}
+          />)}
 
       <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }}/>
 
-      <div className="form-group">
-        <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
-          <input id="memoryDreamsEnabled" type="checkbox" checked={form.memoryDreamsEnabled === true} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsEnabled: e.target.checked }))} disabled={!isMemoryEnabled}/>{t("settings.memory.processDreamsFromDailyMemory", " Process dreams from daily memory ")}</label>
-        <small>{t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md. Default: disabled.")}</small>
-      </div>
+      {/*
+      FNXC:MemoryDreams 2026-07-15-17:35:
+      Dream processing reads the daily memory layer, so the toggle is disabled whenever memory tools are off — there is nothing to synthesize from. The schedule row below stays gated on both flags for the same reason.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryDreamsEnabled",
+          label: t("settings.memory.processDreamsFromDailyMemory", " Process dreams from daily memory "),
+          help: t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md. Default: disabled."),
+          scope: "project",
+          disabled: !isMemoryEnabled,
+        }}
+        value={form.memoryDreamsEnabled === true}
+        onChange={(v) => setForm((f) => ({ ...f, memoryDreamsEnabled: v === true }))}
+      />
 
       {isMemoryEnabled && form.memoryDreamsEnabled === true && (<>
-          <div className="form-group">
-            <label htmlFor="memoryDreamsSchedule">{t("settings.memory.dreamSchedule", "Dream Schedule")}</label>
-            <input id="memoryDreamsSchedule" type="text" value={form.memoryDreamsSchedule ?? "0 4 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))}/>
-            <small>{t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM).")}</small>
-          </div>
+          <SettingsTextRow
+            descriptor={{
+              key: "memoryDreamsSchedule",
+              label: t("settings.memory.dreamSchedule", "Dream Schedule"),
+              help: t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM)."),
+              scope: "project",
+            }}
+            value={form.memoryDreamsSchedule ?? "0 4 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, memoryDreamsSchedule: v ?? "" }))}
+          />
           <div className="form-group">
             <button type="button" className="btn btn-sm" onClick={onDreamNow} disabled={dreamRunning || form.memoryDreamsEnabled !== true}>
               {dreamRunning ? (<>
                   <Loader2 size={14} className="animate-spin"/>{t("settings.memory.dreaming", " Dreaming\u2026 ")}</>) : (t("settings.memory.dreamNow", "Dream Now"))}
             </button>
-            <small>{t("settings.memory.manuallyTriggerDreamProcessingNow", "Manually trigger dream processing now.")}</small>
+            {/*
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings, action buttons included. The tip is a sibling of the button; the button's own label still names the action.
+            */}
+            <SettingsHelpTip settingKey="memory-dream-now">{t("settings.memory.manuallyTriggerDreamProcessingNow", "Manually trigger dream processing now.")}</SettingsHelpTip>
           </div>
         </>)}
 
+      {/*
+      FNXC:SettingsSearch 2026-07-15-17:35:
+      The retrieval tester, memory-file picker, and editor below stay on plain `form-group` markup on purpose: none of them edits a settings key. They are a transient query box, a file selector gated on unsaved edits, and a document editor, so rendering them as settings rows would file them in the settings search index as configuration an operator can set — which they are not.
+      */}
       <div className="memory-retrieval-test">
         <div className="form-group">
-          <label htmlFor="memoryRetrievalQuery">{t("settings.memory.testRetrieval", "Test Retrieval")}</label>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          The tester is not a settings key (see the note above), but its help still hangs off the shared "?" so this section does not mix a help icon and a paragraph in adjacent rows. `settingKey` reuses the input's id — the tip only needs a stable handle for its bubble id, not a real settings key.
+          */}
+          <div className="settings-field-label-row">
+            <label htmlFor="memoryRetrievalQuery">{t("settings.memory.testRetrieval", "Test Retrieval")}</label>
+            <SettingsHelpTip settingKey="memoryRetrievalQuery">{t("settings.memory.runsTheSameQmdBackedMemorySearchPath", "Runs the same qmd-backed memory_search path agents use.")}</SettingsHelpTip>
+          </div>
           <input id="memoryRetrievalQuery" type="text" value={memoryTestQuery} onChange={(e) => setMemoryTestQuery(e.target.value)} placeholder={t("settings.memory.searchMemoryWithQmd", "Search memory with qmd")}/>
-          <small>{t("settings.memory.runsTheSameQmdBackedMemorySearchPath", "Runs the same qmd-backed memory_search path agents use.")}</small>
         </div>
         <div className="form-group">
           <button type="button" className="btn btn-secondary btn-sm" onClick={onTestMemoryRetrieval} disabled={memoryTestLoading}>
@@ -180,7 +248,14 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
 
       {memoryLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.memory.loadingMemory", "Loading memory\u2026")} /></div>) : (<div className="memory-editor-section">
           <div className="form-group">
-            <label htmlFor="memoryFilePath">{t("settings.memory.memoryFile", "Memory File")}</label>
+            {/*
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            The descriptive branch moved behind the shared "?" beside the label — operator requirement: no inline description paragraphs in Settings. The dirty-state line below stays inline: it is the live reason the select is DISABLED, not help, and must be visible without opening a tip.
+            */}
+            <div className="settings-field-label-row">
+              <label htmlFor="memoryFilePath">{t("settings.memory.memoryFile", "Memory File")}</label>
+              <SettingsHelpTip settingKey="memoryFilePath">Choose any project memory file to view or edit. Dreams is selected by default.</SettingsHelpTip>
+            </div>
             <select id="memoryFilePath" value={selectedMemoryPath} onChange={(e) => {
                 setSelectedMemoryPath(e.target.value);
                 setMemoryDirty(false);
@@ -189,11 +264,7 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
                   {formatMemoryFileOptionLabel(file)}
                 </option>))}
             </select>
-            <small>
-              {memoryDirty
-                ? "Save or discard the current edits before switching files."
-                : "Choose any project memory file to view or edit. Dreams is selected by default."}
-            </small>
+            {memoryDirty && (<small>Save or discard the current edits before switching files.</small>)}
           </div>
           {selectedMemoryFile && (<div className="memory-file-summary">
               <span>{memoryLayerNames[selectedMemoryFile.layer]}</span>
@@ -203,13 +274,19 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
               </small>
             </div>)}
           <div className="form-group memory-editor-form-group">
-            <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
-            <small>
-              {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
-              {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
-              {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
-              {!selectedMemoryFile && "Edits the selected memory file."}
-            </small>
+            {/*
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            Per-layer orientation copy moved behind the shared "?" beside the editor label — operator requirement: no inline description paragraphs in Settings. The bubble content still tracks the file picker, so it always describes the currently selected file.
+            */}
+            <div className="settings-field-label-row">
+              <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
+              <SettingsHelpTip settingKey="memory-editor">
+                {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
+                {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
+                {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
+                {!selectedMemoryFile && "Edits the selected memory file."}
+              </SettingsHelpTip>
+            </div>
             <div className="memory-editor-frame">
               <FileEditor content={memoryContent} onChange={(content) => {
                 setMemoryContent(content);
@@ -223,11 +300,12 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
           <button type="button" className="btn btn-secondary btn-sm" onClick={onCompactMemory} disabled={!isEditingAllowed || memoryDirty || memoryCompactLoading}>
             {memoryCompactLoading ? t("settings.memory.compacting", "Compacting…") : t("settings.memory.compactSelectedFile", "Compact Selected File")}
           </button>
-          <small>
-            {memoryDirty
-                ? "Save or discard edits before compacting this file."
-                : `Compacts ${selectedMemoryPath} and writes the result back to the same file.`}
-          </small>
+          {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          The descriptive branch moved behind the shared "?" beside the action button — operator requirement: no inline description paragraphs in Settings. The dirty-state line stays inline: it is the live reason the button is DISABLED, not help.
+          */}
+          <SettingsHelpTip settingKey="memory-compact-file">{`Compacts ${selectedMemoryPath} and writes the result back to the same file.`}</SettingsHelpTip>
+          {memoryDirty && (<small>Save or discard edits before compacting this file.</small>)}
         </div>)}
 
       {memoryDirty && isEditingAllowed && (<div className="form-group">

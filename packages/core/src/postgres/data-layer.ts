@@ -399,6 +399,21 @@ export function projectTable(tableName: string): SQL {
  * candidate scan, and the search scans — see the FNXC:MultiProjectIsolation
  * markers in the task-store helpers.
  */
+/*
+FNXC:ProjectDataIsolation 2026-07-14-18:30:
+Migration 0006 forces every project-owned write through fusion_assign_project_id, which rewrites NULL/empty project_id to current_setting('fusion.project_id') or the explicit __legacy_unscoped__ quarantine. Application reads that still filter project_id = '' never see those rows. Normalize empty/missing bindings to the same sentinel used by the trigger so write+read paths stay lockstep for unbound compatibility stores and bound runtimes alike.
+*/
+export const LEGACY_UNSCOPED_PROJECT_ID = "__legacy_unscoped__";
+
+/**
+ * FNXC:ProjectDataIsolation 2026-07-14-18:30:
+ * Resolve the ownership partition written/read for a project-scoped row. Empty, null, and whitespace map to {@link LEGACY_UNSCOPED_PROJECT_ID} so application code matches the 0006 insert trigger instead of silently partitioning writes and reads differently.
+ */
+export function projectOwnershipPartition(projectId?: string | null): string {
+  const trimmed = projectId?.trim();
+  return trimmed || LEGACY_UNSCOPED_PROJECT_ID;
+}
+
 export function taskProjectScope(layer: Pick<AsyncDataLayer, "projectId">): SQL | undefined {
   return layer.projectId ? eq(schema.project.tasks.projectId, layer.projectId) : undefined;
 }
@@ -410,4 +425,29 @@ export function archivedTaskProjectScope(
   return layer.projectId
     ? eq(schema.project.archivedTasks.projectId, layer.projectId)
     : undefined;
+}
+
+/**
+ * FNXC:MultiProjectIsolation 2026-07-15-21:40:
+ * As {@link taskProjectScope}, but for any project-schema column and a raw project id rather
+ * than a bound layer. Same contract: a bound id scopes the read, an unbound one (undefined or
+ * blank) is a no-op that reads across projects.
+ *
+ * Exists because helpers that take `projectId: string` are called as `layer.projectId ?? ""`,
+ * which turns "no scope" into a literal `''` scope. That never matches anything: the
+ * `fusion_assign_project_id` BEFORE INSERT trigger (migration 0006) rewrites a written `''` to
+ * the session's `fusion.project_id` or `__legacy_unscoped__`, so reads filtering on `''` look
+ * for a value the database never stores. Writes normalize; reads must not invent a scope.
+ *
+ * Blank is treated as unbound rather than as the legacy sentinel deliberately: an unbound layer
+ * is documented as a project-agnostic / analytics reader, so it reads everything, exactly as the
+ * `taskProjectScope` no-op already does. Restricting it to `__legacy_unscoped__` rows would make
+ * an unscoped analytics read silently partial instead.
+ */
+export function projectScopeFor(
+  column: SQL | Parameters<typeof eq>[0],
+  projectId: string | undefined,
+): SQL | undefined {
+  const scope = projectId?.trim();
+  return scope ? eq(column, scope) : undefined;
 }

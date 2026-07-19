@@ -193,13 +193,17 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
 
   /**
    * FNXC:SqliteFinalRemoval 2026-06-26-10:10:
-   * In backend mode (asyncLayer injected), skip all SQLite construction and
-   * the legacy migration sweep. The PostgreSQL schema baseline already covers
-   * these. The per-project plugin state rows are created on-demand by the
-   * async register/enable/disable helpers.
+   * In backend mode (asyncLayer injected), never construct operational SQLite
+   * stores. A narrowly scoped, read-only bridge may inspect retained plugin
+   * rows once behind a durable PostgreSQL marker; all subsequent install and
+   * project-state authority remains in PostgreSQL.
    */
   async init(): Promise<void> {
     if (this.backendMode) {
+      /*
+      FNXC:PluginLegacyMigration 2026-07-15-02:09:
+      PostgreSQL plugin reads use central.plugin_installs plus path-scoped project_plugin_states. The startup factory completes the retained-SQLite bridge with its privileged migration connection before constructing the runtime layer; PluginStore.init must not attempt DDL or migration writes through the restricted project-scoped role used by dashboard, serve, desktop, and engine startup.
+      */
       return;
     }
     const _ = this.localDb;

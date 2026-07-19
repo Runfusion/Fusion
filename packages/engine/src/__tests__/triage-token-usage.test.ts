@@ -1,10 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { aggregateTokenAnalytics, Database, type Task, type TaskStore } from "@fusion/core";
+import { aggregateTokenAnalytics, type Task, type TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { TriageProcessor } from "../triage.js";
 
 interface MockSessionStats {
@@ -59,34 +56,9 @@ async function flushAsyncRecorders(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function insertUsageTask(db: Database, task: Task): void {
-  const usage = task.tokenUsage;
-  if (!usage) throw new Error("expected token usage");
-  db.prepare(
-    `INSERT INTO tasks
-       (id, description, "column", createdAt, updatedAt,
-        tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageLastUsedAt,
-        modelProvider, modelId, tokenUsageModelProvider, tokenUsageModelId, tokenUsagePerModel)
-     VALUES (?, 'desc', 'todo', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
-             ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?)`,
-  ).run(
-    task.id,
-    usage.inputTokens,
-    usage.outputTokens,
-    usage.cachedTokens,
-    usage.cacheWriteTokens,
-    usage.totalTokens,
-    usage.lastUsedAt,
-    usage.modelProvider ?? null,
-    usage.modelId ?? null,
-    JSON.stringify(usage.perModel ?? []),
-  );
-}
-
-describe("triage session token usage recording", () => {
-  let tmpDir: string | undefined;
-  let db: Database | undefined;
+/* FNXC:PgMigrationQuarantine 2026-07-17-18:25: FN-8258 proves token analytics through AsyncDataLayer project-scoped rows, replacing removed raw SQLite Database seeding. */
+pgDescribe("triage session token usage recording", () => {
+  let harness: PgTestHarness;
 
   beforeEach(() => {
     vi.useRealTimers();
@@ -94,12 +66,7 @@ describe("triage session token usage recording", () => {
   });
 
   afterEach(async () => {
-    db?.close();
-    if (tmpDir) {
-      await rm(tmpDir, { recursive: true, force: true });
-    }
-    tmpDir = undefined;
-    db = undefined;
+    await harness?.teardown();
   });
 
   it("records a triage-only Anthropic planning model and surfaces it in by-model analytics", async () => {
@@ -136,18 +103,17 @@ describe("triage session token usage recording", () => {
       }),
     ]);
 
-    tmpDir = mkdtempSync(join(tmpdir(), "kb-triage-token-analytics-"));
-    db = new Database(join(tmpDir, ".fusion"));
-    db.init();
-    insertUsageTask(db, store._task);
+    harness = await createTaskStoreForTest({ prefix: "fusion_triage_token_usage" });
+    const persisted = await harness.store.createTask({ description: "triage analytics" });
+    await harness.store.updateTask(persisted.id, { tokenUsage: store._task.tokenUsage });
 
-    const byModel = await aggregateTokenAnalytics(db, { groupBy: "model" });
+    const byModel = await aggregateTokenAnalytics(harness.layer, { groupBy: "model" });
     expect(byModel.totals).toMatchObject({ totalTokens: 165, nTasks: 1 });
     expect(byModel.groups).toEqual([
       expect.objectContaining({ key: "claude-sonnet-4-5", totalTokens: 165, nTasks: 1 }),
     ]);
 
-    const byProvider = await aggregateTokenAnalytics(db, { groupBy: "provider" });
+    const byProvider = await aggregateTokenAnalytics(harness.layer, { groupBy: "provider" });
     expect(byProvider.groups).toEqual([
       expect.objectContaining({ key: "anthropic", totalTokens: 165, nTasks: 1 }),
     ]);

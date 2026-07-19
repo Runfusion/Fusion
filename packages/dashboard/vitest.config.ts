@@ -327,8 +327,41 @@ The 16 dashboard test files quarantined on 2026-06-25 (cutover batch) were
 deleted per the AGENTS.md deletion ratchet (14 days expired, not rescued).
 Ledger entries removed from scripts/lib/test-quarantine.json in the same commit.
 The array stays empty; add new entries here only with a matching ledger row.
+
+FNXC:DashboardTestQuarantine 2026-07-16-09:00:
+FN-8077 removed routes-system.test.ts from this list and the ledger in lockstep. Its test now explicitly advances a fake Date-only clock between CPU samples, so unrelated route clock reads cannot stretch elapsed time under the loaded API lane; assertions and timeout policy are unchanged.
 */
-const quarantinedDashboardTests: string[] = [];
+const quarantinedDashboardTests: string[] = [
+  /*
+  FNXC:DashboardTestQuarantine 2026-07-17-16:50:
+  FN-8245 re-admits all three UI files with their ledger rows removed in lockstep.
+  QuickEntryBox restores focus from its resolved submit path while isolated jsdom
+  globals prevent cross-file focus leakage; PlanningModeModal stream doubles use
+  deterministic microtasks instead of wall-clock timers; and the oversight menu
+  focuses its first button after the opening frame, never the native select.
+  */
+  /*
+  FNXC:DashboardTests 2026-07-17-22:10:
+  FN-8240 verified the 18 VAL-REMOVAL-005 dashboard API tests on their PG-backed
+  async-store or applicable mock/non-store contracts. Remove their ledger/exclude
+  pairs so dashboard-api-quality-backfill collects the restored coverage.
+  */
+  /*
+  FNXC:DashboardTestQuarantine 2026-07-18-14:05:
+  Full-suite shard 2 (run 29660321240): Terminal-guard tab settle race under
+  dashboard-app-quality-backfill load; passes focused thrice with no product bug.
+  Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
+  */
+  "app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
+  /*
+  FNXC:DashboardTestQuarantine 2026-07-18-14:40:
+  Full-suite shard 4 (run 29661202279): re-flaked stdout/fallback-probe race in
+  clears fallback probe timer when URL is detected from logs under the loaded
+  API backfill lane (prior FN-6722 quarantine / FN-6860 rescue). Quarantine on
+  sight — mirrored in scripts/lib/test-quarantine.json.
+  */
+  "src/__tests__/dev-server-process.test.ts",
+];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,
@@ -374,6 +407,13 @@ const qualityAppBackfillTests = ["app/**/*.test.{ts,tsx}"];
 
 const backfillApiExclude = [
   ...qualityApiTests,
+  /*
+  FNXC:DashboardDistArtifacts 2026-07-17-15:10:
+  FN-8245 reclassified plugin-registry-dist as a curated skip-list build-only
+  assertion, not a flake. Keep this lane exclusion: test:build supplies its
+  required emitted dist artifact without making every API backfill shard build.
+  */
+  "src/__tests__/plugin-registry-dist.test.ts",
   ...skipListDashboardGlobs.filter((file) => file.startsWith("src/")),
 ];
 const qualityApiBackfillTests = ["src/**/*.test.{ts,tsx}"];
@@ -464,12 +504,19 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      Must precede the `@fusion/core` alias: Vite string aliases match by PREFIX, so the broader key would rewrite this subpath to `index.ts/detect-content-language` and fail to resolve.
+      */
+      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
       "@fusion/plugin-sdk": resolve(__dirname, "../plugin-sdk/src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "../core/src/__test-utils__/workspace.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
       "@fusion/dashboard/app/components/ViewHeader": resolve(__dirname, "app/components/ViewHeader.tsx"),
+      // FNXC:Quality 2026-07-19-12:00: Keep the Quality plugin's tokenized artifact-media bridge resolvable under host Vitest just as it is in the production dashboard bundle.
+      "@fusion/dashboard/app/api/task-content": resolve(__dirname, "app/api/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
       "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),
@@ -509,6 +556,18 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-compound-engineering/src/index.ts",
       ),
+      "@fusion-plugin-examples/quality/dashboard-view": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/dashboard-view.tsx",
+      ),
+      "@fusion-plugin-examples/quality/qa-tab": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/qa-tab.tsx",
+      ),
+      "@fusion-plugin-examples/quality": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/index.ts",
+      ),
       "@fusion-plugin-examples/linear-import/dashboard-view": resolve(
         __dirname,
         "../../plugins/fusion-plugin-linear-import/src/dashboard-view.tsx",
@@ -540,6 +599,20 @@ export default defineConfig({
       "@fusion-plugin-examples/grok-runtime": resolve(
         __dirname,
         "../../plugins/fusion-plugin-grok-runtime/src/index.ts",
+      ),
+      /*
+      FNXC:DashboardTests 2026-07-18-09:45:
+      Alias Claude runtime to probes-entry (probe + model discovery only), not the full
+      ACP index — same class as CLI #2292. Importing index pulls @agentclientprotocol/sdk
+      and breaks dashboard-api-quality under source-checkout full-suite resolution.
+      */
+      "@fusion-plugin-examples/claude-runtime": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-claude-runtime/src/probes-entry.ts",
+      ),
+      "@fusion-plugin-examples/claude-runtime/probe": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-claude-runtime/src/probe.ts",
       ),
       /*
       FNXC:OmpAcp 2026-07-11-23:35:

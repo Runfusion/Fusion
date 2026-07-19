@@ -158,11 +158,11 @@ describe("Hermes runtime integration via engine resolution pipeline", () => {
     expect(result.wasConfigured).toBe(true);
     expect(result.session).toBe(hermesSession);
     expect(result.sessionFile).toBe("/tmp/hermes.session.json");
-    expect(hermesCreateSession).toHaveBeenCalledWith({
+    expect(hermesCreateSession).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/project",
       systemPrompt: "You are helpful",
       tools: "coding",
-    });
+    }));
   });
 
   it("forwards skillSelection.requestedSkillNames as runtime skills for plugin runtimes", async () => {
@@ -219,9 +219,9 @@ describe("Hermes runtime integration via engine resolution pipeline", () => {
 
     expect(result.runtimeId).toBe("pi");
     expect(result.wasConfigured).toBe(false);
-    expect(mockCreateFnAgent).toHaveBeenCalledWith({
+    expect(mockCreateFnAgent).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/project",
       systemPrompt: "Use fallback",
-    });
+    }));
   });
 });

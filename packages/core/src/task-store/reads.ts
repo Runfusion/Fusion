@@ -10,7 +10,9 @@ import {TaskStore, storeLog} from "../store.js";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, statSync} from "node:fs";
-import type {Task, TaskDetail, ColumnId} from "../types.js";
+import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus} from "../types.js";
+import * as schema from "../postgres/schema/index.js";
+import { and, eq } from "drizzle-orm";
 import "../builtin-traits.js";
 import {allowsAutoMergeProcessing} from "../task-merge.js";
 import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS} from "../in-review-stall.js";
@@ -21,6 +23,15 @@ import {getStalePausedTodoSignal} from "../stale-paused-todo.js";
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../task-age-staleness.js";
 import {detectStalledReview} from "../stalled-review-detector.js";
 import {computeRetrySummary} from "../retry-summary.js";
+
+/** Merge storage tiers while preserving primary-source authority and order. */
+function mergePrimaryById<T extends { id: string }>(primary: T[], secondary: T[]): T[] {
+  const byId = new Map(primary.map((entry) => [entry.id, entry]));
+  for (const entry of secondary) {
+    if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+  return [...byId.values()];
+}
 
 /**
  * Latest agent-log activity for a task: newest matching in-memory buffer entry
@@ -86,21 +97,37 @@ import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow, readLiveTaskRows} from "../task-store/async-persistence.js";
 import {searchTasksTsvector, searchTasksLike} from "../task-store/async-search.js";
+import {
+  getArchivedTask,
+  listArchivedTasks as listArchivedTaskEntries,
+  listArchivedTasksByCreatedOrder,
+  searchArchivedTasks,
+} from "../async-archive-db.js";
 
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {
       // FNXC:RuntimePersistenceAsync 2026-06-24-10:50:
       // Backend-mode getTask: read the task row via async helper, convert to
-      // Task via pgRowToTaskRow + rowToTask, hydrate derived fields. The archive
-      // fallback is not yet wired (archive is a separate subsystem converted by
-      // runtime-workflow-async); if the task is not in the live table, throw
-      // not-found (same as SQLite path when no archive entry exists).
+      // Task via pgRowToTaskRow + rowToTask, and hydrate derived fields.
       if (store.backendMode) {
-        const pgRow = await readTaskRow(store.asyncLayer!, id, {
+        const layer = store.asyncLayer!;
+        const pgRow = await readTaskRow(layer, id, {
           includeDeleted: options?.includeDeleted,
         });
         if (!pgRow) {
-          throw new Error(`Task ${id} not found`);
+          /*
+          FNXC:PostgresArchiveReads 2026-07-14-17:09:
+          Archive is cold storage, not deletion from the public read model. Task detail must fall back to the project-scoped archive snapshot so an archived card remains inspectable after its live row is tombstoned.
+          */
+          const archived = await getArchivedTask(layer.db, id, layer.projectId);
+          if (!archived) {
+            throw new Error(`Task ${id} not found`);
+          }
+          const archivedTask = store.archiveEntryToTask(archived, false);
+          return {
+            ...archivedTask,
+            prompt: archived.prompt ?? store.generatePromptFromArchiveEntry(archived),
+          };
         }
         const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
         const now = Date.now();
@@ -272,10 +299,7 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
 
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:55:
     // Backend-mode listTasks: read live task rows via async helper, convert to
-    // Tasks, hydrate derived fields. Archive-task merging is not yet wired in
-    // backend mode (archive is converted by runtime-workflow-async). The
-    // column filter and includeArchived filtering are applied client-side
-    // (the async helper reads all live rows; soft-delete is filtered in SQL).
+    // Tasks, and hydrate derived fields.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
       /*
@@ -298,12 +322,25 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       */
       const paginationOffset = Math.max(0, options?.offset ?? 0);
       const paginationLimit = options?.limit !== undefined ? Math.max(0, options.limit) : undefined;
-      const sqlPaginated = paginationLimit !== undefined || paginationOffset > 0;
+      /*
+      FNXC:PostgresArchiveReads 2026-07-14-17:09:
+      Pagination belongs to the composed active-plus-archive result. When cold storage participates, fetch both sources before sorting, deduplicating, and slicing; paginating only project.tasks can make archived rows unreachable or shift them onto the wrong page.
+      */
+      const includeColdStorage = includeArchived && (!columnFilter || columnFilter === "archived");
+      const boundedMergedPrefix = includeColdStorage && paginationLimit !== undefined
+        ? paginationOffset + paginationLimit
+        : undefined;
+      const sqlPaginated = (!includeColdStorage && (paginationLimit !== undefined || paginationOffset > 0))
+        || boundedMergedPrefix !== undefined;
       const filteredRows = await readLiveTaskRows(layer, {
         includeDeleted: options?.includeDeleted,
         column: columnFilter ?? undefined,
         excludeColumn: !columnFilter && !includeArchived ? "archived" : undefined,
-        ...(sqlPaginated ? { limit: paginationLimit, offset: paginationOffset } : {}),
+        ...(boundedMergedPrefix !== undefined
+          ? { limit: boundedMergedPrefix, offset: 0 }
+          : sqlPaginated
+            ? { limit: paginationLimit, offset: paginationOffset }
+            : {}),
       });
       const now = Date.now();
       const settings = await store.getSettingsFast();
@@ -390,17 +427,30 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         }
       }));
       // Sort by createdAt, then by numeric ID suffix for tie-breaking
-      const sorted = tasks.sort((a, b) => {
+      /*
+      FNXC:PostgresArchiveReadPerformance 2026-07-14-17:50:
+      A global page ending at K can only contain rows from each source's first K entries. Bound both SQL reads to K, then apply live-ID authority and the exact shared comparator before slicing. Unbounded callers retain the complete-result contract.
+      */
+      const archiveEntries = includeColdStorage
+        ? boundedMergedPrefix !== undefined
+          ? await listArchivedTasksByCreatedOrder(layer.db, boundedMergedPrefix, layer.projectId)
+          : await listArchivedTaskEntries(layer.db, layer.projectId)
+        : [];
+      const archivedTasks = archiveEntries.map((entry) => store.archiveEntryToTask(entry, slim));
+      // Match the legacy merge invariant: a forensic live row is authoritative
+      // when the same id also has an archive snapshot.
+      const sorted = mergePrimaryById(tasks, archivedTasks).sort((a, b) => {
         const cmp = a.createdAt.localeCompare(b.createdAt);
         if (cmp !== 0) return cmp;
         const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
         const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
         return aNum - bNum;
       });
-      // FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review): pagination was
-      // already applied in SQL above (readLiveTaskRows LIMIT/OFFSET with the
-      // matching order); the JS sort is a stable no-op over the fetched page.
-      return sorted;
+      // Active-only pages were already bounded in SQL. Merged pages are sliced
+      // here after composition so cold-storage rows share the same cursor.
+      if (!includeColdStorage) return sorted;
+      if (paginationLimit === undefined) return sorted.slice(paginationOffset);
+      return sorted.slice(paginationOffset, paginationOffset + paginationLimit);
     }
     // Slim mode drops ONLY the agent log column. On busy boards `log` accounts
     // for ~99% of the row payload (60+ MB across 1200 tasks); every other JSON
@@ -531,9 +581,7 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
     }));
     const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived") ? store.archiveDb.list().map((entry) => store.archiveEntryToTask(entry, slim)) : [];
     // FNXC:BoardConsistency 2026-06-21-08:34: FN-6851's cache-sync fix is primary; listTasks still collapses duplicate storage sources so one task ID cannot render in two columns. Active SQLite rows are authoritative over archive snapshots.
-    const tasksById = new Map<string, Task>(activeTasks.map((task) => [task.id, task]));
-    for (const task of archivedTasks) if (!tasksById.has(task.id)) tasksById.set(task.id, task);
-    const tasks = [...tasksById.values()];
+    const tasks = mergePrimaryById(activeTasks, archivedTasks);
     // Sort by createdAt, then by numeric ID suffix for tie-breaking
     const sorted = tasks.sort((a, b) => {
       const cmp = a.createdAt.localeCompare(b.createdAt);
@@ -759,11 +807,8 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
 
 export async function searchTasksImpl(store: TaskStore, query: string, options?: { limit?: number; offset?: number; slim?: boolean; includeArchived?: boolean }): Promise<Task[]> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-11:00:
-    // Backend-mode searchTasks: delegate to the async tsvector search helper
-    // (the PG schema has the search_vector generated column with a GIN index).
-    // The result rows are converted to Tasks via pgRowToTaskRow + rowToTask and
-    // hydrated with the same derived fields as the SQLite path. Archive search
-    // is not yet wired (converted by runtime-workflow-async).
+    // Backend-mode searchTasks delegates live rows to the generated tsvector
+    // index and composes cold-storage matches when requested.
     if (store.backendMode) {
       const trimmedQuery = query?.trim();
       if (!trimmedQuery) {
@@ -772,14 +817,20 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       const layer = store.asyncLayer!;
       const limit = options?.limit;
       const offset = options?.offset ?? 0;
+      if (limit !== undefined && Math.max(0, limit) === 0) return [];
       const includeArchived = options?.includeArchived ?? true;
       const slim = options?.slim ?? false;
       // The tsvector path is the primary search (GIN-backed). The LIKE path is
       // a fallback if the tsvector query returns no results (e.g., if the search
       // index is cold).
+      const mergedPrefixLimit = includeArchived && limit !== undefined
+        ? Math.max(0, offset) + Math.max(0, limit)
+        : undefined;
+      const sourceLimit = includeArchived ? mergedPrefixLimit : limit;
+      const sourceOffset = includeArchived ? 0 : offset;
       let pgRows = await searchTasksTsvector(layer.db, trimmedQuery, {
-        limit,
-        offset,
+        limit: sourceLimit,
+        offset: sourceOffset,
         includeArchived,
         // FNXC:MultiProjectIsolation 2026-07-10: scope search to the bound project
         // (load-bearing for the CREATE-time near-duplicate check via searchTasks).
@@ -787,8 +838,8 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       });
       if (pgRows.length === 0) {
         pgRows = await searchTasksLike(layer.db, trimmedQuery, {
-          limit,
-          offset,
+          limit: sourceLimit,
+          offset: sourceOffset,
           includeArchived,
           projectId: layer.projectId,
         });
@@ -845,7 +896,32 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
           return task;
         }
       }));
-      return tasks;
+      if (!includeArchived) return tasks;
+      /*
+      FNXC:PostgresArchiveReads 2026-07-14-17:09:
+      Search pagination is global across live and archived matches. Query both project-scoped sources without per-source offsets, keep the established live-then-archive ordering, deduplicate by task id, then apply the requested page.
+      */
+      /*
+      FNXC:PostgresArchiveReadPerformance 2026-07-14-17:50:
+      Search preserves its live-results-first contract. For a finite page only the first offset+limit live matches can contribute; cold matches are fetched in bounded chunks until deduplication against authoritative live IDs fills the requested prefix or cold storage is exhausted.
+      */
+      const target = mergedPrefixLimit;
+      const archiveEntries: ArchivedTaskEntry[] = [];
+      if (target === undefined || tasks.length < target) {
+        const chunkSize = target === undefined ? undefined : Math.max(1, target - tasks.length);
+        let archiveOffset = 0;
+        while (true) {
+          const chunk = await searchArchivedTasks(layer.db, trimmedQuery, chunkSize, layer.projectId, archiveOffset);
+          archiveEntries.push(...chunk);
+          if (chunkSize === undefined || chunk.length < chunkSize) break;
+          const uniqueCount = mergePrimaryById(tasks, archiveEntries.map((entry) => store.archiveEntryToTask(entry, slim))).length;
+          if (target !== undefined && uniqueCount >= target) break;
+          archiveOffset += chunk.length;
+        }
+      }
+      const matches = mergePrimaryById(tasks, archiveEntries.map((entry) => store.archiveEntryToTask(entry, slim)));
+      if (limit === undefined) return matches.slice(offset);
+      return matches.slice(offset, offset + Math.max(0, limit));
     }
     // Fall back to listTasks for empty/whitespace-only queries
     const trimmedQuery = query?.trim();
@@ -1006,3 +1082,12 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     return limit >= 0 ? matches.slice(0, limit) : matches;
   }
 
+/* FNXC:TaskVerificationRequest 2026-07-30-00:00: status reads are project-scoped so chat never observes another project's request. */
+export async function getTaskVerificationRequestAsyncImpl(store: TaskStore, taskId: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const layer = store.asyncLayer!;
+  const projectFilter = layer.projectId ? eq(schema.project.taskVerificationRequests.projectId, layer.projectId) : undefined;
+  const rows = await layer.db.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), ...(projectFilter ? [projectFilter] : []))).limit(1);
+  const row = rows[0];
+  return row ? { taskId: row.taskId, requestId: row.requestId, status: row.status as TaskVerificationStatus, profile: row.profile as TaskVerificationRequest["profile"], command: row.command, scope: row.scope as TaskVerificationRequest["scope"], requestedBy: row.requestedBy, requestedAt: row.requestedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}), ...(row.result ? { result: row.result as TaskVerificationResultSummary } : {}), ...(row.rejectionReason ? { rejectionReason: row.rejectionReason } : {}) } : null;
+}

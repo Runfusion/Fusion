@@ -45,6 +45,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 }));
 vi.mock("@fusion/engine", () => ({
   createFusionAuthStorage: vi.fn(() => ({})),
+  createFusionModelRegistry: vi.fn(async () => ({})),
 }));
 vi.mock("@fusion/core", () => ({
   CentralCore: MockCentralCore,
@@ -151,6 +152,23 @@ describe("onboard", () => {
 
     await runOnboard({ input: inputFrom(["y", "3", "y", "y", "n", "y"]) });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Central DB already exists"));
+  });
+
+  it("waits for API-key persistence before reporting onboarding success", async () => {
+    const providerAuth = makeProviderAuth();
+    let persisted = false;
+    providerAuth.setApiKey.mockImplementation(async () => {
+      await Promise.resolve();
+      persisted = true;
+    });
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation((message: string) => {
+      if (message.includes("Stored API key")) expect(persisted).toBe(true);
+    });
+
+    await runOnboard({ input: inputFrom(["y", "y", "1", "test-key", "y", "y", "n", "y"]) });
+    expect(providerAuth.setApiKey).toHaveBeenCalledWith("openrouter", "test-key");
+    expect(logSpy).toHaveBeenCalledWith("✓ Stored API key for openrouter");
   });
 
   it("stores API key, runs init, persists global testMode and completion marker", async () => {

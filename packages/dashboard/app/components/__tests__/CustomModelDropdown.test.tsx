@@ -15,9 +15,17 @@ const MOCK_MODELS = [
   { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
 ];
 
+const COLLAPSIBLE_MODELS = [
+  { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet", reasoning: true, contextWindow: 200000 },
+  { provider: "anthropic", id: "claude-haiku", name: "Claude Haiku", reasoning: false, contextWindow: 200000 },
+  { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+  { provider: "openai", id: "gpt-4o-mini", name: "GPT-4o mini", reasoning: false, contextWindow: 128000 },
+];
+
 describe("CustomModelDropdown", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
     document.body.innerHTML = "";
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
       matches: false,
@@ -36,6 +44,173 @@ describe("CustomModelDropdown", () => {
     const wrapperRuleMatch = css.match(/\.model-combobox-search-wrapper\s*\{[^}]*\}/);
     expect(wrapperRuleMatch).toBeTruthy();
     expect(wrapperRuleMatch![0]).toContain("background: var(--surface);");
+  });
+
+  it("renders provider headers inside the list with sticky positioning", async () => {
+    const user = userEvent.setup();
+    const css = loadAllAppCss();
+    const optgroupRule = css.match(/\.model-combobox-optgroup\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(optgroupRule).toContain("position: sticky;");
+    expect(optgroupRule).toContain("top: 0;");
+    expect(optgroupRule).toContain("z-index: 1;");
+    expect(optgroupRule).toContain("background: var(--bg);");
+
+    render(<CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={MOCK_MODELS} />);
+    await user.click(screen.getByRole("button", { name: "Model" }));
+
+    const list = screen.getByTestId("model-combobox-portal").querySelector(".model-combobox-list");
+    expect(list).not.toBeNull();
+    expect(within(list!).getByText("anthropic").closest(".model-combobox-optgroup")).not.toBeNull();
+    expect(within(list!).getByText("openai").closest(".model-combobox-optgroup")).not.toBeNull();
+  });
+
+  it.each([
+    { width: 1024, query: "desktop", showThinking: false },
+    { width: 1024, query: "desktop", showThinking: true },
+    { width: 768, query: "(max-width: 768px)", showThinking: false },
+    { width: 768, query: "(max-width: 768px)", showThinking: true },
+    { width: 640, query: "(max-width: 640px)", showThinking: false },
+    { width: 640, query: "(max-width: 640px)", showThinking: true },
+  ])("keeps the provider header flush with the fixed header stack at $query with thinking $showThinking", async ({ width, showThinking }) => {
+    const user = userEvent.setup();
+    const css = readFileSync(resolve(__dirname, "../CustomModelDropdown.css"), "utf-8");
+    const listRules = css.match(/\.model-combobox-list\s*\{[^}]*\}/g) ?? [];
+
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
+    render(
+      <CustomModelDropdown
+        label="Executor Model"
+        value=""
+        onChange={vi.fn()}
+        models={COLLAPSIBLE_MODELS}
+        favoriteModels={["anthropic/claude-haiku"]}
+        thinkingLevel={showThinking ? "high" : undefined}
+        onThinkingLevelChange={showThinking ? vi.fn() : undefined}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Executor Model" }));
+
+    const portal = await screen.findByTestId("model-combobox-portal");
+    const list = portal.querySelector(".model-combobox-list");
+    const firstProviderGroup = Array.from(list?.children ?? []).find((child) =>
+      child.classList.contains("model-combobox-group"),
+    );
+
+    // JSDOM cannot scroll sticky elements; the zero top inset is the structural no-seam invariant.
+    expect(listRules).toHaveLength(1);
+    expect(listRules[0]).toContain("padding: 0 0 var(--space-xs);");
+    expect(listRules[0]).not.toMatch(/padding-top\s*:\s*(?!0[;}])/);
+    expect(firstProviderGroup?.querySelector(".model-combobox-optgroup")).not.toBeNull();
+    expect(firstProviderGroup?.parentElement).toBe(list);
+    if (showThinking) {
+      expect(portal.querySelector(".model-combobox-thinking")).not.toBeNull();
+    } else {
+      expect(portal.querySelector(".model-combobox-thinking")).toBeNull();
+    }
+  });
+
+  it("collapses provider rows, preserves special rows, and persists the preference", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CustomModelDropdown
+        label="Model"
+        value=""
+        onChange={vi.fn()}
+        models={COLLAPSIBLE_MODELS}
+        favoriteModels={["anthropic/claude-haiku"]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Model" }));
+
+    expect(screen.getByRole("button", { name: "Collapse anthropic" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Claude Sonnet")).toBeTruthy();
+    expect(screen.getByText("Claude Haiku")).toBeTruthy();
+    expect(screen.getAllByText("Use default")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Collapse anthropic" }));
+
+    expect(screen.getByRole("button", { name: "Expand anthropic" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    expect(screen.getByText("Claude Haiku")).toBeTruthy();
+    expect(screen.getAllByText("Use default")).toHaveLength(2);
+    expect(window.localStorage.getItem("fusion-dashboard-model-dropdown-collapsed-providers")).toBe('["anthropic"]');
+
+    await user.click(screen.getByRole("button", { name: "Expand anthropic" }));
+    expect(screen.getByText("Claude Sonnet")).toBeTruthy();
+  });
+
+  it("restores collapsed providers, tolerates malformed storage, and surfaces matches while filtering", async () => {
+    window.localStorage.setItem("fusion-dashboard-model-dropdown-collapsed-providers", '["anthropic"]');
+    const user = userEvent.setup();
+    const view = render(<CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={COLLAPSIBLE_MODELS} />);
+
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand anthropic" })).toBeTruthy();
+
+    await user.type(screen.getByPlaceholderText("Filter models…"), "sonnet");
+    expect(screen.getByText("Claude Sonnet")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Collapse anthropic" })).toHaveAttribute("aria-expanded", "true");
+
+    view.unmount();
+    window.localStorage.setItem("fusion-dashboard-model-dropdown-collapsed-providers", "not-json");
+    render(<CustomModelDropdown label="Other model" value="" onChange={vi.fn()} models={MOCK_MODELS} />);
+    await user.click(screen.getByRole("button", { name: "Other model" }));
+    expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
+  });
+
+  it("omits collapsed rows from keyboard navigation", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    render(<CustomModelDropdown label="Model" value="" onChange={onChange} models={COLLAPSIBLE_MODELS} />);
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    await user.click(screen.getByRole("button", { name: "Collapse anthropic" }));
+
+    expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onChange).toHaveBeenCalledWith("openai/gpt-4o");
+  });
+
+  it("skips collapsed provider rows when navigating upward", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    render(<CustomModelDropdown label="Model" value="" onChange={onChange} models={COLLAPSIBLE_MODELS} />);
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    await user.click(screen.getByRole("button", { name: "Collapse anthropic" }));
+
+    await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+    expect(onChange).toHaveBeenCalledWith("");
+  });
+
+  it("hides toggles for fully favorited provider groups", async () => {
+    const user = userEvent.setup();
+    render(
+      <CustomModelDropdown
+        label="Model"
+        value=""
+        onChange={vi.fn()}
+        models={COLLAPSIBLE_MODELS}
+        favoriteModels={["anthropic/claude-sonnet", "anthropic/claude-haiku"]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Model" }));
+
+    expect(screen.queryByTestId("model-combobox-provider-toggle-anthropic")).toBeNull();
+    expect(screen.getByText("Claude Sonnet")).toBeTruthy();
+  });
+
+  it("keeps empty model lists free of provider toggles", async () => {
+    const user = userEvent.setup();
+    render(<CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={[]} />);
+
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    expect(screen.queryByTestId(/model-combobox-provider-toggle-/)).toBeNull();
+    expect(screen.getAllByText("Use default")).toHaveLength(2);
   });
 
   it("keeps CustomModelDropdown.css scoped to .model-combobox selectors", () => {
@@ -167,6 +342,7 @@ describe("CustomModelDropdown", () => {
   });
 
   it.each([
+    { width: 1024, height: 800, query: "desktop", expectedMaxHeight: "320px" },
     { width: 390, height: 844, query: "(max-width: 640px)", expectedMaxHeight: "360px" },
     { width: 700, height: 900, query: "(max-width: 768px)", expectedMaxHeight: "420px" },
   ])("keeps the portaled model list touch-scrollable at $query", async ({ width, height, query, expectedMaxHeight }) => {
@@ -228,6 +404,7 @@ describe("CustomModelDropdown", () => {
     expect(portal.style.maxHeight).toBe(expectedMaxHeight);
     expect(list).toBeInstanceOf(HTMLElement);
     expect(within(portal).getAllByRole("option").length).toBeGreaterThan(20);
+    expect(listRule).toContain("min-height: 0;");
     expect(listRule).toContain("overflow-y: auto;");
     expect(listRule).toContain("overflow-x: hidden;");
     expect(listRule).toContain("-webkit-overflow-scrolling: touch;");
@@ -1094,6 +1271,83 @@ describe("CustomModelDropdown", () => {
         },
       };
     };
+
+    it("keeps the filtered mobile list scrollable after visualViewport keyboard repositioning", async () => {
+      const user = userEvent.setup();
+      const css = readFileSync(resolve(__dirname, "../CustomModelDropdown.css"), "utf-8");
+      const listRule = css.match(/\.model-combobox-list\s*\{[^}]*\}/)?.[0] ?? "";
+      const overflowingModels = Array.from({ length: 30 }, (_, index) => ({
+        provider: index % 2 === 0 ? "anthropic" : "openai",
+        id: `mobile-model-${index}`,
+        name: `Mobile Model ${index}`,
+        reasoning: false,
+        contextWindow: 128000,
+      }));
+      const { simulateChange, cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 375,
+        height: 667,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(667);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+      const restore = setupBoundingRectMock({
+        top: 200,
+        left: 20,
+        bottom: 236,
+        width: 335,
+        height: 36,
+        right: 355,
+        x: 20,
+        y: 200,
+      } as DOMRect);
+
+      try {
+        render(<CustomModelDropdown label="Mobile model" value="" onChange={vi.fn()} models={overflowingModels} />);
+        await user.click(screen.getByRole("button", { name: "Mobile model" }));
+
+        const portal = await screen.findByTestId("model-combobox-portal");
+        const list = portal.querySelector<HTMLElement>(".model-combobox-list");
+        expect(list).not.toBeNull();
+        expect(within(list!).getAllByRole("option")).toHaveLength(31);
+
+        await user.type(screen.getByPlaceholderText("Filter models…"), "mobile");
+        expect(within(list!).getAllByRole("option")).toHaveLength(31);
+
+        // Simulate the virtual keyboard shrinking the visual viewport after search.
+        simulateChange({ height: 160, offsetTop: 507 });
+        await waitFor(() => expect(parseFloat(portal.style.maxHeight)).toBe(160));
+
+        // JSDOM does not lay out overflow, so assert the CSS scroll contract and its runtime owner directly.
+        expect(listRule).toContain("min-height: 0;");
+        expect(listRule).toContain("overflow-y: auto;");
+        expect(listRule).toContain("-webkit-overflow-scrolling: touch;");
+        expect(listRule).toContain("touch-action: pan-y;");
+        expect(listRule).not.toContain("min-height: 160");
+        list!.scrollTop = 96;
+        expect(list!.scrollTop).toBe(96);
+
+        // The empty/no-match state retains the same list scroll owner rather than replacing it.
+        await user.clear(screen.getByPlaceholderText("Filter models…"));
+        await user.type(screen.getByPlaceholderText("Filter models…"), "no-matching-mobile-model");
+        expect(portal.querySelector(".model-combobox-no-results")).not.toBeNull();
+        expect(portal.querySelector(".model-combobox-list")).toBe(list);
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
 
     it("uses visualViewport dimensions for positioning when available", async () => {
       const user = userEvent.setup();

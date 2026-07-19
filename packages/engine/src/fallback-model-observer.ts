@@ -1,3 +1,4 @@
+import type { AgentLogType } from "@fusion/core";
 import { notifyFallbackUsed } from "./notifier.js";
 import type { FallbackModelUsedPayload } from "./pi.js";
 
@@ -6,7 +7,9 @@ type FallbackLogStore = {
   appendAgentLog?(
     taskId: string,
     text: string,
-    type: "text" | "thinking" | "tool" | "tool_result" | "tool_error",
+    // FNXC:AgentLog-EntryTypes 2026-07-15-11:20: reference the canonical AgentLogType rather than
+    // re-listing the members — the hand-copied union silently drifted when `status` was added.
+    type: AgentLogType,
     detail?: string,
     agent?: string,
   ): Promise<unknown>;
@@ -50,7 +53,7 @@ export function createFallbackModelObserver(options: FallbackModelObserverOption
       await options.store.logEntry(taskId, message).catch(() => undefined);
     }
     if (taskId && options.store?.appendAgentLog) {
-      await options.store.appendAgentLog(taskId, message, "text", undefined, options.agent).catch(() => undefined);
+      await options.store.appendAgentLog(taskId, message, "status", undefined, options.agent).catch(() => undefined);
     }
 
     await notifyFallbackUsed({

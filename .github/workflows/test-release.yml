@@ -315,6 +315,13 @@ jobs:
             exit 1
           fi
 
+      # FNXC:DesktopEmbeddedPostgres 2026-07-15-00:20:
+      # AppImage filename presence is not enough — v0.60.0 shipped without
+      # embedded-postgres / main-bootstrap / omp-runtime. Inspect the linux-*-unpacked
+      # trees electron-builder leaves beside the AppImage.
+      - name: Verify Linux AppImage embedded Postgres packaging
+        run: node scripts/verify-desktop-linux-pg-packaging.mjs
+
       - name: Sign Linux desktop artifacts
         if: ${{ env.LINUX_GPG_PRIVATE_KEY != '' }}
         env:

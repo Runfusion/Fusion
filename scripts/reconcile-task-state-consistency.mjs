@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { openBackend } from "./lib/backend-db.mjs";
 
 const DEFAULT_NOTE = "FN-4000 reconciliation: cleared stale transient failure state using TaskStore done-normalization so database and task JSON remain synchronized.";
 
@@ -64,20 +65,21 @@ function readFlagValue(argv, flag) {
 export async function main(argv = process.argv.slice(2), deps = {}) {
   const dryRun = !argv.includes("--apply");
   const projectDir = readFlagValue(argv, "--project-dir") ?? process.cwd();
-  const store = deps.store ?? (await (async () => {
-    const { TaskStore } = await import("../packages/core/dist/index.js");
-    const taskStore = new TaskStore(projectDir);
-    await taskStore.init();
-    return taskStore;
-  })());
+  const backend = deps.store ? undefined : await openBackend(projectDir);
+  const store = deps.store ?? backend.store;
 
   const noteByTaskId = {
     "FN-3990": "FN-4000 reconciliation: cleared stale failed-state metadata after shipped lineage work landed in b89471aa5 and dashboard/doc follow-through completed in FN-3998.",
   };
 
-  const result = await runReconciliation({ store, dryRun, noteByTaskId });
-  console.log(JSON.stringify({ dryRun, ...result }, null, 2));
-  return 0;
+  try {
+    /* FNXC:PostgresOperationalScripts 2026-07-14-18:18: Consistency reconciliation must inspect and repair the authoritative PostgreSQL rows. */
+    const result = await runReconciliation({ store, dryRun, noteByTaskId });
+    console.log(JSON.stringify({ dryRun, ...result }, null, 2));
+    return 0;
+  } finally {
+    await backend?.shutdown();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

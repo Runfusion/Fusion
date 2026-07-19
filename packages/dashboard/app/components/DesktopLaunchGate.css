@@ -40,3 +40,16 @@
   flex-direction: column;
   gap: 0.5rem;
 }
+
+/*
+FNXC:MigrationHoldingPage 2026-07-17-13:35:
+Monospace progress line under the "Database migration in progress" gate copy —
+carries the migrator's structured "[3/12] project.tasks — 500/2000 rows" label.
+*/
+.desktop-launch-gate__detail {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-muted, #9ca3af);
+  overflow-wrap: anywhere;
+  margin: -0.75rem 0 1.25rem;
+}

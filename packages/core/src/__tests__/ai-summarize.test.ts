@@ -14,6 +14,8 @@ import {
   summarizeCommitBody,
   sanitizeCommitSubject,
   sanitizeTitle,
+  deriveFallbackTaskTitle,
+  FALLBACK_TASK_TITLE,
   MAX_COMMIT_SUBJECT_LENGTH,
   checkRateLimit,
   getRateLimitResetTime,
@@ -46,7 +48,8 @@ describe("ai-summarize", () => {
   // ── Constants ──────────────────────────────────────────────────────────────
 
   describe("constants", () => {
-    it("should have correct system prompt", () => {
+    it("should require titles in the description language", () => {
+      expect(SUMMARIZE_SYSTEM_PROMPT).toContain("SAME language as the task description");
       expect(SUMMARIZE_SYSTEM_PROMPT).toContain("max 60 characters");
       expect(SUMMARIZE_SYSTEM_PROMPT).toContain("title summarization");
     });
@@ -166,6 +169,7 @@ describe("ai-summarize", () => {
     it("should return null for descriptions <= 200 characters", async () => {
       const result = await summarizeTitle("Short description", "/tmp");
       expect(result).toBeNull();
+      expect(getFnAgentMock).not.toHaveBeenCalled();
     });
 
     it("should throw AiServiceError when AI service cannot process request", async () => {
@@ -183,6 +187,50 @@ describe("ai-summarize", () => {
       await expect(
         summarizeTitle(longDesc, "/tmp", "anthropic", "claude-sonnet-4-5")
       ).rejects.toThrow(AiServiceError);
+    });
+
+    it.each([
+      ["French", "Nous devons améliorer la création des tâches afin que les opérateurs puissent suivre leurs demandes plus facilement. ".repeat(3), "Français"],
+      ["Spanish", "Necesitamos mejorar la creación de tareas para que los operadores puedan seguir sus solicitudes con mayor facilidad. ".repeat(3), "Español"],
+      ["Chinese", "我们需要改进任务创建流程，让操作员能够更轻松地跟踪他们的请求并完成日常工作。".repeat(8), "简体中文"],
+      ["Korean", "운영자가 요청을 더 쉽게 추적하고 일상 업무를 완료할 수 있도록 작업 생성 과정을 개선해야 합니다. ".repeat(4), "한국어"],
+    ])("instructs %s descriptions to retain their language", async (_language, description, languageHint) => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      const createFnAgent = vi.fn().mockResolvedValue({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: {
+            messages: [{ role: "assistant", content: "Generated task title" }],
+          },
+        },
+      });
+      getFnAgentMock.mockResolvedValue(createFnAgent);
+
+      await expect(summarizeTitle(description, "/tmp")).resolves.toBe("Generated task title");
+
+      const agentOptions = createFnAgent.mock.calls[0][0] as { systemPrompt: string };
+      const wrappedPrompt = prompt.mock.calls[0][0] as string;
+      expect(agentOptions.systemPrompt).toContain("SAME language as the task description");
+      expect(wrappedPrompt).toContain("SAME language as the task description");
+      expect(wrappedPrompt).toContain(`Likely language: ${languageHint}`);
+      expect(wrappedPrompt).toContain("<description>");
+    });
+
+    it("keeps English descriptions in English without forcing another language", async () => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() => Promise.resolve({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Improve task creation" }] },
+        },
+      }));
+      const description = "We need to improve task creation so operators can follow requests more easily during their daily work. ".repeat(3);
+
+      await expect(summarizeTitle(description, "/tmp")).resolves.toBe("Improve task creation");
+      expect(SUMMARIZE_SYSTEM_PROMPT).toContain("SAME language as the task description");
+      expect(prompt.mock.calls[0][0]).toContain("Likely language: English");
     });
 
     it("returns sanitized title when AI responds cleanly", async () => {
@@ -205,24 +253,24 @@ describe("ai-summarize", () => {
       // Verify wrapped prompt was sent (prompt-injection mitigation)
       expect(prompt).toHaveBeenCalledTimes(1);
       expect(prompt.mock.calls[0][0]).toContain("<description>");
+      expect(prompt.mock.calls[0][0]).toContain("SAME language as the task description");
       expect(prompt.mock.calls[0][0]).toContain("Do not call any tools");
     });
 
     it("summarizes long descriptions with bounded prompt input", async () => {
       const prompt = vi.fn().mockResolvedValue(undefined);
-      getFnAgentMock.mockResolvedValue(() =>
-        Promise.resolve({
-          session: {
-            prompt,
-            dispose: vi.fn(),
-            state: {
-              messages: [
-                { role: "assistant", content: "Summarize long description" },
-              ],
-            },
+      const createFnAgent = vi.fn().mockResolvedValue({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: {
+            messages: [
+              { role: "assistant", content: "Summarize long description" },
+            ],
           },
-        })
-      );
+        },
+      });
+      getFnAgentMock.mockResolvedValue(createFnAgent);
       const description = "a".repeat(MAX_TITLE_SUMMARIZE_INPUT_LENGTH) + "tail".repeat(250);
 
       const title = await summarizeTitle(description, "/tmp");
@@ -232,6 +280,9 @@ describe("ai-summarize", () => {
       const promptText = prompt.mock.calls[0][0] as string;
       expect(promptText).toContain("…(truncated)");
       expect(promptText).not.toContain("tail");
+      expect(promptText).toContain("SAME language as the task description");
+      expect((createFnAgent.mock.calls[0][0] as { systemPrompt: string }).systemPrompt)
+        .toContain("SAME language as the task description");
       expect(promptText.length).toBeLessThanOrEqual(MAX_TITLE_SUMMARIZE_INPUT_LENGTH + 250);
     });
 
@@ -287,6 +338,7 @@ describe("ai-summarize", () => {
 
     it("retries stale configured model ids with automatic resolution and logs the stale id", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fallbackPrompt = vi.fn().mockResolvedValue(undefined);
       const createFnAgent = vi
         .fn()
         .mockRejectedValueOnce(new Error(
@@ -295,7 +347,7 @@ describe("ai-summarize", () => {
         ))
         .mockResolvedValueOnce({
           session: {
-            prompt: vi.fn().mockResolvedValue(undefined),
+            prompt: fallbackPrompt,
             dispose: vi.fn(),
             state: {
               messages: [{ role: "assistant", content: "Fix pi upgrade regressions" }],
@@ -303,9 +355,10 @@ describe("ai-summarize", () => {
           },
         });
       getFnAgentMock.mockResolvedValue(createFnAgent);
+      const description = "Nous devons corriger les régressions de mise à niveau afin que les opérateurs puissent poursuivre leur travail sans interruption. ".repeat(3);
 
       const title = await summarizeTitle(
-        "a".repeat(201),
+        description,
         "/tmp",
         "fireworksai",
         "accounts/fireworks/routers/kimi-k2p5-turbo",
@@ -320,6 +373,12 @@ describe("ai-summarize", () => {
         defaultProvider: expect.any(String),
         defaultModelId: expect.any(String),
       }));
+      const primaryOptions = createFnAgent.mock.calls[0][0] as { systemPrompt: string };
+      const fallbackOptions = createFnAgent.mock.calls[1][0] as { systemPrompt: string };
+      expect(primaryOptions.systemPrompt).toContain("SAME language as the task description");
+      expect(fallbackOptions.systemPrompt).toContain("SAME language as the task description");
+      expect(fallbackPrompt.mock.calls[0][0]).toContain("SAME language as the task description");
+      expect(fallbackPrompt.mock.calls[0][0]).toContain("Likely language: Français");
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("fireworksai/accounts/fireworks/routers/kimi-k2p5-turbo"));
       warnSpy.mockRestore();
     });
@@ -455,6 +514,46 @@ describe("ai-summarize", () => {
       const long = "x".repeat(100);
       const out = sanitizeTitle(long)!;
       expect(out.length).toBe(MAX_TITLE_LENGTH);
+    });
+  });
+
+  describe("deriveFallbackTaskTitle", () => {
+    it("derives a deterministic title from a normal description", () => {
+      expect(deriveFallbackTaskTitle("Fix blank task titles after triage failure."))
+        .toBe("Fix blank task titles after triage failure");
+    });
+
+    it("strips common markdown heading and list prefixes", () => {
+      expect(deriveFallbackTaskTitle("### Restore workflow selection state\n\nDetails follow."))
+        .toBe("Restore workflow selection state");
+      expect(deriveFallbackTaskTitle("- Add a retry budget for planning failures"))
+        .toBe("Add a retry budget for planning failures");
+      expect(deriveFallbackTaskTitle("1. Backfill failed task titles"))
+        .toBe("Backfill failed task titles");
+      expect(deriveFallbackTaskTitle("[ ] Cover blank-title failures"))
+        .toBe("Cover blank-title failures");
+    });
+
+    it("truncates long descriptions at a word boundary", () => {
+      const title = deriveFallbackTaskTitle(
+        "Fix permanently blank orphaned task titles when planner model selection fails terminally",
+      );
+      expect(title).toBe("Fix permanently blank orphaned task titles when planner");
+      expect(title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH);
+    });
+
+    it("returns the generic fallback for empty or whitespace-only inputs", () => {
+      expect(deriveFallbackTaskTitle("")).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle("   \n\t  ")).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle(null)).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle(undefined)).toBe(FALLBACK_TASK_TITLE);
+    });
+
+    it("returns the generic fallback when sanitization rejects the text", () => {
+      expect(deriveFallbackTaskTitle("Created task **FN-3058** with the full spec"))
+        .toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle("- ( )"))
+        .toBe(FALLBACK_TASK_TITLE);
     });
   });
 

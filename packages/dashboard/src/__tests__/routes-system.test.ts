@@ -429,7 +429,13 @@ describe("GET /api/system-stats", () => {
 
   it("returns process/system metrics with task and agent aggregates", async () => {
     const cpuUsageSpy = vi.spyOn(process, "cpuUsage");
-    const dateNowSpy = vi.spyOn(Date, "now");
+    /*
+    FNXC:DashboardCpuSampling 2026-07-16-09:00:
+    CPU sampling measures the delta between two route-owned Date.now() values. Fake only Date and explicitly advance it between requests so unrelated Express and I/O clock reads cannot inflate the sampling interval under a loaded lane.
+    */
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const sampleStart = new Date("2026-07-16T00:00:00.000Z");
+    vi.setSystemTime(sampleStart);
     cpuUsageSpy
       .mockReturnValueOnce({ user: 1_000_000, system: 500_000 })
       .mockImplementation((previousValue?: NodeJS.CpuUsage) => {
@@ -438,12 +444,6 @@ describe("GET /api/system-stats", () => {
         }
         return { user: 1_200_000, system: 600_000 };
       });
-    let now = 1_000;
-    dateNowSpy.mockImplementation(() => {
-      now += 1_000;
-      return now;
-    });
-
     const store = createMockStore({
       listTasks: vi.fn().mockResolvedValue([
         { id: "FN-1", column: "triage" },
@@ -495,6 +495,7 @@ describe("GET /api/system-stats", () => {
       }),
     );
 
+    vi.setSystemTime(new Date(sampleStart.getTime() + 1_000));
     const secondRes = await GET(app, "/api/system-stats");
     expect(secondRes.status).toBe(200);
     expect(secondRes.body.systemStats.cpuPercent).toBe(30);
@@ -521,7 +522,7 @@ describe("GET /api/system-stats", () => {
     expect(res.body.vitestLastAutoKillAt).toBeNull();
 
     cpuUsageSpy.mockRestore();
-    dateNowSpy.mockRestore();
+    vi.useRealTimers();
     mockExecFile.mockClear();
   });
 

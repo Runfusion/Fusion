@@ -1739,7 +1739,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Body: { provider: string }
    * Response: { success: true }
    */
-  router.post("/auth/logout", (req, res) => {
+  router.post("/auth/logout", async (req, res) => {
     try {
       const { provider } = req.body;
       if (!provider || typeof provider !== "string") {
@@ -1747,7 +1747,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       const storage = getAuthStorage();
-      storage.logout(toOauthCredentialProviderId(provider));
+      await storage.logout(toOauthCredentialProviderId(provider));
       clearUsageCache();
       res.json({ success: true });
     } catch (err: unknown) {
@@ -1791,7 +1791,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest(`Unknown API key provider: ${provider}`);
       }
 
-      storage.setApiKey(provider, apiKey.trim());
+      await storage.setApiKey(provider, apiKey.trim());
 
       let modelsRefreshed: number | undefined;
       let refreshReason: "no-models-from-cli" | "cli-failed" | "disabled-by-settings" | undefined;
@@ -1829,7 +1829,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Body: { provider: string }
    * Response: { success: true }
    */
-  router.delete("/auth/api-key", (req, res) => {
+  router.delete("/auth/api-key", async (req, res) => {
     try {
       const { provider } = req.body;
       if (!provider || typeof provider !== "string") {
@@ -1851,7 +1851,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest(`Unknown API key provider: ${provider}`);
       }
 
-      storage.clearApiKey(provider);
+      await storage.clearApiKey(provider);
       // No model refresh needed on delete: removing the key leaves nothing to sync.
       clearUsageCache();
       res.json({ success: true });

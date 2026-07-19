@@ -7,9 +7,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import express from "express";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request as performRequest } from "../../test-request.js";
 import { registerSystemRoutes, __resetSystemJobsForTests } from "../register-system-routes.js";
+
+const mockRunLinkLocalFnBinary = vi.fn();
+const mockRunUseGlobalFnBinary = vi.fn();
+
+vi.mock("../../fn-binary-local-install.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../fn-binary-local-install.js")>();
+  return {
+    ...actual,
+    runLinkLocalFnBinary: (...args: unknown[]) => mockRunLinkLocalFnBinary(...args),
+    runUseGlobalFnBinary: (...args: unknown[]) => mockRunUseGlobalFnBinary(...args),
+  };
+});
 
 type App = Parameters<typeof performRequest>[0];
 
@@ -122,13 +134,30 @@ function createApp(harness: HarnessOptions = {}) {
 
 const tempRoots: string[] = [];
 
-function createFakeSourceCheckout(buildScriptBody: string): string {
+function createFakeSourceCheckout(buildScriptBody: string, fullBuildScriptBody = buildScriptBody): string {
   const root = mkdtempSync(join(tmpdir(), "fusion-system-routes-"));
   tempRoots.push(root);
   mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "scripts", "dev-prebuild-client.mjs"), buildScriptBody);
+  writeFileSync(join(root, "scripts", "build-workspace.mjs"), fullBuildScriptBody);
   return root;
 }
+
+function configureFakePnpmInstall(root: string): void {
+  const fakeInstall = join(root, "scripts", "fake-pnpm-install.mjs");
+  writeFileSync(
+    fakeInstall,
+    "console.log('FAKE_PNPM_INSTALL_OK');\nconsole.error('FAKE_PNPM_INSTALL_STDERR');\nif (process.env.FAKE_PNPM_INSTALL_FAIL === '1') process.exit(7);\n",
+  );
+  process.env.FUSION_SYSTEM_PNPM_BIN = process.execPath;
+  process.env.FUSION_SYSTEM_PNPM_ARGS = JSON.stringify([fakeInstall]);
+}
+
+afterEach(() => {
+  delete process.env.FUSION_SYSTEM_PNPM_BIN;
+  delete process.env.FUSION_SYSTEM_PNPM_ARGS;
+  delete process.env.FAKE_PNPM_INSTALL_FAIL;
+});
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -139,6 +168,16 @@ afterAll(() => {
 beforeEach(() => {
   __resetSystemJobsForTests();
   agentStoreState.agents = [];
+  mockRunLinkLocalFnBinary.mockReset();
+  mockRunUseGlobalFnBinary.mockReset();
+  mockRunLinkLocalFnBinary.mockImplementation(async (_root: string, onLog: (s: string, t: string) => void) => {
+    onLog("system", "mock-link-local");
+    return { success: true };
+  });
+  mockRunUseGlobalFnBinary.mockImplementation(async (onLog: (s: string, t: string) => void) => {
+    onLog("system", "mock-use-global");
+    return { success: true };
+  });
 });
 
 describe("GET /system/info", () => {
@@ -167,9 +206,18 @@ describe("GET /system/info", () => {
     const res = await getJson(app, "/api/system/info");
     expect(res.body.restartSupported).toBe(true);
     expect(res.body.rebuildSupported).toBe(true);
+    expect(res.body.fnBinaryLinkLocalSupported).toBe(true);
+    expect(res.body.fnBinaryUseGlobalSupported).toBe(true);
     expect(res.body.sourceWorkspaceRoot).toBe("/checkout");
     expect(res.body.logsSupported).toBe(true);
     expect(res.body.engineAvailable).toBe(true);
+  });
+
+  it("advertises use-global without a source checkout but not link-local", async () => {
+    const { app } = createApp();
+    const res = await getJson(app, "/api/system/info");
+    expect(res.body.fnBinaryLinkLocalSupported).toBe(false);
+    expect(res.body.fnBinaryUseGlobalSupported).toBe(true);
   });
 });
 
@@ -247,6 +295,79 @@ describe("POST /system/rebuild", () => {
     expect(requestRestart).not.toHaveBeenCalled();
   });
 
+  it("runs full install then build, streams both outputs through SSE, and schedules restart", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    const requestRestart = vi.fn(() => true);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart, sourceWorkspaceRoot: root } },
+    });
+
+    const started = await postJson(app, "/api/system/rebuild", { scope: "full", restart: true });
+    expect(started.status).toBe(202);
+
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job.status).toBe("succeeded");
+    }, { timeout: 10_000, interval: 100 });
+
+    const current = await getJson(app, "/api/system/rebuild/current");
+    const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+    expect(lineTexts).toContain("FAKE_PNPM_INSTALL_OK");
+    expect(lineTexts).toContain("FAKE_BUILD_RAN");
+    expect(lineTexts.indexOf("FAKE_PNPM_INSTALL_OK")).toBeLessThan(lineTexts.indexOf("FAKE_BUILD_RAN"));
+    expect(requestRestart).toHaveBeenCalledWith("rebuild:full");
+
+    const stream = openSseStream(app, `/api/system/jobs/${started.body.id}/stream`);
+    const replay = stream.text();
+    expect(replay).toContain('event: line');
+    expect(replay).toContain('"stream":"stdout","text":"FAKE_PNPM_INSTALL_OK"');
+    expect(replay).toContain('event: end');
+  });
+
+  it("fails full rebuild when dependency install fails without building or restarting", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    process.env.FAKE_PNPM_INSTALL_FAIL = "1";
+    const requestRestart = vi.fn(() => true);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart, sourceWorkspaceRoot: root } },
+    });
+
+    await postJson(app, "/api/system/rebuild", { scope: "full" });
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job.status).toBe("failed");
+    }, { timeout: 10_000, interval: 100 });
+
+    const current = await getJson(app, "/api/system/rebuild/current");
+    const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+    expect(lineTexts).toContain("FAKE_PNPM_INSTALL_OK");
+    expect(lineTexts).not.toContain("FAKE_BUILD_RAN");
+    expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("keeps app and plugins rebuilds as single build commands", async () => {
+    const root = createFakeSourceCheckout("console.log('APP_BUILD_RAN');\n", "console.log('FAKE_BUILD_RAN');\n");
+    configureFakePnpmInstall(root);
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: root } },
+    });
+
+    for (const [scope, expectedOutput] of [["app", "APP_BUILD_RAN"], ["plugins", "FAKE_BUILD_RAN"]] as const) {
+      await postJson(app, "/api/system/rebuild", { scope, restart: false });
+      await vi.waitFor(async () => {
+        const current = await getJson(app, "/api/system/rebuild/current");
+        expect(current.body.job.status).toBe("succeeded");
+      }, { timeout: 10_000, interval: 100 });
+      const current = await getJson(app, "/api/system/rebuild/current");
+      const lineTexts = current.body.job.lines.map((line: { text: string }) => line.text);
+      expect(lineTexts).toContain(expectedOutput);
+      expect(lineTexts).not.toContain("Installing workspace dependencies (pnpm install)…");
+      expect(lineTexts).not.toContain("FAKE_PNPM_INSTALL_OK");
+    }
+  });
+
   it("rejects a second concurrent rebuild", async () => {
     const root = createFakeSourceCheckout("setTimeout(() => {}, 400);\n");
     const { app } = createApp({
@@ -259,6 +380,86 @@ describe("POST /system/rebuild", () => {
 
     // Let the short-lived build child exit before the test ends so the
     // subprocess guard sees no leaked children.
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job.status).not.toBe("running");
+    }, { timeout: 10_000, interval: 100 });
+  });
+});
+
+/*
+FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+Contract tests for System panel fn-binary actions. Link-local is source-gated;
+use-global is always available and serializes against rebuild via activeJob.
+Helpers are mocked so tests never run a real npm install or workspace build.
+*/
+describe("POST /system/fn-binary/link-local", () => {
+  it("409s when not running from a source checkout", async () => {
+    const { app } = createApp({ options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true) } } });
+    const res = await postJson(app, "/api/system/fn-binary/link-local");
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/source checkout/i);
+    expect(mockRunLinkLocalFnBinary).not.toHaveBeenCalled();
+  });
+
+  it("streams a succeeded job when the host is a source checkout", async () => {
+    const { app } = createApp({
+      options: {
+        systemControl: {
+          supervised: true,
+          requestRestart: vi.fn(() => true),
+          sourceWorkspaceRoot: "/Users/dev/fusion",
+        },
+      },
+    });
+    const started = await postJson(app, "/api/system/fn-binary/link-local");
+    expect(started.status).toBe(202);
+    expect(started.body.kind).toBe("fn-binary");
+    expect(started.body.scope).toBe("link-local");
+
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job?.status).toBe("succeeded");
+    }, { timeout: 5_000, interval: 50 });
+
+    expect(mockRunLinkLocalFnBinary).toHaveBeenCalledWith("/Users/dev/fusion", expect.any(Function));
+    const current = await getJson(app, "/api/system/rebuild/current");
+    const texts = current.body.job.lines.map((line: { text: string }) => line.text);
+    expect(texts).toContain("mock-link-local");
+  });
+});
+
+describe("POST /system/fn-binary/use-global", () => {
+  it("starts a streaming job without requiring a source checkout", async () => {
+    const { app } = createApp();
+    const started = await postJson(app, "/api/system/fn-binary/use-global");
+    expect(started.status).toBe(202);
+    expect(started.body.kind).toBe("fn-binary");
+    expect(started.body.scope).toBe("use-global");
+    expect(started.body.status).toBe("running");
+
+    await vi.waitFor(async () => {
+      const current = await getJson(app, "/api/system/rebuild/current");
+      expect(current.body.job?.status).toBe("succeeded");
+    }, { timeout: 5_000, interval: 50 });
+
+    const current = await getJson(app, "/api/system/rebuild/current");
+    expect(current.body.job.kind).toBe("fn-binary");
+    expect(current.body.job.scope).toBe("use-global");
+    expect(Array.isArray(current.body.job.lines)).toBe(true);
+    expect(current.body.job.lines.some((line: { text: string }) => line.text === "mock-use-global")).toBe(true);
+  });
+
+  it("rejects concurrent jobs while rebuild is running", async () => {
+    const root = createFakeSourceCheckout("setTimeout(() => {}, 2000);\n");
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: root } },
+    });
+    const rebuild = await postJson(app, "/api/system/rebuild", { scope: "app", restart: false });
+    expect(rebuild.status).toBe(202);
+    const second = await postJson(app, "/api/system/fn-binary/use-global");
+    expect(second.status).toBe(409);
+
     await vi.waitFor(async () => {
       const current = await getJson(app, "/api/system/rebuild/current");
       expect(current.body.job.status).not.toBe("running");

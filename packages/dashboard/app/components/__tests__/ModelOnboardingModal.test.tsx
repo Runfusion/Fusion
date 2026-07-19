@@ -651,9 +651,15 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("preserves split Anthropic quick-start cards and suppresses legacy Anthropic fallback", async () => {
+      /*
+      FNXC:Onboarding 2026-07-18-03:40:
+      The OpenAI Codex subscription card sits in quick start directly AFTER the
+      Anthropic subscription and BEFORE the API-key options.
+      */
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" },
           { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
           { id: "anthropic-api-key", name: "Anthropic API Key", authenticated: false, type: "api_key" },
           { id: "anthropic-subscription", name: "Anthropic Subscription", authenticated: false, type: "oauth" },
@@ -663,7 +669,7 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       const quickStartSection = await screen.findByTestId("onboarding-quick-start-providers");
-      expect(getProviderOrderInSection(quickStartSection)).toEqual(["anthropic-subscription", "anthropic-api-key", "openai"]);
+      expect(getProviderOrderInSection(quickStartSection)).toEqual(["anthropic-subscription", "openai-codex", "anthropic-api-key", "openai"]);
       expect(within(quickStartSection).queryByTestId("onboarding-provider-card-anthropic")).toBeNull();
     });
 

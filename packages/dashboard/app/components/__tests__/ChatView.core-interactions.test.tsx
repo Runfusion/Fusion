@@ -855,7 +855,8 @@ describe("ChatView core interactions", () => {
     expect(streamingMessage?.textContent).toContain("Typing");
   });
 
-  it("shows thinking blocks collapsed by default", async () => {
+  it("keeps persisted thinking blocks collapsed until expanded", async () => {
+    const user = userEvent.setup();
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -866,14 +867,28 @@ describe("ChatView core interactions", () => {
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const message = screen.getByTestId("chat-message-msg-001");
-    const details = message.querySelector("details");
+    const details = message.querySelector("details") as HTMLDetailsElement;
     expect(details).toBeInTheDocument();
-    expect(details).toHaveProperty("open", false);
+    expect(details).not.toHaveAttribute("open");
+    expect(within(message).getByText("I need to think about this...")).not.toBeVisible();
+
+    await user.click(within(details).getByText("Thinking"));
+
+    expect(details).toHaveAttribute("open");
+    expect(within(message).getByText("I need to think about this...")).toBeVisible();
   });
 
+  /*
+  FNXC:DashboardTests 2026-07-15-16:30:
+  Mobile Chat restores the sidebar after a remount even when useChat restores an active
+  session. Streaming tests must therefore open a direct thread through the sidebar before
+  proving that a stream, including an activeSession refresh to null, does not collapse its
+  back-navigation control.
+  */
   describe("streaming states", () => {
     it("keeps mobile thread visible when active session metadata refreshes during streaming", async () => {
       const mediaQuerySpy = mockViewportMode("mobile");
+      const user = userEvent.setup();
       const streamingState: UseChatReturn = {
         ...defaultChatState,
         sessions: [{ ...activeSessionFixture }],
@@ -898,6 +913,9 @@ describe("ChatView core interactions", () => {
       const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
+      await user.click(screen.getByTestId("chat-session-session-001"));
+      expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+
       rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
@@ -947,8 +965,11 @@ describe("ChatView core interactions", () => {
 
     it("keeps mobile accepted silent requests in the visible thread", async () => {
       const mediaQuerySpy = mockViewportMode("mobile");
+      const user = userEvent.setup();
       setupMockChat({
-        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        sessions: [{ ...activeSessionFixture }],
+        filteredSessions: [{ ...activeSessionFixture }],
+        activeSession: { ...activeSessionFixture },
         messages: [
           { id: "msg-001", sessionId: "session-001", role: "user", content: "Slow mobile prompt", createdAt: "2026-04-08T00:00:00.000Z" },
         ],
@@ -958,10 +979,13 @@ describe("ChatView core interactions", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await user.click(screen.getByTestId("chat-session-session-001"));
 
       expect(screen.queryByText("Response failed")).not.toBeInTheDocument();
       expect(screen.queryByText("Timed out waiting for first response event")).not.toBeInTheDocument();
       expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
+      expect(screen.queryByText("Start a new conversation")).not.toBeInTheDocument();
+      expect(screen.queryByText("No messages yet. Start the conversation!")).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
 
       void mediaQuerySpy;
@@ -995,7 +1019,8 @@ describe("ChatView core interactions", () => {
       expect(typingIndicator?.querySelectorAll("span").length).toBe(3);
     });
 
-    it("shows thinking indicator when streaming thinking arrives before text", async () => {
+    it("keeps streaming thinking collapsed until expanded", async () => {
+      const user = userEvent.setup();
       setupMockChat({
         activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
         messages: [
@@ -1014,9 +1039,15 @@ describe("ChatView core interactions", () => {
       expect(streamingMessage?.textContent).toContain("Thinking");
 
       // Thinking details should be rendered
-      const thinkingDetails = streamingMessage?.querySelector("details.chat-message-thinking");
+      const thinkingDetails = streamingMessage?.querySelector("details.chat-message-thinking") as HTMLDetailsElement;
       expect(thinkingDetails).toBeInTheDocument();
-      expect(thinkingDetails?.querySelector(".chat-message-thinking-content")?.textContent).toContain("analyzing the request");
+      expect(thinkingDetails).not.toHaveAttribute("open");
+      expect(within(thinkingDetails).getByText("analyzing the request...")).not.toBeVisible();
+
+      await user.click(within(thinkingDetails).getByText("Thinking"));
+
+      expect(thinkingDetails).toHaveAttribute("open");
+      expect(within(thinkingDetails).getByText("analyzing the request...")).toBeVisible();
 
       // Typing indicator dots should be rendered
       const typingIndicator = streamingMessage?.querySelector(".chat-typing-indicator");
@@ -1422,7 +1453,8 @@ describe("ChatView core interactions", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const betaRow = screen.getByTestId("chat-session-session-002");
-      await userEvent.click(within(betaRow).getByTestId("chat-session-rename-btn"));
+      await userEvent.click(within(betaRow).getByTestId("chat-session-menu-btn"));
+      await userEvent.click(screen.getByTestId("chat-context-rename"));
 
       expect(selectSession).not.toHaveBeenCalled();
       const dialog = screen.getByRole("dialog", { name: /rename conversation/i });
@@ -1442,7 +1474,7 @@ describe("ChatView core interactions", () => {
       expect(selectSession).toHaveBeenCalledWith("session-002");
     });
 
-    it("uses Untitled in the sidebar rename button name for empty session titles", async () => {
+    it("uses Untitled in the sidebar action menu name for empty session titles", async () => {
       const renameSession = vi.fn().mockResolvedValue(undefined);
       const untitledSession: ChatSessionInfo = {
         id: "session-empty-title",
@@ -1462,10 +1494,11 @@ describe("ChatView core interactions", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const row = screen.getByTestId("chat-session-session-empty-title");
-      const renameButton = within(row).getByRole("button", { name: /rename conversation untitled/i });
-      expect(renameButton).toHaveAttribute("data-testid", "chat-session-rename-btn");
+      const menuButton = within(row).getByRole("button", { name: /conversation actions for untitled/i });
+      expect(menuButton).toHaveAttribute("data-testid", "chat-session-menu-btn");
 
-      await userEvent.click(renameButton);
+      await userEvent.click(menuButton);
+      await userEvent.click(screen.getByTestId("chat-context-rename"));
       const dialog = screen.getByRole("dialog", { name: /rename conversation/i });
       const input = within(dialog).getByTestId("chat-rename-input") as HTMLInputElement;
       expect(input).toHaveValue("");
@@ -1505,6 +1538,38 @@ describe("ChatView core interactions", () => {
       await waitFor(() => {
         expect(renameSession).toHaveBeenCalledWith("session-context", "Context Renamed");
       });
+    });
+
+    it("anchors the desktop three-dot menu's right edge under its trigger", async () => {
+      const savedInnerWidth = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+      const session: ChatSessionInfo = {
+        id: "session-menu-position",
+        agentId: "agent-001",
+        status: "active",
+        title: "Desktop menu position",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      };
+
+      try {
+        setupMockChat({ sessions: [session], filteredSessions: [session], activeSession: session });
+        await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+        const menuButton = within(screen.getByTestId("chat-session-session-menu-position")).getByTestId("chat-session-menu-btn");
+        vi.spyOn(menuButton, "getBoundingClientRect").mockReturnValue({
+          x: 1168, y: 48, width: 32, height: 36, top: 48, right: 1200, bottom: 84, left: 1168, toJSON: () => ({}),
+        });
+        await userEvent.click(menuButton);
+
+        const menu = document.querySelector(".chat-session-context-menu") as HTMLElement;
+        const left = Number.parseFloat(menu.style.left);
+        expect(left).toBe(1000);
+        expect(Number.parseFloat(menu.style.top)).toBe(84);
+        expect(left + 200).toBeLessThanOrEqual(window.innerWidth - 8);
+      } finally {
+        Object.defineProperty(window, "innerWidth", { value: savedInnerWidth, configurable: true });
+      }
     });
   });
 

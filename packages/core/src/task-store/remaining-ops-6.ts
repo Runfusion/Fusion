@@ -13,16 +13,17 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
 import { fromJson } from "../db.js";
 import * as schema from "../postgres/schema/index.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync } from "./async-branch-groups.js";
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { type TaskRow } from "./persistence.js";
 import { BranchGroupRow, MergeRequestRow, PrEntityRow, PrThreadStateRow, WorkflowWorkItemRow } from "./row-types.js";
-import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
+import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
 import { validateNodeOverrideChange } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { WorkflowSettingDefinition } from "../workflow-ir-types.js";
-import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -99,8 +100,14 @@ export async function listBranchGroupsImpl(store: TaskStore, options?: { status?
     return (rows as BranchGroupRow[]).map((row) => store.rowToBranchGroup(row));
 }
 
+/*
+FNXC:BranchGroupCompletion 2026-07-18-01:55:
+Archived shared-branch members remain part of promotion completion: an unlanded archived
+member blocks promotion, while an archived member with persisted landing proof permits it.
+The PostgreSQL path must therefore load archived tasks before applying group membership.
+*/
 export async function listTasksByBranchGroupImpl(store: TaskStore, groupId: string): Promise<Task[]> {
-    const tasks = await store.listTasks({ includeArchived: false, slim: true });
+    const tasks = await store.listTasks({ includeArchived: true, slim: false });
     // Membership filter (incl. legacy synthetic-groupId fallback) is shared with
     // the dashboard list route via `filterTasksByBranchGroup` so semantics can't
     // drift between the two call sites (Fix #8/#9).
@@ -260,11 +267,48 @@ export async function recordPrThreadOutcomeImpl(store: TaskStore,
     store.db.bumpLastModified();
 }
 
-export function getBranchProgressByTaskImpl(store: TaskStore,
+export async function getBranchProgressByTaskImpl(store: TaskStore,
     taskIds: readonly string[],
-  ): Map<string, Array<{ branchId: string; nodeId: string; status: string }>> {
+  ): Promise<Map<string, Array<{ branchId: string; nodeId: string; status: string }>>> {
     const result = new Map<string, Array<{ branchId: string; nodeId: string; status: string }>>();
     if (taskIds.length === 0) return result;
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    Backend mode previously fell into the sync catch below and silently
+    returned an empty map, dropping branchProgress from every task payload on
+    PostgreSQL. Read the rows async and resolve the winning (latest updatedAt,
+    runId tie-break) run per task in JS — per-task row counts are small.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowRunBranches;
+      const rows = await store.asyncLayer!.db
+        .select({
+          taskId: table.taskId,
+          runId: table.runId,
+          branchId: table.branchId,
+          nodeId: table.currentNodeId,
+          status: table.status,
+          updatedAt: table.updatedAt,
+        })
+        .from(table)
+        .where(inArray(table.taskId, taskIds as string[]));
+      const latestRunByTask = new Map<string, { runId: string; updatedAt: string }>();
+      for (const row of rows) {
+        const current = latestRunByTask.get(row.taskId);
+        if (!current
+          || row.updatedAt > current.updatedAt
+          || (row.updatedAt === current.updatedAt && row.runId > current.runId)) {
+          latestRunByTask.set(row.taskId, { runId: row.runId, updatedAt: row.updatedAt });
+        }
+      }
+      for (const row of rows) {
+        if (latestRunByTask.get(row.taskId)?.runId !== row.runId) continue;
+        const list = result.get(row.taskId) ?? [];
+        list.push({ branchId: row.branchId, nodeId: row.nodeId, status: row.status });
+        result.set(row.taskId, list);
+      }
+      return result;
+    }
     try {
       // Skip entirely when the table has no rows (cheap existence probe).
       const any = store.db
@@ -327,16 +371,41 @@ export function getBranchProgressByTaskImpl(store: TaskStore,
     return result;
 }
 
-export function loadWorkflowRunBranchesImpl(store: TaskStore,
+export async function loadWorkflowRunBranchesImpl(store: TaskStore,
     taskId: string,
     runId: string,
-  ): Array<{
+  ): Promise<Array<{
     taskId: string;
     runId: string;
     branchId: string;
     currentNodeId: string;
     status: "running" | "completed" | "failed" | "aborted";
-  }> {
+  }>> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    Backend mode previously returned [] from the sync catch, so parallel-branch
+    workflow runs lost their crash-recovery checkpoints on PostgreSQL.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowRunBranches;
+      const rows = await store.asyncLayer!.db
+        .select({
+          taskId: table.taskId,
+          runId: table.runId,
+          branchId: table.branchId,
+          currentNodeId: table.currentNodeId,
+          status: table.status,
+        })
+        .from(table)
+        .where(and(eq(table.taskId, taskId), eq(table.runId, runId)));
+      return rows as Array<{
+        taskId: string;
+        runId: string;
+        branchId: string;
+        currentNodeId: string;
+        status: "running" | "completed" | "failed" | "aborted";
+      }>;
+    }
     try {
       const rows = store.db
         .prepare(
@@ -357,9 +426,19 @@ export function loadWorkflowRunBranchesImpl(store: TaskStore,
     }
 }
 
-export function saveWorkflowRunStepInstanceImpl(store: TaskStore,
+export async function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     state: import("../types.js").WorkflowRunStepInstance,
-  ): void {
+  ): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-13:40:
+    Backend mode previously swallowed the sync throw, so foreach step-instance
+    checkpoints were never persisted on PostgreSQL. Delegate to the FN-8157
+    async sibling (single PG code path); its !backendMode branch routes back
+    here, guarded so there is no recursion.
+    */
+    if (store.backendMode) {
+      return saveWorkflowRunStepInstanceAsyncImpl(store, state);
+    }
     try {
       store.db
         .prepare(
@@ -397,10 +476,14 @@ export function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     }
 }
 
-export function loadWorkflowRunStepInstancesImpl(store: TaskStore,
+export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     taskId: string,
     runId: string,
-  ): import("../types.js").WorkflowRunStepInstance[] {
+  ): Promise<import("../types.js").WorkflowRunStepInstance[]> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
+    if (store.backendMode) {
+      return loadWorkflowRunStepInstancesAsyncImpl(store, taskId, runId);
+    }
     try {
       const rows = store.db
         .prepare(
@@ -416,7 +499,11 @@ export function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     }
 }
 
-export function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): void {
+export async function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): Promise<void> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
+    if (store.backendMode) {
+      return clearWorkflowRunStepInstancesAsyncImpl(store, taskId, keepRunId);
+    }
     try {
       if (keepRunId === undefined) {
         store.db
@@ -434,6 +521,113 @@ export function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: stri
     }
 }
 
+/*
+FNXC:WorkflowStepInstancePersistence 2026-07-16-20:20:
+PostgreSQL backend mode cannot use the removed synchronous SQLite `store.db`
+path. These async siblings preserve the existing identity, pin-clearing, and
+stale-run pruning semantics through the Drizzle async layer rather than
+silently dropping foreach crash-resume state.
+*/
+export async function saveWorkflowRunStepInstanceAsyncImpl(
+  store: TaskStore,
+  state: import("../types.js").WorkflowRunStepInstance,
+): Promise<void> {
+  if (!store.backendMode) {
+    return saveWorkflowRunStepInstanceImpl(store, state);
+  }
+  const layer = store.asyncLayer!;
+  const now = new Date().toISOString();
+  await layer.db
+    .insert(schema.project.workflowRunStepInstances)
+    .values({
+      taskId: state.taskId,
+      runId: state.runId,
+      foreachNodeId: state.foreachNodeId,
+      stepIndex: state.stepIndex,
+      pinnedStepCount: state.pinnedStepCount,
+      currentNodeId: state.currentNodeId ?? null,
+      status: state.status,
+      baselineSha: state.baselineSha ?? null,
+      checkpointId: state.checkpointId ?? null,
+      reworkCount: state.reworkCount ?? 0,
+      branchName: state.branchName ?? null,
+      integratedAt: state.integratedAt ?? null,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        schema.project.workflowRunStepInstances.projectId,
+        schema.project.workflowRunStepInstances.taskId,
+        schema.project.workflowRunStepInstances.runId,
+        schema.project.workflowRunStepInstances.foreachNodeId,
+        schema.project.workflowRunStepInstances.stepIndex,
+      ],
+      set: {
+        pinnedStepCount: state.pinnedStepCount,
+        currentNodeId: state.currentNodeId ?? null,
+        status: state.status,
+        baselineSha: state.baselineSha ?? null,
+        checkpointId: state.checkpointId ?? null,
+        reworkCount: state.reworkCount ?? 0,
+        branchName: state.branchName ?? null,
+        integratedAt: state.integratedAt ?? null,
+        updatedAt: now,
+      },
+    });
+}
+
+export async function loadWorkflowRunStepInstancesAsyncImpl(
+  store: TaskStore,
+  taskId: string,
+  runId: string,
+): Promise<import("../types.js").WorkflowRunStepInstance[]> {
+  if (!store.backendMode) {
+    return loadWorkflowRunStepInstancesImpl(store, taskId, runId);
+  }
+  const layer = store.asyncLayer!;
+  const rows = await layer.db
+    .select()
+    .from(schema.project.workflowRunStepInstances)
+    .where(and(
+      eq(schema.project.workflowRunStepInstances.taskId, taskId),
+      eq(schema.project.workflowRunStepInstances.runId, runId),
+    ))
+    .orderBy(asc(schema.project.workflowRunStepInstances.stepIndex));
+  return rows.map((row) => ({
+    taskId: row.taskId,
+    runId: row.runId,
+    foreachNodeId: row.foreachNodeId,
+    stepIndex: row.stepIndex,
+    pinnedStepCount: row.pinnedStepCount,
+    currentNodeId: row.currentNodeId,
+    status: row.status as import("../types.js").WorkflowRunStepInstanceStatus,
+    baselineSha: row.baselineSha,
+    checkpointId: row.checkpointId,
+    reworkCount: row.reworkCount,
+    branchName: row.branchName,
+    integratedAt: row.integratedAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+export async function clearWorkflowRunStepInstancesAsyncImpl(
+  store: TaskStore,
+  taskId: string,
+  keepRunId?: string,
+): Promise<void> {
+  if (!store.backendMode) {
+    return clearWorkflowRunStepInstancesImpl(store, taskId, keepRunId);
+  }
+  const layer = store.asyncLayer!;
+  const conditions = [eq(schema.project.workflowRunStepInstances.taskId, taskId)];
+  if (keepRunId !== undefined) {
+    conditions.push(ne(schema.project.workflowRunStepInstances.runId, keepRunId));
+  }
+  await layer.db
+    .delete(schema.project.workflowRunStepInstances)
+    .where(and(...conditions));
+}
+
 export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?: string): Promise<string | undefined> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26:
@@ -448,6 +642,18 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
         isNull(schema.project.tasks.deletedAt),
         inArray(schema.project.tasks.status, ["merging", "merging-pr"]),
       ];
+      /*
+       * FNXC:PostgresProjectIsolation 2026-07-17-00:00:
+       * The cross-process merge guard is documented (project-engine.ts) as
+       * "another process is already merging a task for THIS project" — in
+       * SQLite mode the per-project DB file made that scoping implicit. The
+       * shared PG tasks table needs the explicit project_id filter; without it
+       * one merging task anywhere serializes merges across ALL projects
+       * (observed: 697 cross-project "Merge deferred" retries in 10 minutes on
+       * a 6-project deployment, collapsing merge throughput ~6x).
+       */
+      const scope = taskProjectScope(layer);
+      if (scope) conditions.push(scope);
       if (excludeTaskId) {
         conditions.push(ne(schema.project.tasks.id, excludeTaskId));
       }
@@ -519,6 +725,35 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     `).all(trimmedFingerprint, cutoffIso) as TaskRow[];
 
     return rows.map((row) => store.rowToTask(row));
+}
+
+export async function findRecentTasksBySourceParentTaskIdImpl(
+  store: TaskStore,
+  sourceParentTaskId: string,
+  options?: { windowMs?: number },
+): Promise<Task[]> {
+  const parentId = sourceParentTaskId.trim();
+  if (!parentId) return [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  const windowMs = Math.max(1, Math.min(dayMs, Math.trunc(options?.windowMs ?? dayMs)));
+  const cutoffIso = new Date(Date.now() - windowMs).toISOString();
+  if (store.backendMode) {
+    const layer = store.asyncLayer!;
+    const rows = await layer.db.select().from(schema.project.tasks).where(and(
+      isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
+      eq(schema.project.tasks.sourceParentTaskId, parentId),
+      sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
+      ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
+    )).orderBy(asc(schema.project.tasks.createdAt));
+    return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
+  }
+  const selectClause = store.getTaskSelectClause(false, "t");
+  const rows = store.db.prepare(`
+    SELECT ${selectClause} FROM tasks t
+     WHERE t."deletedAt" IS NULL AND t.sourceParentTaskId = ? AND t.createdAt >= ?
+       AND t."column" NOT IN ('archived', 'done') ORDER BY t.createdAt ASC
+  `).all(parentId, cutoffIso) as TaskRow[];
+  return rows.map((row) => store.rowToTask(row));
 }
 
 export async function clearNearDuplicateReferencesToFailSoftImpl(store: TaskStore,
@@ -624,8 +859,7 @@ export async function resetPromptCheckboxesImpl(store: TaskStore, dir: string): 
 
 export async function updateTaskImpl(store: TaskStore,
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined },
-    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:StateMachine 2026-07-07-12:00:
@@ -738,6 +972,15 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      */
     const boundProjectId = store.asyncLayer?.projectId;
     if (boundProjectId) return boundProjectId;
+    /*
+    FNXC:PostgresWorkflowSettings 2026-07-17-14:20:
+    An unscoped backend store (asyncLayer present but projectId empty) must NOT
+    reach `store.db` below — it throws the removed-SQLite stub, which the catch
+    then swallows, so the throw was invisible. Return the same rootDir key the
+    swallow produced, without the spurious stub throw. Only the true legacy
+    (non-backend) path consults the SQLite identity.
+    */
+    if (store.backendMode) return store.rootDir;
     try {
       return store.db.getProjectIdentity()?.id ?? store.rootDir;
     } catch {
@@ -745,19 +988,24 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     }
 }
 
-export function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Record<string, Record<string, unknown>> {
+export async function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Promise<Record<string, Record<string, unknown>>> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * P1 fix: no backendMode branch existed, so this threw in PG mode. In
-     * backend mode, sync reads of workflow_settings are not possible (the
-     * async layer is the authoritative reader). Return empty (the default)
-     * so sync callers (e.g. settings export snapshots composing a sync view)
-     * do not throw; async callers use the async listWorkflowSettingValues
-     * path. The async `getSettingsByScope`-composed dashboard routes read
-     * workflow settings through the async helpers, not this sync method.
+     * FNXC:PostgresWorkflowSettings 2026-07-14-17:46:
+     * Settings exports, dashboard scope responses, memory settings, and cross-node comparisons must include the project-bound PostgreSQL workflow_settings rows. The project id is resolved through the same store binding used for writes so one project's values cannot leak into another export.
      */
     if (store.backendMode) {
-      return {};
+      const projectId = store.getWorkflowSettingsProjectId();
+      const rows = await store.asyncLayer!.db
+        .select({ workflowId: schema.project.workflowSettings.workflowId, values: schema.project.workflowSettings.values })
+        .from(schema.project.workflowSettings)
+        .where(eq(schema.project.workflowSettings.projectId, projectId));
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const row of rows) {
+        if (row.values && typeof row.values === "object" && !Array.isArray(row.values)) {
+          out[row.workflowId] = row.values as Record<string, unknown>;
+        }
+      }
+      return out;
     }
     const projectId = store.getWorkflowSettingsProjectId();
     const rows = store.db
@@ -1017,6 +1265,53 @@ export async function getMutationsForRunImpl(store: TaskStore, runId: string): P
     }
     // Sort by timestamp ascending
     return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+The queue is intentionally one record per project/task. Creation refuses an in-flight
+record and both claim/terminal writes compare request_id so executor races stay safe.
+*/
+function verificationScope(store: TaskStore) {
+  const projectId = store.asyncLayer?.projectId;
+  return projectId ? eq(schema.project.taskVerificationRequests.projectId, projectId) : undefined;
+}
+function verificationRowToRecord(row: typeof schema.project.taskVerificationRequests.$inferSelect): TaskVerificationRequest {
+  return {
+    taskId: row.taskId, requestId: row.requestId, status: row.status as TaskVerificationStatus,
+    profile: row.profile as TaskVerificationRequest["profile"], command: row.command,
+    scope: row.scope as TaskVerificationRequest["scope"], requestedBy: row.requestedBy,
+    requestedAt: row.requestedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+    ...(row.completedAt ? { completedAt: row.completedAt } : {}),
+    ...(row.result ? { result: row.result as TaskVerificationResultSummary } : {}),
+    ...(row.rejectionReason ? { rejectionReason: row.rejectionReason } : {}),
+  };
+}
+export async function createTaskVerificationRequestImpl(store: TaskStore, input: Omit<TaskVerificationRequest, "status" | "requestedAt"> & { requestedAt?: string }): Promise<{ request?: TaskVerificationRequest; inFlightRequestId?: string }> {
+  if (!store.backendMode) throw new Error("Task verification requests require PostgreSQL persistence");
+  const layer = store.asyncLayer!;
+  return layer.db.transaction(async (tx) => {
+    const where = verificationScope(store);
+    const rows = await tx.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, input.taskId), ...(where ? [where] : []))).limit(1);
+    const existing = rows[0];
+    if (existing && (existing.status === "requested" || existing.status === "running")) return { inFlightRequestId: existing.requestId };
+    const requestedAt = input.requestedAt ?? new Date().toISOString();
+    const values = { ...input, status: "requested" as const, requestedAt, startedAt: null, completedAt: null, result: null, rejectionReason: null, projectId: layer.projectId ?? "__legacy_unscoped__" };
+    await tx.insert(schema.project.taskVerificationRequests).values(values).onConflictDoUpdate({ target: [schema.project.taskVerificationRequests.projectId, schema.project.taskVerificationRequests.taskId], set: values });
+    return { request: verificationRowToRecord(values) };
+  });
+}
+export async function claimTaskVerificationRequestImpl(store: TaskStore, taskId: string, requestId: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const startedAt = new Date().toISOString(); const where = verificationScope(store);
+  const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests).set({ status: "running", startedAt }).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), eq(schema.project.taskVerificationRequests.requestId, requestId), eq(schema.project.taskVerificationRequests.status, "requested"), ...(where ? [where] : []))).returning();
+  return rows[0] ? verificationRowToRecord(rows[0]) : null;
+}
+export async function finishTaskVerificationRequestImpl(store: TaskStore, taskId: string, requestId: string, status: Extract<TaskVerificationStatus, "passed" | "failed" | "rejected">, result?: TaskVerificationResultSummary, rejectionReason?: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const where = verificationScope(store);
+  const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests).set({ status, completedAt: new Date().toISOString(), result: result ?? null, rejectionReason: rejectionReason ?? null }).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), eq(schema.project.taskVerificationRequests.requestId, requestId), eq(schema.project.taskVerificationRequests.status, "running"), ...(where ? [where] : []))).returning();
+  return rows[0] ? verificationRowToRecord(rows[0]) : null;
 }
 
 export function normalizeMergeRequestStateImpl(store: TaskStore, value: string): MergeRequestState {
@@ -1334,4 +1629,67 @@ export async function getWorkflowWorkItemImpl(store: TaskStore, id: string): Pro
     }
     const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
     return row ? store.rowToWorkflowWorkItem(row) : null;
+}
+
+export type ToolFailureRetryClaim =
+  | { outcome: "claimed"; attempt: number }
+  | { outcome: "already-claimed-for-run" }
+  | { outcome: "exhausted" };
+
+/**
+ * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+ * PostgreSQL owns the durable per-run claim. The cursor predicate is deliberately
+ * evaluated before the cap after a miss: an older handler must never park a newer run.
+ */
+export async function claimNextToolFailureRetryImpl(
+  store: TaskStore,
+  taskId: string,
+  expectedCursor: number,
+  maxRetries: number,
+): Promise<ToolFailureRetryClaim> {
+  /*
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-13:30:
+   * PostgreSQL is the only runtime TaskStore backend. Keep compatibility-mode
+   * stores on the legacy terminal-park path instead of throwing from a
+   * default-enabled retry policy: they have no durable atomic claim primitive.
+   */
+  if (!store.backendMode) return { outcome: "exhausted" };
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const rows = await layer.db.update(schema.project.tasks).set({
+    consecutiveToolFailureRetryCount: sql`coalesce(${schema.project.tasks.consecutiveToolFailureRetryCount}, 0) + 1`,
+    toolFailureDetectorLogCursor: null,
+    updatedAt: new Date().toISOString(),
+  }).where(and(
+    eq(schema.project.tasks.projectId, projectId),
+    eq(schema.project.tasks.id, taskId),
+    eq(schema.project.tasks.toolFailureDetectorLogCursor, expectedCursor),
+    sql`coalesce(${schema.project.tasks.consecutiveToolFailureRetryCount}, 0) < ${maxRetries}`,
+  )).returning({ attempt: schema.project.tasks.consecutiveToolFailureRetryCount });
+  if (rows.length > 0) return { outcome: "claimed", attempt: rows[0]!.attempt ?? 1 };
+  const [current] = await layer.db.select({
+    cursor: schema.project.tasks.toolFailureDetectorLogCursor,
+    count: schema.project.tasks.consecutiveToolFailureRetryCount,
+  }).from(schema.project.tasks).where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, taskId)));
+  // Cursor mismatch MUST win before cap: stale handlers silently defer to the newer run.
+  if (!current || current.cursor !== expectedCursor) return { outcome: "already-claimed-for-run" };
+  if ((current.count ?? 0) >= maxRetries) return { outcome: "exhausted" };
+  return { outcome: "already-claimed-for-run" };
+}
+
+/** CAS for the single exhaustion audit; terminal parking intentionally remains idempotent. */
+export async function markToolFailureRetryExhaustedAuditImpl(store: TaskStore, taskId: string): Promise<boolean> {
+  // FNXC:ExecutorToolFailureRetry 2026-07-16-13:30: non-PostgreSQL compatibility stores safely skip the deduplicated audit and retain legacy terminal parking.
+  if (!store.backendMode) return false;
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const rows = await layer.db.update(schema.project.tasks).set({
+    toolFailureRetryExhaustedAuditEmitted: 1,
+    updatedAt: new Date().toISOString(),
+  }).where(and(
+    eq(schema.project.tasks.projectId, projectId),
+    eq(schema.project.tasks.id, taskId),
+    sql`(${schema.project.tasks.toolFailureRetryExhaustedAuditEmitted} is null or ${schema.project.tasks.toolFailureRetryExhaustedAuditEmitted} = 0)`,
+  )).returning({ id: schema.project.tasks.id });
+  return rows.length > 0;
 }

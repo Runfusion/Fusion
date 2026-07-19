@@ -6,10 +6,10 @@ import path from "node:path";
 import { tsImport } from "tsx/esm/api";
 import { composeTransitionEvidence } from "../backfill-fn-4441-transition-evidence.mjs";
 
-async function loadTaskStore() {
-  const moduleUrl = new globalThis.URL("../../packages/core/src/store.ts", import.meta.url).href;
+async function loadBackendFactory() {
+  const moduleUrl = new globalThis.URL("../../packages/core/src/postgres/startup-factory.ts", import.meta.url).href;
   const mod = await tsImport(moduleUrl, import.meta.url);
-  return mod.TaskStore;
+  return mod.createTaskStoreForBackend;
 }
 
 test("composeTransitionEvidence includes required evidence fields", () => {
@@ -50,9 +50,14 @@ test("composeTransitionEvidence includes required evidence fields", () => {
 });
 
 test("TaskStore upsertTaskDocument increments revision and round-trips latest content", async () => {
-  const TaskStore = await loadTaskStore();
+  const createTaskStoreForBackend = await loadBackendFactory();
   const projectRoot = mkdtempSync(path.join(os.tmpdir(), "fn-4441-transition-evidence-"));
-  const store = new TaskStore(projectRoot, undefined, { inMemoryDb: true });
+  /* FNXC:PostgresOperationalScriptTests 2026-07-14-18:44: Script integration coverage must exercise the same authoritative PostgreSQL bootstrap as the backfill instead of constructing the removed in-memory SQLite store. */
+  const boot = await createTaskStoreForBackend({
+    rootDir: projectRoot,
+    embeddedDataDir: path.join(projectRoot, ".embedded-pg"),
+  });
+  const store = boot.taskStore;
 
   try {
     await store.createTaskWithReservedId({ description: "seed" }, { taskId: "FN-4441" });
@@ -75,7 +80,7 @@ test("TaskStore upsertTaskDocument increments revision and round-trips latest co
     assert.equal(doc?.revision, 2);
     assert.equal(doc?.content, "second");
   } finally {
-    await store.close();
+    await boot.shutdown();
     rmSync(projectRoot, { recursive: true, force: true });
   }
 });

@@ -265,6 +265,7 @@ export type MessageSseEventType =
   | "message:sent"
   | "message:received"
   | "message:read"
+  | "message:updated"
   | "message:deleted";
 
 export type ApprovalSseEventType = "approval:requested" | "approval:updated" | "approval:decided";
@@ -590,6 +591,15 @@ export function createSSE(
       };
       send(`event: agent:log\ndata: ${JSON.stringify(payload)}\n\n`);
     };
+    const onWorkflowSettingValuesUpdated = (data: {
+      workflowId: string;
+      projectId: string;
+      settingIds: string[];
+      mutationId: string;
+    }) => {
+      if (projectId && data.projectId !== projectId) return;
+      send(`event: workflow:setting-values-updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
 
     const onArtifactRegistered = (artifact: unknown) => {
       /* FNXC:ArtifactRegistry 2026-06-27-00:00: Forward TaskStore's authoritative artifact registration event so live artifact surfaces refresh even when the best-effort inbox notification is absent or delayed. */
@@ -769,6 +779,10 @@ export function createSSE(
       send(`event: message:read\ndata: ${JSON.stringify(message)}\n\n`);
     };
 
+    const onMessageUpdated = (message: unknown) => {
+      send(`event: message:updated\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
     const onMessageDeleted = (messageId: string) => {
       send(`event: message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
     };
@@ -902,6 +916,7 @@ export function createSSE(
       store.off("agent:log", onAgentLog);
       store.off("artifact:registered", onArtifactRegistered);
       store.off("artifact:updated", onArtifactUpdated);
+      store.off("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
       if (missionStore) {
         missionStore.off("mission:created", onMissionCreated);
         missionStore.off("mission:updated", onMissionUpdated);
@@ -951,6 +966,7 @@ export function createSSE(
         messageStore.off("message:sent", onMessageSent);
         messageStore.off("message:received", onMessageReceived);
         messageStore.off("message:read", onMessageRead);
+        messageStore.off("message:updated", onMessageUpdated);
         messageStore.off("message:deleted", onMessageDeleted);
       }
       approvalSseListeners.delete(onApprovalEvent);
@@ -1018,6 +1034,7 @@ export function createSSE(
     store.on("agent:log", onAgentLog);
     store.on("artifact:registered", onArtifactRegistered);
     store.on("artifact:updated", onArtifactUpdated);
+    store.on("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
 
     if (missionStore) {
       missionStore.on("mission:created", onMissionCreated);
@@ -1072,6 +1089,7 @@ export function createSSE(
       messageStore.on("message:sent", onMessageSent);
       messageStore.on("message:received", onMessageReceived);
       messageStore.on("message:read", onMessageRead);
+      messageStore.on("message:updated", onMessageUpdated);
       messageStore.on("message:deleted", onMessageDeleted);
     }
 

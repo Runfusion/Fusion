@@ -40,6 +40,14 @@ function createStore(overrides?: { tasks?: Task[] }) {
     off: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false }),
     listTasks: vi.fn().mockResolvedValue(overrides?.tasks ?? []),
+    /*
+    FNXC:EngineTests 2026-07-17-06:20:
+    Graph entry captures a tool-failure log cursor (getAgentLogCount + updateTask) before the
+    soft-delete short-circuit. Stub both so execute() can reach the deletedAt refuse path.
+    */
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    updateTask: vi.fn().mockResolvedValue({}),
   } as any;
   return store;
 }

@@ -17,11 +17,14 @@ vi.mock("../routes/resolve-diff-base.js", () => ({
 
 vi.mock("@fusion/engine", () => ({
   // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
-  resolveMcpServersForStore: vi.fn(() => []),
+  resolveMcpServersForStore: vi.fn(async () => ({ servers: [] })),
   createResolvedAgentSession: mockCreateResolvedAgentSession,
 }));
 
 import { resolvePrConflicts } from "../pr-conflict-resolver.js";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -128,5 +131,98 @@ describe("resolvePrConflicts", () => {
     ], expect.stringContaining("conflict-fn-001"), 60000);
     expect(mockRunGitCommand).toHaveBeenCalledWith(["push", "-u", "origin", "fusion/fn-001"], expect.stringContaining("conflict-fn-001"), 60000);
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Pushed PR branch after conflict-free merge", "fusion/fn-001");
+  });
+
+  /*
+  FNXC:GrokCliRouting 2026-07-15-09:58:
+  Create-PR conflict resolution must forward pluginRunner into createResolvedAgentSession so grok-cli/no-key models resolve getRuntimeById("grok") the same way engine merge does.
+  */
+  it("forwards optional pluginRunner into createResolvedAgentSession during AI conflict resolution", async () => {
+    const rootDir = await createRootDir();
+    rootDirs.push(rootDir);
+    const store = createStore(createTask());
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    // Temp worktree path used by the resolver when task.worktree is missing.
+    const worktreePath = join(rootDir, ".fusion", "worktrees", "conflict-fn-001");
+
+    const pluginRunner = {
+      getRuntimeById: vi.fn().mockReturnValue({ pluginId: "fusion-plugin-grok-runtime", runtime: {} }),
+    };
+
+    mockCreateResolvedAgentSession.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    });
+
+    mockRunGitCommand.mockImplementation(async (args: string[], cwd?: string) => {
+      const cmd = args.join(" ");
+      if (cmd.startsWith("worktree add")) return "";
+      if (cmd.startsWith("checkout")) return "";
+      if (cmd.startsWith("merge --no-commit")) {
+        throw Object.assign(new Error("CONFLICT"), { code: 1 });
+      }
+      if (cmd === "diff --name-only --diff-filter=U") {
+        // Ensure the conflicted file exists under the worktree cwd so marker scan can run.
+        await mkdir(cwd ?? worktreePath, { recursive: true }).catch(() => undefined);
+        await writeFile(join(cwd ?? worktreePath, "conflicted.txt"), "resolved content\n", "utf8");
+        return "conflicted.txt\n";
+      }
+      if (cmd.startsWith("add -A")) return "";
+      if (cmd.startsWith("diff --cached --quiet")) {
+        throw Object.assign(new Error("diff has changes"), { code: 1 });
+      }
+      if (cmd.startsWith("commit")) return "";
+      if (cmd.startsWith("push")) return "";
+      if (cmd.startsWith("worktree remove")) return "";
+      if (cmd.startsWith("merge --abort") || cmd.startsWith("reset --merge")) return "";
+      return "";
+    });
+
+    const result = await resolvePrConflicts({
+      taskId: "FN-001",
+      baseRef: "main",
+      rootDir,
+      store,
+      settings,
+      pluginRunner,
+    });
+
+    expect(result.resolved).toBe(true);
+    expect(mockCreateResolvedAgentSession).toHaveBeenCalledTimes(1);
+    expect(mockCreateResolvedAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionPurpose: "merger",
+        pluginRunner,
+      }),
+    );
+  });
+});
+
+/*
+FNXC:GrokCliRouting 2026-07-15-10:17:
+Source-level guard: PR conflict route and resolver must thread a getRuntimeById-capable pluginRunner; non-capable runners are dropped before createResolvedAgentSession.
+*/
+describe("Grok CLI PluginRunner wiring for PR conflict + merge doors", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it("pr-conflict-resolver forwards input.pluginRunner via asSessionPluginRunner into createResolvedAgentSession", () => {
+    const source = readFileSync(resolve(here, "../pr-conflict-resolver.ts"), "utf8");
+    expect(source).toContain("pluginRunner?: ConflictResolutionPluginRunner");
+    expect(source).toContain("pluginRunner: input.pluginRunner");
+    expect(source).toContain("pluginRunner: asSessionPluginRunner(pluginRunner)");
+    expect(source).toContain("function asSessionPluginRunner");
+  });
+
+  it("register-git-github resolve-conflicts prefers engine.getPluginRunner over bare loader", () => {
+    const source = readFileSync(resolve(here, "../routes/register-git-github.ts"), "utf8");
+    const routeIndex = source.indexOf('router.post("/tasks/:id/pr/resolve-conflicts"');
+    expect(routeIndex).toBeGreaterThanOrEqual(0);
+    const callIndex = source.indexOf("resolvePrConflicts({", routeIndex);
+    expect(callIndex).toBeGreaterThan(routeIndex);
+    expect(source.slice(routeIndex, callIndex)).toContain("engine?.getPluginRunner?.()");
+    expect(source.slice(routeIndex, callIndex + 400)).toContain("pluginRunner,");
+    expect(source.slice(routeIndex, callIndex)).toContain("getRuntimeById");
   });
 });

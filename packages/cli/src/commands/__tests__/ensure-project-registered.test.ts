@@ -72,7 +72,8 @@ describe("ensureCwdProjectRegistered", () => {
     expect(result).not.toBeNull();
     expect(existsSync(join(cwd, ".git"))).toBe(true);
     expect(existsSync(join(cwd, ".fusion"))).toBe(true);
-    expect(existsSync(join(cwd, ".fusion", "fusion.db"))).toBe(true);
+    expect(existsSync(join(cwd, ".fusion", "project.json"))).toBe(true);
+    expect(existsSync(join(cwd, ".fusion", "fusion.db"))).toBe(false);
     expect(ensureSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         path: cwd,

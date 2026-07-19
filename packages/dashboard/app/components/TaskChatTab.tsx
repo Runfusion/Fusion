@@ -1,5 +1,5 @@
 import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
@@ -53,6 +53,7 @@ type TaskChatToolGroupRow =
 
 const BOTTOM_FOLLOW_THRESHOLD = 48;
 const TOP_LOAD_THRESHOLD = 48;
+const INITIAL_LOADING_INDICATOR_DELAY_MS = 150;
 
 function isTranscriptNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
@@ -74,7 +75,7 @@ function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
 }
 
 function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
-  if (entry.type !== "text") return null;
+  if (entry.type !== "status" && entry.type !== "text") return null;
   const role = entry.agent === "triage" ? "Triage" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
   if (!role) return null;
   return parseRuntimeModelMarker(entry.text, role);
@@ -123,13 +124,13 @@ function getModelForRole(
   effectiveModels?: TaskChatTabProps["effectiveModels"],
 ): TaskChatModelInfo | null {
   /*
-  FNXC:TaskDetailChat 2026-06-23-21:18:
-  Task-detail chat agent headers should identify the AI provider actually backing each role, not a generic/role avatar. Prefer explicit task model overrides because they are stable before logs stream, then fall back to the runtime "using model" log marker emitted by active planner/executor/reviewer sessions. Merger output uses the validator/reviewer lane provider because merge-fix/review flows share that model family in the UI.
+  FNXC:TaskDetailChat 2026-07-16-00:00:
+  FN-8214: Task-detail chat role icons must identify the model that actually ran. Prefer the runtime "using model" marker, then task-detail effective models, and use the explicit task override only before those values are available. Engine lanes emit markers as `status` and historical logs use `text`, so parseModelMarker accepts both. Merger has no marker and continues through its effective validator lane or explicit validator fallback.
 
   FNXC:TaskDetailChat 2026-06-23-00:54:
   Default executor models such as OpenAI Codex GPT-5.5 can resolve through settings rather than task overrides or log markers. Task chat receives the same effective model resolution used by the task-detail model header so role icons match Chat and Agent Log instead of falling back to CPU for default-backed agents.
   */
-  return getExplicitModelForRole(task, role) ?? getRuntimeModelForRole(entries, role) ?? getEffectiveModelForRole(effectiveModels, role);
+  return getRuntimeModelForRole(entries, role) ?? getEffectiveModelForRole(effectiveModels, role) ?? getExplicitModelForRole(task, role);
 }
 
 function TaskChatAgentIcon({ label, modelInfo }: { label: string; modelInfo: TaskChatModelInfo | null }) {
@@ -367,9 +368,26 @@ function segmentGroupEntries(entries: AgentLogEntry[]): TaskChatSegment[] {
       continue;
     }
 
+    /*
+    FNXC:TaskChat-StatusEntries 2026-07-15-11:20:
+    A `status` row is a COMPLETE engine message, so it gets its own segment and is never merged with a neighbour. Merging is only correct for `text`, whose rows are streamed delta fragments that `TaskChatText` re-glues with `join("")`.
+
+    This is why a provider outage rendered as one run-on string: engine markers were written as `text`, so N standalone messages ("Reviewer using model: x/y" ×14) were glued edge-to-edge under a "14 entries" header. Fixing it with a separator in `TaskChatText` would corrupt legitimate streamed text (the FN-5787/5789/5803 regression lineage) — the split has to happen here, on the type.
+    */
+    if (entry.type === "status") {
+      segments.push({ kind: "text", entries: [entry], startIndex: index });
+      index += 1;
+      continue;
+    }
+
     const startIndex = index;
     const textEntries: AgentLogEntry[] = [];
-    while (index < entries.length && !isToolLikeEntry(entries[index]) && entries[index].type !== "thinking") {
+    while (
+      index < entries.length
+      && !isToolLikeEntry(entries[index])
+      && entries[index].type !== "thinking"
+      && entries[index].type !== "status"
+    ) {
       textEntries.push(entries[index]);
       index += 1;
     }
@@ -388,7 +406,14 @@ function TaskChatText({ entries }: { entries: AgentLogEntry[] }) {
       className={`task-chat-entry task-chat-entry--${firstEntry.type.replace("_", "-")}`}
       data-testid={`task-chat-entry-${firstEntry.type}`}
     >
-      <TaskChatTimestampMeta timestamp={getLatestEntryTimestamp(entries)} label="Text block timestamp" />
+      {firstEntry.type === "status" && (
+        <div className="task-chat-entry-label-row">
+          <span className="status-dot status-dot--pending" aria-hidden="true" />
+          <span className="task-chat-entry-kicker">Status update</span>
+          <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Status update timestamp" />
+        </div>
+      )}
+      {firstEntry.type !== "status" && <TaskChatTimestampMeta timestamp={getLatestEntryTimestamp(entries)} label="Text block timestamp" />}
       <div className="markdown-body task-chat-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
           {entries.map((entry) => entry.text).join("")}
@@ -516,12 +541,25 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
   );
 }
 
-function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
+/*
+ FNXC:Chat-Thinking 2026-07-15-10:33:
+ Chat thinking (reasoning) blocks render collapsed by default so the response is scannable without manually closing each block; the summary remains an expand-on-click affordance. (FN-7974)
+
+ FNXC:Chat-Thinking 2026-07-16-18:05:
+ FN-8171 keeps the scannable collapsed default for idle task columns, but opens Live Activity thinking for in-progress and in-review tasks so operators can follow active or awaiting-review reasoning at a glance. The expanded block remains user-collapsible.
+*/
+function TaskChatThinking({ entries, defaultOpen = false }: { entries: AgentLogEntry[]; defaultOpen?: boolean }) {
   const { t } = useTranslation("app");
+  const [open, setOpen] = useState(defaultOpen);
   const combinedThinkingText = entries.map((entry) => entry.text).join("");
 
   return (
-    <details className="task-chat-thinking" data-testid="task-chat-thinking" open>
+    <details
+      className="task-chat-thinking"
+      data-testid="task-chat-thinking"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="task-chat-thinking-summary">
         <span>{t("taskChat.thinking", "Thinking")}</span>
         <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Thinking block timestamp" />
@@ -540,12 +578,12 @@ function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
   );
 }
 
-function TaskChatSegmentView({ segment }: { segment: TaskChatSegment }) {
+function TaskChatSegmentView({ segment, defaultOpen }: { segment: TaskChatSegment; defaultOpen?: boolean }) {
   if (segment.kind === "tool") {
     return <TaskChatToolGroup entries={segment.entries} />;
   }
   if (segment.kind === "thinking") {
-    return <TaskChatThinking entries={segment.entries} />;
+    return <TaskChatThinking entries={segment.entries} defaultOpen={defaultOpen} />;
   }
   return <TaskChatText entries={segment.entries} />;
 }
@@ -585,9 +623,12 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [loadingIndicatorTaskId, setLoadingIndicatorTaskId] = useState<string | null>(null);
   const sendingRef = useRef(false);
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
+  const isTranscriptAtBottomRef = useRef(true);
+  const thinkingDefaultOpen = task.column === "in-progress" || task.column === "in-review";
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef(0);
   const previousScrollHeightRef = useRef(0);
@@ -623,6 +664,27 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     : t("taskChat.activePlaceholder", "Steer the currently executing agent");
   const canSend = draft.trim().length > 0 && !sending;
 
+  useEffect(() => {
+    if (!loading || transcriptItemCount > 0) {
+      setLoadingIndicatorTaskId(null);
+      return;
+    }
+
+    /*
+     * FNXC:TaskDetailChat 2026-07-18-12:21:
+     * FN-8303 browser tracing showed that omitted-tab Activity → Live briefly paints
+     * “Loading agent output…” before its already-populated initial log response arrives.
+     * Delay that indicator so a fast default-open keeps the stable transcript shell rather
+     * than flashing spinner-to-content; slow requests still receive explicit feedback.
+     * Bind the delayed state to its task so a reused List split-detail instance cannot paint
+     * a prior task’s slow-request spinner while its newly selected task initializes.
+     */
+    const timer = window.setTimeout(() => setLoadingIndicatorTaskId(task.id), INITIAL_LOADING_INDICATOR_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [loading, task.id, transcriptItemCount]);
+
+  const showLoadingIndicator = loadingIndicatorTaskId === task.id;
+
   const resizeComposer = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -643,6 +705,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     anchorFrameRef.current = null;
   }, []);
 
+  const setTranscriptFollowing = useCallback((following: boolean) => {
+    isTranscriptAtBottomRef.current = following;
+    setIsTranscriptAtBottom(following);
+  }, []);
+
   const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
     cancelAnchorTranscriptFrame();
     if (!container.isConnected) return;
@@ -654,11 +721,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
 
     const writeBottom = () => {
       anchorFrameRef.current = null;
-      if (!container.isConnected) return;
+      if (!container.isConnected || !isTranscriptAtBottomRef.current) return;
 
       container.scrollTop = container.scrollHeight;
       previousScrollHeightRef.current = container.scrollHeight;
-      setIsTranscriptAtBottom(true);
+      setTranscriptFollowing(true);
       if (container.scrollHeight === lastScrollHeight) {
         stableFrames += 1;
       } else {
@@ -675,7 +742,31 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     };
 
     writeBottom();
-  }, [cancelAnchorTranscriptFrame]);
+  }, [cancelAnchorTranscriptFrame, setTranscriptFollowing]);
+
+  useEffect(() => {
+    if (!active) return;
+    const container = transcriptRef.current;
+    if (!container) return;
+
+    /*
+    FNXC:TaskDetailChat 2026-07-18-14:09:
+    FN-8339 requires live task output to follow its tail only while the reader remains pinned. Streamed text can grow an existing DOM block without changing the entry count, so observe both layout and DOM growth; the ref is updated synchronously by real scroll events and prevents an in-flight observer or settle frame from yanking a reader back down. TaskPlannerChatTab, WorkflowResultsTab, DevServerLogViewer, and SystemControlsArea have separate transcript ownership and their matching force-follow behavior is deferred to FN-8346 rather than silently changing those surfaces here.
+    */
+    const followTail = () => {
+      if (!isTranscriptAtBottomRef.current) return;
+      container.scrollTop = container.scrollHeight;
+      previousScrollHeightRef.current = container.scrollHeight;
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followTail);
+    resizeObserver?.observe(container);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(followTail);
+    mutationObserver?.observe(container, { childList: true, characterData: true, subtree: true });
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, [active]);
 
   useLayoutEffect(() => () => {
     cancelAnchorTranscriptFrame();
@@ -691,6 +782,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     const receivedInitialItems = previousEntryCountRef.current === 0;
     if (!becameActive && !receivedInitialItems) return;
 
+    setTranscriptFollowing(true);
     anchorTranscriptToBottom(container);
     previousEntryCountRef.current = transcriptItemCount;
     previousScrollHeightRef.current = container.scrollHeight;
@@ -698,7 +790,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     return () => {
       cancelAnchorTranscriptFrame();
     };
-  }, [active, anchorTranscriptToBottom, cancelAnchorTranscriptFrame, transcriptItemCount]);
+  }, [active, anchorTranscriptToBottom, cancelAnchorTranscriptFrame, setTranscriptFollowing, transcriptItemCount]);
 
   useLayoutEffect(() => {
     const container = transcriptRef.current;
@@ -742,28 +834,26 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
       const heightDelta = container.scrollHeight - previousHeight;
       container.scrollTop = previousTop + Math.max(0, heightDelta);
       pendingPrependScrollHeightRef.current = null;
-      setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+      setTranscriptFollowing(isTranscriptNearBottom(container));
     } else if (transcriptItemCount > previousCount) {
-      const shouldFollow = previousCount === 0 || previousScrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
+      const shouldFollow = previousCount === 0 || isTranscriptAtBottomRef.current;
       if (shouldFollow) {
         container.scrollTop = container.scrollHeight;
-        setIsTranscriptAtBottom(true);
+        setTranscriptFollowing(true);
       } else {
-        setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+        setTranscriptFollowing(isTranscriptNearBottom(container));
       }
       if (pendingPrependScrollHeightRef.current !== null) {
         pendingPrependScrollHeightRef.current = container.scrollHeight;
         pendingPrependScrollTopRef.current = container.scrollTop;
       }
-    } else {
-      setIsTranscriptAtBottom(isTranscriptNearBottom(container));
     }
 
     previousEntryCountRef.current = transcriptItemCount;
     previousScrollHeightRef.current = container.scrollHeight;
     previousFirstEntryKeyRef.current = firstEntryKey;
     previousAgentEntryCountRef.current = entries.length;
-  }, [active, entries.length, firstEntryKey, transcriptItemCount]);
+  }, [active, entries.length, firstEntryKey, setTranscriptFollowing, transcriptItemCount]);
 
   const loadPreviousMessages = useCallback(async () => {
     const container = transcriptRef.current;
@@ -782,19 +872,19 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     const container = transcriptRef.current;
     if (!container) return;
     previousScrollHeightRef.current = container.scrollHeight;
-    setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+    setTranscriptFollowing(isTranscriptNearBottom(container));
     if (container.scrollTop <= TOP_LOAD_THRESHOLD) {
       void loadPreviousMessages();
     }
-  }, [loadPreviousMessages]);
+  }, [loadPreviousMessages, setTranscriptFollowing]);
 
   const scrollTranscriptToBottom = useCallback(() => {
     const container = transcriptRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
     previousScrollHeightRef.current = container.scrollHeight;
-    setIsTranscriptAtBottom(true);
-  }, []);
+    setTranscriptFollowing(true);
+  }, [setTranscriptFollowing]);
 
   const handleSubmit = useCallback(async (event?: React.FormEvent) => {
     event?.preventDefault();
@@ -921,10 +1011,12 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
           </div>
         ) : null}
         {loading && transcriptItemCount === 0 ? (
-          <div className="task-chat-empty" role="status">
-            <Loader2 className="animate-spin" aria-hidden="true" />
-            <span>{t("taskChat.loadingAgentOutput", "Loading agent output…")}</span>
-          </div>
+          showLoadingIndicator ? (
+            <div className="task-chat-empty" role="status">
+              <Loader2 className="animate-spin" aria-hidden="true" />
+              <span>{t("taskChat.loadingAgentOutput", "Loading agent output…")}</span>
+            </div>
+          ) : null
         ) : transcriptItemCount === 0 ? (
           <div className="task-chat-empty">{t("taskChat.emptyAgentOutput", "No agent output yet. Live messages from Planner, Executor, Reviewer, and Merger agents will appear here.")}</div>
         ) : (
@@ -951,7 +1043,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
                 <div className="task-chat-group-bubbles">
                   {segments.map((segment) => {
                     const segmentKey = `${segment.kind}-${segment.startIndex}-${segment.entries.length}`;
-                    return <TaskChatSegmentView key={segmentKey} segment={segment} />;
+                    return <TaskChatSegmentView key={segmentKey} segment={segment} defaultOpen={thinkingDefaultOpen} />;
                   })}
                 </div>
               </section>

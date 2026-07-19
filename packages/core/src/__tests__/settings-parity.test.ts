@@ -9,6 +9,7 @@ import {
   isGlobalSettingsKey,
   isProjectSettingsKey,
 } from "../types.js";
+import { NON_DEFAULT_PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 
 function assertExactKeyCoverage(scopeName: string, actual: readonly string[], expected: readonly string[]): void {
@@ -40,11 +41,17 @@ describe("settings key parity", () => {
     );
   });
 
+  /*
+  FNXC:SettingsParity 2026-07-18-11:15:
+  PROJECT_SETTINGS_KEYS = defaults keys + NON_DEFAULT_PROJECT_SETTINGS_KEYS
+  (e.g. ephemeralAgentTaskCreationPolicy has no default; resolver owns fallback).
+  Full-suite failed when the parity test still expected defaults-only coverage.
+  */
   it("PROJECT_SETTINGS_KEYS is derived from the project settings defaults", () => {
     assertExactKeyCoverage(
       "PROJECT_SETTINGS_KEYS",
       PROJECT_SETTINGS_KEYS as readonly string[],
-      Object.keys(DEFAULT_PROJECT_SETTINGS),
+      [...Object.keys(DEFAULT_PROJECT_SETTINGS), ...NON_DEFAULT_PROJECT_SETTINGS_KEYS],
     );
   });
 
@@ -54,6 +61,7 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("maxConcurrent")).toBe(true);
     expect(isProjectSettingsKey("heartbeatMultiplier")).toBe(true);
     expect(isProjectSettingsKey("completionDocumentationMode")).toBe(true);
+    expect(isProjectSettingsKey("reviewArtifacts")).toBe(true);
     expect(isProjectSettingsKey("remoteAccess")).toBe(false);
     expect(isProjectSettingsKey("researchSettings")).toBe(true);
     expect(isGlobalSettingsKey("researchGlobalDefaults")).toBe(true);
@@ -63,6 +71,8 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("remoteAccess")).toBe(true);
     expect(isGlobalSettingsKey("persistAgentToolOutput")).toBe(true);
     expect(isProjectSettingsKey("persistAgentToolOutput")).toBe(false);
+    expect(isGlobalSettingsKey("proactiveTaskChatEnabled")).toBe(true);
+    expect(isProjectSettingsKey("proactiveTaskChatEnabled")).toBe(false);
     expect(isGlobalSettingsKey("persistAgentThinkingLog")).toBe(true);
     expect(isProjectSettingsKey("persistAgentThinkingLog")).toBe(false);
     expect(isGlobalOnlySettingsKey("persistAgentThinkingLog")).toBe(true);
@@ -106,6 +116,7 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerThinkingLevel).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerFallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.mergerThinkingLevel).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.mergerFallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.fallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.executionGlobalThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.planningGlobalThinkingLevel).toBeUndefined();
@@ -117,6 +128,7 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("titleSummarizerThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("titleSummarizerFallbackThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("mergerThinkingLevel")).toBe(true);
+    expect(isProjectSettingsKey("mergerFallbackThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("fallbackThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("planningFallbackThinkingLevel")).toBe(false);
     expect(isGlobalSettingsKey("planningFallbackThinkingLevel")).toBe(false);
@@ -152,6 +164,18 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("allowAbsoluteFileBrowserPaths")).toBe(false);
     expect(PROJECT_SETTINGS_KEYS).toContain("allowAbsoluteFileBrowserPaths");
     expect(GLOBAL_SETTINGS_KEYS).not.toContain("allowAbsoluteFileBrowserPaths");
+  });
+
+  it("defaults in-app reports to draft review and keeps mode settings project-scoped", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.reportMode).toBe("draft-review");
+    expect(DEFAULT_PROJECT_SETTINGS.reportModeByAction).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.reportRoadmapDedup).toBe(false);
+    expect(isProjectSettingsKey("reportMode")).toBe(true);
+    expect(isProjectSettingsKey("reportModeByAction")).toBe(true);
+    expect(isProjectSettingsKey("reportRoadmapDedup")).toBe(true);
+    expect(isGlobalSettingsKey("reportMode")).toBe(false);
+    expect(isGlobalSettingsKey("reportModeByAction")).toBe(false);
+    expect(isGlobalSettingsKey("reportRoadmapDedup")).toBe(false);
   });
 
   it("defaults autoClaimCandidatesInPrompt to 5 and keeps it project-scoped", () => {
@@ -262,6 +286,10 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.completionDocumentationMode).toBe("off");
   });
 
+  it("defaults reviewArtifacts to off", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.reviewArtifacts).toBe("off");
+  });
+
   it("defaults directMergeCommitStrategy to always-squash and keeps it project-scoped", () => {
     expect(DEFAULT_PROJECT_SETTINGS.directMergeCommitStrategy).toBe("always-squash");
     expect(isProjectSettingsKey("directMergeCommitStrategy")).toBe(true);
@@ -315,6 +343,9 @@ describe("settings key parity", () => {
       "reflectionEnabled",
       "executionProvider",
       "executionModelId",
+      "executionFallbackProvider",
+      "executionFallbackModelId",
+      "executionFallbackThinkingLevel",
       "planningProvider",
       "planningModelId",
       "planningFallbackProvider",
@@ -429,6 +460,7 @@ describe("settings key parity", () => {
 
   it("keeps github tracking keys in expected scopes with documented defaults", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingEnabledByDefault).toBe(false);
+    expect(DEFAULT_PROJECT_SETTINGS.sessionAdvisorEnabledByDefault).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.githubLinkImportedIssuesToTracking).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingDefaultRepo).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.githubAuthMode).toBe("gh-cli");
@@ -437,6 +469,8 @@ describe("settings key parity", () => {
 
     expect(isProjectSettingsKey("githubTrackingEnabledByDefault")).toBe(true);
     expect(isGlobalSettingsKey("githubTrackingEnabledByDefault")).toBe(false);
+    expect(isProjectSettingsKey("sessionAdvisorEnabledByDefault")).toBe(true);
+    expect(isGlobalSettingsKey("sessionAdvisorEnabledByDefault")).toBe(false);
     expect(isProjectSettingsKey("githubLinkImportedIssuesToTracking")).toBe(true);
     expect(isGlobalSettingsKey("githubLinkImportedIssuesToTracking")).toBe(false);
     expect(isGlobalOnlySettingsKey("githubLinkImportedIssuesToTracking")).toBe(false);
@@ -569,6 +603,8 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "planningProvider", modelId: "planningModelId", expectedScope: "workflow" },
     { provider: "planningGlobalProvider", modelId: "planningGlobalModelId", expectedScope: "global" },
     { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "workflow" },
+    // Executor fallback lane
+    { provider: "executionFallbackProvider", modelId: "executionFallbackModelId", expectedScope: "workflow" },
     // Validator lane
     { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "workflow" },
     { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId", expectedScope: "global" },
@@ -579,6 +615,7 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "project" },
     // Merger lane (project-scoped like summarizer; not workflow-moved)
     { provider: "mergerProvider", modelId: "mergerModelId", expectedScope: "project" },
+    { provider: "mergerFallbackProvider", modelId: "mergerFallbackModelId", expectedScope: "project" },
     { provider: "mergerGlobalProvider", modelId: "mergerGlobalModelId", expectedScope: "global" },
   ] as const;
 

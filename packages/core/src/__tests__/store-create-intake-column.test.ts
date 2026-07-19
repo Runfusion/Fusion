@@ -94,6 +94,14 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     );
     // A direct todo create is NOT an intake column, so it must NOT get the bootstrap stub.
     expect(prompt).not.toBe(`# ${task.id}\n\n${task.description}\n`);
+    // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+    // Non-AI specified prompts must surface the operator description near the top.
+    expect(prompt).toContain("## Original Description");
+    expect(prompt).toContain("direct todo create");
+    const originalIdx = prompt.indexOf("## Original Description");
+    const missionIdx = prompt.indexOf("## Mission");
+    expect(originalIdx).toBeGreaterThan(-1);
+    expect(missionIdx).toBeGreaterThan(originalIdx);
   });
 
   /*

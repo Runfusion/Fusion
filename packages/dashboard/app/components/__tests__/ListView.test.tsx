@@ -430,6 +430,74 @@ describe("ListView", () => {
     expect(screen.getByText("View")).toBeDefined();
   });
 
+  it("renders the exhausted review budget indicator only for the matching approval reason in desktop rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
+  it("renders the exhausted review budget indicator only for the matching approval reason in grouped cards", () => {
+    const viewportSpy = mockMobileViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
+  it("renders the active Planning badge for a fresh status-null triage card in grouped mobile cards", () => {
+    const viewportSpy = mockMobileViewport();
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-8300-mobile",
+          status: null as any,
+          recentAgentActivityAt: new Date().toISOString(),
+        })],
+      });
+
+      const card = screen.getByText("FN-8300-mobile").closest(".list-card") as HTMLElement;
+      expect(card).toHaveClass("agent-active");
+      expect(within(card).getByLabelText("Planning")).toHaveClass("list-status-badge", "pulsing");
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("renders the active Planning badge for a fresh status-null triage card in desktop table rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-8300-desktop",
+          status: null as any,
+          recentAgentActivityAt: new Date().toISOString(),
+        })],
+      });
+
+      const row = screen.getByText("FN-8300-desktop").closest("tr") as HTMLElement;
+      expect(row).toHaveClass("agent-active");
+      expect(within(row).getByLabelText("Planning")).toHaveClass("list-status-badge", "pulsing");
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
   it("falls back malformed task columns to Planning group instead of crashing", () => {
     const malformedTask = {
       ...createMockTask({ id: "FN-404" }),
@@ -807,6 +875,19 @@ describe("ListView", () => {
     expect(onRetryTask).not.toHaveBeenCalled();
     expect(onArchiveTask).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
+  });
+
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const onResetTask = vi.fn(async () => createMockTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    renderListView({ tasks: [createMockTask({ id: "FN-901", column: "in-progress" })], onResetTask });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-901"));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
   });
 
   it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
@@ -1929,6 +2010,44 @@ describe("ListView", () => {
     expect(statusBadge.className).toContain("failed");
   });
 
+  it("suppresses failed table styling and Retry for a stale failed task with automatic recovery pending", () => {
+    const viewportSpy = mockDesktopViewport();
+    const task = createMockTask({
+      id: "FN-RECOVERY",
+      status: "failed",
+      column: "todo",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    renderListView({ tasks: [task] });
+
+    const row = document.querySelector('.list-row[data-id="FN-RECOVERY"]') as HTMLElement;
+    expect(row).not.toHaveClass("failed");
+    expect(screen.getByText("failed")).not.toHaveClass("failed");
+    fireEvent.contextMenu(row, { clientX: 40, clientY: 50 });
+    expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
+    viewportSpy.mockRestore();
+  });
+
+  it("suppresses failed card styling on the mobile ListView path while automatic recovery is pending", () => {
+    const viewportSpy = mockMobileViewport();
+    const task = createMockTask({
+      id: "FN-RECOVERY-MOBILE",
+      status: "failed",
+      column: "todo",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    renderListView({ tasks: [task] });
+
+    const card = document.querySelector('.list-card[data-id="FN-RECOVERY-MOBILE"]') as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(screen.getByText("failed")).not.toHaveClass("failed");
+    viewportSpy.mockRestore();
+  });
+
   it.each([
     {
       name: "failed + in-review uses error token color",
@@ -1962,59 +2081,69 @@ describe("ListView", () => {
     }
   });
 
-  it("shows the Reviewing badge in the desktop table status cell while Plan Review runs", () => {
+  it("keeps the desktop border and Reviewing badge active for a status-null running Plan Review", () => {
     const tasks = [
       createMockTask({
         id: "FN-7831",
-        status: "planning",
+        status: null as any,
         enabledWorkflowSteps: ["plan-review"],
-        workflowStepResults: [
-          {
-            workflowStepId: "plan-review",
-            workflowStepName: "Plan Review",
-            status: "pending",
-            startedAt: "2026-07-11T12:00:00.000Z",
-          },
-        ],
+        workflowStepResults: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "pending",
+          startedAt: "2026-07-11T12:00:00.000Z",
+        }],
       } as Partial<Task>),
     ];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("FN-7831").closest("tr");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByText("Reviewing")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("planning")).toBeInTheDocument();
+    const row = screen.getByText("FN-7831").closest("tr") as HTMLElement;
+    expect(row.className).toContain("agent-active");
+    const badge = within(row).getByText("Reviewing");
+    expect(badge.className).toContain("pulsing");
   });
 
-  it("shows the Reviewing badge in grouped mobile cards while Plan Review runs", () => {
+  it("keeps the mobile border and Reviewing badge active for a status-null running Plan Review", () => {
     const matchMediaSpy = mockMobileViewport();
     try {
       const tasks = [
         createMockTask({
           id: "FN-7831",
-          status: "planning",
+          status: null as any,
           enabledWorkflowSteps: ["plan-review"],
-          workflowStepResults: [
-            {
-              workflowStepId: "plan-review",
-              workflowStepName: "Plan Review",
-              status: "pending",
-              startedAt: "2026-07-11T12:00:00.000Z",
-            },
-          ],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
         } as Partial<Task>),
       ];
 
       renderListView({ tasks });
 
-      const card = screen.getByText("FN-7831").closest(".list-card");
-      expect(card).not.toBeNull();
-      expect(within(card as HTMLElement).getByText("Reviewing")).toBeInTheDocument();
-      expect(within(card as HTMLElement).getByText("planning")).toBeInTheDocument();
+      const card = screen.getByText("FN-7831").closest(".list-card") as HTMLElement;
+      expect(card.className).toContain("agent-active");
+      expect(within(card).getByText("Reviewing").className).toContain("pulsing");
     } finally {
       matchMediaSpy.mockRestore();
     }
+  });
+
+  it("turns off the desktop border and Reviewing pulse when globally paused", () => {
+    const tasks = [createMockTask({
+      id: "FN-8055-paused",
+      status: null as any,
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-07-16T00:00:00.000Z" }],
+    } as Partial<Task>)];
+
+    renderListView({ tasks, globalPaused: true });
+
+    const row = screen.getByText("FN-8055-paused").closest("tr") as HTMLElement;
+    expect(row.className).not.toContain("agent-active");
+    expect(within(row).queryByText("Reviewing")).toBeNull();
   });
 
   it("does not show the Reviewing badge after Plan Review completes", () => {
@@ -2038,6 +2167,35 @@ describe("ListView", () => {
     renderListView({ tasks });
 
     expect(screen.queryByText("Reviewing")).not.toBeInTheDocument();
+  });
+
+  it("FN-8170 suppresses stale planning only on Todo and In Progress table rows", () => {
+    const matchMediaSpy = mockDesktopViewport();
+    try {
+      renderListView({
+        tasks: [
+          createMockTask({ id: "FN-8170-todo", column: "todo", status: "planning" }),
+          createMockTask({ id: "FN-8170-active", column: "in-progress", status: "planning" }),
+          createMockTask({ id: "FN-8170-triage", column: "triage", status: "planning" }),
+          createMockTask({
+            id: "FN-8170-executing",
+            column: "in-progress",
+            status: "executing",
+            steps: [{ name: "Running step", status: "in-progress" }],
+          }),
+        ],
+      });
+
+      for (const id of ["FN-8170-todo", "FN-8170-active"]) {
+        const row = screen.getByText(id).closest("tr") as HTMLElement;
+        expect(within(row).queryByText("planning")).toBeNull();
+        expect(row.querySelector(".list-status-badge")).toHaveTextContent("-");
+      }
+      expect(within(screen.getByText("FN-8170-triage").closest("tr") as HTMLElement).getByText("planning")).toBeInTheDocument();
+      expect(within(screen.getByText("FN-8170-executing").closest("tr") as HTMLElement).getByText("executing")).toBeInTheDocument();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
   });
 
   it("renders paused tasks with dimmed styling", () => {
@@ -5010,6 +5168,30 @@ describe("ListView - Bulk Selection", () => {
       expect(within(card as HTMLElement).getByText("FN-001")).toBeInTheDocument();
       expect(within(card as HTMLElement).getByText("Card title")).toBeInTheDocument();
       expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
+    });
+
+    it("FN-8170 suppresses stale planning only on Todo and In Progress mobile cards", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({ id: "FN-8170-mobile-todo", column: "todo", status: "planning" }),
+          createMockTask({ id: "FN-8170-mobile-active", column: "in-progress", status: "planning" }),
+          createMockTask({ id: "FN-8170-mobile-triage", column: "triage", status: "planning" }),
+          createMockTask({
+            id: "FN-8170-mobile-executing",
+            column: "in-progress",
+            status: "executing",
+            steps: [{ name: "Running step", status: "in-progress" }],
+          }),
+        ],
+      });
+
+      for (const id of ["FN-8170-mobile-todo", "FN-8170-mobile-active"]) {
+        expect(within(container.querySelector(`[data-id="${id}"]`) as HTMLElement).queryByText("planning")).toBeNull();
+      }
+      expect(within(container.querySelector('[data-id="FN-8170-mobile-triage"]') as HTMLElement).getByText("planning")).toBeInTheDocument();
+      expect(within(container.querySelector('[data-id="FN-8170-mobile-executing"]') as HTMLElement).getByText("executing")).toBeInTheDocument();
     });
 
     it("shows fast indicator in mobile cards only for fast-mode tasks", () => {

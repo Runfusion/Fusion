@@ -5,26 +5,34 @@
  * surfacing a raw `database is locked` error or hanging, and must always
  * close the resolved `TaskStore` so the CLI process exits promptly.
  *
- * Two layers of coverage:
- *  1. Unit-level tests against `retryOnLock` itself (fake timers, no real
- *     waits) proving the bounded-backoff/fast-fail/non-lock-passthrough
- *     contract in isolation.
- *  2. An integration-level reproduction against a REAL `TaskStore`/SQLite
- *     database with a genuine external writer lock (a spawned Node
- *     subprocess holding `BEGIN IMMEDIATE`), driving `runTaskShow`/
- *     `runTaskMove` exactly as the CLI would, proving the original
- *     `database is locked` symptom is gone end-to-end.
+ * Unit-level and CLI-boundary mocked-store coverage use fake timers to prove
+ * the bounded-backoff/fast-fail/non-lock-passthrough contract without a
+ * database-specific writer lock.
+ *
+ * FNXC:CliTests 2026-07-16-07:49:
+ * FN-8081 removes the obsolete spawned `DatabaseSync` writer-lock helper.
+ * PostgreSQL has no portable whole-database writer lock; the retained fake-timer
+ * and mocked-store tests cover retry, error, and close-on-every-exit behavior.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { retryOnLock, LockRetryExhaustedError, DEFAULT_CLI_LOCK_RETRY_MS } from "../../lock-retry.js";
 
 describe("retryOnLock", () => {
+  it("retries PostgreSQL serialization failures", async () => {
+    vi.useFakeTimers();
+    try {
+      const op = vi.fn()
+        .mockRejectedValueOnce(Object.assign(new Error("could not serialize access"), { code: "40001" }))
+        .mockResolvedValue("ok");
+      const pending = retryOnLock(op, { id: "FN-PG", action: "move task" }, 1_000);
+      await vi.runAllTimersAsync();
+      await expect(pending).resolves.toBe("ok");
+      expect(op).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("returns immediately on first-try success (no added latency)", async () => {
     const op = vi.fn().mockResolvedValue("ok");
     const result = await retryOnLock(op, { id: "FN-1", action: "read task" });
@@ -90,80 +98,6 @@ describe("retryOnLock", () => {
     expect(DEFAULT_CLI_LOCK_RETRY_MS).toBeGreaterThan(0);
   });
 });
-
-// ── Real-store integration reproduction ──────────────────────────────────
-
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-task-lock-retry-test-"));
-}
-
-/**
- * Spawn a subprocess that opens the given SQLite file, takes a real
- * `BEGIN IMMEDIATE` writer lock, and holds it until told to release (or
- * until `holdMs` elapses in timer mode). Mirrors the pattern used by
- * `packages/core/src/__tests__/store-concurrent-writes.test.ts`.
- */
-async function holdWriteLock(
-  dbPath: string,
-  options?: { holdMs?: number },
-): Promise<{ child: ChildProcessWithoutNullStreams; release: () => Promise<void> }> {
-  const holdMs = options?.holdMs;
-  const releaseMode = holdMs !== undefined ? "timer" : "manual";
-  const script = `
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync(${JSON.stringify(dbPath)});
-    db.exec("PRAGMA busy_timeout = 0");
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("BEGIN IMMEDIATE");
-    process.stdout.write("LOCKED\\n");
-    const release = () => {
-      try { db.exec("COMMIT"); } catch {}
-      try { db.close(); } catch {}
-      process.exit(0);
-    };
-    if (${JSON.stringify(releaseMode)} === "timer") {
-      const signal = new Int32Array(new SharedArrayBuffer(4));
-      Atomics.wait(signal, 0, 0, ${holdMs ?? 0});
-      release();
-    } else {
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", (chunk) => {
-        if (chunk.includes("RELEASE")) release();
-      });
-    }
-  `;
-
-  const child = spawn(process.execPath, ["-e", script], { stdio: ["pipe", "pipe", "pipe"] });
-
-  const ready = new Promise<void>((resolve, reject) => {
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.stdout.on("data", (chunk) => {
-      if (chunk.toString().includes("LOCKED")) resolve();
-    });
-    child.once("exit", (code) => {
-      if (code !== 0) reject(new Error(`Lock helper exited early (${code}): ${stderr || "no stderr"}`));
-    });
-    child.once("error", reject);
-  });
-
-  await ready;
-
-  return {
-    child,
-    release: async () => {
-      if (child.exitCode !== null || child.killed) return;
-      if (releaseMode === "timer") {
-        await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-        return;
-      }
-      child.stdin.write("RELEASE\n");
-      await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    },
-  };
-}
 
 /*
  * FNXC:PostgresCutover 2026-07-10:

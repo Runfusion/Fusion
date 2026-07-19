@@ -85,7 +85,7 @@ describe("resolvePostMergeAuditInvocation", { timeout: 30_000 }, () => {
     expect(appendAgentLog).toHaveBeenCalledWith(
       "FN-4961",
       expect.stringContaining("from diffBaseRef"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -113,7 +113,7 @@ describe("resolvePostMergeAuditInvocation", { timeout: 30_000 }, () => {
     expect(appendAgentLog).toHaveBeenCalledWith(
       "FN-4961",
       expect.stringContaining("from baseCommitSha"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -141,7 +141,7 @@ describe("resolvePostMergeAuditInvocation", { timeout: 30_000 }, () => {
     expect(appendAgentLog).toHaveBeenCalledWith(
       "FN-4961",
       expect.stringContaining("from merge-base"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -169,7 +169,7 @@ describe("resolvePostMergeAuditInvocation", { timeout: 30_000 }, () => {
     expect(appendAgentLog).toHaveBeenCalledWith(
       "FN-4961",
       expect.stringContaining("post-merge audit degraded to single-commit squash fallback"),
-      "text",
+      "status",
       undefined,
       "merger",
     );

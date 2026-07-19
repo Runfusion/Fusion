@@ -1,23 +1,39 @@
 # Fusion Dashboard Storage Audit (FN-1202)
 
+> Current authority: Fusion runtime metadata lives in PostgreSQL. `.fusion/project.json` is the local identity marker; `fusion.db`, `archive.db`, SQLite inventories, FTS5 notes, and worktree-DB hydration sections below are retained only as pre-cutover migration/history records and do not describe a supported runtime fallback.
+
+See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-review-2026-07-14.md) for the audited authority inventory, exact authorized legacy readers, and deployment/rollback checklist.
+
+## Embedded PostgreSQL startup resources
+
+- The zero-config embedded PostgreSQL lifecycle uses mmap-backed primary shared memory to avoid exhausted SysV shared-memory IDs on constrained hosts.
+- The supported, tested constrained-host floor is **64MB `/dev/shm`**. Both `fn serve` and boot smoke inherit this lifecycle default; an explicit later PostgreSQL `-c shared_memory_type=…` flag remains an operator override.
+
 ## Task-ID allocator authority and compatibility
 
 - `distributed_task_id_state` is the authoritative local task-ID allocator state. `nextSequence` is the active high-water mark used for local ID reservations.
-- `distributed_task_id_reservations` tracks reserve/commit/abort lifecycle entries. Aborted/expired reservations are burned and never reissued. Create-class writes commit the reservation in the same SQLite transaction as the `tasks` row insert, then roll back the row/partial directory and move the reservation to aborted if post-insert `task.json`/`PROMPT.md` materialization or create validation fails.
+- `distributed_task_id_reservations` tracks reserve/commit/abort lifecycle entries. Aborted/expired reservations are burned and never reissued. Create-class writes commit the reservation in the same PostgreSQL transaction as the `tasks` row insert, then roll back the row/partial directory and move the reservation to aborted if post-insert `task.json`/`PROMPT.md` materialization or create validation fails.
 - `config.nextId` is retained only as a deprecated legacy compatibility field and optional one-time seed source. Fusion still reads it during reconciliation, but runtime task creation and settings writes no longer mutate it.
 - Startup/store-open allocator reconciliation bumps each active prefix sequence to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)` so stale allocator rows self-heal before local task creation resumes.
-- Create-class task persistence is intentionally non-destructive: new tasks use plain `INSERT` semantics, while `ON CONFLICT(id) DO UPDATE` remains update-only. If counters drift and a reserved ID still collides, the create fails and the existing SQLite row / task directory stays intact. A `committed` distributed reservation is valid only with a matching durable task row/directory; failed creates burn the reservation as `aborted` instead of leaving a committed-reservation-without-task phantom.
+- Create-class task persistence is intentionally non-destructive: new tasks use plain `INSERT` semantics, while upserts remain update-only. If counters drift and a reserved ID still collides, the create fails and the existing PostgreSQL row / task directory stays intact. A `committed` distributed reservation is valid only with a matching durable task row/directory; failed creates burn the reservation as `aborted` instead of leaving a committed-reservation-without-task phantom.
+
+## Durable symbol locks (FN-8305)
+
+- `project.symbol_locks` is the project-scoped, lease-based admission seam for later mission-lineage scheduling. Its composite `(project_id, symbol_key)` identity permits only one current lock row per normalized symbol in a project; ownership records task ID plus optional mission, feature, lineage, node, and agent IDs.
+- Lock acquire is all-or-nothing over normalized keys. Held unexpired rows owned by another task return their owner as a conflict, while expired/released rows may be reclaimed. Renewal and release are owner-scoped and release is idempotent.
+- The `0000_initial.sql` baseline defines the table and indexes only. The later `0025_symbol_locks.sql` migration enables and forces RLS, creates `fusion_project_isolation`, and attaches `fusion_assign_project_id` after `0006_project_ownership.sql` creates that function/policy machinery. Both fresh full-applier and upgrade paths therefore end with the same project-isolation contract.
+- Startup and Batch 1 self-healing expire locks when their lease elapsed or the owner task is terminal/missing. They never move a task or alter scheduler, worktree, semaphore, or verification state. Run-audit events are `symbol-lock:acquired`, `symbol-lock:acquire-conflict`, `symbol-lock:renewed`, `symbol-lock:released`, `symbol-lock:reconcile-stale`, and deduplicated `symbol-lock:reconcile-stale-no-action`; metadata uses only counts/outcomes and normalized opaque keys.
 
 ## Soft-deleted tasks (FN-5105)
 
 - User-initiated `TaskStore.deleteTask` is a **soft delete**: the task row stays in `tasks` and `deletedAt` is set.
 - Active task readers (`getTask`, `listTasks`, search, dependency scans, scheduler/watcher reads, mission task aggregations) must filter with `deletedAt IS NULL`.
-- Archived-task flows (`archiveTask`, archived cleanup/migration) still hard-delete from the active `tasks` table after copying to cold storage (`archive.db`).
+- Archived-task flows (`archiveTask`, archived cleanup/migration) hard-delete from the active `tasks` table after copying to PostgreSQL cold storage. Legacy `archive.db` files are import-only.
 - ID reservation is unchanged: soft-deleted IDs remain reserved. `distributed-task-id` and `task-id-integrity` intentionally scan all task rows (including soft-deleted rows), and must not filter on `deletedAt`.
 
 ### Orphaned task-dir reconciliation (FN-6783)
 
-- Disk-backed `TaskStore` instances reconcile `.fusion/tasks/{ID}/task.json` directories against the SQLite `tasks` index on store open and during `SelfHealingManager` Batch 1 maintenance (`reconcile-orphaned-task-dirs`). This closes the visibility gap where a heartbeat-created task could exist on disk but be absent from `getTask`/`listTasks` and the dashboard board.
+- PostgreSQL-backed `TaskStore` instances reconcile `.fusion/tasks/{ID}/task.json` compatibility artifacts against the PostgreSQL `project.tasks` table on store open and during `SelfHealingManager` Batch 1 maintenance (`reconcile-orphaned-task-dirs`). This closes the visibility gap where a heartbeat-created task could exist on disk but be absent from `getTask`/`listTasks` and the dashboard board.
 - The reconcile is non-destructive: when an ID already exists anywhere the create path would reserve it (active task row, soft-deleted row, archived table/archive DB, or tombstone), the scan skips the directory and never overwrites or resurrects that ID. Only a valid live `task.json` with no DB record anywhere is re-imported.
 - Recovered rows preserve the on-disk task metadata, including `column`, `status`, dependencies, steps, and log, after the same defensive disk normalization used by task JSON fallback reads. Malformed or unparseable `task.json` files are skipped with a warning instead of failing store open or maintenance.
 - Recovery is visible: each inserted orphan emits a store warning, a `task:reconcile-orphaned-task-dir` run-audit event, and a `task:created` lifecycle event so live boards can render the recovered card.
@@ -25,12 +41,13 @@
 
 ### Agent log storage + soft-delete visibility (FN-5143 / FN-5911)
 
-- Agent logs are no longer stored in SQLite. Each task now appends newline-delimited JSON records to `<rootDir>/.fusion/tasks/{ID}/agent-log.jsonl`.
+- Agent logs are stored outside PostgreSQL. Each task appends newline-delimited JSON records to `<rootDir>/.fusion/tasks/{ID}/agent-log.jsonl`.
+- Tool arguments and successful `tool_result` detail remain opt-in through `persistAgentToolOutput`; failed `tool_error` detail always persists as bounded diagnostic signal so task Activity transcripts can reveal the underlying failure.
 - Agent-log JSONL rows may include optional numeric timing metadata: `timeToFirstTokenMs` on the first visible model-output row for a request, and `durationMs` on tool/request completion rows such as `tool_result` or `tool_error`. These fields are additive, non-sensitive millisecond values; legacy rows may omit them and readers must continue to treat omission as normal.
 - `TaskStore.deleteTask` keeps that JSONL file on disk for forensics, but all live read APIs (`getAgentLogs*`, `getAgentLogCount`) gate on task liveness and return zero entries once `deletedAt` is set.
-- Archived-task snapshot behavior (`taskToArchiveEntry` / `archiveTask`) is unchanged in spirit: archive payloads still embed a capped agent-log snapshot, now sourced from the JSONL file instead of `fusion.db`.
-- Retention is now independent from SQLite operational-log pruning. `settings.agentLogFileRetentionDays` controls age-based pruning of JSONL entries for soft-deleted and archived tasks only. Default: `0` (disabled).
-- SQLite operational-log pruning is controlled separately by `settings.operationalLogRetentionDays`. It now prunes `activityLog`, `runAuditEvents`, `agentHeartbeats`, terminal `agentRuns` rows by `endedAt`, and `agentConfigRevisions` by `createdAt`.
+- Archived-task snapshot behavior (`taskToArchiveEntry` / `archiveTask`) embeds a capped agent-log snapshot sourced from JSONL.
+- Retention is independent from PostgreSQL operational-log pruning. `settings.agentLogFileRetentionDays` controls age-based pruning of JSONL entries for soft-deleted and archived tasks only. Default: `0` (disabled).
+- PostgreSQL operational-log pruning is controlled separately by `settings.operationalLogRetentionDays`. It prunes `activityLog`, `runAuditEvents`, `agentHeartbeats`, terminal `agentRuns` rows by `endedAt`, and `agentConfigRevisions` by `createdAt`.
 - Safety invariants for operational pruning: in-flight `agentRuns` (`endedAt IS NULL`) are never deleted, and the most-recent `agentConfigRevisions` row per agent is always preserved even when older than the retention window.
 
 ### Archived-column pagination (FN-7659)
@@ -38,7 +55,7 @@
 - The Archived board column no longer loads the full archive into memory. `ArchiveDatabase.listPage(limit, offset)` reads a bounded page ordered `archivedAt DESC, rowid DESC` via SQL `LIMIT/OFFSET`, backed by the existing `idxArchivedTasksArchivedAt` index.
 - `TaskStore.listArchivedTasks({ limit, offset, slim })` is a dedicated, archive-only read path (default page size 100) that maps paged entries through `archiveEntryToTask` and returns `{ tasks, total, hasMore }` in `archivedAt DESC` order. It intentionally does **not** run the `createdAt ASC` sort used by the merged `listTasks({ includeArchived: true })` path — that merged path (and its non-board consumers: github-tracking reconciler, signal routes, agent-token-usage, self-healing) is unchanged.
 - `GET /tasks/archived?limit=&offset=` exposes the paged read with `projectId` scoping and `limit`/`offset` validation, returning the same `{ tasks, total, hasMore }` shape.
-- The dashboard's `useTasks` hook loads page 1 on first Archived-column expand and fetches subsequent pages only via an explicit "Show more" click (`loadMoreArchivedTasks`); it never re-fetches the whole archive on SSE reconnect, tab-visibility recovery, or repeated expand calls. Fetched pages merge into the board `tasks` array de-duplicated by id, with active SQLite rows authoritative over archive snapshots.
+- The dashboard's `useTasks` hook loads page 1 on first Archived-column expand and fetches subsequent pages only via an explicit "Show more" click (`loadMoreArchivedTasks`); it never re-fetches the whole archive on SSE reconnect, tab-visibility recovery, or repeated expand calls. Fetched pages merge into the board `tasks` array de-duplicated by id, with active PostgreSQL rows authoritative over archive snapshots.
 
 ### Activity-log no-op `task:moved` cleanup (FN-5940)
 
@@ -46,7 +63,7 @@
 - Defense is layered: the `task:moved` listener skips same-column transitions, and source emitters skip no-op `archived -> archived` / same-column polling re-emits before subscribers see them.
 - Existing junk rows are removed by a one-time init migration guarded by `__meta.noOpTaskMovedActivityCleanupVersion = "1"`.
 - The cleanup deletes only rows matching `type = 'task:moved'` where `json_extract(metadata, '$.from') = json_extract(metadata, '$.to')`; legitimate distinct-column moves are preserved.
-- The migration does **not** run `VACUUM` automatically. After the delete lands on a large disk-backed DB, run `fn db --vacuum` manually to reclaim the freed space from the SQLite file.
+- Historical migration note: the pre-cutover SQLite cleanup did **not** run `VACUUM` automatically. `fn db --vacuum` applies only while inspecting a retained legacy database and is not part of PostgreSQL operation.
 
 ### Dashboard delete-event handling (FN-5135)
 
@@ -74,10 +91,10 @@
 
 ### Artifact registry (FN-6777)
 
-- `artifacts` is the first-class metadata registry for generated or uploaded task artifacts. Rows store ID, `type` (`document`, `image`, `video`, `audio`, or `other`), title/description, MIME type, size, author identity/type, optional task linkage, metadata JSON, textual `content`, a relative `uri`, and timestamps; binary bytes are not stored in SQLite.
-- `TaskStore.registerArtifact()` writes task-scoped binary payloads under `<rootDir>/.fusion/tasks/{ID}/artifacts/` and task-less registry payloads under `<rootDir>/.fusion/artifacts/`, then records a relative `artifacts/<file>` URI in SQLite. If the DB insert fails after a binary write, the store removes the orphaned file before surfacing the error.
+- `artifacts` is the first-class PostgreSQL metadata registry for generated or uploaded task artifacts. Rows store ID, `type` (`document`, `image`, `video`, `audio`, or `other`), title/description, MIME type, size, author identity/type, optional task linkage, metadata JSON, textual `content`, a relative `uri`, and timestamps; binary bytes stay on disk.
+- `TaskStore.registerArtifact()` writes task-scoped binary payloads under `<rootDir>/.fusion/tasks/{ID}/artifacts/` and task-less registry payloads under `<rootDir>/.fusion/artifacts/`, then records a relative `artifacts/<file>` URI in PostgreSQL. If the DB insert fails after a binary write, the store removes the orphaned file before surfacing the error.
 - Image task attachments (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) and video task attachments (`video/mp4`, `video/webm`, `video/quicktime`; 100MB cap vs 5MB for other attachments) are bridged into the artifact registry by `TaskStore.addAttachment()` as `image`/`video` rows with `metadata.source: "attachment"` and a relative `attachments/<file>` URI. This keeps one copy of the bytes under `<rootDir>/.fusion/tasks/{ID}/attachments/` while making the image discoverable through artifact list APIs and the Documents/Task Artifacts galleries. Non-image attachments remain attachment-only. Deleting an attachment also deletes its bridged artifact row before removing the attachment file so `/api/artifacts/:id/media` does not point at a deleted attachment.
-- Inline text/document artifacts may store `content` directly in SQLite and therefore have no media file. The dashboard media route streams `GET /api/artifacts/:id/media` from disk when `uri` is present, accepting task-scoped artifact URIs under `artifacts/` and bridged image-attachment URIs under `attachments/`, or returns inline `content` with the persisted MIME type when no `uri` exists.
+- Inline text/document artifacts may store `content` directly in PostgreSQL and therefore have no media file. The dashboard media route streams `GET /api/artifacts/:id/media` from disk when `uri` is present, accepting task-scoped artifact URIs under `artifacts/` and bridged image-attachment URIs under `attachments/`, or returns inline `content` with the persisted MIME type when no `uri` exists.
 - `getArtifact(id)` returns metadata by ID, `getArtifacts(taskId)` returns active-task artifacts newest-first, and `listArtifacts(...)` is the cross-agent query path with type/author/task/search filters and pagination. List reads hide artifacts whose parent task is soft-deleted while preserving task-less artifacts.
 - `updateArtifact(id, { title?, description?, content? })` powers the dashboard Artifacts view's in-place doc editing (`GET`/`PATCH /api/artifacts/:id`). Content edits are only allowed on inline-content rows (no `uri`); binary-backed rows accept metadata edits only, archived-task artifacts stay read-only, and successful updates emit `artifact:updated` for live gallery refresh.
 - `fn_artifact_register` accepts a local file `path` (in addition to inline `content`/`dataBase64`): the tool reads the file (50 MB cap), infers the MIME type from the extension when omitted, signature-validates image payloads (PNG/JPEG/GIF/WebP magic bytes, SVG text sniff), video payloads (mp4/mov `ftyp` box, WebM EBML header), and PDF payloads (`%PDF-` prefix), and persists the bytes through `registerArtifact()`'s managed storage path so the registry row keeps a servable URI after worktrees are cleaned up. Executor-lane registrations resolve relative paths against the task worktree and default `taskId` to the executing task. Every `path` is containment-checked before stat/read: the realpath-canonicalized file (symlinks and `../` segments resolved) must remain inside the session's `baseDir` or the OS temp directory; relative paths require a configured `baseDir`, and lanes without one (dashboard chat, no-task heartbeats) accept only absolute paths under the OS temp directory. HTML mockups register as `type="document"` + `mimeType="text/html"` (via `content` or `path`) and render as live sandboxed previews in the Artifacts view.
@@ -101,7 +118,7 @@ Fusion runs a read-only task-ID integrity detector at startup and on demand to s
 
 The latest report is exposed in two operator-facing places:
 
-- `GET /api/health` returns a `taskIdIntegrity` object with `status`, `checkedAt`, `anomalies`, and a `recommendedAction` string. When anomalies are present, the top-level health `status` becomes `"degraded"` even if the SQLite integrity check is still healthy.
+- `GET /api/health` returns a `taskIdIntegrity` object with `status`, `checkedAt`, `anomalies`, and a `recommendedAction` string. Anomalies or an integrity-query `error` degrade the top-level health status; missing PostgreSQL layers and connectivity failures also fail closed rather than reporting the backend-mode healthy sentinel.
 - The dashboard renders a non-dismissible task-ID integrity banner for anomalous reports so the operator sees the issue in the same session.
 
 ### Operator playbook
@@ -122,7 +139,7 @@ node scripts/audit-task-id-collisions.mjs [--project-root /path/to/project]
 
 The script checks for:
 - `task.json.history` timestamps older than the active DB row's `createdAt`
-- task-title mismatches between SQLite and the first `#` heading in `PROMPT.md`
+- task-title mismatches between PostgreSQL and the first `#` heading in `PROMPT.md`
 - task-title mismatches against the latest `Fusion-Task-Id` commit subject on `main`
 - active tasks that share an ID with an `archivedTasks` row
 
@@ -148,7 +165,7 @@ Use this path for the confirmed FN-3909 mismatch (canonical UI-fix prompt/merge 
 For any audit/forensic/reconciliation task that targets another task ID (for example FN-4194 reconciling FN-3909), source-of-truth locations are always at the project root:
 
 - On-disk task artifacts: `<rootDir>/.fusion/tasks/{ID}/` (`task.json`, `PROMPT.md`, `attachments/`, agent logs)
-- Task database row: `<rootDir>/.fusion/fusion.db` (SQLite in WAL mode)
+- Task database row: PostgreSQL `project.tasks` scoped by the project's `.fusion/project.json` identity
 
 Important execution nuance:
 
@@ -170,7 +187,9 @@ Important execution nuance:
   - done tasks: prefer `mergeDetails.landedFiles`
   - in-progress/in-review (or legacy pre-FN-4646 tasks): fall back to `task.modifiedFiles`
 
-## FTS5 task-index maintenance (FN-5943 / FN-5976)
+## Legacy SQLite FTS5 task-index maintenance (historical, FN-5943 / FN-5976)
+
+This section records the pre-PostgreSQL design for migration archaeology. It is not an active runtime architecture or recommendation.
 
 - Live task search uses the `tasks_fts` external-content FTS5 table in `fusion.db`; the archive log uses a separate `archived_tasks_fts` table in `archive.db`.
 - `tasks_fts_au` is value-aware and column-scoped. Hot task mutations (`atomicWriteTaskJson` / `atomicWriteTaskJsonWithAudit`) now diff the current row against the incoming task and issue `UPDATE tasks SET <changed cols>, updatedAt = ? WHERE id = ?` instead of rewriting the full task row. Non-text churn (status, steps, leases, scheduler stamps) therefore skips the FTS trigger entirely because those UPDATEs omit the indexed text columns.
@@ -217,7 +236,7 @@ Important execution nuance:
   - The attached-file idea still improves corruption isolation, but it would trade away the current same-file trigger-maintained index for a manual two-file sync architecture with weaker crash atomicity under WAL.
 - Revisit only if post-FN-5943 production evidence shows recurring `fusion.db`-coupled FTS corruption or materially persistent live-index bloat significant enough to justify a contentless/manual-sync redesign. Until then, keep the single-file external-content design and existing maintenance path.
 
-## SQLite write-path lock recovery (FN-4042 / FN-4083)
+## Legacy SQLite write-path lock recovery (historical, FN-4042 / FN-4083)
 
 - Every disk-backed SQLite connection that Fusion opens for project storage (`fusion.db`), the central registry (`fusion-central.db`), archives (`archive.db`), and worktree hydration explicitly sets `PRAGMA busy_timeout = 5000` and `PRAGMA journal_mode = WAL` at connection open time before write work begins.
 - Project database transactions now distinguish read and write intent:
@@ -239,7 +258,7 @@ Important execution nuance:
 - **Backend settings keys defined in `@fusion/core`:** **79** total
   - **Global settings:** 17 (`GlobalSettings`)
   - **Project settings:** 62 (`ProjectSettings`)
-- **SQLite tables in project DB schema (`packages/core/src/db.ts`):** **47** (including migration-created tables)
+- **Legacy SQLite tables in the audited pre-cutover project schema (`packages/core/src/db.ts`):** **47** (including migration-created tables; retained here as migration inventory)
 - **Issues identified:** **9**
   - High: 2
   - Medium: 5
@@ -407,7 +426,7 @@ Additional backend notes:
 
 ---
 
-### Backup pairing behavior (project + central DB)
+### Legacy SQLite backup pairing behavior (migration/history only)
 
 Backups in `.fusion/backups/` now capture the project DB and (when present) the global central DB as a pair using the same timestamp/counter:
 - `fusion-<timestamp>(-N).db` (project)
@@ -417,12 +436,12 @@ Backups in `.fusion/backups/` now capture the project DB and (when present) the 
 
 Database Backup automation failures are surfaced with DB-qualified detail. Project backup failures include the project DB source path, backup target or backup directory when available, and the underlying cause; central DB sub-failures keep the project backup run successful but include `Central DB backup failed` plus central source/target/cause detail in the run output.
 
-## 4) SQLite Tables Inventory (`packages/core/src/db.ts`)
+## 4) Legacy SQLite Tables Inventory (`packages/core/src/db.ts`, migration reference)
 
 | Table | Purpose |
 |---|---|
 | `tasks` | Core task metadata and JSON-backed nested fields (priority, dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). |
-| `branch_groups` | Durable shared-branch group records keyed by `BG-*` id with source linkage (`mission`/`planning`/`new-task`), branch/worktree metadata, optional PR tracking fields, lifecycle status, and per-group `autoMerge` override. This SQLite row is the authority for grouped-task reads after restart; task `sourceMetadata.fusionBranchContext.groupId` values should point at real `BG-*` rows, and stale per-task references are cleared through `TaskStore.setTaskBranchGroup(taskId, null)` / `POST /api/branch-groups/assign` rather than raw SQLite edits. |
+| `branch_groups` | Durable PostgreSQL shared-branch group records keyed by project plus `BG-*` id, with source linkage (`mission`/`planning`/`new-task`), branch/worktree metadata, optional PR tracking fields, lifecycle status, and per-group `autoMerge` override. These rows are authoritative after restart; task `sourceMetadata.fusionBranchContext.groupId` values should point at real `BG-*` rows, and stale references are cleared through `TaskStore.setTaskBranchGroup(taskId, null)` / `POST /api/branch-groups/assign` rather than direct SQL edits. |
 | `mergeQueue` | Durable merge handoff queue keyed by `taskId`. Stores enqueue ordering (`enqueuedAt`, mirrored `priority`), single-owner lease state (`leasedBy`, `leasedAt`, `leaseExpiresAt`), and retry diagnostics (`attemptCount`, `lastError`). Leasing is priority-first + FIFO within priority, and expired leases are recoverable without incrementing attempts. FN-5242 adds the persistence/lease primitive; FN-5241 and FN-5243 wire executor enqueue + merger consumption. |
 
 FN-5240/FN-5241/FN-5242 establish the handoff invariant: the only legal executor/self-healing path into `in-review` after execution finishes is `TaskStore.handoffToReview(...)`. That helper runs the column move, `mergeQueue` insert, and handoff audit fan-out inside one `BEGIN IMMEDIATE` transaction so observers never see `column = "in-review"` without the matching queue row. Direct `moveTask(taskId, "in-review")` writes remain allowed for explicit non-handoff/test paths but emit `task:handoff-invariant-violation` run-audit events unless the caller opts into the narrow allowlist flag.
@@ -499,11 +518,11 @@ The `tasks.cumulativeActiveMs` and `tasks.executionCompletedAt` columns are the 
 FNXC:AiSessionStore 2026-07-13-00:00: Deleting a Planning Mode session while its background generation was still in flight let the session silently reappear moments later. Root cause: `runGenerationWithTimeout`'s `Promise.race` (in `planning.ts`, and the equivalent wrappers in `subtask-breakdown.ts`/`mission-interview.ts`/`milestone-slice-interview.ts`) only stops the *caller* from awaiting the in-flight `session.agent.session.prompt()` call — it does not cancel it. A straggling `persistSession(...)`-style `upsert()` call landing after the row was deleted would silently re-INSERT it and re-broadcast `ai_session:updated`.
 */
 
-`AiSessionStore.delete()` / `deleteByIdAndType()` / the bulk `cleanupOld()` / `cleanupStaleSessions()` paths now record a delete tombstone (`id -> deletion timestamp`) alongside removing the row. `AiSessionStore.upsert()` checks that tombstone first: a write for an id deleted within the last `DELETE_TOMBSTONE_TTL_MS` (10 minutes — generously longer than any realistic straggling generation write) is dropped without touching SQLite and without emitting `ai_session:updated`. This closes the resurrection race for every `AiSessionType` producer that shares the store (`planning`, `subtask`, `mission_interview`, `milestone_interview`, `slice_interview`), not just the originally reported Planning Mode case.
+`AiSessionStore.delete()` / `deleteByIdAndType()` / the bulk `cleanupOld()` / `cleanupStaleSessions()` paths now record a delete tombstone (`id -> deletion timestamp`) alongside removing the row. `AiSessionStore.upsert()` checks that tombstone first: a write for an id deleted within the last `DELETE_TOMBSTONE_TTL_MS` (10 minutes — generously longer than any realistic straggling generation write) is dropped without touching PostgreSQL and without emitting `ai_session:updated`. This closes the resurrection race for every `AiSessionType` producer that shares the store (`planning`, `subtask`, `mission_interview`, `milestone_interview`, `slice_interview`), not just the originally reported Planning Mode case.
 
 A normal delete with no in-flight generation, and a genuinely new session that reuses a brand-new distinct id, are both unaffected — the guard only applies to writes for the *exact* id that was just deleted. Tombstone entries are pruned lazily (on tombstone check) and piggyback pruning on the existing `cleanupStaleSessions()` cadence, so the in-memory tombstone map cannot grow unbounded on a long-running server. See `packages/dashboard/src/ai-session-store.ts` (`upsert()`, `isTombstoned()`, `pruneExpiredTombstones()`).
 
-### Central SQLite Tables Inventory (`packages/core/src/central-db.ts`)
+### Legacy Central SQLite Tables Inventory (`packages/core/src/central-db.ts`, migration reference)
 
 | Table | Purpose |
 |---|---|
@@ -518,15 +537,15 @@ A normal delete with no in-flight generation, and a genuinely new session that r
 
 Invariant: after init, every declared column for covered tables exists regardless of `__meta.schemaVersion` whenever the fingerprint is stale or missing, preventing legacy drift from causing `no such column` regressions on newly added fields while keeping unchanged-schema opens fast.
 
-### Project identity row (`__meta.projectIdentity`)
+### Legacy project identity row (`__meta.projectIdentity`, migration reference)
 
-Each project-scoped `.fusion/fusion.db` now stores the canonical central registry identity in `__meta.projectIdentity` as JSON:
+Pre-cutover `.fusion/fusion.db` files stored the canonical central registry identity in `__meta.projectIdentity` as JSON:
 
 ```json
 { "id": "proj_0123456789abcdef", "createdAt": "2026-05-21T12:00:00.000Z", "firstSeenPath": "/abs/project/path" }
 ```
 
-This is written on first successful registration (and back-filled on later startup for older projects). If `~/.fusion/fusion-central.db` loses the row for that path, startup reads this identity and reattaches the same `projectId` instead of minting a new id. That preserves project-scoped rows keyed by `projectId` (`todo_lists`, `chat_sessions`, `project_insights`, etc.).
+The PostgreSQL-era runtime writes `.fusion/project.json`. Startup reads this legacy SQLite identity only during migration/reattachment, then preserves the same `projectId` instead of minting a new one.
 
 ---
 
@@ -592,8 +611,8 @@ This is written on first successful registration (and back-filled on later start
 9. **Workflow steps still persisted in config JSON compatibility path (known in-progress work)**  
    - **Severity:** Low  
    - **Affected:** `config.settings/workflowSteps`, `db.ts` config table  
-   - **Problem:** Workflow step storage is still tied to config blob structure; this is already being addressed by **FN-1201** (migration to dedicated SQLite table).  
-   - **Recommended fix:** Continue and complete FN-1201; remove config-blob coupling after migration.
+   - **Problem (historical audit):** Workflow step storage was tied to config blob structure; **FN-1201** moved it to a dedicated table before the PostgreSQL cutover.
+   - **Recommended fix:** Preserve the dedicated PostgreSQL table and do not reintroduce config-blob coupling.
 
 ---
 
@@ -651,7 +670,9 @@ This is written on first successful registration (and back-filled on later start
 - [x] SQLite table inventory included
 - [x] Known in-progress FN-1201 called out
 
-## Per-Worktree DB Hydration
+## Legacy per-worktree SQLite DB hydration (historical)
+
+The following section documents the retired SQLite runtime. PostgreSQL-backed worktrees do not create or hydrate authoritative `fusion.db` files.
 
 Each git worktree has its own gitignored `.fusion/` directory, so `.fusion/fusion.db` is local scratch state per worktree. That isolation created a cross-task lookup gap: executor prompts that query sibling/dependency rows directly from the worktree DB could see empty results. FN-3840 documented the manual `ATTACH`/`INSERT OR REPLACE` recovery, and FN-3832 was the breaking case that surfaced this in production.
 
@@ -739,3 +760,9 @@ this fix, and this fix additionally removes the dependency on that condition bei
 There is no data-recovery step needed once the resolver is fixed — no rows were corrupted, they
 were written to (and remain recoverable from) the worktree-local `.fusion/fusion.db` if it still
 exists on disk.
+
+## Configuration revision history (FN-8282)
+
+Configuration changes are immutable `project.configuration_revisions` snapshots. Rows are partitioned by `(project_id, id)` and address resources with structured JSON targets plus a canonical JSON target key; history reads are newest-first by owner, kind, and target. A database identity sequence deterministically breaks same-millisecond timestamp ties. Project settings, workflow setting values, routine definitions, and automation definitions record their PostgreSQL mutations within the same transaction, so a failed revision insert rolls back the configuration write. The legacy SQLite writers reject versioned configuration mutations before side effects: accepting a write without an atomically durable revision would violate the rollback contract.
+
+User-global `~/.fusion/settings.json` history uses the reserved `__fusion_global_configuration__` owner identity rather than the project that initiated the write. Filesystem writes are serialized and stage a durable revision-intent file before replacing settings; a later mutation reconciles an interrupted intent by completing its journal append or restoring the old snapshot. When its revision append fails, the store restores the pre-write raw settings file before rejecting. `TaskStore.rollbackConfiguration()` exactly restores project/global/workflow snapshots; `RoutineStore` and `AutomationStore` expose the same rollback action for their stable-ID resources. Each rollback includes deletion/recreation semantics and appends exactly one forward revision marked `source: "rollback"`, rather than modifying history.

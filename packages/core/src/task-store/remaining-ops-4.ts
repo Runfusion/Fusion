@@ -13,7 +13,8 @@ import * as schema from "../postgres/schema/index.js";
 import type {MoveTaskOptions, MoveTaskInternalOptions} from "../store.js";
 import {TASK_BRANCH_CONTEXT_METADATA_KEY} from "../store.js";
 import {randomUUID} from "node:crypto";
-import {and, eq, inArray} from "drizzle-orm";
+import {and, eq, inArray, isNull} from "drizzle-orm";
+import {filterArchived as filterArchivedAsync} from "../async-archive-db.js";
 import type {Task, TaskCreateInput, Column, ColumnId, TaskDocumentWithTask, RunMutationContext, TaskCommitAssociation, GoalCitation, GoalCitationInput, TaskBranchAssignmentMode, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind} from "../types.js";
 import {COLUMNS} from "../types.js";
 import {parseWorkflowIr, serializeWorkflowIr} from "../workflow-ir.js";
@@ -122,7 +123,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
       always wrote the changed-column subset.
       */
       await layer.transactionImmediate(async (tx) => {
-        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
         if (!pgRow || pgRow.deletedAt != null) {
           // Update-only path: never resurrect a soft-deleted row; a missing row
           // falls through to the legacy full upsert (matches sqlite's
@@ -335,6 +336,37 @@ export async function getTaskColumnsImpl(store: TaskStore, ids: string[]): Promi
     }
 
     const uniqueIds = [...new Set(ids)];
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:25:
+    Backend mode previously threw here (dashboard's caller swallowed it, so
+    every agent-linked task read as non-terminal on PostgreSQL). Async reads:
+    live columns from project.tasks, then archive membership for the misses.
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const rows = await layer.db
+        .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
+        .from(schema.project.tasks)
+        .where(and(inArray(schema.project.tasks.id, uniqueIds), isNull(schema.project.tasks.deletedAt)));
+      const activeByIdPg = new Map<string, Column>();
+      for (const row of rows) {
+        activeByIdPg.set(row.id, row.column as Column);
+      }
+      const missingPg = uniqueIds.filter((id) => !activeByIdPg.has(id));
+      const archivedPg = missingPg.length > 0
+        ? await filterArchivedAsync(layer.db, missingPg, layer.projectId)
+        : new Set<string>();
+      const resultPg = new Map<string, Column>();
+      for (const id of uniqueIds) {
+        const activeColumn = activeByIdPg.get(id);
+        if (activeColumn !== undefined) {
+          resultPg.set(id, activeColumn);
+        } else if (archivedPg.has(id)) {
+          resultPg.set(id, "archived");
+        }
+      }
+      return resultPg;
+    }
     const placeholders = uniqueIds.map(() => "?").join(",");
     const rows = store.db
       .prepare(`SELECT id, "column" FROM tasks WHERE id IN (${placeholders}) AND ${TaskStore.ACTIVE_TASKS_WHERE}`)
@@ -420,8 +452,29 @@ export async function updateTaskCustomFieldsImpl(store: TaskStore, taskId: strin
     });
   }
 
-export function listWorkflowPromptOverridesForProjectImpl(store: TaskStore): Record<string, Record<string, string>> {
+export async function listWorkflowPromptOverridesForProjectImpl(store: TaskStore): Promise<Record<string, Record<string, string>>> {
     const projectId = store.getWorkflowSettingsProjectId();
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:25: backend branch added so
+    // this public method cannot throw the sync-SQLite error on PostgreSQL.
+    if (store.backendMode) {
+      const table = schema.project.workflowPromptOverrides;
+      const pgRows = await store.asyncLayer!.db
+        .select({ workflowId: table.workflowId, overrides: table.overrides })
+        .from(table)
+        .where(eq(table.projectId, projectId));
+      const outPg: Record<string, Record<string, string>> = {};
+      for (const row of pgRows) {
+        // jsonb column: drizzle returns the parsed object (getWorkflowPromptOverridesAsyncImpl parity).
+        const overrides = row.overrides;
+        if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) continue;
+        const entry: Record<string, string> = {};
+        for (const [nodeId, value] of Object.entries(overrides as Record<string, unknown>)) {
+          if (typeof value === "string" && value.trim()) entry[nodeId] = value;
+        }
+        outPg[row.workflowId] = entry;
+      }
+      return outPg;
+    }
     const rows = store.db
       .prepare("SELECT workflowId, overrides FROM workflow_prompt_overrides WHERE projectId = ?")
       .all(projectId) as Array<{ workflowId: string; overrides: string }>;
@@ -583,16 +636,36 @@ export async function getAllDocumentsImpl(store: TaskStore, options?: { searchQu
   }
 
 export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Promise<void> {
-    const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
-      changes?: number;
-    };
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+    Backend mode deletes the workflow_steps row via the AsyncDataLayer (mirrors the
+    async workflow_steps deletes in workflow-ops.ts). The `.returning()` clause lets
+    us preserve the sync path's "not found" contract. `bumpLastModified` is a
+    SQLite-only mtime touch with no PostgreSQL analogue. The task-reference cleanup
+    below is already async and backend-safe, so it runs in both modes.
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const deletedRows = await layer.db
+        .delete(schema.project.workflowSteps)
+        .where(eq(schema.project.workflowSteps.id, id))
+        .returning({ id: schema.project.workflowSteps.id });
+      if (deletedRows.length === 0) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
+      store.workflowStepsCache = null;
+    } else {
+      const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
+        changes?: number;
+      };
 
-    if ((deleted.changes || 0) === 0) {
-      throw new Error(`Workflow step '${id}' not found`);
+      if ((deleted.changes || 0) === 0) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
+
+      store.db.bumpLastModified();
+      store.workflowStepsCache = null;
     }
-
-    store.db.bumpLastModified();
-    store.workflowStepsCache = null;
 
     // Clean up references from existing tasks (best-effort, outside config lock)
     try {

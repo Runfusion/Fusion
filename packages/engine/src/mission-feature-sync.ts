@@ -26,6 +26,7 @@ export async function reconcileMissionFeatureState(
     };
   }
 
+  /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Research-derived features use this same reconciliation decision, so task completion never bypasses assertion validation or parent-roadmap rollups. */
   const hasUnvalidatedAssertions = context.hasLinkedAssertions === true
     && feature.lastValidatorStatus !== "passed";
 

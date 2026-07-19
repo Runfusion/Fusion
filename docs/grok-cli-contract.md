@@ -68,7 +68,7 @@ mcpServers through createResolvedAgentSession. Grok ACP must not drop them.
 -->
 
 1. **Operator MCP** — `options.mcpServers` is reshaped to ACP wire format and forwarded on `session/new`.
-2. **Fusion custom tools (`fn_*`)** — engine `customTools` are hosted by a loopback HTTP bridge + stdio MCP server (`mcp-schema-server.cjs`) named `fusion-custom-tools`. Grok invokes tools via real MCP `tools/call`; the bridge runs `ToolDefinition.execute` in-process.
+2. **Fusion custom tools (`fn_*`)** — engine `customTools` are hosted by a loopback HTTP bridge + stdio MCP server (`mcp-schema-server.cjs`) named `fusion-custom-tools`. Grok invokes tools via real MCP `tools/call`; the bridge runs `ToolDefinition.execute` in-process. Dashboard chat and room responders include the same safe coordination/productivity tools as their pi-shaped sessions: board discovery, task creation and delegation, agent discovery/configuration, web fetch, and goal/memory/research retrieval; destructive agent-lifecycle tools remain excluded from chat.
 3. **Skills** — the bundled Fusion skill (`packages/cli/skill/fusion`) plus any `additionalSkillPaths` skill roots are staged into a temp plugin directory and loaded via `grok agent --plugin-dir` and `_meta.pluginDirs`. Requested skill names and tool counts are also written into `_meta.rules` / system prompt context.
 
 ### Session lifecycle

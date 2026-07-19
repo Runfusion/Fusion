@@ -1144,7 +1144,8 @@
     "backendError": {
       "failedFetch": "Failed to fetch projects"
     },
-    "testMode": "Test mode — no real AI calls"
+    "testMode": "Test mode — no real AI calls",
+    "migrationInProgress": "Database migration in progress — the dashboard will reconnect when it completes."
   },
   "appName": "Fusion",
   "approval": {
@@ -1175,32 +1176,6 @@
     "manageConnection": "Manage Connection",
     "retryConnection": "Retry Connection",
     "retrying": "Retrying…"
-  },
-  "backgroundTasks": {
-    "confirmMessage": "This session is active in another tab. Open anyway?",
-    "confirmTitle": "Open Active Session",
-    "dismissButton": "Dismiss",
-    "pillLabel_one": "AI {{count}}",
-    "pillLabel_other": "AI {{count}}",
-    "pillTitle_one": "{{count}} background AI task",
-    "pillTitle_other": "{{count}} background AI task",
-    "pillTitleWithInput_one": "{{count}} background AI task ({{needsInput}} needs input)",
-    "pillTitleWithInput_other": "{{count}} background AI task ({{needsInput}} needs input)",
-    "popoverHeader": "Background Tasks",
-    "status": {
-      "activeElsewhere": "active in another tab",
-      "failed": "Failed",
-      "generating": "generating...",
-      "needsInput": "needs input"
-    },
-    "typeLabel": {
-      "cliAgent": "CLI Agent",
-      "milestoneInterview": "Milestone Interview",
-      "missionInterview": "Mission Interview",
-      "planning": "Planning",
-      "sliceInterview": "Slice Interview",
-      "subtask": "Subtask Breakdown"
-    }
   },
   "board": {
     "archived": "Archived",
@@ -1427,13 +1402,6 @@
     "versionMismatchPrefix": "Your installed",
     "versionMismatchSuffix": "Update to stay in sync."
   },
-  "storageMigrationNotice": {
-    "body": "The next Fusion version will replace the current SQLite data store with an embedded Postgres backend for data storage, and project databases will be served from the central Fusion database instead of each project's local .fusion/fusion.db SQLite file. No migration runs from this notice; it is an advance heads-up for operators who rely on the current storage layout.",
-    "dismissLabel": "Dismiss storage update notice",
-    "getHelp": "Get help",
-    "getHelpLabel": "Get help on Discord",
-    "title": "Storage update coming in the next Fusion version"
-  },
   "cliBinary": {
     "binaryLabel": "Binary:",
     "checking": "Checking…",
@@ -1622,6 +1590,30 @@
       },
       "title": "Operator controls"
     },
+    "portability": {
+      "title": "Org export / import",
+      "description": "Download or preview a secret-scrubbed organization bundle.",
+      "export": {
+        "action": "Export org bundle",
+        "working": "Exporting…",
+        "success": "Export ready",
+        "error": "Export failed"
+      },
+      "import": {
+        "label": "Org bundle JSON",
+        "placeholder": "Paste a secret-scrubbed org bundle",
+        "preview": "Preview import",
+        "previewing": "Previewing…",
+        "previewReady": "Preview ready. Confirm to apply this bundle.",
+        "apply": "Apply import",
+        "importing": "Importing…",
+        "invalid": "Paste a valid org bundle JSON document",
+        "error": "Unable to preview or import bundle",
+        "confirmTitle": "Import organization bundle?",
+        "confirmMessage": "This applies the previewed configuration to this project.",
+        "confirmApply": "Import bundle"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "Ecosystem breadth",
       "empty": "No models or plugins active in the selected range.",
@@ -1760,6 +1752,10 @@
       "volumeHint": "volume, not outcome",
       "volumeTitle": "Volume (proxy)"
     },
+    "reviewArtifacts": {
+      "empty": "No review artifacts are available yet.",
+      "title": "Review artifacts"
+    },
     "range": {
       "custom": "Custom range",
       "dialogLabel": "Select date range",
@@ -1806,6 +1802,7 @@
       "nodes": "Nodes",
       "overview": "Overview",
       "productivity": "Productivity",
+      "reviewArtifacts": "Review artifacts",
       "reliability": "Reliability",
       "signals": "Signals",
       "system": "System",
@@ -2027,6 +2024,7 @@
     "connectRemoteButton": "Connect to Remote Fusion",
     "couldNotStart": "Couldn't start local Fusion",
     "loading": "Loading Fusion…",
+    "migrationInProgress": "Database migration in progress — this can take a few minutes.",
     "opening": "Opening…",
     "retry": "Retry",
     "runLocalButton": "Run Fusion Locally",
@@ -2487,6 +2485,11 @@
     "taskMatches": "Task matches"
   },
   "git": {
+    "addComment": "Add comment",
+    "addCommentPlaceholder": "Write a comment…",
+    "commentAuthorYou": "You",
+    "commentPosted": "Comment posted",
+    "failedToPostComment": "Failed to post comment",
     "add": "Add",
     "addRemote": "Add Remote",
     "advancesHelpFix": "<strong>Fix:</strong> Fusion only shows <em>Sync working tree</em> when at least one advance is genuinely <code>pending</code> and HEAD is not aligned with the integration tip. If entries are already handled (subsumed/orphaned/reachable/superseded), no sync action is offered.",
@@ -2847,6 +2850,16 @@
     "tabPullRequests": "Pull Requests",
     "tip": "tip",
     "toolbarAriaLabel": "GitHub import controls",
+    "translateAction": "Translate",
+    "translateDismiss": "Dismiss",
+    "translateOffer": "This content appears to be in {{source}}. Translate into {{target}}?",
+    "translateRegionAriaLabel": "Content translation",
+    "translateShowingOriginal": "Showing original ({{source}}).",
+    "translateShowingTranslated": "Showing translation into {{target}}.",
+    "translateShowOriginal": "Show original",
+    "translateShowTranslated": "Show translation",
+    "translateUnknownLanguage": "another language",
+    "translateWorking": "Translating…",
     "tryDifferentFilter": "Try a different label filter or choose another repository.",
     "unlinkButton": "Unlink",
     "unresolvedMergeConflicts": "Unresolved merge conflicts",
@@ -3200,7 +3213,6 @@
     "refinedScope": "Refined Scope",
     "refineScope": "Refine {{label}} scope with AI",
     "sendToBackground": "Send to background",
-    "sessionActiveAnotherTab": "Session is active in another tab.",
     "showThinking": "Show thinking",
     "startInterview": "Start Interview",
     "targetLabel": {
@@ -3321,6 +3333,7 @@
     "statsInColumn_one": "{{count}} of {{total}} tasks in {{column}}",
     "statsInColumn_other": "{{count}} of {{total}} tasks in {{column}}",
     "statusMergingFix": "Merging fixes…",
+    "statusReplan": "Replan",
     "stuck": "Stuck",
     "taskCreationUnavailable": "Task creation not available",
     "unpauseSelected": "Unpause selected",
@@ -3845,9 +3858,6 @@
     "selectGoal": "Select an active goal",
     "selectMissionToView": "Select a mission to view details",
     "sendToBackground": "Send to background",
-    "sessionActiveAnother": "Session is active in another tab.",
-    "sessionActiveHeartbeat": "This session is active in another tab (live heartbeat)",
-    "sessionActiveTab": "This session is active in another tab",
     "showDetails": "Show details",
     "showMetadata": "Show metadata",
     "showThinking": "Show thinking",
@@ -3893,8 +3903,6 @@
     "tabActivity_one": "Activity ({{count}})",
     "tabActivity_other": "Activity ({{count}})",
     "tabStructure": "Structure",
-    "takeControl": "Take Control",
-    "takingControl": "Taking control...",
     "targetBranch": "Target branch",
     "targetBranchPlaceholder": "e.g. main",
     "taskIdPlaceholder": "Task ID (e.g., FN-001)",
@@ -4579,6 +4587,7 @@
     "deleteSession": "Delete session",
     "dependencies": "Dependencies",
     "dependencyCycle": "Dependencies contain a cycle. Remove circular references before creating tasks.",
+    "agentClarification": "Allow agent clarification questions",
     "depthBlurb": "Plan size sets default interview depth. Questions lets you override with an exact count.",
     "depthLarge": "Large",
     "depthMedium": "Medium",
@@ -4623,7 +4632,6 @@
     "plain": "Plain",
     "planningComplete": "Planning Complete!",
     "planningCompleteSubheading": "Review and refine your task before creating it.",
-    "planningDepth": "Planning depth",
     "planningModel": "Planning Model",
     "planningModelBlurb": "Selects which model runs the planning interview and writes the final draft.",
     "planningSessions": "Planning sessions",
@@ -4645,8 +4653,6 @@
     "remove": "Remove",
     "retryFailed": "Retry failed. Please try again.",
     "retrying": "Retrying...",
-    "sessionActiveOtherTab": "This session is active in another tab",
-    "sessionActiveOtherTabLive": "This session is active in another tab (live heartbeat)",
     "sessionFailed": "Session failed while contacting the AI.",
     "sessionFailed2": "Session failed",
     "showArchived": "Show archived",
@@ -4669,8 +4675,6 @@
     "subtaskTitle": "Title",
     "suggestedDependencies": "Suggested Dependencies",
     "suggestedSize": "Suggested Size",
-    "takeControl": "Take Control",
-    "takingControl": "Taking control...",
     "thinkingElapsed": "Thinking… ({{seconds}}s)",
     "title": "Planning Mode",
     "tryAnExample": "Try an example:",
@@ -5668,9 +5672,13 @@
     "headerErrorPlural_other": "",
     "headerErrorSingular_one": "",
     "headerErrorSingular_other": "",
-    "regionLabel": "AI sessions needing input or failed",
+    "regionLabel": "AI sessions in progress, needing input, or failed",
     "resume": "Resume",
-    "retry": "Retry"
+    "retry": "Retry",
+    "headerGeneratingSingular": "{{count}} AI session in progress",
+    "headerGeneratingPlural": "{{count}} AI sessions in progress",
+    "headerMixed": "{{generatingCount}} AI sessions in progress, {{actionableCount}} need attention",
+    "inProgress": "In progress"
   },
   "settings": {
     "actions": {
@@ -5688,12 +5696,12 @@
       "language": "Language",
       "languageAuto": "Auto",
       "languageAutoHint": "Follow the browser language",
-      "suppressTheLdquoNeedsYourInputRdquoBanner": " Suppress the &ldquo;needs your input&rdquo; banner that appears when AI sessions are awaiting input or have failed. ",
+      "suppressTheLdquoNeedsYourInputRdquoBanner": "Suppress the “needs your input” banner that appears when AI sessions are awaiting input or have failed.",
       "title": "Appearance",
       "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
       "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
-      "taskPopupsBoardListOnly": "Keep task popups on their Board/List view",
-      "taskPopupsBoardListOnlyHelp": "When enabled, each open task-detail popup appears only on the Board or List view where it was opened. Switching to another view hides it without closing; returning to that view restores it in the same position. Default: disabled.",
+      "taskPopupsBoardListOnly": "Keep task popups on the view where they were opened",
+      "taskPopupsBoardListOnlyHelp": "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled.",
       "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
       "showCostBadgeOnCards": "Show cost badges on task cards",
       "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge."
@@ -5834,11 +5842,15 @@
       "allSections": "Showing all settings sections",
       "clear": "Clear settings search",
       "label": "Search settings",
+      "moreResults": "{{count}} more — keep typing to narrow",
       "navigationLabel": "Settings navigation",
       "noMobileOptions": "No sections match this search.",
       "noResults": "No settings sections match \"{{query}}\".",
       "placeholder": "Search by setting or section",
-      "resultCount": "{{count}} matching sections"
+      "resultCount_one": "{{count}} matching section",
+      "resultCount_other": "{{count}} matching sections",
+      "settingResultCount_one": "{{count}} matching setting",
+      "settingResultCount_other": "{{count}} matching settings"
     },
     "general": {
       "25": "25",
@@ -5858,6 +5870,8 @@
       "chatHistory": "Chat history",
       "chatRooms": "Chat Rooms",
       "completionDocumentationAutomation": "Completion Documentation Automation",
+      "reviewArtifacts": "Review Artifacts",
+      "reviewArtifactsHint": "Controls whether eligible future tasks generate review deliverables. User-facing limits generation to user-facing work; on enables it for all eligible tasks. Individual PROMPT.md headers can override this. Default: off.",
       "controlsHowFutureTaskSpecsHandleReleaseNote": " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ",
       "controlsWhetherNewlyCreatedTasksHaveGitHubIssue": " Controls whether newly created tasks have GitHub issue tracking enabled by default. Individual tasks can still override this from the task detail modal. ",
       "defaultRepoUsedWhenCreatingGitHubIssuesFor": "Default repo used when creating GitHub issues for tracked tasks. Falls back to the global default if blank.",
@@ -5872,6 +5886,13 @@
       "hardCapOnTheSynthesizedEarlierRoomContext": "Hard cap on the synthesized \"Earlier room context\" summary block. Default: 3000.",
       "learnMore": "Learn more",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Lowering this window means Reliability metrics/charts and the Activity feed will not show history older than the selected range. Per-task task detail history is unaffected. Default: 30 days. ",
+      "mobileNavPrimaryItems": "Mobile footer quick actions",
+      "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.",
+      "addNavItem": "Add quick action",
+      "selectNavItem": "Choose a destination",
+      "removeNavItem": "Remove {{item}}",
+      "moveNavItemEarlier": "Move {{item}} earlier",
+      "moveNavItemLater": "Move {{item}} later",
       "newTasksInheritThisCustomWorkflowsStepsOverridable": "New tasks inherit this custom workflow's steps (overridable per task). No default — unset (built-in default workflow).",
       "numberOfMostRecentChatRoomMessagesKept": "Number of most-recent chat-room messages kept verbatim in the responder transcript. Older messages are compacted into a summary block. Default: 25.",
       "off": "Off",
@@ -5902,6 +5923,10 @@
       "updateNow": "Update now",
       "updateSuccess": "Updated to v{{version}} — restart Fusion to apply",
       "updateSuccessToast": "Update installed. Restart Fusion to apply it.",
+      "restartFailed": "Restart could not be scheduled. Try restarting Fusion manually.",
+      "restartNow": "Restart Fusion",
+      "restartUnavailable": "Needs a supervising parent — restart Fusion manually without --no-supervise.",
+      "restarting": "Restarting… Your connection will close shortly.",
       "updating": "Updating…",
       "upperBoundOnMessagesFetchedFromTheRoom": "Upper bound on messages fetched from the room store for compaction consideration. Default: 200.",
       "upToDate": "You're up to date ✓",
@@ -5915,13 +5940,27 @@
       "quickChatLauncherHint": "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).",
       "showTaskChatsInCommonFeedHint": "When enabled, populated task-detail Chat conversations appear in the common Direct feed. Empty task chats stay hidden. Default: disabled.",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.",
+      "autoTranslateImportedIssues": "Auto-translate imported issues",
+      "autoTranslateImportedIssuesHelp": "When enabled, the Import Tasks panel automatically translates foreign-language issue titles and bodies into the target language below and shows the translation by default. You can always switch back to the original text, and imported tasks carry the translated text. Default: disabled.",
+      "translationTargetLanguage": "Translation target language",
+      "translationTargetLanguageHelp": "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language.",
+      "followDashboardLanguage": "Follow dashboard language",
       "gitLabEnabledHint": "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).",
       "allowEphemeralAgentsToCreateTasksHint": "When enabled (default), ephemeral task-worker agents can open follow-up tasks via fn_task_create. When disabled, only humans and permanent agents can create tasks; ephemeral callers are rejected.",
+      "ephemeralAgentTaskCreationPolicy": "Ephemeral agent follow-up tasks",
+      "ephemeralAgentTaskCreationPolicyHint": "No default — unset policy falls back to Allow. Upon validation sends a proposal to your mailbox for one-click approval; Deny rejects follow-up task creation.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Allow",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Upon validation",
+      "ephemeralAgentTaskCreationPolicyDeny": "Deny",
       "quickChatCloseOnOutsideClickHint": "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).",
       "aiUndoTaskWorkflow": "AI-undo task workflow",
       "aiUndoTaskWorkflowInherit": "Inherit project default workflow",
-      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy."
+      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.",
+      "reportModeHelp": "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).",
+      "reportModeByActionHelp": "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.",
+      "reportRoadmapDedup": "Check roadmap before filing reports",
+      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
@@ -5946,6 +5985,8 @@
       "saveAIThinkingForPermanentAgents": " Save AI thinking for permanent agents ",
       "saveAIThinkingLogs": "Save AI thinking logs",
       "saveToolOutputInAgentLogs": " Save tool output in agent logs ",
+      "enableProactiveTaskChat": " Enable proactive task-chat updates ",
+      "enableProactiveTaskChatHint": " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. ",
       "updates": "Updates",
       "weekly": "Weekly",
       "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
@@ -5957,7 +5998,9 @@
       "gitLabApiBaseUrlHint": "Blank derives <instance>/api/v4. Override only for self-managed GitLab API gateways that use a different absolute http:// or https:// URL. No default — unset.",
       "gitLabTokenTypeHint": "No default — unset (the selector falls back to personal access token until you choose otherwise).",
       "gitLabAuthTokenHint": "Projects inherit this fallback only when they do not set a project GitLab token. Read-only operations need read_api or api; write actions need api; project/group tokens remain limited by resource membership. No default — unset.",
-      "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. "
+      "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. ",
+      "skipConfirmationDialogs": " Skip confirmation dialogs for critical actions ",
+      "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled"
     },
     "globalModels": {
       "allow": "allow",
@@ -6282,8 +6325,9 @@
         "global": "Shared across all projects",
         "project": "Specific to this project"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project",
+      "configVersions": "Configuration Versions"
     },
     "nodeRouting": {
       "blockExecution": "Block execution",
@@ -6320,6 +6364,9 @@
     },
     "notifications": {
       "accessTokenOptional": "Access token (optional)",
+      "agentClarification": "Agent clarification",
+      "agentClarificationEnable": "Allow the planner to ask questions",
+      "agentClarificationHint": "Default: disabled. When enabled, planner questions pause planning and notify your mailbox.",
       "advanced": "Advanced",
       "allFailuresLegacy": "All failures (legacy)",
       "baseURLForDeepLinksInNotificationsWhen": " Base URL for deep links in notifications. When set, clicking a notification opens the dashboard directly to the task. No default — unset. ",
@@ -6380,6 +6427,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default — unset (no cap).",
       "autoSelectPresetBasedOnTaskSize": " Auto-select preset based on task size ",
       "autoSummarizeLongDescriptionsAsTitles": " Auto-summarize long descriptions as titles ",
+      "taskDefinitionInInputLanguage": "Write task definitions in the operator's input language",
+      "taskDefinitionInInputLanguageHelp": "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled.",
       "configuredPresets": "Configured presets",
       "configuresTheModelUsedForTwoShortSummary": " Configures the model used for two short-summary jobs: auto-generating task titles from long descriptions, and generating merge commit summaries from step commits and diff stats. ",
       "defaultWorkflowModelLaneActions": "Default workflow model lane actions",
@@ -6612,6 +6661,20 @@
       "enableAutomaticTaskArchiving": " Enable automatic task archiving ",
       "enablePlanStalenessEnforcement": " Enable plan staleness enforcement ",
       "escalateHighFanOutBlockersOnlyAfterThey": "Escalate high fan-out blockers only after they remain in in-progress or in-review for this many hours (age source: columnMovedAt, fallback updatedAt). Default: 2 hours.",
+      "executorToolFailureRetryCount": "Executor tool-failure retries",
+      "executorToolFailureRetryCountHelp": "Same-model retries after consecutive tool-call failures. Set 0 to disable. Default: 2.",
+      "executorToolFailureRetryBackoffMs": "Tool-failure retry backoff (ms)",
+      "executorToolFailureRetryBackoffMsHelp": "Unref'd wait before retrying. Default: 2000.",
+      "executorToolFailureThreshold": "Consecutive tool failures",
+      "executorToolFailureThresholdHelp": "Terminal tool errors required before retrying. Default: 3.",
+      "executorModelEscalationEnabled": "Escalate after tool-failure retries",
+      "executorModelEscalationEnabledHelp": "After same-model retries are exhausted, try one configured alternate model or node. Default: disabled.",
+      "executorEscalationProvider": "Escalation provider",
+      "executorEscalationProviderHelp": "Provider for the alternate model. No default — unset; requires an alternate model ID.",
+      "executorEscalationModelId": "Escalation model ID",
+      "executorEscalationModelIdHelp": "Alternate model ID. No default — unset; requires an escalation provider.",
+      "executorEscalationNodeId": "Escalation node ID",
+      "executorEscalationNodeIdHelp": "Optional configured node; a node target re-enters scheduler routing. No default — unset.",
       "fullAgentLog": "Full agent log",
       "globalMaxConcurrent": "Global Max Concurrent",
       "heartbeatScopeDiscipline": "Heartbeat Scope Discipline",
@@ -6651,11 +6714,14 @@
       "browseWorkspacePath": "Browse workspace path",
       "overlapPickerNote": "Choose a file to ignore directly, or navigate into a folder and select the current directory.",
       "maxConcurrentTasksHint": "Default: 2.",
-      "pollIntervalMsHint": "Default: 15000 (15 seconds)."
-    },
-    "scope": {
-      "globalBanner": "These settings are shared across all your Fusion projects.",
-      "projectBanner": "These settings only affect this project."
+      "maxConcurrentVerifications": "Max Concurrent Verifications",
+      "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1. Range: 1–8.",
+      "pollIntervalMsHint": "Default: 15000 (15 seconds).",
+      "triageDuplicateResolution": "Triage duplicate resolution",
+      "triageDuplicateResolutionHelp": "Block triage-detected duplicates for a Keep/Delete decision with a link to the duplicate (default), keep automatically, or delete automatically.",
+      "triageDuplicateResolutionPrompt": "Block for decision (default)",
+      "triageDuplicateResolutionKeep": "Keep automatically",
+      "triageDuplicateResolutionDelete": "Delete automatically"
     },
     "title": "Settings",
     "worktrees": {
@@ -6685,7 +6751,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": " keeps progress moving by switching to Fusion&apos;s built-in worktree backend. ",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "Limits total git worktrees including in-review tasks. Default: 4.",
       "maxWorktrees": "Max Worktrees",
-      "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup",
+      "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming.",
+      "recycleNotApplicableWithTaskIdNaming": "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.",
       "openApprovals": "Open Approvals",
       "optionalLeaveBlankToAutoResolveFusionWill": "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.",
       "optionalSupports": " Optional. Supports ",
@@ -6715,8 +6782,8 @@
       "worktreesPickerNote": "Navigate to the folder where Fusion should create task worktrees, then select the current directory.",
       "showWorktreeGroupingHelp": "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
       "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
-      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names",
-      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. Default: random."
+      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
+      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."
     },
     "fileBrowser": {
       "currentDirectory": "Current directory:",
@@ -6746,6 +6813,25 @@
       "resetAllProjectAction": "Reset all project settings",
       "menuResetSuccess": "{{section}} settings reset to defaults",
       "allProjectResetSuccess": "All project settings reset to defaults"
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.",
+      "embeddedConnectionCap": "Embedded PostgreSQL connection cap",
+      "embeddedConnectionCapError": "Enter a value between 32 and 2,000.",
+      "advanced": "Advanced database settings"
+    },
+    "configVersions": {
+      "title": "Configuration versions",
+      "description": "Restore any recorded project configuration version.",
+      "loading": "Loading versions…",
+      "loadError": "Unable to load configuration versions",
+      "rollbackError": "Unable to roll back configuration",
+      "empty": "No configuration versions yet.",
+      "rollback": "Roll back",
+      "rollingBack": "Rolling back…",
+      "confirmTitle": "Roll back configuration?",
+      "confirmMessage": "Restore this version? The rollback is recorded as a new version.",
+      "confirmRollback": "Roll back"
     }
   },
   "setup": {
@@ -7269,7 +7355,7 @@
     "generatingSubtasks": "AI is generating subtasks...",
     "groupedOnSharedBranch": "Grouped on shared branch",
     "hideThinking": "Hide thinking",
-    "keepSessionMessage": "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume.",
+    "keepSessionMessage": "Close this modal and keep the subtask session available from the session notification banner? Edited fields that have not been saved to the session may be reset when you resume.",
     "keepSessionTitle": "Keep subtask session available?",
     "modalTitle": "Subtask Breakdown",
     "moveDown": "Move down",
@@ -7290,14 +7376,9 @@
     "reviewSubtasksHint": "Edit titles, descriptions, sizes, and dependencies before creating all tasks at once.",
     "sendToBackgroundAriaLabel": "Send to background",
     "sendToBackgroundTitle": "Send to background",
-    "sessionActiveAnotherTab": "Session is active in another tab.",
-    "sessionActiveAnotherTabLive": "This session is active in another tab (live heartbeat)",
-    "sessionActiveAnotherTabTakeover": "This session is active in another tab",
     "showThinking": "Show thinking",
     "sizeLabel": "Size",
     "startingBreakdown": "Starting subtask breakdown...",
-    "takeControl": "Take Control",
-    "takingControl": "Taking control...",
     "titleLabel": "Title",
     "untitled": "Untitled",
     "waitingForThinking": "Waiting for AI progress updates..."
@@ -7665,9 +7746,15 @@
       "archiveMessage": "Archive {{id}} as a duplicate of {{duplicateOf}}?",
       "archiveTitle": "Archive near-duplicate task",
       "copy": "This task appears to be a near-duplicate of",
+      "deleteBtn": "Delete",
+      "deleteConfirm": "Delete",
+      "deleted": "Deleted {{id}}",
+      "deleteMessage": "Delete {{id}} as a duplicate of {{duplicateOf}}?",
+      "deleteTitle": "Delete duplicate task",
       "headline": "Potential duplicate detected",
       "keepBtn": "Keep",
-      "kept": "Kept {{id}} and dismissed duplicate warning"
+      "kept": "Kept {{id}} and dismissed duplicate warning",
+      "triageActions": "Choose Delete to remove this duplicate, or Keep to continue anyway."
     },
     "nextRecoveryAt": "Next recovery at {{time}}",
     "no": "No",
@@ -7695,6 +7782,8 @@
     },
     "paused": "Paused",
     "plan": {
+      "approvalCopy": "This project's plan-approval settings require a human decision before work starts. Review the plan below, then Approve Plan to continue to Todo or Reject Plan to regenerate it.",
+      "approvalHeadline": "Approval needed before implementation",
       "approveBtn": "Approve Plan",
       "approved": "Plan approved — {{id}} moved to Todo",
       "rebuildMessage": "Rebuild the plan for this task? The task will move to planning for replanning.",
@@ -7703,6 +7792,8 @@
       "rejected": "Plan rejected — {{id}} returned to Planning for replanning",
       "rejectMessage": "Reject this plan? The specification will be discarded and regenerated.",
       "rejectTitle": "Reject Plan",
+      "replanCapCopy": "Plan Review requested automatic planning revisions repeatedly without approving a plan. Fusion stopped the replan loop so a human can decide. Approve the current PROMPT.md to move this task to Todo, or Reject Plan to discard it and regenerate.",
+      "replanCapHeadline": "Approval needed: Plan Review did not converge",
       "replanning": "Replanning {{id}}…"
     },
     "pr": {
@@ -8153,6 +8244,9 @@
     "attachedFile": "Attached {{fileName}} to {{taskId}}",
     "attachFileFailed": "Failed to attach {{fileName}}: {{error}}",
     "awaitingApproval": "Awaiting Approval",
+    "awaitingApprovalPlanReviewReplanCapTitle": "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.",
+    "reviewBudgetExhausted": "Review budget exhausted",
+    "awaitingApprovalTitle": "This plan needs your approval before implementation can start.",
     "baseBranch": "Base",
     "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
     "branch": "Branch",
@@ -8313,6 +8407,8 @@
     "revertNeedsHuman": "Cannot auto-revert {{taskId}}: {{reason}}",
     "revertNeedsHumanDefault": "human review required",
     "reverted": "Reverted {{taskId}} in commit {{sha}}",
+    "revertedBadge": "Reverted",
+    "revertedBadgeTitle": "This task's changes were reverted",
     "revertTask": "Revert this task's changes",
     "reviewerModel": "Reviewer Model",
     "save": "Save",
@@ -8326,6 +8422,7 @@
     "showSteps": "Show steps",
     "stalled": "Stalled",
     "statusMergingFix": "Merging fixes…",
+    "statusReplan": "Replan",
     "stepCount_one": "{{count}} step",
     "stepCount_other": "{{count}} steps",
     "stuck": "Stuck",
@@ -8464,6 +8561,10 @@
     "learnMore": "Learn more",
     "message": "Update available: v{{latestVersion}} (current: v{{currentVersion}}). Run fn update for an installed CLI, or pull this source checkout.",
     "releaseNotes": "Release notes",
+    "restartFailed": "Restart could not be scheduled. Try restarting Fusion manually.",
+    "restartNow": "Restart Fusion",
+    "restartUnavailable": "Needs a supervising parent — restart Fusion manually without --no-supervise.",
+    "restarting": "Restarting… Your connection will close shortly.",
     "updateFailed": "Update failed",
     "updateFailedWithMessage": "Update failed: {{message}}",
     "updateNow": "Update now",
@@ -9036,5 +9137,11 @@
     "toolResult": "Tool result",
     "you": "You",
     "youMessage": "You message"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "Already on the roadmap",
+      "message": "This report matches a feature that is already planned."
+    }
   }
 }

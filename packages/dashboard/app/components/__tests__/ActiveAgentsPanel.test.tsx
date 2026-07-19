@@ -238,15 +238,25 @@ describe("ActiveAgentsPanel", () => {
   });
 
   it("renders multiple agent cards with separate transcript streams", async () => {
-    mockUseLiveTranscript
-      .mockReturnValueOnce({
-        entries: [{ type: "text", text: "Agent 1 output", timestamp: "2026-01-01T00:01:00Z" }],
-        isConnected: true,
-      })
-      .mockReturnValueOnce({
-        entries: [{ type: "text", text: "Agent 2 output", timestamp: "2026-01-01T00:02:00Z" }],
-        isConnected: true,
-      });
+    /*
+    FNXC:ActiveAgentsPanel 2026-07-14-19:35:
+    mockReturnValueOnce is brittle under Strict Mode double-mount and extra hook calls. Route transcript entries by taskId so each card gets a stable stream.
+    */
+    mockUseLiveTranscript.mockImplementation((taskId?: string) => {
+      if (taskId === "FN-001") {
+        return {
+          entries: [{ type: "text", text: "Agent 1 output", timestamp: "2026-01-01T00:01:00Z" }],
+          isConnected: true,
+        };
+      }
+      if (taskId === "FN-002") {
+        return {
+          entries: [{ type: "text", text: "Agent 2 output", timestamp: "2026-01-01T00:02:00Z" }],
+          isConnected: true,
+        };
+      }
+      return { entries: [], isConnected: false };
+    });
 
     const mockAgent1: Agent = {
       id: "agent-001",

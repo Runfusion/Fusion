@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
-import { ChatView } from "../ChatView";
+import { ChatView, resolveChatContextMenuPosition } from "../ChatView";
 import { loadAllAppCss } from "../../test/cssFixture";
 import * as mobileScrollLock from "../../hooks/useMobileScrollLock";
 import { _resetInitialViewportHeight } from "../../hooks/useMobileKeyboard";
@@ -503,12 +503,12 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
-  it("mobile mode: direct sidebar rows expose rename and delete buttons", async () => {
+  it("mobile mode: direct sidebar rows expose one action menu without title overlap shells", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const selectSession = vi.fn();
     try {
       const sessions = [
-        { id: "session-001", agentId: "agent-001", status: "active" as const, title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        { id: "session-001", agentId: "agent-001", status: "active" as const, title: "A long mobile conversation title that must clear the overflow menu", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       ];
       setupMockChat({
         sessions,
@@ -520,17 +520,58 @@ describe("ChatView mobile behavior", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const row = screen.getByTestId("chat-session-session-001");
-      const renameButton = within(row).getByTestId("chat-session-rename-btn");
-      const deleteButton = within(row).getByTestId("chat-session-delete-btn");
-      expect(renameButton).toHaveAccessibleName(/rename conversation mobile chat/i);
-      expect(deleteButton).toHaveAccessibleName(/delete conversation/i);
-      expect(renameButton.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(renameButton.closest(".chat-session-actions")).toBe(deleteButton.closest(".chat-session-actions"));
+      const menuButton = within(row).getByTestId("chat-session-menu-btn");
+      expect(menuButton).toHaveAccessibleName(/conversation actions for a long mobile conversation title/i);
+      expect(within(row).getAllByTestId("chat-session-menu-btn")).toHaveLength(1);
+      expect(row.querySelector(".chat-session-actions")).not.toBeInTheDocument();
 
-      await userEvent.click(renameButton);
+      await userEvent.click(menuButton);
       expect(selectSession).not.toHaveBeenCalled();
+      const menu = document.querySelector(".chat-session-context-menu");
+      expect(within(menu!).getByTestId("chat-context-rename")).toHaveTextContent("Rename");
+      expect(within(menu!).getByTestId("chat-context-delete")).toHaveTextContent("Delete");
+      await userEvent.click(within(menu!).getByTestId("chat-context-rename"));
       expect(screen.getByRole("dialog", { name: /rename conversation/i })).toBeInTheDocument();
     } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
+  it("mobile mode: clamps conversation action menus using their rendered size", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const savedInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    const sessions = [
+      { id: "session-menu-viewport", agentId: "agent-001", status: "active" as const, title: "Viewport menu", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+    ];
+
+    try {
+      setupMockChat({ sessions, filteredSessions: sessions, activeSession: null });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const row = screen.getByTestId("chat-session-session-menu-viewport");
+      const menuButton = within(row).getByTestId("chat-session-menu-btn");
+      vi.spyOn(menuButton, "getBoundingClientRect").mockReturnValue({
+        x: 358, y: 40, width: 32, height: 36, top: 40, right: 390, bottom: 76, left: 358, toJSON: () => ({}),
+      });
+
+      await userEvent.click(menuButton);
+      let menu = document.querySelector(".chat-session-context-menu") as HTMLElement;
+      let left = Number.parseFloat(menu.style.left);
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(left + 200).toBeLessThanOrEqual(window.innerWidth - 8);
+
+      fireEvent.contextMenu(row, { clientX: 388, clientY: 96 });
+      menu = document.querySelector(".chat-session-context-menu") as HTMLElement;
+      left = Number.parseFloat(menu.style.left);
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(left + 200).toBeLessThanOrEqual(window.innerWidth - 8);
+      expect(Number.parseFloat(menu.style.top)).toBe(96);
+
+      const factoryMenuPosition = resolveChatContextMenuPosition(390, 790, true, 132, 168, 390, 800);
+      expect(factoryMenuPosition).toEqual({ x: 250, y: 624 });
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: savedInnerWidth, configurable: true });
       restoreMatchMedia.mockRestore();
     }
   });

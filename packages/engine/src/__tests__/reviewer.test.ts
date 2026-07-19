@@ -25,7 +25,7 @@ vi.mock("../pi.js", () => ({
 }));
 
 import { resolveAgentPrompt } from "@fusion/core";
-import { reviewStep } from "../reviewer.js";
+import { reviewStep, ReviewerProviderError } from "../reviewer.js";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 
 const DEFAULT_REVIEWER_PROMPT = resolveAgentPrompt("reviewer");
@@ -52,7 +52,7 @@ function createMockSession(reviewText: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedPromptWithFallback.mockImplementation(async (session, prompt, options) => {
+  mockedPromptWithFallback.mockImplementation(async (session: any, prompt: any, options: any) => {
     if (typeof session.prompt === "function") {
       if (options == null) {
         await session.prompt(prompt);
@@ -237,10 +237,13 @@ describe("reviewStep — model settings threading", () => {
       "FN-100",
       "Reviewer using model: mock-provider/mock-model (thinking effort: high)",
     );
+    // FNXC:AgentLog-EntryTypes 2026-07-15-11:20: the marker is a complete standalone message,
+    // so it is a `status` row — `text` means "streamed delta fragment" and gets glued to its
+    // neighbours with no separator.
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-100",
       "Reviewer using model: mock-provider/mock-model (thinking effort: high)",
-      "text",
+      "status",
       undefined,
       "reviewer",
     );
@@ -487,6 +490,104 @@ describe("reviewStep — spec review type", () => {
 
     expect(capturedPrompt).not.toContain("git diff");
     expect(capturedPrompt).not.toContain("abc123");
+  });
+});
+
+/*
+FNXC:TriagePlanReviewConvergence 2026-07-16-19:40:
+Prove the spec-gate convergence block is wired through reviewStep -> buildReviewRequest. We drive
+the real (module-private) request builder by capturing the prompt string handed to the mocked
+session, exactly like the "spec review type" tests above — no test-only export is needed because
+the request text is observable at the session seam.
+*/
+describe("reviewStep — spec convergence wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function captureReviewPrompt(): { getPrompt: () => string } {
+    const state = { prompt: "" };
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          state.prompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+    return { getPrompt: () => state.prompt };
+  }
+
+  it("omits the convergence block for spec reviews on attempt <= 1 or undefined", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "prior REVISE text", specReviewAttempt: 1 },
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+    expect(cap.getPrompt()).not.toContain("prior REVISE text");
+  });
+
+  it("omits the convergence block for spec reviews when convergence fields are absent", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("includes the convergence block + prior feedback + verify-your-own-miss wording at attempt 2", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "PRIOR-REVISE-MARKER: fix the missing Surface Enumeration", specReviewAttempt: 2 },
+    );
+    const prompt = cap.getPrompt();
+    expect(prompt).toContain("## Convergence — Plan Review attempt 2");
+    expect(prompt).toContain("PRIOR-REVISE-MARKER: fix the missing Surface Enumeration");
+    expect(prompt).toContain("VERIFY each issue you raised previously was addressed");
+    expect(prompt).toContain("that is your own earlier miss");
+    // Attempt 2 must NOT yet ratchet severity.
+    expect(prompt).not.toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("adds the severity ratchet at attempt >= 3", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 },
+    );
+    const prompt = cap.getPrompt();
+    expect(prompt).toContain("## Convergence — Plan Review attempt 3");
+    expect(prompt).toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("never includes the convergence block for code reviews even when convergence fields are passed", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 1, "Code Review", "code", "# prompt", "abc123",
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 } as any,
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("never includes the convergence block for plan reviews even when convergence fields are passed", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 1, "Plan Review", "plan", "# prompt",
+      undefined,
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 } as any,
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
   });
 });
 
@@ -1588,5 +1689,261 @@ describe("reviewStep — subagent lifecycle hooks", () => {
 
     expect(onSessionCreated).toHaveBeenCalledTimes(2);
     expect(onSessionEnded).toHaveBeenCalledTimes(2);
+  });
+});
+
+/*
+FNXC:ReviewerProviderErrors 2026-07-15-11:20:
+Regression coverage for the reviewer provider-error loop.
+
+## Symptom Verification
+Original symptom: a task's Chat tab filled with 14 identical "Reviewer using model: umans/umans-kimi-k2.7" rows and no review text, while the engine kept re-hitting an already-rate-limited provider.
+Exact reproduction: the reviewer's prompt rejects with a rate-limit error (the provider condition behind the report).
+Assertion it is gone: the rate limit escalates as a typed `ReviewerProviderError` instead of becoming an `UNAVAILABLE` verdict, and exactly ONE session is created — no same-model re-hit, and therefore no repeated marker.
+
+## Surface Enumeration
+Provider-error classes: usage-limit, transient (recovered + exhausted), permanent (must keep the existing fallback ladder).
+Fallback configurations: configured fallback model AND no configured fallback (the reported case — the "fallback" degrades to a same-model strict-prompt rerun, so a rate limit was re-hit instantly).
+Review types: code (blocking) and plan/spec (advisory) share `reviewStep`, so both are asserted.
+Budget: `reviewerFallbackRetryCount` must not be burned by an outage.
+Marker emission: deduped per model, but a real model change must still emit.
+*/
+describe("reviewStep — provider errors are not review verdicts", () => {
+  const RATE_LIMIT_ERROR = "429 rate_limit_error: too many requests";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+    mockedPromptWithFallback.mockImplementation(async (session: any, prompt: any, options: any) => {
+      if (options == null) await session.prompt(prompt);
+      else await session.prompt(prompt, options);
+    });
+  });
+
+  it("escalates a rate limit as ReviewerProviderError instead of an UNAVAILABLE verdict", async () => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("unused"));
+    mockedPromptWithFallback.mockRejectedValue(new Error(RATE_LIMIT_ERROR));
+
+    const error = await reviewStep(
+      "/tmp/worktree", "FN-RL", 2, "Rate limited", "code", "# prompt", "abc123", {},
+    ).then(() => null, (err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ReviewerProviderError);
+    expect((error as ReviewerProviderError).classification).toBe("usage-limit");
+    // The reported bug: with no configured fallback the ladder re-ran the SAME model
+    // immediately, so a 429 spawned a second session (and a second identical marker).
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend the configured fallback model on a rate limit", async () => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("unused"));
+    mockedPromptWithFallback.mockRejectedValue(new Error(RATE_LIMIT_ERROR));
+
+    await expect(
+      reviewStep("/tmp/worktree", "FN-RL2", 2, "Rate limited", "code", "# prompt", "abc123", {
+        projectValidatorFallbackProvider: "openai",
+        projectValidatorFallbackModelId: "gpt-5-mini",
+      }),
+    ).rejects.toBeInstanceOf(ReviewerProviderError);
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("escalates a rate limit for advisory plan reviews too, not just blocking code reviews", async () => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("unused"));
+    mockedPromptWithFallback.mockRejectedValue(new Error(RATE_LIMIT_ERROR));
+
+    await expect(
+      reviewStep("/tmp/worktree", "FN-RL3", 1, "Plan", "plan", "# prompt", undefined, {}),
+    ).rejects.toBeInstanceOf(ReviewerProviderError);
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not burn the reviewer fallback retry budget on a provider outage", async () => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("unused"));
+    mockedPromptWithFallback.mockRejectedValue(new Error(RATE_LIMIT_ERROR));
+
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({}),
+      getTask: vi.fn().mockResolvedValue({ id: "FN-RL4", reviewerFallbackRetryCount: 0, steps: [] }),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(
+      reviewStep("/tmp/worktree", "FN-RL4", 2, "Rate limited", "code", "# prompt", "abc123", {
+        store: store as any,
+        taskId: "FN-RL4",
+        settings: {} as any,
+      }),
+    ).rejects.toBeInstanceOf(ReviewerProviderError);
+
+    // The budget bounds BAD REVIEWS. Spending it on an outage would fail healthy tasks.
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-RL4",
+      expect.objectContaining({ reviewerFallbackRetryCount: expect.anything() }),
+    );
+  });
+
+  it("keeps the fallback ladder for a genuine (permanent) reviewer error", async () => {
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(createMockSession("unused"))
+      .mockResolvedValueOnce(createMockSession("### Verdict: REVISE\n### Summary\nRecovered."));
+    mockedPromptWithFallback
+      .mockRejectedValueOnce(new Error("reviewer produced malformed output"))
+      .mockImplementation(async (session: any, prompt: any, options: any) => {
+        if (options == null) await session.prompt(prompt);
+        else await session.prompt(prompt, options);
+      });
+
+    const result = await reviewStep(
+      "/tmp/worktree", "FN-PERM", 2, "Retry", "code", "# prompt", "abc123",
+      { projectValidatorFallbackProvider: "openai", projectValidatorFallbackModelId: "gpt-5-mini" },
+    );
+
+    // A permanent error is a REVIEW problem — the ladder still applies.
+    expect(result.verdict).toBe("REVISE");
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("absorbs a flaky network blip by retrying the attempt with backoff", async () => {
+    vi.useFakeTimers();
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(createMockSession("unused"))
+      .mockResolvedValueOnce(createMockSession("### Verdict: APPROVE\n### Summary\nRecovered."));
+    mockedPromptWithFallback
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockImplementation(async (session: any, prompt: any, options: any) => {
+        if (options == null) await session.prompt(prompt);
+        else await session.prompt(prompt, options);
+      });
+
+    const pending = reviewStep(
+      "/tmp/worktree", "FN-NET", 2, "Flaky", "code", "# prompt", "abc123", {},
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await pending;
+
+    // A network blip must not surface as a failed review or a rate-limit escalation.
+    expect(result.verdict).toBe("APPROVE");
+    vi.useRealTimers();
+  });
+
+  it("escalates as transient once the network retry budget is exhausted", async () => {
+    vi.useFakeTimers();
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("unused"));
+    mockedPromptWithFallback.mockRejectedValue(new Error("ECONNREFUSED connection refused"));
+
+    const pending = reviewStep(
+      "/tmp/worktree", "FN-NET2", 2, "Down", "code", "# prompt", "abc123", {},
+    ).then(() => null, (err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(300_000);
+    const error = await pending;
+
+    expect(error).toBeInstanceOf(ReviewerProviderError);
+    expect((error as ReviewerProviderError).classification).toBe("transient");
+    vi.useRealTimers();
+  });
+});
+
+/*
+FNXC:ReviewerModelMarker 2026-07-15-11:20:
+The marker only carries information when the model CHANGES — the dashboard resolves the effective
+model from the latest matching row. Re-emitting it per retry is what produced the run-on
+"14 entries" card, so dedupe on marker text while keeping a real model switch visible.
+*/
+describe("reviewStep — model marker emission", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+    mockedPromptWithFallback.mockImplementation(async (session: any, prompt: any, options: any) => {
+      if (options == null) await session.prompt(prompt);
+      else await session.prompt(prompt, options);
+    });
+  });
+
+  function markerStore() {
+    return {
+      getSettings: vi.fn().mockResolvedValue({}),
+      getTask: vi.fn().mockResolvedValue({ id: "FN-MARK", reviewerFallbackRetryCount: 0, steps: [] }),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  const markerRows = (store: ReturnType<typeof markerStore>) =>
+    store.appendAgentLog.mock.calls.filter((call) => String(call[1]).startsWith("Reviewer using model:"));
+
+  it("emits the model marker once when the same model is retried", async () => {
+    // Two same-model sessions (unparseable verdict -> same-model strict-prompt rerun).
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(createMockSession("no parseable verdict #1"))
+      .mockResolvedValueOnce(createMockSession("no parseable verdict #2"));
+    const store = markerStore();
+
+    await reviewStep("/tmp/worktree", "FN-MARK", 2, "Marker", "spec", "# prompt", undefined, {
+      store: store as any,
+      taskId: "FN-MARK",
+      settings: {} as any,
+    });
+
+    // Two sessions, one marker — the reported symptom was one marker PER session.
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(markerRows(store)).toHaveLength(1);
+  });
+
+  it("still emits a marker when the reviewer actually switches models", async () => {
+    /*
+    Tag each session with the model it represents and resolve `describeModel` from the session
+    itself. A `mockReturnValueOnce` chain is NOT safe here: `describeModel` is also called by
+    agent-session-helpers (its "built-in fallback model" warning), which silently consumes a
+    queued value and makes this test assert the wrong thing.
+    */
+    const taggedSession = (reviewText: string, model: string) => {
+      const mock = createMockSession(reviewText);
+      mock.session.__testModel = model;
+      return mock;
+    };
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(taggedSession("no parseable verdict", "primary-provider/primary-model"))
+      .mockResolvedValueOnce(taggedSession("### Verdict: APPROVE\n### Summary\nok", "fallback-provider/fallback-model"));
+    const { describeModel } = await import("../pi.js");
+    vi.mocked(describeModel).mockImplementation(
+      (session: any) => session?.__testModel ?? "mock-provider/mock-model",
+    );
+    const store = markerStore();
+
+    await reviewStep("/tmp/worktree", "FN-MARK2", 2, "Marker", "spec", "# prompt", undefined, {
+      store: store as any,
+      taskId: "FN-MARK2",
+      settings: {} as any,
+      projectValidatorFallbackProvider: "fallback-provider",
+      projectValidatorFallbackModelId: "fallback-model",
+    });
+
+    // Dedupe is on marker TEXT, so a genuine model switch is never hidden. Assert the actual
+    // rows, not just the count — a count-only check would pass even if both rows named the
+    // same model, which is exactly the bug this guards.
+    expect(markerRows(store).map((call) => call[1])).toEqual([
+      "Reviewer using model: primary-provider/primary-model",
+      "Reviewer using model: fallback-provider/fallback-model",
+    ]);
+  });
+
+  it("writes the marker as a standalone status row, never as a streamed text delta", async () => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("### Verdict: APPROVE\n### Summary\nok"));
+    const store = markerStore();
+
+    await reviewStep("/tmp/worktree", "FN-MARK3", 2, "Marker", "code", "# prompt", "abc123", {
+      store: store as any,
+      taskId: "FN-MARK3",
+      settings: {} as any,
+    });
+
+    // `text` rows are re-glued with join("") by the renderers; a whole message must be `status`.
+    expect(markerRows(store).every((call) => call[2] === "status")).toBe(true);
   });
 });

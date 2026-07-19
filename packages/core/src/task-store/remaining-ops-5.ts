@@ -23,7 +23,7 @@ import { type TaskIdIntegrityReport, detectTaskIdIntegrityAnomalies } from "../t
 import { createBranchGroup as createBranchGroupAsync } from "./async-branch-groups.js";
 import { findLiveLineageChildren as findLiveLineageChildrenAsync } from "./async-lifecycle.js";
 import { recordRunAuditEvent as recordRunAuditEventAsync } from "./async-audit.js";
-import { readTaskRow } from "./async-persistence.js";
+import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async-persistence.js";
 import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } from "./persistence.js";
 import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./remaining-ops-8.js";
 import { ConfigRow } from "./row-types.js";
@@ -47,10 +47,16 @@ export function trackDeferredTaskCreatedWorkImpl(store: TaskStore, work: () => P
     });
 }
 
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-16-10:20:
+Backend mode intentionally has no synchronous SQLite escape hatch. Name the
+AsyncDataLayer route and authoring guide in this failure so plugin authors fix
+the durable-data boundary rather than adding a backend-specific fallback.
+*/
 export function dbImpl(store: TaskStore): Database {
     if (store.backendMode) {
       throw new Error(
-        "TaskStore.db: SQLite Database is not available in backend mode (AsyncDataLayer injected)",
+        "TaskStore.db: SQLite Database is not available in backend mode (PostgreSQL/AsyncDataLayer injected). Use ctx.taskStore.getAsyncLayer() / an async store — see docs/PLUGIN_AUTHORING.md",
       );
     }
     if (!store._db) {
@@ -294,26 +300,14 @@ export function patchTaskRowInTransactionImpl(store: TaskStore,
     return { current: store.readTaskFromDb(id) };
 }
 
-export async function applyTaskPatchImpl(store: TaskStore,
-    dir: string,
-    id: string,
-    task: Task,
-    changedColumns: Iterable<keyof TaskRow>,
-    options?: { existingRow?: TaskRow; auditInput?: { agentId?: string; runId?: string; timestamp?: string; operation?: string } },
-  ): Promise<void> {
-    let result: { deletedAt?: string; current?: Task } | undefined;
-    store.db.transactionImmediate(() => {
-      result = store.patchTaskRowInTransaction(id, task, changedColumns, options?.existingRow);
-    });
-    if (result?.deletedAt) {
-      store.throwSoftDeletedWriteBlocked(id, result.deletedAt, options?.auditInput?.operation ?? "applyTaskPatch", {
-        agentId: options?.auditInput?.agentId,
-        runId: options?.auditInput?.runId,
-        timestamp: options?.auditInput?.timestamp,
-      });
-    }
-    await store.writeTaskJsonFile(dir, result?.current ?? task);
-}
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+`applyTaskPatchImpl` (the low-level sync SQLite column-patch primitive) was
+removed: it had zero callers in either mode, and its `store.db.transactionImmediate`
++ `patchTaskRowInTransaction` body only ran against the deleted SQLite runtime.
+Task writes go through the async persistence helpers (upsertTaskRowInTransaction /
+updateTaskColumns). The public `TaskStore.applyTaskPatch` facade was removed with it.
+*/
 
 export function readTaskFromDbImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Task | undefined {
     const selectClause = options?.activityLogLimit
@@ -495,7 +489,7 @@ export function findLiveDependentsImpl(store: TaskStore, id: string): string[] {
 export async function findLiveLineageChildrenImpl(store: TaskStore, id: string): Promise<string[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return findLiveLineageChildrenAsync(layer.db, id);
+      return findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
     }
     const rows = store.db
       .prepare(
@@ -668,6 +662,41 @@ export function getMalformedTaskMetadataReasonImpl(store: TaskStore, task: Parti
 
 export async function atomicCreateTaskJsonImpl(store: TaskStore, dir: string, task: Task, operation: string): Promise<void> {
     const id = store.getTaskIdFromDir(dir);
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-11:05:
+    refineTask and duplicateTask create rows through this shared helper via their
+    createTaskWithId callbacks, bypassing _createTaskInternal's backend routing, so
+    creating a refinement in backend mode threw "SQLite Database is not available".
+    This helper must route itself: soft-delete conflict check + non-destructive
+    insert in one async transaction (parity with the sync transactionImmediate
+    block below), with unique_violation normalized to "Task ID already exists".
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const context = store.createTaskPersistSerializationContext(task);
+      let backendDeletedAt: string | undefined;
+      try {
+        await layer.transactionImmediate(async (tx) => {
+          const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+          if (pgRow) {
+            backendDeletedAt = store.getSoftDeletedWriteConflict(id, task, store.pgRowToTaskRow(pgRow));
+            if (backendDeletedAt) return;
+          }
+          await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+        });
+      } catch (error) {
+        if (isTaskIdConflictError(error)) {
+          store.logTaskCreateConflict(task, operation, error);
+          throw new Error(`Task ID already exists: ${task.id}`);
+        }
+        throw error;
+      }
+      if (backendDeletedAt) {
+        store.throwSoftDeletedWriteBlocked(id, backendDeletedAt, operation);
+      }
+      await store.writeTaskJsonFile(dir, task);
+      return;
+    }
     let deletedAt: string | undefined;
     store.db.transactionImmediate(() => {
       deletedAt = store.getSoftDeletedWriteConflict(id, task);
@@ -755,6 +784,12 @@ export function toBuiltInWorkflowStepImpl(store: TaskStore, template: import("..
 }
 
 export function getLegacyWorkflowStepSnapshotImpl(store: TaskStore, id: string, templateId?: string): Record<string, unknown> | undefined {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:55: the legacy snapshot lives
+    // only in the pre-migration SQLite config.workflowSteps JSON blob; a
+    // PostgreSQL deployment has no legacy snapshot, so overrides never apply.
+    if (store.backendMode) {
+      return undefined;
+    }
     const row = store.db
       .prepare("SELECT workflowSteps FROM config WHERE id = 1")
       .get() as { workflowSteps?: string | null } | undefined;
@@ -907,4 +942,3 @@ export async function createBranchGroupImpl(store: TaskStore, input: BranchGroup
     const created = await store.getBranchGroup(id);
     return created!;
 }
-

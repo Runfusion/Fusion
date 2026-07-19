@@ -26,6 +26,14 @@ export const REVIEW_VERDICT_MARKER = "REVIEW_VERDICT:";
 const VERDICT_LINE_RE = /REVIEW_VERDICT:\s*(approve|reject)\b/i;
 const SEVERITY_LINE_RE = /SEVERITY:\s*(blocking|advisory)\b/i;
 
+/*
+FNXC:MergerAiReview 2026-07-15-21:30:
+Cap on reasons recovered from lines PRECEDING the verdict (FN-8004 follow-up). The reviewer's
+free-form analysis can run long; the corrective re-merge prompt only needs the closing argument,
+and an unbounded splice would paste an entire transcript into it.
+*/
+const MAX_RECOVERED_PRECEDING_REASONS = 8;
+
 /**
  * Parse the reviewer's free-form output. Fail-safe: no/garbled output, or a
  * rejection with no explicit severity, is treated as a BLOCKING reject — an
@@ -75,6 +83,60 @@ export function parseReviewVerdict(
   };
 }
 
+/** Strip bullet/numeric list markers and surrounding whitespace from one line. */
+function cleanReasonLine(line: string): string {
+  return line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim();
+}
+
+/** Lines that carry no reviewer reasoning and must never be reported as a reason. */
+function isNonReasonLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return true;
+  if (SEVERITY_LINE_RE.test(t)) return true;
+  if (VERDICT_LINE_RE.test(t)) return true;
+  // Markdown scaffolding the reviewer may emit around its analysis.
+  if (/^#{1,6}\s/.test(t)) return true;
+  if (/^(?:-{3,}|={3,}|`{3,})/.test(t)) return true;
+  return false;
+}
+
+/*
+FNXC:MergerAiReview 2026-07-15-14:45:
+FN-8004 corrective merges must receive reviewer conclusions, never pasted diff or tool output. Track Markdown fences while recovering reasons on either side of a verdict so nearby evidence cannot displace actionable feedback.
+*/
+function collectReasonLines(lines: string[], start: number, end: number, step: 1 | -1): string[] {
+  const reasons: string[] = [];
+  let inFence = false;
+  for (let i = start; step === 1 ? i < end : i >= end; i += step) {
+    if (/^\s*(?:`{3,}|~{3,})/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || isNonReasonLine(lines[i])) continue;
+    reasons.push(cleanReasonLine(lines[i]));
+    if (reasons.length >= MAX_RECOVERED_PRECEDING_REASONS) break;
+  }
+  return reasons;
+}
+
+/*
+FNXC:MergerAiReview 2026-07-15-21:30:
+FN-8004 follow-up. The prompt tells the reviewer to "End with a single decision line", so a
+compliant reviewer writes its reasoning ABOVE `REVIEW_VERDICT: reject` and ends on the verdict.
+This function only scanned lines AFTER the verdict line, so those reasons were discarded and the
+rejection degraded to the placeholder "rejected the merge without a stated reason" — which was then
+handed to the corrective re-merge pass as its instruction. The corrective pass thus received no
+actionable feedback and merely re-rolled the merge, which typically passed on the next review.
+
+Observed on FN-8004's own merge: BOTH attempts went reject(no reason) → corrective pass → approve,
+burning ~7 min per cycle and pushing each attempt past main's ~8-min churn window into a livelock.
+That is a lost-reason bug, not a reviewer that genuinely objects twice and then relents.
+
+Reason precedence: inline (same line as the verdict) → lines after the verdict → lines before it
+(nearest-first, the "End with the verdict" layout). Falling back to the preceding lines is what
+makes a compliant reviewer's rejection actionable. Keep the prompt's ordering guidance and this
+precedence in sync — see buildMergeReviewSystemPrompt.
+*/
 function extractRejectReasons(
   lines: string[],
   verdictLineIndex: number
@@ -85,10 +147,11 @@ function extractRejectReasons(
     .replace(/^[\s:–—-]+/, "")
     .trim();
   if (inline) reasons.push(inline);
-  for (let i = verdictLineIndex + 1; i < lines.length; i++) {
-    if (SEVERITY_LINE_RE.test(lines[i])) continue;
-    const cleaned = lines[i].replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim();
-    if (cleaned) reasons.push(cleaned);
+  reasons.push(...collectReasonLines(lines, verdictLineIndex + 1, lines.length, 1));
+  if (reasons.length === 0) {
+    // Walk backwards from the verdict so the reviewer's closing argument — the part
+    // most likely to state the blocking defect — is reported first.
+    reasons.push(...collectReasonLines(lines, verdictLineIndex - 1, 0, -1));
   }
   if (reasons.length === 0)
     reasons.push("reviewer rejected the merge without a stated reason");
@@ -228,14 +291,29 @@ export function buildReviewSystemPrompt(): string {
     "",
     "Bias toward rejection when uncertain.",
     "",
-    `End with a single decision line: "${REVIEW_VERDICT_MARKER} approve" or`,
-    `"${REVIEW_VERDICT_MARKER} reject". When rejecting, add a "SEVERITY:" line:`,
+    /*
+    FNXC:MergerAiReview 2026-07-15-21:30:
+    FN-8004 follow-up. This block used to say "End with a single decision line ... Then list each
+    concrete reason as a bullet" — self-contradictory: a reviewer cannot both END on the verdict
+    and list reasons after it. Reviewers obeyed "End with", so the reasons landed above the verdict
+    where the parser did not look, and every rejection degraded to "without a stated reason".
+    The ordering below is now unambiguous: reasons FIRST, verdict LAST. The parser additionally
+    recovers reasons from either side (see extractRejectReasons), so both layouts stay actionable.
+    */
+    "When rejecting, first list each concrete reason as its own bullet — state the",
+    "specific defect (what was dropped, lost, or wrongly resolved), not a generic",
+    "objection. These bullets are fed verbatim to the corrective re-merge pass, so a",
+    "vague reason produces a blind retry rather than a fix.",
+    "",
+    `Then add a "SEVERITY:" line:`,
     "  - SEVERITY: blocking — a correctness problem (dropped/lost task changes,",
     "    incomplete squash, or a conflict resolution that discards intent). The",
     "    merge must NOT land if this is unfixable.",
     "  - SEVERITY: advisory — a quality/style concern that does not risk",
     "    correctness; acceptable to land if unresolved.",
-    "Then list each concrete reason as a bullet.",
+    "",
+    `Finish with a single decision line, and nothing after it:`,
+    `"${REVIEW_VERDICT_MARKER} approve" or "${REVIEW_VERDICT_MARKER} reject".`,
   ].join("\n");
 }
 

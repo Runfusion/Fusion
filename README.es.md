@@ -139,12 +139,13 @@ Cada tarea muestra su plan, sus revisiones, sus diffs y sus cambios de archivos 
 | 🧠 **Planificación con IA** | Describe una tarea en lenguaje natural. Los agentes de planificación la convierten en un plan `PROMPT.md` con pasos, alcance de archivos y criterios de aceptación. |
 | 🔁 **Workflows seleccionables** | Los integrados cubren codificación, arreglos rápidos, trabajo con revisión intensa, ejecución paso a paso, Compound Engineering con plugin y fragmentos de ciclo de vida de PR. Elige un workflow por tarea o crea personalizados en el [Editor de workflows](./docs/workflow-editor.md). |
 | 🌳 **Aislamiento con worktrees** | Cada tarea corre en su propia rama y worktree (`fusion/{task-id}`). Tareas en paralelo. Cero conflictos. Delegación opcional a [worktrunk](https://github.com/max-sixty/worktrunk) mediante [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (ver [abstracción WorktreeBackend](./docs/architecture.md#worktreebackend-abstraction)). |
+| 🗄️ **PostgreSQL de forma predeterminada** | Fusion usa PostgreSQL integrado sin configuración para los metadatos de ejecución locales. Los archivos SQLite heredados son solo entradas de migración de una sola vez; usa una base de datos externa compartida para instalaciones de [múltiples proyectos y nodos](./docs/multi-project.md). ([Almacenamiento](./docs/storage.md)) |
 | ⚡ **Controles de merge inteligente** | ¿Pasa todas las puertas? Fusion hace squash-merge y avanza. Puedes exigir aprobación manual, heredar el valor global de auto-merge o definir sobreescrituras por tarea. |
 | 🛰️ **Malla multinodo** | Laptop, Mac mini, servidor Linux, VM en la nube, teléfono — todos sincronizados. Escritorio, móvil, web. |
-| 🧩 **Cualquier modelo** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, runtimes locales y [proveedores personalizados](./docs/dashboard-guide.md#custom-providers). Local y nube coexisten, con canales de modelo/fallback configurables por workflow. |
+| 🧩 **Cualquier modelo** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, Kimi K3, runtimes locales y [proveedores personalizados](./docs/dashboard-guide.md#custom-providers). Local y nube coexisten, con canales de modelo/fallback configurables por workflow. |
 | 🏢 **Empresas de agentes** | Importa equipos predefinidos — más de 440 agentes en 16 empresas — y ejecútalos de forma autónoma durante semanas. |
 | 📬 **Mensajería entre agentes** | Buzón incorporado entre agentes. Delega, aclara, coordina. |
-| 🗨️ **Chat de agentes** | Chat directo, chat de tareas, adjuntos, tarjetas de preguntas en chat, streams reanudables y salas multiagente experimentales donde los miembros mencionados responden directamente y miembros ambientales pueden sumarse hasta un límite. ([Documentación de chat](./docs/dashboard-guide.md#chat-view)) |
+| 🗨️ **Chat de agentes** | Chat directo, chat de tareas que narra proactivamente el progreso de los pasos, los fallos y los resultados de las revisiones, adjuntos, tarjetas de preguntas en chat, streams reanudables y salas multiagente experimentales donde los miembros mencionados responden directamente y miembros ambientales pueden sumarse hasta un límite. ([Documentación de chat](./docs/dashboard-guide.md#chat-view)) |
 | 🗺️ **Misiones** | Planificación jerárquica (Misión → Hito → Slice → Característica → Tarea) con piloto automático y contratos de validación. |
 | 🔬 **Investigación** | Ejecuciones de investigación delimitadas con búsqueda web, GitHub, documentación local y síntesis con LLM (además de soporte integrado en tiempo de ejecución para WebSearch/WebFetch en flujos de planificación y síntesis cuando está disponible). Convierte los hallazgos en tareas. ([Documentación](./docs/research.md)) |
 | 🧪 **Automejora** | Los agentes reflexionan sobre su propio resultado y actualizan sus prompts a medida que aprenden tu base de código. |
@@ -182,7 +183,7 @@ Una sola pantalla para todo lo que hacen tus agentes. Ajusta en vivo la capacida
 
 > Tokens · Herramientas · Actividad · Productividad · Equipo · Ecosistema · GitHub · Señales · Sistema · Fiabilidad · Control de misión — cada pestaña es una lente distinta sobre la misma flota en vivo.
 
-**La misma flota, a tu manera** — Command Center (y todo el panel) se re-estiliza en vivo en más de **70 temas de color**. Aquí está en Shadcn Light y Shadcn Dark Gray:
+**La misma flota, a tu manera** — Command Center (y todo el panel) se re-estiliza en vivo en más de **70 temas de color**, incluidos Cobalt, Clay y Moss. Aquí está en Shadcn Light y Shadcn Dark Gray:
 
 <table>
 <tr>
@@ -425,6 +426,7 @@ npx companies.sh add paperclipai/companies/gstack
 | [Acceso remoto](./docs/remote-access.md) | Acceso remoto con token, Tailscale/Cloudflare y solución de problemas |
 | [Multiproyecto](./docs/multi-project.md) | Registro central, aislamiento y migraciones |
 | [Docker](./docs/docker.md) | Despliegue en contenedores |
+| [Almacenamiento](./docs/storage.md) | Almacenamiento de ejecución PostgreSQL, compatibilidad de migración y cargas útiles respaldadas por archivos |
 
 ---
 
@@ -437,8 +439,8 @@ npx companies.sh add paperclipai/companies/gstack
 - **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
 - **Workflow Steps** — Configurable quality gates (pre-merge blocks merge; post-merge informational), plus opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
 - **Workflow-native policy** — Fast-mode planning, typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings ([Settings Reference](./docs/settings-reference.md#workflow-settings))
-- **GitHub + PR lifecycle** — Import issues, create PRs, display live PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
-- **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, missions, chat, workflow editor, custom providers, and one-click updates
+- **GitHub + PR lifecycle** — Import issues with optional translation and screenshot attachments, skip previously imported issues even after edits or repository casing changes, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
+- **Dashboard** — Real-time kanban/list/graph views, a project Overview with local codebase token estimate and on-disk size, agent management, terminal, git manager, missions, chat, workflow editor, custom providers, and one-click updates
 - **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked handoffs
 - **Multi-Project** — Manage multiple projects from one installation with project isolation
 - **Custom Providers** — Add OpenAI-compatible, OpenAI Responses, Anthropic-compatible, or Google Generative AI providers; saved models appear in project and workflow model dropdowns ([Dashboard Guide](./docs/dashboard-guide.md#custom-providers))
@@ -470,7 +472,7 @@ Fusion usa una jerarquía de modelos de doble alcance con cinco canales independ
 
 **Canales de workflow:** El workflow predeterminado expone canales de modelo Plan/Triage, Executor, Reviewer y fallback en **Configuración → Modelos de proyecto**, y los workflows avanzados pueden declarar valores tipados adicionales ([Referencia de configuración](./docs/settings-reference.md#workflow-settings)).
 
-**Sobreescrituras por tarea:** Las tareas pueden sobreescribir los canales de executor, validator y planning con campos de modelo por tarea (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`).
+**Sobreescrituras por tarea:** Quick Add e Inline Create permiten que las tareas sobrescriban los canales de planificación, executor, validator y merger; las selecciones de planificación, validator y merger también admiten niveles de razonamiento específicos de cada tarea (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId` y las sobreescrituras de modelo/razonamiento de merger).
 
 **Precedencia:** Por tarea → Sobreescritura de proyecto → Canal global → `defaultProvider`/`defaultModelId` → Resolución automática.
 
@@ -563,7 +565,7 @@ fn skills install firebase/agent-skills               # Instalar habilidades de 
 
 | Paquete | Descripción |
 |---------|-------------|
-| `@fusion/core` | Modelo de dominio — tareas, columnas del tablero, almacén SQLite |
+| `@fusion/core` | Modelo de dominio — tareas, columnas del tablero, almacenes PostgreSQL |
 | `@fusion/dashboard` | Interfaz web — servidor Express + tablero kanban con SSE |
 | `@fusion/engine` | Motor de IA — planificación, ejecución, programación, pasos del flujo |
 | `@runfusion/fusion` | CLI + extensión — publicado en npm |

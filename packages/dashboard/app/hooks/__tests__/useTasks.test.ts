@@ -3676,6 +3676,60 @@ describe("useTasks", () => {
       vi.useRealTimers();
     });
 
+    it("marks fresh planner logs transiently active and clears the signal on an authoritative update", async () => {
+      const initialTask = createMockTask({
+        column: "triage",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBe("2026-07-28T12:00:01.000Z");
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:updated", {
+          ...initialTask,
+          updatedAt: "2026-07-28T12:00:02.000Z",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBeUndefined();
+    });
+
+    it("keeps clearing in-review stalls when a fresh agent log arrives", async () => {
+      const initialTask = createMockTask({
+        column: "in-review",
+        inReviewStall: {
+          code: "merge-blocker",
+          reason: "Merge is blocked",
+          observedAt: "2026-07-28T12:00:00.000Z",
+        },
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "text",
+          agent: "reviewer",
+        });
+      });
+      expect(result.current.tasks[0]?.inReviewStall).toBeUndefined();
+    });
+
     it("does not trigger onReconnect refetch after sseEnabled flips to false", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const { rerender } = renderHook(

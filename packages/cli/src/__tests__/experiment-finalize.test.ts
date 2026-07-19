@@ -22,6 +22,7 @@ const previewPlan = vi.fn();
 const finalize = vi.fn();
 const init = vi.fn();
 const getExperimentSessionStore = vi.fn(() => ({}));
+const backendShutdown = vi.fn(async () => undefined);
 
 const mockErrors = vi.hoisted(() => ({
   CherryPickConflictError: class extends Error {
@@ -30,9 +31,11 @@ const mockErrors = vi.hoisted(() => ({
     commit = "abc";
     stderr = "conflict";
   },
+  closeProjectStore: vi.fn(async () => undefined),
 }));
 
 vi.mock("@fusion/core", () => ({
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: { init, getExperimentSessionStore }, shutdown: backendShutdown })),
   TaskStore: makeConstructibleMock(() => ({ init, getExperimentSessionStore })),
 }));
 
@@ -45,6 +48,17 @@ vi.mock("@fusion/engine", () => ({
   ExperimentFinalizeMergeBaseError: class extends Error { code = "merge_base_error" as const; },
   ExperimentFinalizeBranchExistsError: class extends Error { code = "branch_exists" as const; },
   ExperimentFinalizeCherryPickConflictError: mockErrors.CherryPickConflictError,
+}));
+
+vi.mock("../project-context.js", () => ({
+  resolveProject: vi.fn(async () => ({
+    projectId: "proj-1",
+    projectName: "demo",
+    projectPath: "/tmp/demo",
+    isRegistered: true,
+    store: {},
+  })),
+  closeProjectStore: mockErrors.closeProjectStore,
 }));
 
 import { runExperimentFinalize } from "../commands/experiment-finalize.js";
@@ -66,6 +80,7 @@ describe("runExperimentFinalize", () => {
     expect(previewPlan).toHaveBeenCalledWith({ sessionId: "EXP-1", integrationBranch: undefined });
     expect(finalize).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalled();
+    expect(backendShutdown).toHaveBeenCalledTimes(1);
   });
 
   it("plan-file loads override and passes to finalize", async () => {
@@ -109,6 +124,27 @@ describe("runExperimentFinalize", () => {
 
     await expect(runExperimentFinalize({ sessionId: "EXP-1" })).rejects.toThrow("exit:1");
 
+    exitSpy.mockRestore();
+  });
+
+  it("closes the resolver-owned project on success", async () => {
+    previewPlan.mockResolvedValue({ sessionId: "EXP-1", mergeBaseCommit: "mb", groups: [] });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runExperimentFinalize({ sessionId: "EXP-1", projectName: "demo", dryRun: true });
+
+    expect(mockErrors.closeProjectStore).toHaveBeenCalledTimes(1);
+    logSpy.mockRestore();
+  });
+
+  it("closes the resolver-owned project before backend startup fails", async () => {
+    const { createTaskStoreForBackend } = await import("@fusion/core");
+    vi.mocked(createTaskStoreForBackend).mockRejectedValueOnce(new Error("startup failed"));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit:${code}`); }) as never);
+
+    await expect(runExperimentFinalize({ sessionId: "EXP-1", projectName: "demo" })).rejects.toThrow("exit:1");
+
+    expect(mockErrors.closeProjectStore).toHaveBeenCalledTimes(1);
     exitSpy.mockRestore();
   });
 });

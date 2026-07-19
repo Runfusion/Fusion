@@ -33,6 +33,14 @@ function hasProjectArg(script: string | undefined, project: string): boolean {
   return parts.some((part, index) => part === "--project" && parts[index + 1] === project);
 }
 
+/*
+FNXC:DependencyPinning 2026-07-17-12:00:
+FN-8201 requires source and prepack-transformed manifests to keep pi-ai and
+pi-coding-agent as one exact version pair, because npm global installation does
+not honor pnpm-lock.yaml when resolving package dependency ranges.
+*/
+const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   const dependencies = pkg.dependencies ?? {};
   const peerDependencies = pkg.peerDependencies ?? {};
@@ -48,7 +56,10 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "^0.80.6",
+      "0.80.10",
+    );
+    expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
+      EXACT_SEMVER,
     );
     expect(peerDependencies, `${label}: ${dependencyName} must not be a peer dependency`).not.toHaveProperty(
       dependencyName,
@@ -57,6 +68,11 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
       dependencyName,
     );
   }
+
+  expect(
+    dependencies["@earendil-works/pi-ai"],
+    `${label}: pi-ai and pi-coding-agent must remain a matched exact version pair`,
+  ).toBe(dependencies["@earendil-works/pi-coding-agent"]);
 
   expect(dependencies, `${label}: typebox must not be promoted into runtime dependencies`).not.toHaveProperty(
     "typebox",
@@ -215,11 +231,21 @@ describe("CLI package.json publishing config", () => {
     // when adding to this list, document *why* it doesn't need to be a runtime dep
     // (transitive via another dep, only used by the Bun binary, etc.) so future
     // edits don't silently re-introduce the dockerode-class bug.
+    /*
+    FNXC:CliTests 2026-07-17-09:45:
+    FN-8210: extractStringArray("external") intentionally scans the entire tsup config, including per-plugin bundlePluginEntry externals. Optional Baileys dynamic-require helpers for the bundled WhatsApp Chat plugin are therefore allowlisted here: they must remain present in the config's external array, but are not runtime dependencies of the @runfusion/fusion CLI bin.
+    */
     const TRANSITIVE_EXTERNALS: Record<string, string> = {
       ssh2: "transitive dep of dockerode",
       "cpu-features": "transitive dep of dockerode (via ssh2)",
       "@homebridge/node-pty-prebuilt-multiarch":
         "aliased as node-pty in dependencies; the alias entry satisfies the import",
+      jimp:
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      "link-preview-js":
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      "qrcode-terminal":
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
       // FNXC:BuildConfig 2026-07-13-12:00: FN-7936 aliased @fusion/core to a runtime shim in bundled plugin outputs; it's no longer a tsup external, so this allowlist entry is stale.
       // "@fusion/core": REMOVED — was "plugin-entry bundling external only; not a runtime dep of the CLI bin",
       "@fusion/engine": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
@@ -324,7 +350,7 @@ describe("Workspace bootstrap script contract", () => {
 
   it("defines verify:workspace in lint -> test:full -> build order", () => {
     const verifyScript = rootPkg.scripts?.["verify:workspace"];
-    expect(verifyScript).toBe("pnpm lint && pnpm test:full && pnpm build");
+    expect(verifyScript).toBe("pnpm lint && pnpm test:full && pnpm build:full");
 
     const lintIdx = verifyScript.indexOf("pnpm lint");
     const testIdx = verifyScript.indexOf("pnpm test:full");

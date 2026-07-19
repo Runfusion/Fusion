@@ -10,6 +10,7 @@ import { TaskCard } from "../TaskCard";
 
 // FNXC:TaskCardTestHarness 2026-07-11-00:00: RuntimeFallbackBadge calls useToast directly, so isolated TaskCard mobile renders need the hook mocked unless wrapped in ToastProvider.
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("../../hooks/useToast", () => ({
 }));
 
 vi.mock("../../api", () => ({
+  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
   fetchMission: vi.fn(),
@@ -87,7 +89,19 @@ function getMainMobileSection(css: string): string {
   return blocks.join("\n");
 }
 
-describe("getMainMobileSection — compound media queries", () => {
+describe("mobile board magnetic column snap wiring (FN-8235)", () => {
+  it("shares the mobile scroll-end hook across legacy, selected, and aggregate live board renders", () => {
+    const boardSource = fs.readFileSync(path.join(process.cwd(), "app/components/Board.tsx"), "utf8");
+
+    expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
+    expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
+    expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(3);
+    expect(boardSource.match(/className="board board-workflow-columns"/g)).toHaveLength(2);
+    expect(boardSource).toContain('<main className="board" id="board" ref={setBoardRef}>');
+  });
+});
+
+describe("getMainMobileSection — compound media queries",  () => {
   it("matches simple and compound 768px blocks but excludes other breakpoints", () => {
     const syntheticCss = `
       @media (max-width: 768px)
@@ -285,7 +299,7 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(mobileSection, ".card-archive-btn", "opacity: 1;");
   });
 
-  it("keeps archive/unarchive/send-back visible without min-height overrides in the mobile media block", () => {
+  it("keeps archive/unarchive/Promote controls visible without min-height overrides in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
@@ -310,7 +324,7 @@ describe("TaskCard mobile", () => {
     }
   });
 
-  it("FN-4351: archive/unarchive/send-back buttons have no min-height in the mobile media block", () => {
+  it("FN-4351: archive/unarchive/Promote buttons have no min-height in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
@@ -454,7 +468,7 @@ describe("TaskCard mobile", () => {
     );
 
     expect(container.querySelector(".card-revert-btn")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
     expect(screen.getByRole("menuitem", { name: "Revert" })).toBeTruthy();
   });
 

@@ -28,7 +28,7 @@
  * The date the rates in {@link MODEL_PRICING} were last verified, ISO-8601.
  * Bump this whenever you edit a rate. Surfaced in the UI as "prices as of".
  */
-export const pricingAsOf = "2026-07-11";
+export const pricingAsOf = "2026-07-16";
 
 /**
  * Pricing entries older than this (relative to a caller-supplied `now`) are
@@ -387,7 +387,12 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
 
   /*
    * FNXC:ModelCatalog 2026-07-11-23:02:
-   * The LiteLLM pricing refresh only maps OpenAI, Anthropic, and Google providers, so Z.ai, MiniMax, and Kimi Coding runs need static rows to keep Dashboard token-cost surfaces from rendering `—`. Rates are verified from https://docs.z.ai/guides/overview/pricing.md, https://platform.minimax.io/docs/guides/pricing-paygo.md, and https://platform.kimi.ai/docs/pricing/chat-k26.md; MiniMax uses the Standard ≤512k pay-as-you-go tier because MODEL_PRICING has no request-tier dimension.
+   * The LiteLLM pricing refresh only maps OpenAI, Anthropic, and Google providers, so Z.ai, MiniMax, and Kimi Coding runs need static rows to keep Dashboard token-cost surfaces from rendering `—`. Rates are verified from https://docs.z.ai/guides/overview/pricing.md, https://platform.minimax.io/docs/guides/pricing-paygo.md, https://platform.kimi.ai/docs/pricing/chat-k26.md, and https://platform.kimi.ai/docs/pricing/chat-k3.md; MiniMax uses the Standard ≤512k pay-as-you-go tier because MODEL_PRICING has no request-tier dimension.
+
+   * FNXC:ModelCatalog 2026-07-16-19:05:
+   * FN-8180 upgrades pi to 0.80.10, whose native kimi-coding catalog exposes `k3`.
+   * Keep the Dashboard's independent cost derivation aligned with Moonshot's published
+   * K3 rates rather than pi's intentionally zero-valued catalog cost placeholders.
    */
   // ── Zhipu AI (Z.ai) ─────────────────────────────────────────────────
   // No distinct cache-write token charge → cacheWrite = input rate.
@@ -417,6 +422,14 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheReadPer1M: 0.16,
     cacheWritePer1M: 0.95,
     source: "platform.kimi.ai/docs/pricing/chat-k26.md",
+  },
+  // Cache miss is the input rate; K3 has no separately published cache-write rate.
+  "kimi-coding:k3": {
+    inputPer1M: 3,
+    outputPer1M: 15,
+    cacheReadPer1M: 0.3,
+    cacheWritePer1M: 3,
+    source: "platform.kimi.ai/docs/pricing/chat-k3.md",
   },
 };
 

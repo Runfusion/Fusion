@@ -2,13 +2,7 @@ import type {
   Task,
   TaskDetail,
   TaskReviewData,
-  TaskAttachment,
-  TaskComment,
-  TaskCreateInput,
   AgentLogEntry,
-  ColumnId,
-  MergeResult,
-  Settings,
   GlobalSettings,
   ProjectSettings,
   BatchStatusResult,
@@ -23,12 +17,6 @@ import type {
   PluginUiSlotDefinition,
   PluginUiContributionDefinition,
   PluginDashboardViewDefinition,
-  TaskDocument,
-  TaskDocumentRevision,
-  TaskDocumentWithTask,
-  Artifact,
-  ArtifactType,
-  ArtifactWithTask,
 
   Message,
   MessageMetadata,
@@ -67,9 +55,6 @@ import type {
   EvalTaskResult,
   ResearchRunStatus,
   TaskPriority,
-  TaskSourceIssue,
-  TaskGitLabTracking,
-  TaskGitLabTrackedItem,
   PrConflictDiagnostics,
   PrInfo,
   ManagedDockerNodeInput,
@@ -81,25 +66,12 @@ import type {
   DockerNodeStatus,
   ProjectNodePathMapping,
   ApprovalRequestStatus,
-  TaskIdIntegrityReport,
-  BranchGroup,
-  BranchGroupPrState,
-  WorkflowFieldDefinition,
-  WorkflowFieldType,
-  WorkflowFieldOption,
-  WorkflowFieldRender,
-  WorkflowSettingDefinition,
-  WorkflowSettingType,
-  WorkflowSettingOption,
-  WorkflowSettingRender,
-  WorkflowSettingRejection,
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
+// Consumers import backfill report types from the legacy API barrel.
+export type { CommitAssociationDiffBackfillReport };
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
-import type { PlannerInterventionEntry } from "@fusion/core";
-import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
-import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry, SkillFileContent } from "@fusion/dashboard";
+import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 import type { MilestoneValidationTelemetry, MissionInterviewDraftSummary } from "../components/mission-types";
 import type {
   ResearchAvailability,
@@ -109,1700 +81,296 @@ import type {
   ResearchProviderOption,
 } from "../research-types";
 import { appendTokenQuery, getAuthToken, withTokenHeader } from "../auth";
-import { dedupe, type DedupeOptions } from "./dedupe";
+import { dedupe } from "./dedupe";
 
-/** Options accepted by deduped fetchers. Pass `{ forceFresh: true }` after a
- *  mutation to bypass any in-flight pre-mutation request and force a new one. */
-export type FetchOptions = DedupeOptions;
-
-// Re-export skills types for use by hooks and components
-export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry, SkillFileContent };
-export type { CommitAssociationDiffBackfillReport };
-
-export class ApiRequestError extends Error {
-  readonly status: number;
-  readonly details?: Record<string, unknown>;
-
-  constructor(message: string, status: number, details?: Record<string, unknown>) {
-    super(message);
-    this.name = "ApiRequestError";
-    this.status = status;
-    this.details = details;
-  }
-}
-
-/** Options that shape the soft-delete request payload/query, not hard-delete behavior. */
-export interface DeleteTaskOptions {
-  removeDependencyReferences?: boolean;
-  removeLineageReferences?: boolean;
-  githubIssueAction?: GithubIssueAction;
-  allowResurrection?: boolean;
-}
-
-export interface ArchiveTaskOptions {
-  removeLineageReferences?: boolean;
-}
-
-function looksLikeHtml(body: string): boolean {
-  const trimmed = body.trim();
-  return trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML");
-}
-
-function buildApiUrl(path: string): string {
-  return `/api${path}`;
-}
-
-export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-  const url = buildApiUrl(path);
-  const token = getAuthToken();
-  const headers = (() => {
-    if (token) {
-      const authenticatedHeaders = new Headers(opts.headers ?? {});
-      if (!authenticatedHeaders.has("Content-Type")) {
-        authenticatedHeaders.set("Content-Type", "application/json");
-      }
-      return withTokenHeader(authenticatedHeaders);
-    }
-
-    if (!opts.headers) {
-      return { "Content-Type": "application/json" };
-    }
-
-    const defaultHeaders = new Headers(opts.headers);
-    if (!defaultHeaders.has("Content-Type")) {
-      defaultHeaders.set("Content-Type", "application/json");
-    }
-    return Object.fromEntries(defaultHeaders.entries());
-  })();
-
-  const res = await fetch(url, {
-    ...opts,
-    headers,
-  });
-
-  // Handle successful 204 No Content responses (e.g., DELETE, reorder)
-  // These return no body and no JSON content-type — return undefined for void endpoints
-  if (res.status === 204) {
-    if (!res.ok) {
-      // 204 is always ok by definition, but guard anyway
-      throw new Error(`Request failed for ${url}: ${res.status} ${res.statusText}`);
-    }
-    return undefined as T;
-  }
-
-  const contentType = res.headers.get("content-type") ?? "";
-  const bodyText = await res.text();
-  const isJson = contentType.includes("application/json");
-  const isHtml = contentType.includes("text/html") || looksLikeHtml(bodyText);
-
-  if (isHtml) {
-    throw new Error(
-      `API returned HTML instead of JSON for ${url}. ` +
-      `The endpoint may not be properly configured. (${res.status} ${res.statusText})`
-    );
-  }
-
-  if (!isJson) {
-    const preview = bodyText.length > 160 ? `${bodyText.slice(0, 160)}...` : bodyText;
-    throw new Error(
-      `API returned ${contentType || "an unknown content type"} instead of JSON for ${url}. ` +
-      `(${res.status} ${res.statusText})${preview ? ` Response: ${preview}` : ""}`
-    );
-  }
-
-  let data: unknown;
-  try {
-    data = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    throw new Error(
-      `API returned invalid JSON for ${url}. (${res.status} ${res.statusText})`
-    );
-  }
-
-  if (!res.ok) {
-    const payload = data as { error?: string; details?: Record<string, unknown> } | null;
-    throw new ApiRequestError(
-      payload?.error || `Request failed for ${url}: ${res.status} ${res.statusText}`,
-      res.status,
-      payload?.details,
-    );
-  }
-
-  return data as T;
-}
-
-export interface DashboardHealthResponse {
-  status: string;
-  version: string;
-  uptime: number;
-  engine?: {
-    available: boolean;
-  };
-  database: {
-    healthy: boolean;
-    corruptionDetected: boolean;
-    corruptionErrors: string[];
-    lastCheckedAt: string | null;
-    isRunning: boolean;
-  };
-  taskIdIntegrity: TaskIdIntegrityReport & {
-    recommendedAction: string | null;
-  };
-}
-
-export function fetchDashboardHealth(): Promise<DashboardHealthResponse> {
-  return api<DashboardHealthResponse>("/health");
-}
-
-export function refreshDashboardHealth(): Promise<DashboardHealthResponse> {
-  return api<DashboardHealthResponse>("/health/refresh", { method: "POST" });
-}
-
-export interface EngineStatusResponse {
-  connected: boolean;
-  starting: boolean;
-  canStart: boolean;
-  reason?: "dashboard-only" | "no-project" | string;
-  projectId?: string;
-}
-
-/*
- * FNXC:EngineStatusBanner 2026-06-22-00:00:
- * Engine status is project-scoped because a multi-project dashboard can have one running engine while the current project is paused, failed, or not yet started. Thread `projectId` through the existing query helper so the server resolves the same project context as task and settings routes.
- */
-export function fetchEngineStatus(projectId?: string): Promise<EngineStatusResponse> {
-  return api<EngineStatusResponse>(withProjectId("/engine/status", projectId));
-}
-
-export function startEngine(projectId?: string): Promise<EngineStatusResponse> {
-  return api<EngineStatusResponse>(withProjectId("/engine/start", projectId), { method: "POST" });
-}
-
-export function checkForUpdates(): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>("/updates/check");
-}
-
-export function fetchTasks(
-  limit?: number,
-  offset?: number,
-  projectId?: string,
-  q?: string,
-  includeArchived?: boolean,
-): Promise<Task[]> {
-  const search = new URLSearchParams();
-  if (limit !== undefined) search.set("limit", String(limit));
-  if (offset !== undefined) search.set("offset", String(offset));
-  if (projectId) search.set("projectId", projectId);
-  if (q) search.set("q", q);
-  if (includeArchived) search.set("includeArchived", "1");
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<Task[]>(`/tasks${suffix}`);
-}
-
-/**
- * FNXC:ArchivePagination 2026-07-08-00:00:
- * Dedicated paged read for the Archived board column (FN-7659). Returns
- * one bounded page (default 100) ordered `archivedAt DESC` plus `total`/
- * `hasMore` so the caller can drive a "Show more" affordance without ever
- * fetching the whole archive in one request.
- */
-export function fetchArchivedTasks(
-  projectId?: string,
-  limit?: number,
-  offset?: number,
-): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
-  const search = new URLSearchParams();
-  if (limit !== undefined) search.set("limit", String(limit));
-  if (offset !== undefined) search.set("offset", String(offset));
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/archived${suffix}`, projectId));
-}
-
-export async function fetchTaskDetail(id: string, projectId?: string): Promise<TaskDetail> {
-  const maxAttempts = 2; // 1 initial + 1 retry
-  const url = buildApiUrl(withProjectId(`/tasks/${id}`, projectId));
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await fetch(url, {
-      headers: withTokenHeader({ "Content-Type": "application/json" }),
-    });
-    const data = await res.json();
-    if (res.ok) return data as TaskDetail;
-    if (attempt === maxAttempts) {
-      throw new Error((data as { error?: string }).error || "Request failed");
-    }
-  }
-  // unreachable
-  throw new Error("Request failed");
-}
-
-export interface TaskRuntimeFallbackResponse {
-  taskId: string;
-  hasEvent: boolean;
-  wasConfigured: boolean | null;
-  runtimeHint: string | null;
-  reason: string | null;
-  eventId: string | null;
-  timestamp: string | null;
-  showFallbackBadge: boolean;
-}
-
-/**
- * Fetch the most recent session:runtime-resolved audit event for a task,
- * normalized for the runtime-fallback badge/toast affordance. Used by
- * useRuntimeFallbackStatus.
- */
-export async function fetchTaskRuntimeFallback(
-  taskId: string,
-  projectId?: string,
-): Promise<TaskRuntimeFallbackResponse> {
-  return api<TaskRuntimeFallbackResponse>(withProjectId(`/tasks/${taskId}/runtime-fallback`, projectId));
-}
-
-export interface UpdateTaskReviewRequest {
-  reviewState: TaskDetail["reviewState"] | null;
-}
-
-export interface TaskReviewResponse {
-  reviewState: NonNullable<TaskDetail["reviewState"]>;
-  automationStatus: string | null;
-  emptyMessage?: string | null;
-  prInfo?: TaskDetail["prInfo"];
-}
-
-export interface RefreshTaskReviewResponse {
-  reviewState: NonNullable<TaskDetail["reviewState"]>;
-  automationStatus: string | null;
-  prInfo?: TaskDetail["prInfo"];
-}
-
-export interface SelectedReviewItem {
-  id: string;
-  source: "pr-review" | "reviewer-agent";
-  threadId?: string;
-  filePath?: string;
-  lineNumber?: number;
-  author?: string;
-  summary: string;
-  body: string;
-  url?: string;
-}
-
-export interface ReviseTaskReviewResponse {
-  task: Task;
-  reviewState: NonNullable<TaskDetail["reviewState"]>;
-}
-
-export interface AddressPrFeedbackResponse {
-  task: Task;
-}
-
-export interface DuplicateMatch {
-  id: string;
-  title: string;
-  description: string;
-  column: string;
-  score: number;
-}
-
-export class DuplicateCandidatesError extends Error {
-  readonly matches: DuplicateMatch[];
-
-  constructor(matches: DuplicateMatch[]) {
-    super("duplicate_candidates");
-    this.name = "DuplicateCandidatesError";
-    this.matches = matches;
-  }
-}
-
-export interface CreateTaskRequestOptions {
-  transportNodeId?: string;
-  localNodeId?: string;
-}
-
-export type BranchSelectionInput = {
-  mode: "project-default" | "auto-new" | "existing" | "custom-new";
-  branchName?: string;
-  baseBranch?: string;
+/* FNXC:DashboardApi 2026-07-15-13:25: Preserve the legacy API barrel while consumers migrate to focused modules. */
+export {
+  api,
+  ApiRequestError,
+  buildApiUrl,
+  withNodeId,
+  proxyApi,
+} from "./client.js";
+export type { FetchOptions } from "./client.js";
+export {
+  fetchDashboardHealth,
+  refreshDashboardHealth,
+  fetchEngineStatus,
+  startEngine,
+  checkForUpdates,
+  withProjectId,
+} from "./health.js";
+import type {
+  DashboardHealthResponse,
+  EngineStatusResponse,
+  UpdateCheckResponse,
+} from "./health.js";
+export type {
+  DashboardHealthResponse,
+  EngineStatusResponse,
+  UpdateCheckResponse,
 };
 
-export type CreateTaskInput = TaskCreateInput & {
-  branchSelection?: BranchSelectionInput;
-  acknowledgedDuplicates?: string[];
-  bypassDuplicateCheck?: boolean;
+export {
+  fetchTasks,
+  fetchArchivedTasks,
+  fetchTaskDetail,
+  fetchTaskRuntimeFallback,
+  checkDuplicateTasks,
+  createTask,
+  repairOverlapBlocker,
+  updateTask,
+  batchUpdateTaskModels,
+  moveTask,
+  DuplicateCandidatesError,
+} from "./tasks.js";
+import type {
+  DeleteTaskOptions,
+  ArchiveTaskOptions,
+  TaskRuntimeFallbackResponse,
+  UpdateTaskReviewRequest,
+  TaskReviewResponse,
+  RefreshTaskReviewResponse,
+  SelectedReviewItem,
+  ReviseTaskReviewResponse,
+  AddressPrFeedbackResponse,
+  DuplicateMatch,
+  CreateTaskRequestOptions,
+  BranchSelectionInput,
+  CreateTaskInput,
+  RepairOverlapBlockerResult,
+} from "./tasks.js";
+export type {
+  DeleteTaskOptions,
+  ArchiveTaskOptions,
+  TaskRuntimeFallbackResponse,
+  UpdateTaskReviewRequest,
+  TaskReviewResponse,
+  RefreshTaskReviewResponse,
+  SelectedReviewItem,
+  ReviseTaskReviewResponse,
+  AddressPrFeedbackResponse,
+  DuplicateMatch,
+  CreateTaskRequestOptions,
+  BranchSelectionInput,
+  CreateTaskInput,
+  RepairOverlapBlockerResult,
 };
 
-export async function checkDuplicateTasks(
-  input: { title?: string; description: string },
-  projectId?: string,
-): Promise<DuplicateMatch[]> {
-  const response = await api<{ matches?: DuplicateMatch[] }>(withProjectId("/tasks/duplicate-check", projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return response.matches ?? [];
-}
-
-export async function createTask(
-  input: CreateTaskInput,
-  projectId?: string,
-  options?: CreateTaskRequestOptions,
-): Promise<Task> {
-  const {
-    title,
-    description,
-    column,
-    dependencies,
-    breakIntoSubtasks,
-    enabledWorkflowSteps,
-    workflowId,
-    assignedAgentId,
-    modelPresetId,
-    modelProvider,
-    modelId,
-    validatorModelProvider,
-    validatorModelId,
-    planningModelProvider,
-    planningModelId,
-    thinkingLevel,
-    plannerOversightLevel,
-    summarize,
-    reviewLevel,
-    executionMode,
-    autoMerge,
-    priority,
-    source,
-    nodeId,
-    branch,
-    baseBranch,
-    branchSelection,
-    githubTracking,
-    acknowledgedDuplicates,
-    bypassDuplicateCheck,
-  } = input;
-
-  try {
-    return await proxyApi<Task>(withProjectId("/tasks", projectId), {
-    method: "POST",
-    nodeId: options?.transportNodeId,
-    localNodeId: options?.localNodeId,
-    body: JSON.stringify({
-      title,
-      description,
-      column,
-      dependencies,
-      breakIntoSubtasks,
-      enabledWorkflowSteps,
-      workflowId,
-      assignedAgentId,
-      modelPresetId,
-      modelProvider,
-      modelId,
-      validatorModelProvider,
-      validatorModelId,
-      planningModelProvider,
-      planningModelId,
-      thinkingLevel,
-      plannerOversightLevel,
-      summarize,
-      reviewLevel,
-      executionMode,
-      autoMerge,
-      priority,
-      source,
-      nodeId,
-      branch,
-      baseBranch,
-      branchSelection,
-      githubTracking,
-      acknowledgedDuplicates,
-      bypassDuplicateCheck,
-    }),
-  });
-  } catch (error) {
-    if (error instanceof ApiRequestError && error.status === 409 && error.message === "duplicate_candidates") {
-      const matches = Array.isArray(error.details?.matches)
-        ? (error.details?.matches as DuplicateMatch[])
-        : [];
-      throw new DuplicateCandidatesError(matches);
-    }
-    throw error;
-  }
-}
-
-export interface RepairOverlapBlockerResult {
-  taskId: string;
-  dryRun: boolean;
-  repaired: boolean;
-  statusCleared: boolean;
-  previousOverlapBlockedBy?: string;
-  currentOverlapBlockedBy?: string;
-  reason: string;
-  message: string;
-  task?: Task;
-}
-
-export function repairOverlapBlocker(
-  id: string,
-  options: { dryRun?: boolean; reason?: string } = {},
-  projectId?: string,
-): Promise<RepairOverlapBlockerResult> {
-  return api<RepairOverlapBlockerResult>(withProjectId(`/tasks/${id}/repair-overlap-blocker`, projectId), {
-    method: "POST",
-    body: JSON.stringify(options),
-  });
-}
-
-export function updateTask(
-  id: string,
-  updates: {
-    title?: string;
-    description?: string;
-    prompt?: string;
-    dependencies?: string[];
-    enabledWorkflowSteps?: string[];
-    overlapBlockedBy?: string | null;
-    status?: null;
-    modelProvider?: string | null;
-    modelId?: string | null;
-    validatorModelProvider?: string | null;
-    validatorModelId?: string | null;
-    planningModelProvider?: string | null;
-    planningModelId?: string | null;
-    thinkingLevel?: string | null;
-    validatorThinkingLevel?: string | null;
-    planningThinkingLevel?: string | null;
-    plannerOversightLevel?: "off" | "observe" | "steer" | "autonomous" | null;
-    reviewLevel?: number | null;
-    executionMode?: "standard" | "fast" | null;
-    noCommitsExpected?: boolean;
-    autoMerge?: boolean | null;
-    priority?: TaskPriority | null;
-    sourceIssue?: TaskSourceIssue | null;
-    nodeId?: string | null;
-    branch?: string | null;
-    baseBranch?: string | null;
-    githubTracking?: {
-      enabled?: boolean;
-      repoOverride?: string | null;
-      issue?: null;
-    } | null;
-    gitlabTracking?: (Omit<TaskGitLabTracking, "item"> & { item?: TaskGitLabTrackedItem | null }) | null;
-    dismissNearDuplicate?: boolean;
-  },
-  projectId?: string,
-): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-/**
- * Batch update AI model configuration for multiple tasks.
- * @param taskIds - Array of task IDs to update
- * @param modelProvider - Executor model provider (optional, null to clear)
- * @param modelId - Executor model ID (optional, null to clear)
- * @param validatorModelProvider - Validator model provider (optional, null to clear)
- * @param validatorModelId - Validator model ID (optional, null to clear)
- * @param thinkingLevel - Executor thinking level (optional, null to clear)
- * @returns Promise with updated tasks and count
+/*
+ * FNXC:CodeOrganization 2026-07-16-12:00:
+ * Preserve legacy task-lifecycle imports while implementations live in
+ * tasks-lifecycle.ts.
  */
-export function batchUpdateTaskModels(
-  taskIds: string[],
-  modelProvider?: string | null,
-  modelId?: string | null,
-  validatorModelProvider?: string | null,
-  validatorModelId?: string | null,
-  planningModelProvider?: string | null,
-  planningModelId?: string | null,
-  nodeId?: string | null,
-  thinkingLevel?: string | null,
-  projectId?: string,
-): Promise<{ updated: Task[]; count: number }> {
-  return api<{ updated: Task[]; count: number }>(withProjectId("/tasks/batch-update-models", projectId), {
-    method: "POST",
-    body: JSON.stringify({
-      taskIds,
-      modelProvider,
-      modelId,
-      validatorModelProvider,
-      validatorModelId,
-      planningModelProvider,
-      planningModelId,
-      nodeId,
-      ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
-    }),
-  });
-}
+export {
+  promoteTask,
+  deleteTask,
+  mergeTask,
+  apiListBranchGroups,
+  apiGetBranchGroup,
+  apiAssignTaskBranchGroup,
+  apiPromoteBranchGroup,
+  apiAbandonBranchGroup,
+  retryTask,
+  bypassReview,
+  relaunchCliSession,
+  recoverBranchBinding,
+  resetTask,
+  duplicateTask,
+  pauseTask,
+  unpauseTask,
+  nudgeOverseer,
+  stopOverseer,
+  explainOverseer,
+  fetchPlannerInterventionTimeline,
+  archiveTask,
+  unarchiveTask,
+  revertTask,
+  archiveAllDone,
+  approvePlan,
+  rejectPlan,
+} from "./tasks-lifecycle.js";
+export type {
+  BranchGroupMemberSummary,
+  BranchGroupSummary,
+  PromoteBranchGroupResult,
+  RecoverBranchBindingOutcome,
+  OverseerControlResult,
+  RevertTaskWorkspaceRepoResult,
+  RevertTaskGitResult,
+  RevertTaskAiResult,
+  RevertTaskResult,
+  RevertTaskOptions,
+} from "./tasks-lifecycle.js";
 
-export function moveTask(
-  id: string,
-  column: ColumnId,
-  projectId?: string,
-  optionsOrPosition?: { preserveProgress?: boolean } | number,
-): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/move`, projectId), {
-    method: "POST",
-    body: JSON.stringify({
-      column,
-      ...(
-        typeof optionsOrPosition === "object" && optionsOrPosition?.preserveProgress
-          ? { preserveProgress: true }
-          : {}
-      ),
-    }),
-  });
-}
+export {
+  fetchConfig,
+  fetchSettings,
+  fetchTaskEffectiveSettings,
+  updateSettings,
+  checkForUpdate,
+  refreshUpdateCheck,
+  installUpdate,
+} from "./settings.js";
+export type { UpdateInstallResponse } from "./settings.js";
 
-/** Resolved trait flags for a board column (subset the client cares about). */
-export interface BoardWorkflowColumnFlags {
-  countsTowardWip?: boolean;
-  complete?: boolean;
-  archived?: boolean;
-  hiddenFromBoard?: boolean;
-  hold?: boolean;
-  intake?: boolean;
-  mergeBlocker?: boolean;
-  humanReview?: boolean;
-  [key: string]: boolean | undefined;
-}
-
-export interface BoardWorkflowColumn {
-  id: string;
-  name: string;
-  flags: BoardWorkflowColumnFlags;
-}
-
-// WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender
-// are re-exported from @fusion/core above (KTD-13/14).
-export type { WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender };
-
-// Workflow-settings (U6/KTD-1) declaration types re-exported from @fusion/core so
-// the WorkflowSettingsPanel imports them from `../api` like the field types.
-export type { WorkflowSettingDefinition, WorkflowSettingType, WorkflowSettingOption, WorkflowSettingRender, WorkflowSettingRejection };
-
-export interface BoardWorkflowDefinition {
-  id: string;
-  name: string;
-  /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
-  icon?: string;
-  columns: BoardWorkflowColumn[];
-  /** Custom field definitions declared by this workflow (U13/KTD-14). Absent on
-   *  workflows with no fields, or from older servers. */
-  fields?: WorkflowFieldDefinition[];
-}
-
-export interface BoardWorkflowsPayload {
-  flagEnabled: boolean;
-  defaultWorkflowId: string;
-  workflows: BoardWorkflowDefinition[];
-  taskWorkflowIds: Record<string, string>;
-}
-
-/** A typed custom-field rejection surfaced by the PATCH endpoint (KTD-13). */
-export interface CustomFieldRejection {
-  code: "no-fields-defined" | "unknown-field" | "type-mismatch" | "enum-violation";
-  fieldId: string;
-  detail: string;
-}
-
-/**
- * Patch a task's custom field values (U13/KTD-14). The server validates the
- * patch against the task's workflow field schema and returns the updated task;
- * a validation failure surfaces as a 400 carrying `{ fieldId, code, detail }`.
- * A `null` value for a field deletes it.
+/*
+ * FNXC:CodeOrganization 2026-07-17-12:00:
+ * Preserve legacy global/pi settings and task-content imports via satellites.
  */
-export function updateTaskCustomFields(
-  id: string,
-  customFields: Record<string, unknown>,
-  projectId?: string,
-): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/custom-fields`, projectId), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ customFields }),
-  });
-}
+export {
+  fetchGlobalSettings,
+  updateGlobalSettings,
+  fetchSettingsByScope,
+  fetchPiExtensions,
+  updatePiExtensions,
+  testNotification,
+  testNtfyNotification,
+  fetchPiSettings,
+  updatePiSettings,
+  installPiPackage,
+  reinstallFusionPiPackage,
+} from "./global-and-pi-settings.js";
+export type {
+  PiExtensionEntry,
+  PiExtensionSettings,
+  PiSettings,
+} from "./global-and-pi-settings.js";
 
-/** Fetch the multi-lane board metadata (U9). When the flag is OFF the server
- *  returns `{ flagEnabled: false }` and the board renders its legacy form. */
-export function fetchBoardWorkflows(projectId?: string, options?: FetchOptions): Promise<BoardWorkflowsPayload> {
-  const path = withProjectId("/tasks/board-workflows", projectId);
-  return dedupe(path, () => api<BoardWorkflowsPayload>(path), options);
-}
+export {
+  uploadAttachment,
+  deleteAttachment,
+  fetchAgentLogs,
+  fetchAgentLogsWithMeta,
+  fetchSessionFiles,
+  fetchTaskVerificationRequest,
+  fetchTaskComments,
+  addTaskComment,
+  updateTaskComment,
+  deleteTaskComment,
+  fetchTaskDocuments,
+  fetchTaskDocument,
+  fetchTaskDocumentRevisions,
+  fetchArtifacts,
+  artifactMediaUrl,
+  artifactMediaUrlWithToken,
+  fetchArtifact,
+  fetchNativeStructurePreview,
+  updateArtifact,
+  fetchAllDocuments,
+  fetchProjectMarkdownFiles,
+  putTaskDocument,
+  deleteTaskDocument,
+} from "./task-content.js";
+export type {
+  FetchAllDocumentsOptions,
+  MarkdownFileEntry,
+  MarkdownFileListResponse,
+  FetchArtifactsOptions,
+  FetchProjectMarkdownFilesOptions,
+  UpdateArtifactInput,
+} from "./task-content.js";
+// Artifact types still re-exported from core for callers of legacy barrel
+export type { Artifact, ArtifactType, ArtifactWithTask } from "@fusion/core";
 
-/** Manually promote a held card out of its hold column (U9). */
-export function promoteTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/promote`, projectId), { method: "POST" });
-}
 
-/**
- * Soft-deletes a task by setting `deletedAt` server-side while preserving the row/artifacts,
- * and keeping the task ID reserved.
- *
- * `removeDependencyReferences` allows forced delete by first removing incoming dependency links.
- * `githubIssueAction` controls linked issue behavior (`close`, `delete`, or `leave`) during deletion.
- *
- * Hard removal is handled only by the archive-cleanup pipeline (after archival), not this endpoint.
+/*
+ * FNXC:CodeOrganization 2026-07-16-20:00:
+ * Preserve legacy board/remote/memory imports while implementations live in satellites.
  */
-export function deleteTask(id: string, projectId?: string, options?: DeleteTaskOptions): Promise<Task> {
-  const search = new URLSearchParams();
-  if (options?.removeDependencyReferences) {
-    search.set("removeDependencyReferences", "true");
-  }
-  if (options?.removeLineageReferences) {
-    search.set("removeLineageReferences", "true");
-  }
-  if (options?.githubIssueAction) {
-    search.set("githubIssueAction", options.githubIssueAction);
-  }
-  // FN-5233 route reads delete modifiers from query params, including allowResurrection.
-  if (options?.allowResurrection) {
-    search.set("allowResurrection", "true");
-  }
+export {
+  updateTaskCustomFields,
+  fetchBoardWorkflows,
+} from "./board-workflows.js";
+export type {
+  BoardWorkflowColumnFlags,
+  BoardWorkflowColumn,
+  BoardWorkflowDefinition,
+  BoardWorkflowsPayload,
+  CustomFieldRejection,
+  WorkflowFieldDefinition,
+  WorkflowFieldType,
+  WorkflowFieldOption,
+  WorkflowFieldRender,
+  WorkflowSettingDefinition,
+  WorkflowSettingType,
+  WorkflowSettingOption,
+  WorkflowSettingRender,
+  WorkflowSettingRejection,
+} from "./board-workflows.js";
 
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<Task>(withProjectId(`/tasks/${id}${suffix}`, projectId), { method: "DELETE" });
-}
+export {
+  fetchRemoteSettings,
+  updateRemoteSettings,
+  fetchRemoteStatus,
+  installCloudflared,
+  activateRemoteProvider,
+  startRemoteTunnel,
+  stopRemoteTunnel,
+  killExternalTunnel,
+  regenerateRemotePersistentToken,
+  generateShortLivedRemoteToken,
+  fetchRemoteUrl,
+  fetchRemoteQr,
+} from "./remote.js";
+export type {
+  RemoteSettings,
+  RemoteStatus,
+} from "./remote.js";
 
-export function mergeTask(id: string, projectId?: string): Promise<MergeResult> {
-  return api<MergeResult>(withProjectId(`/tasks/${id}/merge`, projectId), { method: "POST" });
-}
+export {
+  fetchMemory,
+  saveMemory,
+  fetchMemoryFiles,
+  fetchMemoryFile,
+  saveMemoryFile,
+  compactMemory,
+  triggerMemoryDreams,
+  fetchMemoryInsights,
+  saveMemoryInsights,
+  triggerInsightExtraction,
+  fetchMemoryAudit,
+  fetchMemoryStats,
+  fetchMemoryBackendStatus,
+  installQmd,
+  testMemoryRetrieval,
+} from "./memory.js";
+export type {
+  MemoryFileInfo,
+  MemoryAuditReport,
+  MemoryBackendCapabilities,
+  MemoryBackendStatus,
+  MemorySearchResult,
+  MemoryRetrievalTestResult,
+  QmdInstallResult,
+} from "./memory.js";
+import type { MemoryFileInfo } from "./memory.js";
 
-export interface BranchGroupMemberSummary {
-  taskId: string;
-  title: string;
-  column: Task["column"];
-  landed: boolean;
-}
+import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
+import type { FetchOptions } from "./client.js";
+import { withProjectId } from "./health.js";
+import { notifyWorkflowSettingValuesUpdated } from "../utils/workflowSettingValuesEvents.js";
 
-export interface BranchGroupSummary extends BranchGroup {
-  members: BranchGroupMemberSummary[];
-  completion: {
-    landed: number;
-    total: number;
-    complete: boolean;
-  };
-}
-
-export interface PromoteBranchGroupResult {
-  groupId: string;
-  status?: BranchGroup["status"];
-  prState?: BranchGroupPrState;
-  prNumber?: number;
-  prUrl?: string;
-}
-
-export function apiListBranchGroups(projectId?: string, status?: BranchGroup["status"]): Promise<{ groups: BranchGroupSummary[] }> {
-  const search = new URLSearchParams();
-  if (status) search.set("status", status);
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<{ groups: BranchGroupSummary[] }>(withProjectId(`/branch-groups${suffix}`, projectId));
-}
-
-export function apiGetBranchGroup(id: string, projectId?: string): Promise<{ group: BranchGroupSummary }> {
-  return api<{ group: BranchGroupSummary }>(withProjectId(`/branch-groups/${id}`, projectId));
-}
-
-export function apiAssignTaskBranchGroup(
-  payload: { taskId: string; groupId?: string | null; branchName?: string },
-  projectId?: string,
-): Promise<{ taskId: string; groupId: string | null }> {
-  return api<{ taskId: string; groupId: string | null }>(withProjectId("/branch-groups/assign", projectId), {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function apiPromoteBranchGroup(id: string, projectId?: string): Promise<PromoteBranchGroupResult> {
-  return api<PromoteBranchGroupResult>(withProjectId(`/branch-groups/${id}/promote`, projectId), {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export function apiAbandonBranchGroup(id: string, projectId?: string): Promise<{ groupId: string; group: BranchGroupSummary }> {
-  return api<{ groupId: string; group: BranchGroupSummary }>(withProjectId(`/branch-groups/${id}/abandon`, projectId), {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export type RecoverBranchBindingOutcome =
-  | { taskId: string; result: "applied"; branch: string; aheadCount: number; integrationBase: string; previousBranch: string | null }
-  | { taskId: string; result: "skipped"; reason: "binding-intact" | "no-live-branch" | "ambiguous-candidates" | "no-unique-work"; candidates?: Array<{ branch: string; aheadCount: number }> };
-
-export function retryTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
-}
-
-/*
-FNXC:ReviewLaneBypass 2026-07-09-00:00:
-Operator/privileged review-lane bypass primitive (FN-7720). Bypasses the latest
-failed pre-merge review step of an in-review task so it can advance past the
-gate; a non-empty `reason` is mandatory and audited server-side. Mirrors
-`retryTask`'s client shape.
-*/
-export function bypassReview(id: string, reason: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/bypass-review`, projectId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
-  return api<{ ok: boolean; taskId?: string }>(
-    withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),
-    { method: "POST" },
-  );
-}
-
-export function recoverBranchBinding(id: string, projectId?: string): Promise<RecoverBranchBindingOutcome> {
-  return api<RecoverBranchBindingOutcome>(withProjectId(`/tasks/${id}/recover-branch-binding`, projectId), { method: "POST" });
-}
-
-export function resetTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/reset`, projectId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm: true }),
-  });
-}
-
-export function duplicateTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/duplicate`, projectId), { method: "POST" });
-}
-
-export function pauseTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/pause`, projectId), { method: "POST" });
-}
-
-export function unpauseTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/unpause`, projectId), { method: "POST" });
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-17:00:
-FN-7517 task-detail planner-overseer controls. `nudgeOverseer` asks the
-engine to inject one steering-guidance comment into the task's currently
-watched stage right now (guidance-only — never a merge/PR/destructive side
-effect); `stopOverseer` disables active oversight for the task (writes the
-per-task `plannerOversightLevel: "off"` override); `explainOverseer` is a
-read of the current overseer runtime state (watched stage, reason, last
-action, attempt count/limit) for the "explain current action" panel. Each
-returns an `applied: false`/`snapshot: null` style result rather than
-throwing when oversight is off/inactive or the engine runtime is
-unavailable — callers should treat that as a normal disabled state, not an
-error toast.
-*/
-export interface OverseerControlResult {
-  applied: boolean;
-  reason: string;
-  task?: Task;
-}
-
-export function nudgeOverseer(id: string, projectId?: string): Promise<OverseerControlResult> {
-  return api<OverseerControlResult>(withProjectId(`/tasks/${id}/overseer/nudge`, projectId), { method: "POST" });
-}
-
-export function stopOverseer(id: string, projectId?: string): Promise<OverseerControlResult> {
-  return api<OverseerControlResult>(withProjectId(`/tasks/${id}/overseer/stop`, projectId), { method: "POST" });
-}
-
-export function explainOverseer(id: string, projectId?: string): Promise<{ snapshot: PlannerOverseerRuntimeSnapshot | null }> {
-  return api<{ snapshot: PlannerOverseerRuntimeSnapshot | null }>(withProjectId(`/tasks/${id}/overseer/explain`, projectId), { method: "GET" });
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-18:00:
-FN-7519 read-only client fetch for the planner-intervention timeline. Mirrors
-`explainOverseer`'s pattern; never mutates state and resolves to an empty
-array when the task has no recorded interventions.
-*/
-export function fetchPlannerInterventionTimeline(id: string, projectId?: string): Promise<{ entries: PlannerInterventionEntry[] }> {
-  return api<{ entries: PlannerInterventionEntry[] }>(withProjectId(`/tasks/${id}/overseer/interventions`, projectId), { method: "GET" });
-}
-
-export function archiveTask(id: string, projectId?: string, options?: ArchiveTaskOptions): Promise<Task> {
-  const search = new URLSearchParams();
-  if (options?.removeLineageReferences) {
-    search.set("removeLineageReferences", "true");
-  }
-
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<Task>(withProjectId(`/tasks/${id}/archive${suffix}`, projectId), { method: "POST" });
-}
-
-export function unarchiveTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/unarchive`, projectId), { method: "POST" });
-}
-
-/*
-FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-Client-side contract for `POST /tasks/:id/revert` (route owned by FN-7523/
-FN-7524/FN-7547/FN-7548 — see the `FNXC:TaskRevert` block in
-`register-task-workflow-routes.ts`). This is a discriminated union, NOT a
-`Task` — the source task's column/status is never mutated by this call; the
-caller (useTasks' `revertTask` op) refreshes the task list afterward so any
-newly-created revert commit / AI-undo task becomes visible, without patching
-the source task's column directly.
-*/
-export interface RevertTaskWorkspaceRepoResult {
-  repo: string;
-  classification?: string;
-  revertCommitSha?: string;
-  conflicts?: unknown;
-  alreadyReverted?: boolean;
-}
-
-export interface RevertTaskGitResult {
-  mode: "git";
-  clean: boolean;
-  revertCommitSha?: string;
-  revertCommitShas?: string[];
-  conflicts?: unknown;
-  alreadyReverted?: boolean;
-  unsupported?: boolean;
-  needsHuman?: boolean;
-  reason?: string;
-  workspace?: { repos: RevertTaskWorkspaceRepoResult[] };
-}
-
-export interface RevertTaskAiResult {
-  mode: "ai";
-  createdTaskId: string;
-  alreadyOpen?: boolean;
-}
-
-export type RevertTaskResult = RevertTaskGitResult | RevertTaskAiResult;
-
-export interface RevertTaskOptions {
-  mode?: "git" | "ai" | "auto";
-  granularity?: "squash" | "per-sha";
-}
-
-export function revertTask(id: string, projectId?: string, body?: RevertTaskOptions): Promise<RevertTaskResult> {
-  return api<RevertTaskResult>(withProjectId(`/tasks/${id}/revert`, projectId), {
-    method: "POST",
-    body: JSON.stringify(body ?? {}),
-  });
-}
-
-export function archiveAllDone(projectId?: string): Promise<Task[]> {
-  return api<{ archived: Task[] }>(withProjectId("/tasks/archive-all-done", projectId), { method: "POST" }).then(
-    (response) => response.archived
-  );
-}
-
-export function approvePlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/approve-plan`, projectId), { method: "POST" });
-}
-
-export function rejectPlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), { method: "POST" });
-}
-
-export function fetchConfig(projectId?: string): Promise<{ maxConcurrent: number; rootDir: string }> {
-  const path = withProjectId("/config", projectId);
-  return dedupe(path, () => api<{ maxConcurrent: number; rootDir: string }>(path));
-}
-
-export function fetchSettings(projectId?: string, options?: FetchOptions): Promise<Settings> {
-  const path = withProjectId("/settings", projectId);
-  return dedupe(path, () => api<Settings>(path), options);
-}
-
-export function fetchTaskEffectiveSettings(taskId: string, projectId?: string, options?: FetchOptions): Promise<Settings> {
-  const path = withProjectId(`/tasks/${taskId}/effective-settings`, projectId);
-  return dedupe(path, () => api<Settings>(path), options);
-}
-
-export function updateSettings(settings: Partial<Settings>, projectId?: string): Promise<Settings> {
-  return api<Settings>(withProjectId("/settings", projectId), {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-export interface UpdateCheckResponse {
-  currentVersion: string;
-  latestVersion: string | null;
-  updateAvailable: boolean;
-  lastChecked?: number;
-  disabled?: boolean;
-  error?: string;
-}
-
-export function checkForUpdate(projectId?: string): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>(withProjectId("/update-check", projectId));
-}
-
-export function refreshUpdateCheck(projectId?: string): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>(withProjectId("/update-check/refresh", projectId), {
-    method: "POST",
-  });
-}
-
-export interface UpdateInstallResponse {
-  currentVersion: string;
-  latestVersion: string | null;
-  updated: boolean;
-  error?: string;
-}
-
-export function installUpdate(projectId?: string): Promise<UpdateInstallResponse> {
-  return api<UpdateInstallResponse>(withProjectId("/update-check/install", projectId), {
-    method: "POST",
-  });
-}
-
-export interface RemoteSettings {
-  remoteActiveProvider: "tailscale" | "cloudflare" | null;
-  remoteTailscaleEnabled: boolean;
-  remoteTailscaleHostname: string;
-  remoteTailscaleTargetPort: number;
-  remoteTailscaleAcceptRoutes: boolean;
-  remoteCloudflareEnabled: boolean;
-  remoteCloudflareQuickTunnel: boolean;
-  remoteCloudflareTunnelName: string;
-  remoteCloudflareTunnelToken: string | null;
-  remoteCloudflareIngressUrl: string;
-  remotePersistentToken: string | null;
-  remoteShortLivedEnabled: boolean;
-  remoteShortLivedTtlMs: number;
-  remoteShortLivedMaxTtlMs: number;
-  remoteRememberLastRunning: boolean;
-  remoteWasRunningOnShutdown: boolean;
-  remoteLastStartedProvider: "tailscale" | "cloudflare" | null;
-}
-
-export interface RemoteStatus {
-  provider: "tailscale" | "cloudflare" | null;
-  state: "stopped" | "starting" | "running" | "stopping" | "failed";
-  url: string | null;
-  lastError: string | null;
-  lastErrorCode?: string | null;
-  cloudflaredAvailable?: boolean | null;
-  externalTunnel?: {
-    provider: "tailscale" | "cloudflare";
-    url: string | null;
-  } | null;
-  restore?: {
-    outcome: "applied" | "skipped" | "failed";
-    reason: string;
-    at: string;
-    provider: "tailscale" | "cloudflare" | null;
-    message?: string;
-  };
-}
-
-export function fetchRemoteSettings(projectId?: string): Promise<{ settings: RemoteSettings }> {
-  return api<{ settings: RemoteSettings }>(withProjectId("/remote/settings", projectId));
-}
-
-export function updateRemoteSettings(
-  settings: Partial<RemoteSettings>,
-  projectId?: string,
-): Promise<{ settings: RemoteSettings }> {
-  return api<{ settings: RemoteSettings }>(withProjectId("/remote/settings", projectId), {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-export function fetchRemoteStatus(projectId?: string): Promise<RemoteStatus> {
-  return api<RemoteStatus>(withProjectId("/remote/status", projectId));
-}
-
-export function installCloudflared(projectId?: string): Promise<{ success: boolean; command: string; error?: string }> {
-  return api(withProjectId("/remote/install-cloudflared", projectId), {
-    method: "POST",
-  });
-}
-
-export function activateRemoteProvider(provider: "tailscale" | "cloudflare", projectId?: string): Promise<{ activeProvider: "tailscale" | "cloudflare" }> {
-  return api<{ activeProvider: "tailscale" | "cloudflare" }>(withProjectId("/remote/provider/activate", projectId), {
-    method: "POST",
-    body: JSON.stringify({ provider }),
-  });
-}
-
-export function startRemoteTunnel(projectId?: string): Promise<{ state: "starting" | "running"; provider: string }> {
-  return api<{ state: "starting" | "running"; provider: string }>(withProjectId("/remote/tunnel/start", projectId), {
-    method: "POST",
-  });
-}
-
-export function stopRemoteTunnel(projectId?: string): Promise<{ state: "stopped"; provider: string | null }> {
-  return api<{ state: "stopped"; provider: string | null }>(withProjectId("/remote/tunnel/stop", projectId), {
-    method: "POST",
-  });
-}
-
-export function killExternalTunnel(projectId?: string): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>(withProjectId("/remote/tunnel/kill-external", projectId), {
-    method: "POST",
-  });
-}
-
-export function regenerateRemotePersistentToken(projectId?: string): Promise<{ token: string; maskedToken: string }> {
-  return api<{ token: string; maskedToken: string }>(withProjectId("/remote/token/persistent/regenerate", projectId), {
-    method: "POST",
-  });
-}
-
-export function generateShortLivedRemoteToken(ttlMs: number, projectId?: string): Promise<{ token: string; expiresAt: string; ttlMs: number }> {
-  return api<{ token: string; expiresAt: string; ttlMs: number }>(withProjectId("/remote/token/short-lived/generate", projectId), {
-    method: "POST",
-    body: JSON.stringify({ ttlMs }),
-  });
-}
-
-type RemoteAuthTokenType = "persistent" | "short-lived";
-
-type RemoteLinkRequestOptions = {
-  projectId?: string;
-  tokenType?: RemoteAuthTokenType;
-  ttlMs?: number;
+// Import + re-export skills types so legacy monofile bodies can reference them
+// while hooks/components keep stable import paths via this barrel.
+import type {
+  DiscoveredSkill,
+  CatalogEntry,
+  CatalogFetchResult,
+  ToggleSkillResult,
+  SkillContent,
+  SkillFileEntry,
+  SkillFileContent,
+} from "@fusion/dashboard";
+export type {
+  DiscoveredSkill,
+  CatalogEntry,
+  CatalogFetchResult,
+  ToggleSkillResult,
+  SkillContent,
+  SkillFileEntry,
+  SkillFileContent,
 };
-
-function buildRemoteAuthQuery(
-  format: "text" | "image/svg" | null,
-  tokenType: RemoteAuthTokenType,
-  ttlMs?: number,
-): string {
-  const params = new URLSearchParams();
-  if (format) {
-    params.set("format", format);
-  }
-  params.set("tokenType", tokenType);
-  if (tokenType === "short-lived" && typeof ttlMs === "number" && Number.isFinite(ttlMs)) {
-    params.set("ttlMs", String(ttlMs));
-  }
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
-export function fetchRemoteUrl(
-  options: RemoteLinkRequestOptions = {},
-): Promise<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null }> {
-  const { projectId, tokenType = "persistent", ttlMs } = options;
-  const query = buildRemoteAuthQuery(null, tokenType, ttlMs);
-  return api<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null }>(withProjectId(`/remote/url${query}`, projectId));
-}
-
-export function fetchRemoteQr(
-  format: "text" | "image/svg" = "text",
-  options: RemoteLinkRequestOptions = {},
-): Promise<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null; format: "text" | "image/svg"; data?: string }> {
-  const { projectId, tokenType = "persistent", ttlMs } = options;
-  const query = buildRemoteAuthQuery(format, tokenType, ttlMs);
-  return api<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null; format: "text" | "image/svg"; data?: string }>(withProjectId(`/remote/qr${query}`, projectId));
-}
-
-export function fetchMemory(projectId?: string): Promise<{ content: string }> {
-  return api<{ content: string }>(withProjectId("/memory", projectId));
-}
-
-export function saveMemory(content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-export interface MemoryFileInfo {
-  path: string;
-  label: string;
-  layer: "long-term" | "daily" | "dreams";
-  size: number;
-  updatedAt: string;
-}
-
-export function fetchMemoryFiles(projectId?: string): Promise<{ files: MemoryFileInfo[] }> {
-  return api<{ files: MemoryFileInfo[] }>(withProjectId("/memory/files", projectId));
-}
-
-export function fetchMemoryFile(path: string, projectId?: string): Promise<{ path: string; content: string }> {
-  const query = `path=${encodeURIComponent(path)}`;
-  return api<{ path: string; content: string }>(withProjectId(`/memory/file?${query}`, projectId));
-}
-
-export function saveMemoryFile(path: string, content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory/file", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ path, content }),
-  });
-}
-
-/**
- * Compact memory content using AI to distill it down to the most important insights.
- * Reads one memory file, compacts it via AI, and writes the result back.
- *
- * Backwards-compatible call patterns:
- * - compactMemory(projectId?)
- * - compactMemory(path, projectId?)
- *
- * @param pathOrProjectId - Memory file path or legacy projectId-only argument
- * @param projectId - Optional project ID for multi-project support
- * @returns Promise resolving to the compacted memory content
- */
-export function compactMemory(
-  pathOrProjectId?: string,
-  projectId?: string,
-): Promise<{ path?: string; content: string }> {
-  let path: string | undefined;
-  let effectiveProjectId = projectId;
-
-  if (projectId !== undefined) {
-    path = pathOrProjectId;
-  } else if (typeof pathOrProjectId === "string" && pathOrProjectId.trim().length > 0) {
-    const trimmed = pathOrProjectId.trim();
-    const looksLikeMemoryPath = trimmed.includes("/") || trimmed.endsWith(".md") || trimmed.startsWith(".");
-    if (looksLikeMemoryPath) {
-      path = trimmed;
-    } else {
-      effectiveProjectId = trimmed;
-    }
-  }
-
-  return api<{ path?: string; content: string }>(withProjectId("/memory/compact", effectiveProjectId), {
-    method: "POST",
-    body: JSON.stringify(path ? { path } : {}),
-  });
-}
-
-/**
- * Trigger manual memory dream processing.
- * Synthesizes daily notes into dreams and promotes durable lessons to long-term memory.
- *
- * @param projectId - Optional project ID for multi-project support
- * @returns Promise resolving to dream processing result
- */
-export function triggerMemoryDreams(projectId?: string): Promise<{
-  success: boolean;
-  summary?: string;
-  dreamsWritten?: boolean;
-  longTermUpdatesWritten?: boolean;
-  error?: string;
-}> {
-  return api(withProjectId("/memory/dream", projectId), {
-    method: "POST",
-  });
-}
-
-/** Memory audit report type (mirrors @fusion/core MemoryAuditReport) */
-export interface MemoryAuditReport {
-  generatedAt: string;
-  workingMemory: {
-    exists: boolean;
-    size: number;
-    sectionCount: number;
-    lastModified?: string;
-  };
-  insightsMemory: {
-    exists: boolean;
-    size: number;
-    insightCount: number;
-    categories: Record<string, number>;
-    lastUpdated?: string;
-  };
-  extraction: {
-    runAt: string;
-    success: boolean;
-    insightCount: number;
-    duplicateCount: number;
-    skippedCount: number;
-    summary: string;
-    error?: string;
-  };
-  pruning: {
-    applied: boolean;
-    reason: string;
-    sizeDelta: number;
-    originalSize: number;
-    newSize: number;
-  };
-  checks: Array<{
-    id: string;
-    name: string;
-    passed: boolean;
-    details: string;
-  }>;
-  health: "healthy" | "warning" | "issues";
-}
-
-/**
- * Fetch memory insights content.
- * Returns { content: string | null, exists: boolean }.
- * content is null when no insights file exists yet.
- */
-export function fetchMemoryInsights(projectId?: string): Promise<{ content: string | null; exists: boolean }> {
-  return api<{ content: string | null; exists: boolean }>(withProjectId("/memory/insights", projectId));
-}
-
-/**
- * Save memory insights content.
- * The insights file stores parsed long-term memory grouped by category.
- */
-export function saveMemoryInsights(content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory/insights", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-/**
- * Trigger AI-powered insight extraction from working memory.
- * Reads working memory, generates insights via AI, merges/prunes existing insights,
- * and generates an audit report.
- *
- * Returns: { success: boolean, summary: string, insightCount: number, pruned: boolean }
- */
-export function triggerInsightExtraction(projectId?: string): Promise<{ success: boolean; summary: string; insightCount: number; pruned: boolean }> {
-  return api<{ success: boolean; summary: string; insightCount: number; pruned: boolean }>(withProjectId("/memory/extract", projectId), {
-    method: "POST",
-  });
-}
-
-/**
- * Fetch memory audit report.
- * The audit checks working memory and insights memory state, extraction history,
- * and generates health recommendations.
- */
-export function fetchMemoryAudit(projectId?: string): Promise<MemoryAuditReport> {
-  return api<MemoryAuditReport>(withProjectId("/memory/audit", projectId));
-}
-
-/**
- * Fetch quick memory stats (lightweight, no AI).
- * Useful for dashboard displays showing memory size and insight counts.
- *
- * Returns: { workingMemorySize: number, insightsSize: number, insightsExists: boolean }
- */
-export function fetchMemoryStats(projectId?: string): Promise<{ workingMemorySize: number; insightsSize: number; insightsExists: boolean }> {
-  return api<{ workingMemorySize: number; insightsSize: number; insightsExists: boolean }>(withProjectId("/memory/stats", projectId));
-}
-
-/**
- * Memory backend capabilities returned by the backend status API.
- */
-export interface MemoryBackendCapabilities {
-  readable: boolean;
-  writable: boolean;
-  supportsAtomicWrite: boolean;
-  hasConflictResolution: boolean;
-  persistent: boolean;
-}
-
-/**
- * Memory backend status response from GET /api/memory/backend
- */
-export interface MemoryBackendStatus {
-  /** The effective backend type after runtime resolution */
-  currentBackend: string;
-  /** Capabilities of the effective backend */
-  capabilities: MemoryBackendCapabilities;
-  /** List of registered backend types available */
-  availableBackends: string[];
-  /** Whether the qmd CLI is available on PATH */
-  qmdAvailable?: boolean;
-  /** Suggested install command when qmd is unavailable */
-  qmdInstallCommand?: string;
-}
-
-export interface MemorySearchResult {
-  path: string;
-  lineStart: number;
-  lineEnd: number;
-  snippet: string;
-  score: number;
-  backend: string;
-}
-
-export interface MemoryRetrievalTestResult {
-  query: string;
-  qmdAvailable: boolean;
-  usedFallback: boolean;
-  qmdInstallCommand: string;
-  results: MemorySearchResult[];
-}
-
-export interface QmdInstallResult {
-  success: boolean;
-  qmdAvailable: boolean;
-  qmdInstallCommand: string;
-}
-
-/**
- * Fetch the current memory backend status and capabilities.
- * Use this to determine which backend is active and what operations it supports.
- */
-export function fetchMemoryBackendStatus(projectId?: string): Promise<MemoryBackendStatus> {
-  return api<MemoryBackendStatus>(withProjectId("/memory/backend", projectId));
-}
-
-export function installQmd(projectId?: string): Promise<QmdInstallResult> {
-  return api<QmdInstallResult>(withProjectId("/memory/install-qmd", projectId), {
-    method: "POST",
-  });
-}
-
-export function testMemoryRetrieval(query: string, projectId?: string): Promise<MemoryRetrievalTestResult> {
-  return api<MemoryRetrievalTestResult>(withProjectId("/memory/test", projectId), {
-    method: "POST",
-    body: JSON.stringify({ query }),
-  });
-}
-
-/** Fetch global (user-level) settings from ~/.fusion/settings.json */
-export function fetchGlobalSettings(options?: FetchOptions): Promise<GlobalSettings> {
-  return dedupe("/settings/global", () => api<GlobalSettings>("/settings/global"), options);
-}
-
-/** Update global (user-level) settings. These persist across all fn projects. */
-export function updateGlobalSettings(settings: Partial<GlobalSettings>): Promise<Settings> {
-  return api<Settings>("/settings/global", {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-/** Fetch settings separated by scope: { global, project } */
-export function fetchSettingsByScope(projectId?: string): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
-  return api<{ global: GlobalSettings; project: Partial<ProjectSettings> }>(withProjectId("/settings/scopes", projectId));
-}
-
-export interface PiExtensionEntry {
-  id: string;
-  name: string;
-  path: string;
-  source: "fusion-global" | "pi-global" | "fusion-project" | "pi-project" | "package";
-  enabled: boolean;
-}
-
-export interface PiExtensionSettings {
-  extensions: PiExtensionEntry[];
-  disabledIds: string[];
-  settingsPath: string;
-}
-
-export function fetchPiExtensions(projectId?: string): Promise<PiExtensionSettings> {
-  return api<PiExtensionSettings>(withProjectId("/settings/pi-extensions", projectId));
-}
-
-export function updatePiExtensions(disabledIds: string[], projectId?: string): Promise<PiExtensionSettings> {
-  return api<PiExtensionSettings>(withProjectId("/settings/pi-extensions", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ disabledIds }),
-  });
-}
-
-/**
- * Test a notification provider by sending a test notification.
- * Supports "ntfy" and "webhook" provider IDs.
- */
-export function testNotification(providerId: string, config?: Record<string, unknown>, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/settings/test-notification", projectId), {
-    method: "POST",
-    body: JSON.stringify({ providerId, ...(config ?? {}) }),
-  });
-}
-
-/**
- * Backward-compatible ntfy test helper.
- * Wraps testNotification() while preserving the legacy function signature.
- */
-export function testNtfyNotification(
-  config?: {
-    ntfyEnabled?: boolean;
-    ntfyTopic?: string;
-    ntfyBaseUrl?: string;
-    ntfyAccessToken?: string;
-  },
-  projectId?: string,
-): Promise<{ success: boolean }> {
-  return testNotification("ntfy", config as Record<string, unknown> | undefined, projectId);
-}
-
-/** Pi extension settings from ~/.pi/agent/settings.json (global scope) */
-export interface PiSettings {
-  packages: Array<string | { source: string; extensions?: string[]; skills?: string[]; prompts?: string[]; themes?: string[] }>;
-  extensions: string[];
-  skills: string[];
-  prompts: string[];
-  themes: string[];
-}
-
-/** Fetch pi extension settings (global scope from ~/.pi/agent/settings.json) */
-export function fetchPiSettings(): Promise<PiSettings> {
-  return api<PiSettings>("/pi-settings");
-}
-
-/** Update pi extension settings (partial update, global scope) */
-export async function updatePiSettings(settings: Partial<PiSettings>): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/pi-settings", {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-/** Install a new pi package source (adds to ~/.pi/agent/settings.json) */
-export async function installPiPackage(source: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/pi-settings/packages", {
-    method: "POST",
-    body: JSON.stringify({ source }),
-  });
-}
-
-/** Reinstall Fusion's bundled pi package and ensure it remains in global Pi settings. */
-export async function reinstallFusionPiPackage(projectId?: string): Promise<{ success: boolean; source: string }> {
-  return api<{ success: boolean; source: string }>(withProjectId("/pi-settings/reinstall-fusion", projectId), {
-    method: "POST",
-  });
-}
-
-export async function uploadAttachment(id: string, file: File, projectId?: string): Promise<TaskAttachment> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(buildApiUrl(withProjectId(`/tasks/${id}/attachments`, projectId)), {
-    method: "POST",
-    headers: withTokenHeader(),
-    body: formData,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data as { error?: string }).error || "Upload failed");
-  return data as TaskAttachment;
-}
-
-export async function deleteAttachment(id: string, filename: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/attachments/${filename}`, projectId), { method: "DELETE" });
-}
-
-export function fetchAgentLogs(
-  taskId: string,
-  projectId?: string,
-  options?: { limit?: number; offset?: number },
-): Promise<AgentLogEntry[]> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) {
-    params.set("limit", String(options.limit));
-  }
-  if (options?.offset !== undefined) {
-    params.set("offset", String(options.offset));
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  return api<AgentLogEntry[]>(withProjectId(`/tasks/${taskId}/logs${suffix}`, projectId));
-}
-
-/**
- * Fetch agent logs with pagination metadata.
- * Returns entries along with total count and hasMore flag from response headers.
- */
-export async function fetchAgentLogsWithMeta(
-  taskId: string,
-  projectId?: string,
-  options?: { limit?: number; offset?: number },
-): Promise<{ entries: AgentLogEntry[]; total: number; hasMore: boolean }> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) {
-    params.set("limit", String(options.limit));
-  }
-  if (options?.offset !== undefined) {
-    params.set("offset", String(options.offset));
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  const url = withProjectId(`/tasks/${taskId}/logs${suffix}`, projectId);
-
-  const response = await fetch(buildApiUrl(url), {
-    headers: withTokenHeader(),
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: "Failed to fetch agent logs" }));
-    throw new Error((data as { error?: string }).error || `HTTP ${response.status}`);
-  }
-
-  const entries = await response.json() as AgentLogEntry[];
-
-  // Read pagination headers
-  const total = response.headers.has("X-Total-Count")
-    ? parseInt(response.headers.get("X-Total-Count")!, 10)
-    : entries.length;
-  const hasMore = response.headers.has("X-Has-More")
-    ? response.headers.get("X-Has-More") === "true"
-    : false;
-
-  return { entries, total, hasMore };
-}
-
-export function fetchSessionFiles(taskId: string, projectId?: string): Promise<string[]> {
-  return api<string[]>(withProjectId(`/tasks/${taskId}/session-files`, projectId));
-}
-
-export function fetchTaskComments(id: string, projectId?: string): Promise<TaskComment[]> {
-  return api<TaskComment[]>(withProjectId(`/tasks/${id}/comments`, projectId));
-}
-
-export function addTaskComment(id: string, text: string, author?: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ text, author }),
-  });
-}
-
-export function updateTaskComment(id: string, commentId: string, text: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments/${commentId}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify({ text }),
-  });
-}
-
-export function deleteTaskComment(id: string, commentId: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments/${commentId}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-// ── Task Document API Functions ──────────────────────────────────────────────
-
-export function fetchTaskDocuments(taskId: string, projectId?: string): Promise<TaskDocument[]> {
-  return api<TaskDocument[]>(withProjectId(`/tasks/${taskId}/documents`, projectId));
-}
-
-export function fetchTaskDocument(taskId: string, key: string, projectId?: string): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId));
-}
-
-export function fetchTaskDocumentRevisions(taskId: string, key: string, projectId?: string): Promise<TaskDocumentRevision[]> {
-  return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${key}/revisions`, projectId));
-}
-
-export interface FetchAllDocumentsOptions {
-  q?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface MarkdownFileEntry {
-  path: string;
-  name: string;
-  size: number;
-  mtime: string;
-}
-
-export interface MarkdownFileListResponse {
-  files: MarkdownFileEntry[];
-}
-
-export type { Artifact, ArtifactType, ArtifactWithTask };
-
-export interface FetchArtifactsOptions {
-  type?: ArtifactType;
-  authorId?: string;
-  taskId?: string;
-  q?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export async function fetchArtifacts(
-  options?: FetchArtifactsOptions,
-  projectId?: string,
-): Promise<ArtifactWithTask[]> {
-  const params = new URLSearchParams();
-  if (options?.type) params.set("type", options.type);
-  if (options?.authorId) params.set("authorId", options.authorId);
-  if (options?.taskId) params.set("taskId", options.taskId);
-  if (options?.q) params.set("q", options.q);
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  const queryString = params.toString();
-  const path = `/artifacts${queryString ? `?${queryString}` : ""}`;
-  return api<ArtifactWithTask[]>(withProjectId(path, projectId));
-}
-
-export function artifactMediaUrl(id: string, projectId?: string): string {
-  return buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId));
-}
-
-/*
-FNXC:ArtifactRegistry 2026-07-10-15:20:
-The Artifacts view document viewer needs the full artifact INCLUDING inline content (list responses strip content), and edit mode persists title/description/content through PATCH.
-*/
-export async function fetchArtifact(id: string, projectId?: string): Promise<Artifact> {
-  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId));
-}
-
-export interface UpdateArtifactInput {
-  title?: string;
-  description?: string;
-  content?: string;
-}
-
-export async function updateArtifact(id: string, updates: UpdateArtifactInput, projectId?: string): Promise<Artifact> {
-  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-}
-
-export async function fetchAllDocuments(
-  options?: FetchAllDocumentsOptions,
-  projectId?: string,
-): Promise<TaskDocumentWithTask[]> {
-  const params = new URLSearchParams();
-  if (options?.q) params.set("q", options.q);
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  const queryString = params.toString();
-  const path = `/documents${queryString ? `?${queryString}` : ""}`;
-  return api<TaskDocumentWithTask[]>(withProjectId(path, projectId));
-}
-
-export interface FetchProjectMarkdownFilesOptions {
-  showHidden?: boolean;
-}
-
-export function fetchProjectMarkdownFiles(
-  projectId?: string,
-  options?: FetchProjectMarkdownFilesOptions,
-): Promise<MarkdownFileListResponse> {
-  const params = new URLSearchParams();
-  if (options?.showHidden) {
-    params.set("showHidden", "1");
-  }
-
-  const query = params.toString();
-  const path = `/files/markdown-list${query ? `?${query}` : ""}`;
-
-  return api<MarkdownFileListResponse>(withProjectId(path, projectId));
-}
-
-export function putTaskDocument(
-  taskId: string,
-  key: string,
-  content: string,
-  opts?: { author?: string; metadata?: Record<string, unknown> },
-  projectId?: string,
-): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
-    method: "PUT",
-    body: JSON.stringify({
-      content,
-      author: opts?.author,
-      metadata: opts?.metadata,
-    }),
-  });
-}
-
-export function deleteTaskDocument(taskId: string, key: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
-    method: "DELETE",
-  });
-}
 
 export function addSteeringComment(id: string, text: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/steer`, projectId), {
@@ -2751,10 +1319,15 @@ export function apiFetchGitHubIssues(
 }
 
 /** Import a specific GitHub issue as a fn task */
-export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string): Promise<Task> {
+/*
+FNXC:GitHubImportTranslate 2026-07-15-14:10:
+`targetLocale` forwards the panel's ACTIVE locale so an imported task carries the same translation the operator previewed.
+The server also falls back to the global `language` setting, so this argument is not load-bearing for the common case — it exists for the one case the server cannot know: a surface whose locale was browser-detected while global `language` is unset (PR #2141 review, P1).
+*/
+export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string, targetLocale?: string): Promise<Task> {
   return api<Task>(withProjectId("/github/issues/import", projectId), {
     method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumber }),
+    body: JSON.stringify({ owner, repo, issueNumber, ...(targetLocale ? { targetLocale } : {}) }),
   });
 }
 
@@ -2774,11 +1347,13 @@ export function apiBatchImportGitHubIssues(
   repo: string,
   issueNumbers: number[],
   delayMs?: number,
-  projectId?: string
+  projectId?: string,
+  /** See apiImportGitHubIssue: batch import must carry translations identically. */
+  targetLocale?: string,
 ): Promise<{ results: BatchImportResult[] }> {
   return api<{ results: BatchImportResult[] }>(withProjectId("/github/issues/batch-import", projectId), {
     method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumbers, delayMs }),
+    body: JSON.stringify({ owner, repo, issueNumbers, delayMs, ...(targetLocale ? { targetLocale } : {}) }),
   });
 }
 
@@ -2866,11 +1441,44 @@ export async function apiCloseGitHubIssue(repo: string, number: number): Promise
   });
 }
 
+
+/*
+FNXC:GitHubImport 2026-07-17-12:00:
+Posts a new comment to the upstream GitHub issue. This is deliberately separate from
+apiImportGitHubComment, which creates a Fusion resolve-feedback task from an existing comment.
+*/
+export async function apiAddGitHubIssueComment(repo: string, number: number, body: string): Promise<void> {
+  await api<{ ok: boolean }>("/github/issues/comment", {
+    method: "POST",
+    body: JSON.stringify({ repo, number, body }),
+  });
+}
+
 /** Import a specific GitHub pull request as a fn review task */
 export function apiImportGitHubPull(owner: string, repo: string, prNumber: number, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId("/github/pulls/import", projectId), {
     method: "POST",
     body: JSON.stringify({ owner, repo, prNumber }),
+  });
+}
+
+/**
+ * FNXC:GitHubImport 2026-07-16-18:05:
+ * Comment imports preserve the comment payload and issue/PR source context so the server can create a separately auditable resolve-feedback task without closing the detail window.
+ */
+export function apiImportGitHubComment(
+  params: {
+    owner: string;
+    repo: string;
+    number: number;
+    type: "issue" | "pull";
+    comment: Pick<GitHubCommentDetail, "author" | "body" | "createdAt">;
+  },
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId("/github/comments/import", projectId), {
+    method: "POST",
+    body: JSON.stringify(params),
   });
 }
 
@@ -4032,14 +2640,12 @@ export type AgentOnboardingStreamEvent =
 export function startPlanning(
   initialPlan: string,
   projectId?: string,
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+
 ): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/start", projectId), {
     method: "POST",
     body: JSON.stringify({
       initialPlan,
-      planningDepth: planningOptions?.planningDepth,
-      customQuestionCount: planningOptions?.customQuestionCount,
     }),
   });
 }
@@ -4065,7 +2671,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+  planningOptions?: { clarificationEnabled?: boolean },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -4075,11 +2681,15 @@ export function startPlanningStreaming(
       planningModelProvider: modelOverride?.planningModelProvider,
       planningModelId: modelOverride?.planningModelId,
       thinkingLevel: modelOverride?.thinkingLevel,
-      planningDepth: planningOptions?.planningDepth,
-      customQuestionCount: planningOptions?.customQuestionCount,
+      clarificationEnabled: planningOptions?.clarificationEnabled,
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });
+}
+
+/** Explicitly validate the current running planning summary before creating work. */
+export function validatePlanningSession(sessionId: string, projectId?: string): Promise<{ summary: PlanningSummary; validated: boolean }> {
+  return api<{ summary: PlanningSummary; validated: boolean }>(withProjectId(`/planning/${encodeURIComponent(sessionId)}/validate`, projectId), { method: "POST" });
 }
 
 /** Submit a response to the current planning question */
@@ -4087,11 +2697,10 @@ export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-  tabId?: string,
 ): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses, tabId }),
+    body: JSON.stringify({ sessionId, responses }),
   });
 }
 
@@ -4099,13 +2708,13 @@ export function respondToPlanning(
 export function rewindPlanningSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
+  questionId?: string,
 ): Promise<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }> {
   return api<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/back`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
+      ...(questionId ? { body: JSON.stringify({ questionId }) } : {}),
     },
   );
 }
@@ -4114,13 +2723,11 @@ export function rewindPlanningSession(
 export function retryPlanningSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/retry`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
@@ -4129,22 +2736,20 @@ export function retryPlanningSession(
 export function stopPlanningGeneration(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean }> {
   return api<{ success: boolean }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/stop`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
 
 /** Cancel an active planning session */
-export function cancelPlanning(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
+export function cancelPlanning(sessionId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId("/planning/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, tabId }),
+    body: JSON.stringify({ sessionId }),
   });
 }
 
@@ -5825,18 +4430,22 @@ export function fetchWorkflowSettingValues(
  *  `values` map is validated against the named workflow's declarations; a `null`
  *  value deletes that key. A typed rejection surfaces as an ApiRequestError with
  *  `status: 400` and `details.rejections: WorkflowSettingRejection[]`. */
-export function updateWorkflowSettingValues(
+export async function updateWorkflowSettingValues(
   id: string,
   values: Record<string, unknown>,
   projectId?: string,
 ): Promise<WorkflowSettingValuesPayload> {
-  return api<WorkflowSettingValuesPayload>(
+  const payload = await api<WorkflowSettingValuesPayload>(
     withProjectId(`/workflows/${encodeURIComponent(id)}/setting-values`, projectId),
     {
       method: "PATCH",
       body: JSON.stringify({ values }),
     },
   );
+  if (Object.prototype.hasOwnProperty.call(values, "plannerOversightLevel")) {
+    notifyWorkflowSettingValuesUpdated(id, projectId);
+  }
+  return payload;
 }
 
 /** Read per-node prompt overrides for a workflow in the current project context. */
@@ -6176,6 +4785,113 @@ export async function draftGoalDescription(title: string, projectId?: string): P
   return response.description;
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-14-12:00:
+Client for POST /api/ai/translate-text — used by the GitHub/GitLab import preview when issue/PR prose is not the dashboard language.
+Structured title+body fields keep markdown import content intact; shares the AI-helper rate-limit budget with refine/draft.
+*/
+export interface TranslateImportFields {
+  title?: string;
+  body?: string;
+}
+
+export interface TranslateImportContentResponse {
+  fields: TranslateImportFields;
+}
+
+/**
+ * Translate import-preview title/body into the dashboard locale via AI.
+ * @param fields - Original title and/or body
+ * @param targetLocale - Active dashboard locale
+ * @param projectId - Optional project scope for settings/MCP
+ * @param sourceLocale - Optional detection hint for the model
+ */
+export async function translateImportContent(
+  fields: TranslateImportFields,
+  targetLocale: string,
+  projectId?: string,
+  sourceLocale?: string,
+): Promise<TranslateImportFields> {
+  const response = await api<TranslateImportContentResponse>(
+    withProjectId("/ai/translate-text", projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fields,
+        targetLocale,
+        ...(sourceLocale ? { sourceLocale } : {}),
+      }),
+    },
+  );
+  return response.fields;
+}
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Auto-translate the visible import list in ONE request. The server reads through its durable cache, so a repeat load of the same repo returns instantly and bills nothing; the same cache is what the import path reads, so an imported task carries the translation shown here.
+The server enforces the auto-translate setting and the 50-issue cap itself and echoes `enabled`/`capped` back, so the client never has to duplicate that policy.
+*/
+export interface AutoTranslateImportItem {
+  number: number;
+  title: string;
+  body: string | null;
+  state?: "open" | "closed";
+}
+
+export interface AutoTranslateImportResponse {
+  translations: Record<number, { title: string; body: string }>;
+  enabled: boolean;
+  targetLocale: string | null;
+  /** True when more foreign issues existed than the per-load cap. */
+  capped: boolean;
+}
+
+export async function autoTranslateImportIssues(
+  owner: string,
+  repo: string,
+  items: AutoTranslateImportItem[],
+  targetLocale: string,
+  projectId?: string,
+): Promise<AutoTranslateImportResponse> {
+  return api<AutoTranslateImportResponse>(
+    withProjectId("/github/issues/auto-translate", projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({ owner, repo, items, targetLocale }),
+    },
+  );
+}
+
+/** User-facing error copy for translateImportContent failures (toast/banner). */
+export const TRANSLATE_ERROR_MESSAGES = {
+  RATE_LIMIT: "Too many translation requests. Please wait an hour.",
+  NETWORK: "Failed to translate content. Please try again.",
+} as const;
+
+/**
+ * Map a translateImportContent error to banner-safe copy.
+ */
+export function getTranslateErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return TRANSLATE_ERROR_MESSAGES.NETWORK;
+  }
+
+  const message = error.message.toLowerCase();
+  if (message.includes("rate limit") || message.includes("429")) {
+    return TRANSLATE_ERROR_MESSAGES.RATE_LIMIT;
+  }
+  if (
+    message.startsWith("fields") ||
+    message.startsWith("text to translate") ||
+    message.startsWith("targetlocale") ||
+    message.includes("targetlocale must") ||
+    message.includes("sourceLocale must")
+  ) {
+    return error.message;
+  }
+  return TRANSLATE_ERROR_MESSAGES.NETWORK;
+}
+
 export function startSubtaskBreakdown(description: string, projectId?: string): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/subtasks/start-streaming", projectId), {
     method: "POST",
@@ -6186,14 +4902,10 @@ export function startSubtaskBreakdown(description: string, projectId?: string): 
 export function retrySubtaskSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/subtasks/${encodeURIComponent(sessionId)}/retry`, projectId),
-    {
-      method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
-    },
+    { method: "POST" },
   );
 }
 
@@ -6318,10 +5030,10 @@ export function createTasksFromBreakdown(
   });
 }
 
-export function cancelSubtaskBreakdown(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
+export function cancelSubtaskBreakdown(sessionId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId("/subtasks/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, tabId }),
+    body: JSON.stringify({ sessionId }),
   });
 }
 
@@ -6355,11 +5067,6 @@ export interface AgentPromptSizePoint {
   totalChars: number;
 }
 
-export function withProjectId(path: string, projectId?: string): string {
-  if (!projectId) return path;
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}projectId=${encodeURIComponent(projectId)}`;
-}
 
 /** Append repoPath query param for workspace-mode sub-repo targeting */
 function withRepoPath(path: string, repoPath?: string): string {
@@ -6371,33 +5078,6 @@ function withRepoPath(path: string, repoPath?: string): string {
 /** Fetch workspace sub-repos for a project */
 export function fetchWorkspaceRepos(projectId?: string): Promise<{ repos: string[] }> {
   return api<{ repos: string[] }>(withProjectId("/git/workspace-repos", projectId));
-}
-
-/**
- * Rewrite a path to route through the node proxy when viewing a remote node.
- * When nodeId is provided and differs from localNodeId (i.e., it's a remote node),
- * rewrites the path from `/tasks` to `/proxy/${encodeURIComponent(nodeId)}/tasks`.
- * When nodeId is undefined or matches localNodeId, returns the path unchanged.
- */
-export function withNodeId(path: string, nodeId?: string, localNodeId?: string): string {
-  if (!nodeId || nodeId === localNodeId) return path;
-  // Rewrite path to proxy endpoint: /tasks -> /proxy/:nodeId/tasks
-  // Strip leading /api prefix if present since proxyApi adds it
-  const apiPrefix = "/api";
-  const pathWithoutPrefix = path.startsWith(apiPrefix) ? path.slice(apiPrefix.length) : path;
-  return `/proxy/${encodeURIComponent(nodeId)}${pathWithoutPrefix}`;
-}
-
-/**
- * Make an API request, optionally routing through the node proxy for remote nodes.
- * When nodeId is provided and differs from localNodeId, the request is routed
- * through /api/proxy/:nodeId/... instead of directly.
- */
-export function proxyApi<T>(path: string, opts?: RequestInit & { nodeId?: string; localNodeId?: string }): Promise<T> {
-  // Extract nodeId/localNodeId from opts before passing to api()
-  const { nodeId, localNodeId, ...fetchOpts } = opts ?? {};
-  const resolvedPath = withNodeId(path, nodeId, localNodeId);
-  return api<T>(resolvedPath, fetchOpts);
 }
 
 /** Fetch all agents, optionally filtered by state or role */
@@ -7217,6 +5897,16 @@ export interface ProjectInfo {
 }
 
 /** Project health metrics */
+export interface CodebaseMetrics {
+  tokenEstimate: number;
+  sourceFileCount: number;
+  sourceByteCount: number;
+  diskBytes: number;
+  diskFileCount: number;
+  method: string;
+  truncated: boolean;
+}
+
 export interface ProjectHealth {
   projectId: string;
   status: "active" | "paused" | "errored" | "initializing";
@@ -7297,6 +5987,8 @@ export interface ProjectCreateInput {
   cloneUrl?: string;
   workspaceMode?: boolean;
   taskPrefix?: string;
+  /** Confirmed "create anyway without a git repo" when git is missing on the host (never valid for clone mode). */
+  skipGitInit?: boolean;
 }
 
 export type DockerNodeConfigInfo = DockerNodeConfig;
@@ -7854,6 +6546,10 @@ export function fetchProjectHealth(id: string): Promise<ProjectHealth> {
   return api<ProjectHealth>(`/projects/${encodeURIComponent(id)}/health`);
 }
 
+export function fetchCodebaseMetrics(id: string): Promise<CodebaseMetrics> {
+  return api<CodebaseMetrics>(`/projects/${encodeURIComponent(id)}/codebase-metrics`);
+}
+
 /** Fetch executor statistics for the status bar.
  * 
  * Returns settings-based values and lastActivityAt.
@@ -8255,7 +6951,7 @@ export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]>
 }
 
 /** Create a new mission */
-export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"]; taskPrefix?: string }, projectId?: string): Promise<Mission> {
+export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; autoMerge?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"]; taskPrefix?: string }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId("/missions", projectId), {
     method: "POST",
     body: JSON.stringify(input),
@@ -8267,10 +6963,10 @@ export function fetchMission(missionId: string, projectId?: string): Promise<Mis
   return api<MissionWithHierarchy>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId));
 }
 
-/** Update mission. Pass `taskPrefix: null` to clear a per-mission override (inherit project prefix). */
+/** Update mission. Pass `taskPrefix: null` or `autoMerge: null` to clear the corresponding per-mission override. */
 export function updateMission(
   missionId: string,
-  updates: Partial<Omit<Mission, "taskPrefix">> & { taskPrefix?: string | null },
+  updates: Partial<Omit<Mission, "taskPrefix" | "autoMerge">> & { taskPrefix?: string | null; autoMerge?: boolean | null },
   projectId?: string,
 ): Promise<Mission> {
   return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
@@ -8842,11 +7538,10 @@ export function respondToMissionInterview(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-  tabId?: string,
 ): Promise<MissionInterviewResponse> {
   return api<MissionInterviewResponse>(withProjectId("/missions/interview/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses, tabId }),
+    body: JSON.stringify({ sessionId, responses }),
   });
 }
 
@@ -8854,22 +7549,18 @@ export function respondToMissionInterview(
 export function retryMissionInterviewSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/missions/interview/${encodeURIComponent(sessionId)}/retry`, projectId),
-    {
-      method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
-    },
+    { method: "POST" },
   );
 }
 
 /** Cancel an active mission interview session */
-export function cancelMissionInterview(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
+export function cancelMissionInterview(sessionId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId("/missions/interview/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, tabId }),
+    body: JSON.stringify({ sessionId }),
   });
 }
 
@@ -8882,14 +7573,10 @@ export async function fetchMissionInterviewDrafts(projectId?: string): Promise<M
 export function discardMissionInterviewDraft(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ removed: boolean }> {
   return api<{ removed: boolean }>(
     withProjectId(`/missions/interview/drafts/${encodeURIComponent(sessionId)}/discard`, projectId),
-    {
-      method: "POST",
-      body: JSON.stringify({ tabId }),
-    },
+    { method: "POST" },
   );
 }
 
@@ -9099,11 +7786,10 @@ export function respondToMilestoneInterview(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-  tabId?: string,
 ): Promise<TargetInterviewResponse> {
   return api<TargetInterviewResponse>(buildMilestoneInterviewUrl(sessionId, "/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses, tabId }),
+    body: JSON.stringify({ sessionId, responses }),
   });
 }
 
@@ -9235,11 +7921,10 @@ export function respondToSliceInterview(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-  tabId?: string,
 ): Promise<TargetInterviewResponse> {
   return api<TargetInterviewResponse>(buildSliceInterviewUrl(sessionId, "/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses, tabId }),
+    body: JSON.stringify({ sessionId, responses }),
   });
 }
 
@@ -9443,7 +8128,7 @@ export function reorderTodoItems(listId: string, itemIds: string[], projectId?: 
   });
 }
 
-// ── AI Sessions (Background Tasks) ─────────────────────────────────────────
+// ── AI Sessions ────────────────────────────────────────────────────────────
 
 /**
  * Needs-attention variants for a CLI agent session (CLI Agent Executor, U11).
@@ -9479,7 +8164,6 @@ export interface AiSessionSummary {
   /** Server-derived preview of the in-progress initialPlan; only set for draft planning sessions. */
   preview?: string;
   projectId: string | null;
-  lockedByTab: string | null;
   updatedAt: string;
   archived?: boolean;
 }
@@ -9498,7 +8182,6 @@ export interface AiSessionDetail extends AiSessionSummary {
   thinkingOutput: string;
   error: string | null;
   createdAt: string;
-  lockedAt: string | null;
 }
 
 export function parseConversationHistory(raw: string): ConversationHistoryEntry[] {
@@ -9514,12 +8197,13 @@ export function parseConversationHistory(raw: string): ConversationHistoryEntry[
 
 export async function fetchAiSessions(
   projectId?: string,
-  options?: { includeCompleted?: boolean; includeArchived?: boolean },
+  options?: { includeCompleted?: boolean; includeArchived?: boolean; type?: AiSessionSummary["type"] },
 ): Promise<AiSessionSummary[]> {
   const search = new URLSearchParams();
   if (projectId) search.set("projectId", projectId);
   if (options?.includeCompleted) search.set("includeCompleted", "1");
   if (options?.includeArchived) search.set("includeArchived", "1");
+  if (options?.type) search.set("type", options.type);
   const qs = search.toString();
   const res = await fetch(buildApiUrl(`/ai-sessions${qs ? `?${qs}` : ""}`), {
     headers: withTokenHeader(),
@@ -9549,37 +8233,12 @@ export async function fetchAiSession(id: string): Promise<AiSessionDetail | null
   return res.json();
 }
 
-export async function acquireSessionLock(
-  sessionId: string,
-  tabId: string,
-): Promise<{ acquired: boolean; currentHolder: string | null }> {
-  const result = await api<{ acquired: boolean; currentHolder?: string | null }>(
-    `/ai-sessions/${encodeURIComponent(sessionId)}/lock`,
-    {
-      method: "POST",
-      body: JSON.stringify({ tabId }),
-    },
-  );
-
-  return {
-    acquired: result.acquired,
-    currentHolder: result.currentHolder ?? null,
-  };
-}
-
-export function releaseSessionLock(sessionId: string, tabId: string): Promise<void> {
-  return api<void>(`/ai-sessions/${encodeURIComponent(sessionId)}/lock`, {
-    method: "DELETE",
-    body: JSON.stringify({ tabId }),
-  });
-}
-
-export function forceAcquireSessionLock(sessionId: string, tabId: string): Promise<void> {
-  return api<void>(`/ai-sessions/${encodeURIComponent(sessionId)}/lock/force`, {
-    method: "POST",
-    body: JSON.stringify({ tabId }),
-  });
-}
+/*
+FNXC:PlanningMultiTab 2026-07-14-00:00:
+acquireSessionLock / releaseSessionLock / forceAcquireSessionLock were removed with the rest of
+the per-tab session lock; their routes no longer exist. AI interview sessions are multi-tab —
+the persisted session row is the shared source of truth and any tab may read and interact.
+*/
 
 export async function deleteAiSession(id: string): Promise<void> {
   const url = buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`);
@@ -9808,6 +8467,11 @@ export function sendMessage(input: SendMessageInput, projectId?: string): Promis
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+/** Materialize an operator-approved task proposal exactly once. */
+export function createProposedTask(id: string, projectId?: string): Promise<{ task: import("@fusion/core").Task; proposal: Message }> {
+  return api(withProjectId(`/messages/${encodeURIComponent(id)}/create-proposed-task`, projectId), { method: "POST" });
 }
 
 /** Mark a specific message as read. */
@@ -10406,6 +9070,7 @@ export function updateChatSession(
     modelId?: string | null;
     agentId?: string;
     thinkingLevel?: string | null;
+    pinned?: boolean;
   },
   projectId?: string,
 ): Promise<ChatSessionResponse> {
@@ -11499,10 +10164,15 @@ in-place restart, rebuild jobs with streamed output, engine/agent restarts,
 plugin reload, and the host-process log viewer.
 */
 
+/*
+FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+Job snapshots cover rebuild scopes and the fn-binary link-local / use-global
+actions that stream into the same System panel log viewer.
+*/
 export interface SystemRebuildJobSnapshot {
   id: string;
-  kind: "rebuild";
-  scope: "app" | "full" | "plugins";
+  kind: "rebuild" | "fn-binary";
+  scope: "app" | "full" | "plugins" | "link-local" | "use-global";
   restartAfter: boolean;
   status: "running" | "succeeded" | "failed";
   startedAt: number;
@@ -11527,6 +10197,10 @@ export interface SystemInfoResponse {
   supervised: boolean;
   restartSupported: boolean;
   rebuildSupported: boolean;
+  /** True when the host is a Fusion source checkout (dev) — can build & link local fn. */
+  fnBinaryLinkLocalSupported?: boolean;
+  /** Always true when the route is wired; UI may still disable while a job runs. */
+  fnBinaryUseGlobalSupported?: boolean;
   sourceWorkspaceRoot?: string;
   logsSupported: boolean;
   engineAvailable: boolean;
@@ -11569,6 +10243,19 @@ export function startSystemRebuild(
   });
 }
 
+/*
+FNXC:SystemPanelFnBinary 2026-07-15-09:54:
+Client wrappers for System panel fn-binary actions. Both return a job snapshot
+that the panel streams via /system/jobs/:id/stream (same path as rebuild).
+*/
+export function startFnBinaryLinkLocal(): Promise<SystemRebuildJobSnapshot> {
+  return api<SystemRebuildJobSnapshot>("/system/fn-binary/link-local", { method: "POST" });
+}
+
+export function startFnBinaryUseGlobal(): Promise<SystemRebuildJobSnapshot> {
+  return api<SystemRebuildJobSnapshot>("/system/fn-binary/use-global", { method: "POST" });
+}
+
 export function fetchCurrentSystemRebuild(): Promise<{ job: SystemRebuildJobSnapshot | null }> {
   return api<{ job: SystemRebuildJobSnapshot | null }>("/system/rebuild/current");
 }
@@ -11597,4 +10284,25 @@ export function reloadAllSystemPlugins(): Promise<{
 export function fetchSystemLogs(limit?: number): Promise<{ entries: SystemLogEntryDto[] }> {
   const suffix = limit ? `?limit=${limit}` : "";
   return api<{ entries: SystemLogEntryDto[] }>(`/system/logs${suffix}`);
+}
+
+export type ResearchFindingPromotionInput = {
+  findingId: string;
+  sliceId: string;
+  title?: string;
+  description?: string;
+  acceptanceCriteria?: string;
+  triage?: boolean;
+  taskId?: string;
+};
+
+export function promoteResearchFinding(
+  runId: string,
+  input: ResearchFindingPromotionInput,
+  projectId?: string,
+): Promise<{ runId: string; findingId: string; feature: { id: string; status: string; taskId?: string }; citations: string[]; reused: boolean }> {
+  return api(withProjectId(`/research/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(input.findingId)}/promote`, projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }

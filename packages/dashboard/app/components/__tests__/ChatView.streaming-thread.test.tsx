@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "../ChatView";
 import type { ChatMessage, ChatSession } from "@fusion/core";
@@ -255,6 +255,22 @@ describe("FN-6599 ChatView streaming prior thread", () => {
       expect(screen.getByText("Second question")).toBeInTheDocument();
       expect(screen.getByText("Second answer")).toBeInTheDocument();
     };
+
+    /* FN-8339: streamed in-place growth must not override manual scroll-away on either breakpoint. */
+    const messagesContainer = document.querySelector(".chat-messages") as HTMLDivElement;
+    let scrollTop = 180;
+    let scrollHeight = 1200;
+    Object.defineProperty(messagesContainer, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+    Object.defineProperty(messagesContainer, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(messagesContainer, "clientHeight", { configurable: true, value: 240 });
+    fireEvent.scroll(messagesContainer);
+    scrollHeight = 1500;
+    act(() => attachedHandlers?.onText(" while reading earlier output"));
+    expect(scrollTop).toBe(180);
 
     act(() => {
       subscribeHandler["chat:session:updated"]?.({

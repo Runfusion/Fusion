@@ -82,16 +82,57 @@ files:
   - node_modules/protobufjs/**/*
   - node_modules/tar-fs/**/*
   - node_modules/uuid/**/*
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-18:25:
+  # Zero-config desktop local mode boots embedded PostgreSQL via @fusion/core.
+  # These packages are required runtime deps of that path and must be in the
+  # explicit files allowlist so electron-builder cannot drop them when walking
+  # the staged production closure.
+  - node_modules/embedded-postgres/**/*
+  - node_modules/@embedded-postgres/**/*
+  - node_modules/pg/**/*
+  - node_modules/pg-connection-string/**/*
+  - node_modules/pg-int8/**/*
+  - node_modules/pg-pool/**/*
+  - node_modules/pg-protocol/**/*
+  - node_modules/pg-types/**/*
+  - node_modules/pgpass/**/*
+  - node_modules/postgres-array/**/*
+  - node_modules/postgres-bytea/**/*
+  - node_modules/postgres-date/**/*
+  - node_modules/postgres-interval/**/*
+  - node_modules/split2/**/*
+  - node_modules/xtend/**/*
+  - node_modules/postgres/**/*
+  - node_modules/async-exit-hook/**/*
+  # FNXC:DesktopOmpPlugin 2026-07-14-18:55:
+  # Dashboard server statically imports @fusion-plugin-examples/* runtime probes
+  # (hermes/openclaw/cursor/grok/omp/paperclip/droid/roadmap/dependency-graph).
+  # Include the whole scoped tree so a new statically-imported plugin cannot be
+  # dropped from the packaged app.asar when electron-builder walks the allowlist.
+  - node_modules/@fusion-plugin-examples/**/*
+  - node_modules/@fusion/plugin-sdk/**/*
+  - node_modules/@agentclientprotocol/sdk/**/*
 
-# FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
-# Embedded Postgres launches native initdb/pg_ctl/postgres child processes.
-# Executables and their shared libraries must live on the real filesystem;
-# processes cannot execute payloads directly from Electron's virtual app.asar.
+# FNXC:DesktopEmbeddedPostgres 2026-07-14-18:25:
+# Embedded Postgres launches native initdb/pg_ctl/postgres child processes and resolves
+# those paths from platform-package dist/index.js via import.meta.url.
+# If only native/** is unpacked, dist/index.js stays inside app.asar so binary paths
+# resolve as .../app.asar/.../native/bin/postgres. Electron marks those files unpacked,
+# but fs.promises.chmod (used by embedded-postgres ensureBinIsExecutable) still fails
+# with ENOTDIR against the asar path — packaged desktop local mode cannot start Postgres.
+# Unpack the full platform packages (JS entrypoints + native trees) so __dirname is a
+# real filesystem path under app.asar.unpacked and chmod/spawn work without asar redirects.
+# Also keep the top-level embedded-postgres package unpacked so its dynamic import of the
+# platform package resolves to the same real tree.
 asarUnpack:
-  - "node_modules/@embedded-postgres/*/native/**/*"
+  - "node_modules/@embedded-postgres/**/*"
+  - "node_modules/embedded-postgres/**/*"
 
 extraMetadata:
-  main: dist/main.js
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-18:50:
+  # CJS bootstrap patches child_process.spawn before ESM main loads so packaged
+  # embedded Postgres binaries resolve out of app.asar (see main-bootstrap.cjs).
+  main: dist/main-bootstrap.cjs
 
 extraResources:
   - from: src/icons
@@ -164,6 +205,11 @@ nsis:
   perMachine: false
   allowElevation: false
   allowToChangeInstallationDirectory: true
+  # FNXC:WindowsDesktopPackaging 2026-07-18-05:20:
+  # Uninstall must stop the embedded postmaster and remove Fusion-materialized
+  # runtime binaries; the database is user data and is only deleted after an
+  # interactive YES (never on silent or auto-update uninstalls).
+  include: build/uninstaller.nsh
 
 portable:
   artifactName: "${productName}-${version}-${os}-${arch}-portable.${ext}"

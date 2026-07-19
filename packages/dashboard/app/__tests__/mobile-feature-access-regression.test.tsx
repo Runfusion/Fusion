@@ -209,6 +209,25 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
+  it("keeps every configurable destination reachable when a custom footer omits one", () => {
+    render(
+      <MobileNavBar
+        {...createDefaultMobileNavProps()}
+        mobileNavPrimaryItems={["command-center", "tasks", "agents", "planning", "chat", "mailbox", "skills"]}
+        showSkillsTab={false}
+        experimentalFeatures={{ insights: false, memoryView: false }}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-nav-tab-missions")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
+    expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
+  });
+
   it("reliability is no longer a mobile More item and is reached via Command Center", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} />);

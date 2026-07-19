@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "取得項目失敗"
     },
-    "testMode": "測試模式 — 無實際 AI 呼叫"
+    "testMode": "測試模式 — 無實際 AI 呼叫",
+    "migrationInProgress": "資料庫遷移進行中 — 完成後儀表板將自動重新連線。"
   },
   "appName": "",
   "approval": {
@@ -1165,32 +1166,6 @@
     "manageConnection": "管理連接",
     "retryConnection": "重新連接",
     "retrying": "重試中…"
-  },
-  "backgroundTasks": {
-    "confirmMessage": "此工作階段在另一個標籤頁中處於活躍狀態。仍然開啟?",
-    "confirmTitle": "開啟活躍工作階段",
-    "dismissButton": "關閉",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "背景任務",
-    "status": {
-      "activeElsewhere": "在另一個標籤頁中活躍",
-      "failed": "失敗",
-      "generating": "生成中...",
-      "needsInput": "需要輸入"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "里程碑訪談",
-      "missionInterview": "任務訪談",
-      "planning": "規劃",
-      "sliceInterview": "切片訪談",
-      "subtask": "子任務分解"
-    }
   },
   "board": {
     "archived": "已歸檔",
@@ -1417,13 +1392,6 @@
     "versionMismatchPrefix": "你安裝的",
     "versionMismatchSuffix": "更新以保持同步。"
   },
-  "storageMigrationNotice": {
-    "body": "",
-    "dismissLabel": "",
-    "getHelp": "",
-    "getHelpLabel": "",
-    "title": ""
-  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "檢查中…",
@@ -1611,6 +1579,43 @@
         "title": ""
       },
       "title": ""
+    },
+    "portability": {
+      "title": "組織匯出 / 匯入",
+      "description": "下載或預覽已清除機密的組織設定包。",
+      "export": {
+        "action": "匯出組織包",
+        "working": "正在匯出…",
+        "success": "匯出就緒",
+        "error": "匯出失敗"
+      },
+      "import": {
+        "label": "組織包 JSON",
+        "placeholder": "貼上已清除機密的組織包",
+        "preview": "預覽匯入",
+        "previewing": "正在預覽…",
+        "previewReady": "預覽就緒。確認後套用此包。",
+        "apply": "套用匯入",
+        "importing": "正在匯入…",
+        "invalid": "請貼上有效的組織包 JSON 文件",
+        "error": "無法預覽或匯入包",
+        "confirmTitle": "匯入組織包？",
+        "confirmMessage": "這會將預覽的設定套用到此專案。",
+        "confirmApply": "匯入包"
+      },
+      "versions": {
+        "title": "設定版本",
+        "description": "還原任意已記錄的專案設定版本。",
+        "loading": "正在載入版本…",
+        "empty": "尚無設定版本。",
+        "loadError": "無法載入設定版本",
+        "rollback": "回滾",
+        "rollingBack": "正在回滾…",
+        "rollbackError": "無法回滾設定",
+        "confirmTitle": "回滾設定？",
+        "confirmMessage": "還原此版本？回滾會記錄為新版本。",
+        "confirmRollback": "回滾"
+      }
     },
     "ecosystem": {
       "breadthTitle": "",
@@ -1802,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "審查產物"
     },
     "team": {
       "agent": "",
@@ -1880,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "審查產物",
+      "empty": "尚無審查產物。"
     }
   },
   "comments": {
@@ -2017,6 +2027,7 @@
     "connectRemoteButton": "連接到遠端 Fusion",
     "couldNotStart": "無法啟動本機 Fusion",
     "loading": "正在載入 Fusion…",
+    "migrationInProgress": "資料庫遷移進行中 — 可能需要幾分鐘。",
     "opening": "正在開啟…",
     "retry": "重試",
     "runLocalButton": "本機執行 Fusion",
@@ -2477,6 +2488,11 @@
     "taskMatches": "匹配的任務"
   },
   "git": {
+    "addComment": "Add comment",
+    "addCommentPlaceholder": "Write a comment…",
+    "commentAuthorYou": "You",
+    "commentPosted": "Comment posted",
+    "failedToPostComment": "Failed to post comment",
     "add": "新增",
     "addRemote": "新增遠端",
     "advancesHelpFix": "<strong>修正：</strong>Fusion 僅在至少有一個確實為 <code>pending</code> 的推進且 HEAD 未與整合提示對齊時才顯示<em>同步工作樹</em>。如果條目已被處理（subsumed/orphaned/reachable/superseded），則不提供同步操作。",
@@ -2865,7 +2881,17 @@
     "worktreesInUse_one": "",
     "worktreesInUse_other": "",
     "worktreesTotal_one": "",
-    "worktreesTotal_other": ""
+    "worktreesTotal_other": "",
+    "translateAction": "",
+    "translateDismiss": "",
+    "translateOffer": "",
+    "translateRegionAriaLabel": "",
+    "translateShowingOriginal": "",
+    "translateShowingTranslated": "",
+    "translateShowOriginal": "",
+    "translateShowTranslated": "",
+    "translateUnknownLanguage": "",
+    "translateWorking": ""
   },
   "githubStarPrompt": {
     "body": "",
@@ -3190,7 +3216,6 @@
     "refinedScope": "精煉範圍",
     "refineScope": "用AI精煉{{label}}範圍",
     "sendToBackground": "傳送到背景",
-    "sessionActiveAnotherTab": "工作階段在另一個標籤頁中處於活躍狀態。",
     "showThinking": "顯示思考",
     "startInterview": "開始面試",
     "targetLabel": {
@@ -3318,7 +3343,8 @@
     "unpauseUnavailable": "恢復操作無法使用",
     "useProjectDefault": "使用專案預設",
     "viewOptions": "檢視選項",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "重新規劃"
   },
   "mailbox": {
     "agent": "代理",
@@ -3835,9 +3861,6 @@
     "selectGoal": "",
     "selectMissionToView": "選擇一個任務以查看詳情",
     "sendToBackground": "傳送到背景",
-    "sessionActiveAnother": "工作階段在另一個分頁中處於活躍狀態。",
-    "sessionActiveHeartbeat": "此工作階段在另一個分頁中處於活躍狀態（即時心跳）",
-    "sessionActiveTab": "此工作階段在另一個分頁中處於活躍狀態",
     "showDetails": "顯示詳情",
     "showMetadata": "顯示中繼資料",
     "showThinking": "顯示思考",
@@ -3883,8 +3906,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "結構",
-    "takeControl": "接管",
-    "takingControl": "正在接管...",
     "targetBranch": "目標分支",
     "targetBranchPlaceholder": "例如 main",
     "taskIdPlaceholder": "任務 ID（例如 FN-001）",
@@ -4613,7 +4634,6 @@
     "plain": "純文字",
     "planningComplete": "規劃完成！",
     "planningCompleteSubheading": "在建立任務之前，請審查並完善您的任務。",
-    "planningDepth": "規劃深度",
     "planningModel": "規劃模型",
     "planningModelBlurb": "選擇執行規劃訪談並撰寫最終草稿的模型。",
     "planningSessions": "規劃工作階段",
@@ -4635,8 +4655,6 @@
     "remove": "移除",
     "retryFailed": "重試失敗，請再試一次。",
     "retrying": "重試中…",
-    "sessionActiveOtherTab": "此工作階段在另一個分頁中處於活動狀態",
-    "sessionActiveOtherTabLive": "此工作階段在另一個分頁中處於活動狀態（即時心跳）",
     "sessionFailed": "聯絡 AI 時工作階段失敗。",
     "sessionFailed2": "工作階段失敗",
     "showArchived": "顯示已封存",
@@ -4659,8 +4677,6 @@
     "subtaskTitle": "標題",
     "suggestedDependencies": "建議依賴項目",
     "suggestedSize": "建議規模",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制…",
     "thinkingElapsed": "思考中…（{{seconds}} 秒）",
     "title": "規劃模式",
     "tryAnExample": "試試範例：",
@@ -4670,7 +4686,8 @@
     "untitledSession": "未命名工作階段",
     "usingDefault": "使用預設",
     "whatToBuild": "您想建構什麼？",
-    "whatToBuildPlaceholder": "例如，建構一個包含登入、註冊和密碼重設的使用者驗證系統..."
+    "whatToBuildPlaceholder": "例如，建構一個包含登入、註冊和密碼重設的使用者驗證系統...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "新增項目",
@@ -5660,7 +5677,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "需要輸入或已失敗的 AI 工作階段",
     "resume": "繼續",
-    "retry": "重試"
+    "retry": "重試",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5901,7 +5922,34 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": "",
+      "mobileNavPrimaryItems": "行動版底部快捷操作",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。可新增符合條件的目的地；未選取的目的地仍在「更多」中。",
+      "addNavItem": "新增快捷操作",
+      "selectNavItem": "選擇目的地",
+      "removeNavItem": "移除 {{item}}",
+      "moveNavItemEarlier": "將 {{item}} 前移",
+      "moveNavItemLater": "將 {{item}} 後移",
+      "ephemeralAgentTaskCreationPolicy": "臨時代理後續任務",
+      "ephemeralAgentTaskCreationPolicyHint": "無預設值 — 未設定時回退為允許。需驗證會將提案傳送到信箱供一鍵核准；拒絕則禁止建立後續任務。",
+      "ephemeralAgentTaskCreationPolicyAllow": "允許",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "需驗證",
+      "ephemeralAgentTaskCreationPolicyDeny": "拒絕",
+      "reportModeHelp": "應用內缺陷/回饋/想法/說明報告的提交方式。預設：draft-review（提交前由操作者審閱草稿）。",
+      "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。",
+      "reviewArtifacts": "審查產物",
+      "reviewArtifactsHint": "控制符合條件的未來任務是否產生審查交付物。面向使用者的報告與活動擷取保持獨立。預設：關閉。",
+      "reportRoadmapDedup": "提交報告前檢查路線圖",
+      "reportRoadmapDedupHelp": "啟用後，符合的路線圖功能會內嵌顯示，而不會建立另一個 GitHub Issue 或討論。預設：關閉。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5937,7 +5985,11 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6262,8 +6314,8 @@
         "global": "在所有專案中共用",
         "project": "特定於此專案"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6344,7 +6396,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6360,6 +6415,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
+      "taskDefinitionInInputLanguage": "",
+      "taskDefinitionInInputLanguageHelp": "",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6631,11 +6688,28 @@
       "ignoreHiddenDotPathsHelp": "",
       "ignoreHiddenDotPathsInOverlapChecks": "",
       "maxConcurrentTasksHint": "",
-      "pollIntervalMsHint": ""
-    },
-    "scope": {
-      "globalBanner": "這些設定在所有 Fusion 專案中共用。",
-      "projectBanner": "這些設定僅影響此專案。"
+      "maxConcurrentVerifications": "",
+      "maxConcurrentVerificationsHint": "",
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "分流重複項處理",
+      "triageDuplicateResolutionHelp": "將分流偵測到的重複項攔截並要求保留/刪除決策（預設），或不攔截而自動保留/刪除。",
+      "triageDuplicateResolutionPrompt": "攔截並決策（預設）",
+      "triageDuplicateResolutionKeep": "自動保留",
+      "triageDuplicateResolutionDelete": "自動刪除"
     },
     "title": "設定",
     "worktrees": {
@@ -6696,7 +6770,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -6713,11 +6788,15 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -6736,6 +6815,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 內嵌 PostgreSQL 的最大伺服器連線數。重新啟動 Fusion 後生效。範圍：32–2,000。預設：500。外部 PostgreSQL 使用其提供者的連線限制。",
+      "embeddedConnectionCap": "內嵌 PostgreSQL 連線上限",
+      "embeddedConnectionCapError": "請輸入 32 到 2,000 之間的值。",
+      "advanced": "進階資料庫設定"
     }
   },
   "setup": {
@@ -7280,14 +7365,9 @@
     "reviewSubtasksHint": "在一次性建立所有任務之前，編輯標題、描述、大小和相依關係。",
     "sendToBackgroundAriaLabel": "傳送至背景",
     "sendToBackgroundTitle": "傳送至背景",
-    "sessionActiveAnotherTab": "工作階段正在另一個索引標籤中執行。",
-    "sessionActiveAnotherTabLive": "此工作階段正在另一個索引標籤中執行（即時心跳）",
-    "sessionActiveAnotherTabTakeover": "此工作階段正在另一個索引標籤中執行",
     "showThinking": "顯示思考過程",
     "sizeLabel": "規模",
     "startingBreakdown": "",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制...",
     "titleLabel": "標題",
     "untitled": "無標題",
     "waitingForThinking": ""
@@ -7628,7 +7708,13 @@
       "copy": "此任務看起來是以下任務的近似重複：",
       "headline": "檢測到潛在重複",
       "keepBtn": "保留",
-      "kept": "保留了 {{id}} 並關閉了重複警告"
+      "kept": "保留了 {{id}} 並關閉了重複警告",
+      "deleteBtn": "刪除",
+      "deleteConfirm": "刪除",
+      "deleted": "已刪除 {{id}}",
+      "deleteMessage": "將 {{id}} 作為 {{duplicateOf}} 的重複項刪除？",
+      "deleteTitle": "刪除重複任務",
+      "triageActions": "選擇刪除以移除此重複項，或選擇保留以繼續。"
     },
     "nextRecoveryAt": "下次恢復時間：{{time}}",
     "no": "否",
@@ -7664,7 +7750,11 @@
       "rejected": "計劃已拒絕 — {{id}} 已返回規劃階段重新規劃",
       "rejectMessage": "拒絕此計劃？規範將被丟棄並重新生成。",
       "rejectTitle": "拒絕計劃",
-      "replanning": "正在為 {{id}} 重新規劃…"
+      "replanning": "正在為 {{id}} 重新規劃…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "等待 PR 檢查",
@@ -8333,11 +8423,17 @@
     "revertNeedsHumanDefault": "",
     "reverted": "",
     "revertTask": "",
+    "revertedBadge": "",
+    "revertedBadgeTitle": "",
     "undoOf": "",
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": "",
+    "statusReplan": "重新規劃"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8458,7 +8554,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "在設定中設定身份驗證以查看使用數據。",
@@ -9036,5 +9136,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "已在路線圖中",
+      "message": "此報告與已規劃的功能相符。"
+    }
   }
 }

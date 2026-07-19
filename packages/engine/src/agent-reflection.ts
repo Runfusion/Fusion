@@ -220,7 +220,7 @@ export class AgentReflectionService {
         return null;
       }
 
-      const metrics = this.buildCapturedMetrics(taskId, task, outcome);
+      const metrics = await this.buildCapturedMetrics(taskId, task, outcome);
 
       const reflection = await this.reflectionStore.createReflection({
         agentId,
@@ -259,17 +259,19 @@ export class AgentReflectionService {
    * FNXC:AgentReflection 2026-07-04-00:00:
    * Code review (FN-7528) flagged that `retryReworkCount` only reflected `Task.recoveryRetryCount`,
    * silently dropping workflow step RETHINK/rework cycles tracked per-step-instance
-   * (`WorkflowRunStepInstance.reworkCount`, keyed by taskId+runId). `captureTaskPerformance` has no
-   * real runId threaded through, so we probe the same `${taskId}:run` fallback literal the executor
-   * itself falls back to when no runId is threaded (see executor.ts loadWorkflowRunStepInstances call
-   * sites) and sum reworkCount across every persisted instance row for that task. `retryReworkCount`
-   * is now `recoveryRetryCount + workflowReworkCount`; either driver is surfaced individually in
-   * `durationDrivers` (`retries:N` / `rework:N`) so the two causes stay distinguishable.
+   * (`WorkflowRunStepInstance.reworkCount`, keyed by taskId+runId).
+   *
+   * FNXC:AgentReflection 2026-07-16-00:00:
+   * The synchronous step-instance read returns no rows in PostgreSQL backend mode. Prefer its async
+   * sibling and mirror the executor's production `${taskId}:${definitionId}` run id: resolve the
+   * selection's workflowId to its definition id through awaited `getWorkflowDefinition`, never the
+   * legacy `${taskId}:run` literal. This keeps persisted RETHINK/rework cycles visible while missing
+   * selection, definition, or store capabilities still degrade to an unfabricated zero.
    */
-  private buildCapturedMetrics(taskId: string, task: Task, outcome: "completed" | "failed"): ReflectionMetrics {
+  private async buildCapturedMetrics(taskId: string, task: Task, outcome: "completed" | "failed"): Promise<ReflectionMetrics> {
     const durationMs = this.calculateDurationMs(task);
     const recoveryRetryCount = task.recoveryRetryCount ?? 0;
-    const workflowReworkCount = this.sumWorkflowStepReworkCount(taskId);
+    const workflowReworkCount = await this.sumWorkflowStepReworkCount(taskId);
     const retryReworkCount = recoveryRetryCount + workflowReworkCount;
 
     const touchedFiles = task.mergeDetails?.landedFiles ?? task.modifiedFiles;
@@ -312,18 +314,34 @@ export class AgentReflectionService {
   }
 
   /**
-   * Sum `reworkCount` across every persisted `WorkflowRunStepInstance` row for this task (KTD-6),
-   * under the same `${taskId}:run` fallback runId literal used elsewhere when no real runId is
-   * threaded. Returns 0 (never fabricated) when the store lacks the method or the table/rows don't
-   * exist — additive bookkeeping, degrades silently like its call sites in executor.ts.
+   * Sum `reworkCount` for the executor's resolved production run. The async persistence read is
+   * required for PostgreSQL backend mode; synchronous stores retain the compatibility fallback.
+   * Missing capability or an unresolvable selection/definition returns 0 without inventing metrics.
    */
-  private sumWorkflowStepReworkCount(taskId: string): number {
+  private async sumWorkflowStepReworkCount(taskId: string): Promise<number> {
     const store = this.taskStore as unknown as {
+      getTaskWorkflowSelectionAsync?: (taskId: string) => Promise<{ workflowId: string; stepIds: string[] } | undefined>;
+      getTaskWorkflowSelection?: (taskId: string) => { workflowId: string; stepIds: string[] } | undefined;
+      getWorkflowDefinition?: (workflowId: string) => Promise<{ id: string } | undefined>;
+      loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<Array<{ reworkCount?: number }>>;
       loadWorkflowRunStepInstances?: (taskId: string, runId: string) => Array<{ reworkCount?: number }>;
     };
-    if (typeof store.loadWorkflowRunStepInstances !== "function") return 0;
+
     try {
-      const rows = store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`);
+      const selection = typeof store.getTaskWorkflowSelectionAsync === "function"
+        ? await store.getTaskWorkflowSelectionAsync(taskId)
+        : store.getTaskWorkflowSelection?.(taskId);
+      if (!selection) return 0;
+
+      const definition = selection.workflowId === "builtin:coding"
+        ? { id: "builtin:coding" }
+        : await store.getWorkflowDefinition?.(selection.workflowId);
+      if (!definition) return 0;
+
+      const runId = `${taskId}:${definition.id}`;
+      const rows = typeof store.loadWorkflowRunStepInstancesAsync === "function"
+        ? await store.loadWorkflowRunStepInstancesAsync(taskId, runId)
+        : store.loadWorkflowRunStepInstances?.(taskId, runId);
       if (!Array.isArray(rows) || rows.length === 0) return 0;
       return rows.reduce((sum, row) => sum + (row.reworkCount ?? 0), 0);
     } catch {

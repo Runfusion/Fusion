@@ -1,4 +1,5 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
+import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
 
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
 import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
@@ -98,8 +99,6 @@ export function getInReviewStallCopy(
   };
 }
 
-const ACTIVE_MERGE_STATUSES: ReadonlySet<Task["status"]> = new Set(["merging", "merging-pr", "merging-fix"]);
-
 const IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX = "In-review stall auto-disposed [";
 
 const IN_REVIEW_STALL_DEADLOCK_COPY: InReviewStallDeadlockCopy = {
@@ -135,7 +134,6 @@ export function shouldShowInReviewStallBadge(task: Pick<Task, "column" | "paused
 
   return !(
     task.inReviewStall.code === "merge-blocker" &&
-    task.status != null &&
-    ACTIVE_MERGE_STATUSES.has(task.status)
+    isActiveMergeStatus(task.status)
   );
 }

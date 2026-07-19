@@ -64,6 +64,10 @@ const electronApi = {
   // Tray status
   updateTrayStatus: (status: string): Promise<void> => ipcRenderer.invoke("tray:updateStatus", status),
 
+  // FNXC:DesktopOAuth 2026-07-18-04:00:
+  // Activation-free system-browser open for OAuth URLs (see shell:openExternal in ipc.ts).
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke("shell:openExternal", url),
+
   // Native dialogs
   showExportDialog: (): Promise<string | null> => ipcRenderer.invoke("native:showExportDialog"),
   showImportDialog: (): Promise<string | null> => ipcRenderer.invoke("native:showImportDialog"),

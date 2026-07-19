@@ -42,6 +42,8 @@ type TaskModelLike = {
   validatorModelId?: string | null;
   planningModelProvider?: string | null;
   planningModelId?: string | null;
+  mergerModelProvider?: string | null;
+  mergerModelId?: string | null;
 };
 
 function hasCompleteModelPair(pair: ModelPair): pair is { provider: string; modelId: string } {
@@ -186,6 +188,37 @@ export function resolveTitleSummarizerSettingsModel(settings?: Partial<Settings>
   );
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation resolves its own lane so operators can pin a cheap/fast translation model independently of summarization.
+Hierarchy: project translate lane -> global translate lane -> summarization lane (nearest one-off readonly helper) -> project/global default.
+Partial provider/model pairs are skipped by `pickFirstModelPair`, and test mode still forces mock like every other lane.
+*/
+export function resolveImportTranslateSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.importTranslateProvider,
+        modelId: settings?.importTranslateModelId,
+      },
+      {
+        provider: settings?.importTranslateGlobalProvider,
+        modelId: settings?.importTranslateGlobalModelId,
+      },
+      {
+        provider: settings?.titleSummarizerProvider,
+        modelId: settings?.titleSummarizerModelId,
+      },
+      {
+        provider: settings?.titleSummarizerGlobalProvider,
+        modelId: settings?.titleSummarizerGlobalModelId,
+      },
+      resolveProjectDefaultModel(settings),
+    ),
+    settings,
+  );
+}
+
 /**
  * FNXC:Settings-MergerModel 2026-07-13-07:52:
  * Merger sessions resolve project merger lane → global merger lane → project/global default.
@@ -204,6 +237,49 @@ export function resolveMergerSettingsModel(settings?: Partial<Settings>): Resolv
         modelId: settings?.mergerGlobalModelId,
       },
       resolveProjectDefaultModel(settings),
+    ),
+    settings,
+  );
+}
+
+/**
+ * FNXC:Settings-MergerModel 2026-07-16-00:00:
+ * Retryable merger sessions resolve a project merger-fallback pair before the shared
+ * global fallback pair. Complete-pair selection and test-mode override behavior match
+ * all other model lanes, preserving existing behavior while this lane is unset.
+ */
+export function resolveMergerFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.mergerFallbackProvider,
+        modelId: settings?.mergerFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
+    ),
+    settings,
+  );
+}
+
+/**
+ * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+ * FN-8098 gives executor work a workflow-specific fallback pair while preserving the
+ * shared fallback as the ultimate default for workflows that leave this lane unset.
+ */
+export function resolveExecutorFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.executionFallbackProvider,
+        modelId: settings?.executionFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
     ),
     settings,
   );
@@ -252,6 +328,24 @@ export function resolveTaskPlanningModel(
         modelId: task.planningModelId,
       },
       resolvePlanningSettingsModel(settings),
+    ),
+    settings,
+  );
+}
+
+/**
+ * FNXC:Settings-MergerModel 2026-07-16-12:00:
+ * A complete task pair wins before the project/global merger lane. Partial pairs
+ * are deliberately ignored, preserving the established lane-pair invariant.
+ */
+export function resolveTaskMergerModel(
+  task: TaskModelLike,
+  settings?: Partial<Settings>,
+): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      { provider: task.mergerModelProvider, modelId: task.mergerModelId },
+      resolveMergerSettingsModel(settings),
     ),
     settings,
   );

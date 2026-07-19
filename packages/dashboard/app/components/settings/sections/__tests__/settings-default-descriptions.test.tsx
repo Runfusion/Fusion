@@ -75,7 +75,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   gitlabAuthTokenType: "globalGeneral.gitLabTokenTypeHint",
   gitlabAuthToken: "globalGeneral.gitLabAuthTokenHint",
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
+  skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
+  proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",
   persistAgentThinkingLogPermanent: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   persistAgentThinkingLogEphemeral: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   fnBinaryCheckEnabled: "globalGeneral.disableThisIfYourLocalDevProcessIs",
@@ -125,6 +127,12 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   researchGlobalLocalDocsEnabled: "researchGlobal.localDocsSourceHint",
   researchGlobalWebSearchProvider: "researchGlobal.searchesAndFetchesUseTheAgentsNativeWebSearch",
   // NotificationsSection
+  /*
+   * FNXC:SettingsDefaults 2026-07-16-10:05:
+   * FN-8216 classifies the NotificationsSection clarification checkbox and SchedulingSection
+   * duplicate-resolution select as surfaced fields: their existing help text states each default.
+   */
+  agentClarificationEnabled: "notifications.agentClarificationHint",
   failureNotificationDelayMs: "notifications.howLongAFailureMustPersistBeforeA",
   failureNotificationMode: "notifications.stickyFailuresOnlyDefault",
   ntfyEnabled: "notifications.ntfyEnabledHint",
@@ -155,6 +163,12 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryBackupRetention: "backups.numberOfMemoryBackupsToKeepOldestAre",
   memoryBackupDir: "backups.directoryForMemoryBackupsRelativeToProjectRoot",
   memoryBackupScope: "backups.memoryBackupScopeHint",
+  /*
+  FNXC:SettingsDefaults 2026-07-17-13:55:
+  FN-8335 restores FN-7505 default-value parity for the surfaced embeddedPostgresMaxConnections
+  control. The English locale description is the canonical rendered SettingsHelpTip copy and states Default: 500.
+  */
+  embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
   memoryEnabled: "memory.agentsGetMemorySearchMemoryGetAndMemory",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
@@ -192,10 +206,18 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // SchedulingSection
   globalMaxConcurrent: "scheduling.maximumConcurrentAgentsAcrossAllProjects",
   maxConcurrent: "scheduling.maxConcurrentTasksHint",
+  maxConcurrentVerifications: "scheduling.maxConcurrentVerificationsHint",
   maxTriageConcurrent: "scheduling.maximumConcurrentPlanningAgents",
   pollIntervalMs: "scheduling.pollIntervalMsHint",
   heartbeatScopeDiscipline: "scheduling.strictDefault",
   engineerBacklogAutoClaim: "scheduling.backlogNoTaskAutoClaimIsExecutorOnly",
+  executorToolFailureRetryCount: "scheduling.executorToolFailureRetryCountHelp",
+  executorToolFailureRetryBackoffMs: "scheduling.executorToolFailureRetryBackoffMsHelp",
+  executorToolFailureThreshold: "scheduling.executorToolFailureThresholdHelp",
+  executorModelEscalationEnabled: "scheduling.executorModelEscalationEnabledHelp",
+  executorEscalationProvider: "scheduling.executorEscalationProviderHelp",
+  executorEscalationModelId: "scheduling.executorEscalationModelIdHelp",
+  executorEscalationNodeId: "scheduling.executorEscalationNodeIdHelp",
   taskStuckTimeoutMs: "scheduling.timeoutInMinutesForDetectingStuckTasksWhen",
   staleHighFanoutBlockerAgeThresholdMs: "scheduling.escalateHighFanOutBlockersOnlyAfterThey",
   preserveProgressOnStuckRequeue: "scheduling.whenTheStuckDetectorKillsAndReQueues",
@@ -205,6 +227,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   autoArchiveDoneAfterMs: "scheduling.numberOfDaysATaskCanStayIn",
   archiveAgentLogMode: "scheduling.compactModeKeepsArchiveSizeLowWhilePreserving",
   autoArchiveDuplicateTasksEnabled: "scheduling.autoArchiveDuplicateTasksHelp",
+  triageDuplicateResolution: "scheduling.triageDuplicateResolutionHelp",
   maxStuckKills: "scheduling.maximumStuckDetectorRetriesBeforeATaskIs",
   groupOverlappingFiles: "scheduling.whenEnabledTasksThatModifyTheSameFiles",
   ignoreHiddenOverlapPaths: "scheduling.ignoreHiddenDotPathsHelp",
@@ -231,14 +254,29 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   chatRoomRecentVerbatimMessages: "general.numberOfMostRecentChatRoomMessagesKept",
   chatRoomSummaryMaxChars: "general.hardCapOnTheSynthesizedEarlierRoomContext",
   completionDocumentationMode: "general.workflowsOrChangelogModeWhenContributorsShouldUpdate",
-  ephemeralAgentsCanCreateTasks: "general.allowEphemeralAgentsToCreateTasksHint",
+  reviewArtifacts: "general.reviewArtifactsHint",
+  ephemeralAgentTaskCreationPolicy: "general.ephemeralAgentTaskCreationPolicyHint",
   ephemeralAgentsEnabled: "general.whenEnabledDefaultFusionSpawnsShortLived",
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",
+  // FNXC:GitHubImportTranslate 2026-07-15-09:30: surfaced as plain rows in
+  // GeneralSection beside the other import-scoped GitHub settings.
+  githubImportAutoTranslate: "general.autoTranslateImportedIssuesHelp",
+  importTranslateTargetLocale: "general.translationTargetLanguageHelp",
+  /*
+  FNXC:SettingsDefaults 2026-07-17-13:55:
+  FN-8335 restores FN-7505 default-value parity for the surfaced reportMode and reportModeByAction
+  controls. reportMode states the draft-review default; undefined per-action overrides state that unset actions inherit it.
+  */
+  reportMode: "general.reportModeHelp",
+  reportModeByAction: "general.reportModeByActionHelp",
+  reportRoadmapDedup: "general.reportRoadmapDedupHelp",
   githubTrackingDedupEnabled: "general.whenEnabledFusionChecksOpenAndClosedIssues",
   githubTrackingEnabledByDefault: "general.offDefault",
+  sessionAdvisorEnabledByDefault: "general.offDefault",
   mailAutoCleanupDays: "general.deleteInboxOutboxMessagesOlderThanThisMany",
   operationalLogRetentionDays: "general.loweringThisWindowMeansReliabilityMetricsChartsAnd",
   quickChatButtonMode: "general.quickChatLauncherHint",
+  mobileNavPrimaryItems: "general.mobileNavPrimaryItemsHint",
   quickChatCloseOnOutsideClick: "general.quickChatCloseOnOutsideClickHint",
   showTaskChatsInCommonFeed: "general.showTaskChatsInCommonFeedHint",
   taskPrefix: "general.prefixForNewTaskIDsEGKB",
@@ -249,6 +287,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // ProjectModelsSection
   autoSelectModelPreset: "projectModels.autoSelectModelPresetHint",
   autoSummarizeTitles: "projectModels.whenEnabledTasksCreatedWithoutATitleBut",
+  taskDefinitionInInputLanguage: "projectModels.taskDefinitionInInputLanguageHelp",
   defaultPresetBySize: "projectModels.autoSelectModelPresetHint",
   modelPresets: "projectModels.autoSelectModelPresetHint",
   prDescriptionPromptInstructions: "projectModels.prDescriptionPromptInstructionsHelp",
@@ -265,6 +304,10 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
+  // Legacy compatibility input; GeneralSection exposes its policy replacement instead.
+  ephemeralAgentsCanCreateTasks: "legacy compatibility input replaced by ephemeralAgentTaskCreationPolicy",
+  // Global-only serve/dashboard LAN discovery switch; no Settings UI description field exists.
+  localNetworkDiscoveryEnabled: "global-only LAN discovery runtime switch",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in settings-schema.ts.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
@@ -302,6 +345,14 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   engineActiveSinceMs: "internal engine bookkeeping timestamp",
   engineActivationGraceMs: "internal engine tuning constant, no UI field",
   reliabilityStatsResetAt: "internal engine bookkeeping timestamp",
+  /*
+  FNXC:SettingsDefaults 2026-07-16-12:25:
+  Single allowlist entry per key (noDuplicateObjectKeys). FN-8038 classifies PostgreSQL
+  migration bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  */
+  sqliteMigrationNotice: "startup-factory-managed PostgreSQL migration banner record, not a plain description field",
+  backupSettingsMigrationConflicts: "startup migration conflict record is rendered conditionally, not a plain settings row",
+  postgresMigrationInboxMessageSentAt: "engine-written PostgreSQL migration inbox completion-message marker, not a plain description field",
   dashboardCurrentNodeId: "dashboard session/PWA restore state, not a setting field",
   dashboardCurrentProjectIdByNode: "dashboard session/PWA restore state, not a setting field",
   daemonToken: "daemon runtime secret, not rendered as a description field",
@@ -325,6 +376,14 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   gitlabCommentOnDone: "not yet exposed as a distinct Settings field",
   gitlabCommentTemplate: "not yet exposed as a distinct Settings field",
   gitlabCloseSourceIssueOnDone: "not yet exposed as a distinct Settings field",
+  // FNXC:GitHubImportTranslate 2026-07-15-09:30: the import-translate lane is a
+  // model-lane picker (Settings -> Project/Global Models), not a description field.
+  importTranslateProvider: "configured via the model-lane picker, not a plain description field",
+  importTranslateModelId: "configured via the model-lane picker, not a plain description field",
+  importTranslateThinkingLevel: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalProvider: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalModelId: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalThinkingLevel: "configured via the model-lane picker, not a plain description field",
   titleSummarizerProvider: "configured via the model-lane picker, not a plain description field",
   titleSummarizerModelId: "configured via the model-lane picker, not a plain description field",
   titleSummarizerFallbackProvider: "configured via the model-lane picker, not a plain description field",
@@ -333,6 +392,8 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   titleSummarizerGlobalModelId: "configured via the model-lane picker, not a plain description field",
   mergerProvider: "configured via the model-lane picker, not a plain description field",
   mergerModelId: "configured via the model-lane picker, not a plain description field",
+  mergerFallbackProvider: "configured via the inline merger-fallback model picker, not a plain description field",
+  mergerFallbackModelId: "configured via the inline merger-fallback model picker, not a plain description field",
   mergerGlobalProvider: "configured via the model-lane picker, not a plain description field",
   mergerGlobalModelId: "configured via the model-lane picker, not a plain description field",
   executionGlobalProvider: "configured via the model-lane picker, not a plain description field",
@@ -358,6 +419,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   titleSummarizerThinkingLevel: "project title-summarizer inline thinking companion, configured via the model-lane picker, not a plain description field",
   titleSummarizerFallbackThinkingLevel: "project title-summarizer fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
   mergerThinkingLevel: "project merger inline thinking companion, configured via the model-lane picker, not a plain description field",
+  mergerFallbackThinkingLevel: "project merger-fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
   fallbackThinkingLevel: "global fallback model inline thinking companion, configured via the model-lane picker, not a plain description field",
   agentPrompts2: "not a real key (placeholder guard)",
   promptOverrides2: "not a real key (placeholder guard)",

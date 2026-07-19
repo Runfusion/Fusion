@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Agent, AgentStore, TaskStore, Task } from "@fusion/core";
-import { createListAgentsTool, createDelegateTaskTool } from "../agent-tools.js";
+import { createAgentTask, createListAgentsTool, createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
 
 function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   return {
@@ -14,6 +14,12 @@ function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
 function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
+    getRootDir: vi.fn().mockReturnValue("/project"),
+    searchTasks: vi.fn().mockResolvedValue([]),
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+    findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
+    updateTask: vi.fn(),
+    moveTask: vi.fn(),
     createTask: vi.fn().mockResolvedValue({
       id: "FN-001",
       description: "",
@@ -237,6 +243,309 @@ describe("createDelegateTaskTool", () => {
     expect(text).toContain("Delegated to Bob (agent-001)");
     expect(text).toContain("Created FN-050");
     expect(text).toContain("picked up by Bob on their next heartbeat cycle");
+  });
+
+  it("reassigns and moves a duplicate canonical task before reporting delegation", async () => {
+    const agent = createAgent({ id: "agent-002", name: "Rita" });
+    const existing = {
+      id: "FN-duplicate",
+      description: "Write tests",
+      dependencies: [],
+      column: "triage" as const,
+      assignedAgentId: "agent-001",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const reassigned = { ...existing, assignedAgentId: "agent-002" };
+    const moved = { ...reassigned, column: "todo" as const };
+    vi.mocked(agentStore.getAgent).mockResolvedValue(agent);
+    vi.mocked(taskStore.findRecentTasksByContentFingerprint).mockResolvedValue([existing]);
+    vi.mocked(taskStore.updateTask).mockResolvedValue(reassigned);
+    vi.mocked(taskStore.moveTask).mockResolvedValue(moved);
+
+    const result = await createDelegateTaskTool(agentStore, taskStore).execute("session-1", {
+      agent_id: "agent-002",
+      description: "Write tests",
+    }, undefined as any, undefined as any, undefined as any);
+
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-duplicate", { assignedAgentId: "agent-002" });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-duplicate", "todo");
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("Delegated to Rita (agent-002): Linked existing FN-duplicate");
+    expect(text).toContain("picked up by Rita on their next heartbeat cycle");
+  });
+
+  it("does not mutate a same-owner duplicate canonical task", async () => {
+    const existing = {
+      id: "FN-duplicate",
+      description: "Write tests",
+      dependencies: [],
+      column: "todo" as const,
+      assignedAgentId: "agent-001",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    vi.mocked(taskStore.findRecentTasksByContentFingerprint).mockResolvedValue([existing]);
+
+    const result = await createAgentTask(taskStore, {
+      description: "Write tests",
+      column: "todo",
+      assignedAgentId: "agent-001",
+    });
+
+    expect(result.task).toBe(existing);
+    expect(taskStore.updateTask).not.toHaveBeenCalled();
+    expect(taskStore.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("reuses paraphrased follow-ups from the same parent without collapsing distinct sibling intents", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      const created = {
+        id: `FN-${tasks.length + 1}`, title: input.title, description: input.description,
+        dependencies: input.dependencies ?? [], column: "triage" as const,
+        sourceType: input.source?.sourceType, sourceAgentId: input.source?.sourceAgentId,
+        sourceParentTaskId: input.source?.sourceParentTaskId,
+        steps: [], currentStep: 0, log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      } as Task;
+      tasks.push(created);
+      return created;
+    });
+    const descriptions = [
+      "Add optional screenshot and short activity-trace context capture to in-app agentic reports, preserving the scrub-before-egress boundary.",
+      "Add GitHub Discussions as a selectable filing target for in-app agentic reports.",
+      "Add public-roadmap (FR-30) as a deduplication source for in-app agentic reports.",
+    ];
+    for (const description of descriptions) {
+      expect((await createAgentTask(taskStore, { description }, { sourceTaskId: "FN-PARENT" })).wasDuplicate).toBe(false);
+    }
+    const replay = await createAgentTask(taskStore, {
+      description: "Add screenshot and activity-trace context capture to in-app Bug/Feedback/Idea/Help reports, with privacy scrub coverage before GitHub egress.",
+    }, { sourceTaskId: "FN-PARENT" });
+    expect(replay.wasDuplicate).toBe(true);
+    expect(replay.task.id).toBe("FN-1");
+    expect(tasks).toHaveLength(3);
+  });
+
+  it("keeps identical follow-ups from different parent tasks separate", async () => {
+    const foreign = {
+      id: "FN-A",
+      title: "",
+      description: "Write the regression test",
+      dependencies: [],
+      column: "triage" as const,
+      sourceParentTaskId: "FN-PARENT-A",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as Task;
+    const created = {
+      ...foreign,
+      id: "FN-B",
+      sourceParentTaskId: "FN-PARENT-B",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    } as Task;
+    vi.mocked(taskStore.findRecentTasksByContentFingerprint)
+      .mockResolvedValueOnce([foreign])
+      .mockResolvedValueOnce([foreign, created]);
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockResolvedValue([]);
+    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+
+    const result = await createAgentTask(taskStore, {
+      description: "Write the regression test",
+    }, { sourceTaskId: "FN-PARENT-B" });
+
+    expect(result).toEqual({ task: created, wasDuplicate: false });
+    expect(taskStore.createTask).toHaveBeenCalled();
+    expect(taskStore.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("reuses one active diagnostic follow-up across different parent tasks", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.searchTasks).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async (parentId) =>
+      tasks.filter((task) => task.sourceParentTaskId === parentId),
+    );
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      await Promise.resolve();
+      const now = new Date().toISOString();
+      const created = {
+        id: `FN-${tasks.length + 1}`,
+        description: input.description,
+        dependencies: [],
+        column: "triage" as const,
+        sourceParentTaskId: input.source?.sourceParentTaskId,
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: now,
+        updatedAt: now,
+      } as Task;
+      tasks.push(created);
+      return created;
+    });
+
+    const [first, replay] = await Promise.all([
+      createAgentTask(taskStore, {
+        description: "Investigate and repair dashboard typecheck failure: app/utils/capture-screenshot.ts imports unresolved `html2canvas`, causing `pnpm verify:fast` to fail.",
+      }, { sourceTaskId: "FN-8343", rootDir: "/worktrees/FN-8343" }),
+      createAgentTask(taskStore, {
+        description: "Restore the missing `html2canvas` dependency declaration/lock entry for dashboard screenshot capture so @fusion/dashboard typecheck passes.",
+      }, { sourceTaskId: "FN-8348", rootDir: "/worktrees/FN-8348" }),
+    ]);
+
+    expect(first.wasDuplicate).toBe(false);
+    expect(replay).toMatchObject({ wasDuplicate: true, task: { id: first.task.id } });
+    expect(tasks).toHaveLength(1);
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({
+        sourceMetadata: expect.objectContaining({
+          crossParentDiagnosticClaimId: expect.stringMatching(/^agent-diagnostic-intent:/),
+        }),
+      }),
+    }), expect.anything());
+  });
+
+  it("does not let a completed diagnostic suppress newly required work", async () => {
+    const completed = {
+      id: "FN-DONE",
+      description: "Fix unresolved `html2canvas` typecheck failure.",
+      dependencies: [],
+      column: "done" as const,
+      sourceParentTaskId: "FN-OLD-PARENT",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    const created = {
+      ...completed,
+      id: "FN-NEW",
+      column: "triage" as const,
+      sourceParentTaskId: "FN-NEW-PARENT",
+    } as Task;
+    vi.mocked(taskStore.searchTasks).mockResolvedValue([completed]);
+    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+
+    const result = await createAgentTask(taskStore, {
+      description: "Restore the missing html2canvas dependency so dashboard typecheck passes.",
+    }, { sourceTaskId: "FN-NEW-PARENT" });
+
+    expect(result).toEqual({ task: created, wasDuplicate: false });
+    expect(taskStore.createTask).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when cross-parent diagnostic lookup is unavailable", async () => {
+    vi.mocked(taskStore.searchTasks).mockRejectedValue(new Error("database unavailable"));
+
+    await expect(createAgentTask(taskStore, {
+      description: "Fix unresolved `html2canvas` typecheck failure.",
+    }, { sourceTaskId: "FN-PARENT" })).rejects.toThrow("Unable to verify cross-parent diagnostic task uniqueness");
+
+    expect(taskStore.createTask).not.toHaveBeenCalled();
+  });
+
+  it("persists option-based parent provenance on the step-session fn_task_create surface", async () => {
+    const tool = createTaskCreateTool(taskStore, undefined, { sourceTaskId: "FN-PARENT", sourceAgentId: "agent-worker" });
+    await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ sourceType: "api", sourceAgentId: "agent-worker", sourceParentTaskId: "FN-PARENT" }),
+    }), expect.anything());
+  });
+
+  it("serializes three concurrent paraphrased creates from one parent", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      await Promise.resolve();
+      const created = { id: `FN-${tasks.length + 1}`, description: input.description, dependencies: [], column: "triage" as const,
+        sourceParentTaskId: input.source?.sourceParentTaskId, steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Task;
+      tasks.push(created); return created;
+    });
+    const results = await Promise.all([
+      "Add screenshot and activity-trace capture with privacy scrub coverage.",
+      "Add screenshot and activity-trace capture while preserving privacy scrubbing.",
+      "Capture screenshots and activity traces with mandatory privacy scrubbing.",
+    ].map((description) => createAgentTask(taskStore, { description }, { sourceTaskId: "FN-PARENT" })));
+    expect(results.filter((result) => result.wasDuplicate)).toHaveLength(2);
+    expect(tasks).toHaveLength(1);
+  });
+
+  it("fails closed when parent-scoped duplicate lookup is unavailable", async () => {
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockRejectedValue(new Error("database unavailable"));
+    await expect(createAgentTask(taskStore, {
+      description: "Add screenshot and activity-trace capture",
+    }, { sourceTaskId: "FN-PARENT" })).rejects.toThrow("Unable to verify parent-scoped task uniqueness");
+    expect(taskStore.createTask).not.toHaveBeenCalled();
+  });
+
+  it("normalizes parent provenance and reports database claim reuse as a duplicate", async () => {
+    const canonical = {
+      id: "FN-1", title: "", description: "Add new support", dependencies: [], column: "triage" as const,
+      sourceParentTaskId: "FN-PARENT", proposalClaimId: "claim", steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as Task;
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockResolvedValue([]);
+    vi.mocked(taskStore.createTask).mockImplementation(async (_input, options) => {
+      options?.onProposalClaimConflict?.(canonical);
+      return canonical;
+    });
+
+    const result = await createAgentTask(taskStore, { description: "Add new support" }, { sourceTaskId: "fn-parent" });
+
+    expect(taskStore.findRecentTasksBySourceParentTaskId).toHaveBeenCalledWith("FN-PARENT");
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ sourceParentTaskId: "FN-PARENT" }),
+      proposalClaimId: expect.stringMatching(/^agent-parent-intent:FN-PARENT:/),
+    }), expect.anything());
+    expect(result).toMatchObject({ task: canonical, wasDuplicate: true });
+  });
+
+  it("carries delegation routing onto the reconcile canonical task", async () => {
+    const created = {
+      id: "FN-new",
+      description: "Write tests",
+      dependencies: [],
+      column: "todo" as const,
+      steps: [], currentStep: 0, log: [],
+      createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    const canonical = { ...created, id: "FN-old", assignedAgentId: "agent-old", column: "triage" as const, createdAt: "2026-01-01T00:00:00.000Z" };
+    const reassigned = { ...canonical, assignedAgentId: "agent-002" };
+    const moved = { ...reassigned, column: "todo" as const };
+    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+    vi.mocked(taskStore.findRecentTasksByContentFingerprint)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([canonical, created]);
+    vi.mocked(taskStore.updateTask).mockImplementation(async (id, updates) =>
+      id === "FN-old" ? reassigned : { ...created, ...updates },
+    );
+    vi.mocked(taskStore.moveTask).mockImplementation(async (id, column) =>
+      id === "FN-old" ? moved : { ...created, id, column },
+    );
+
+    const result = await createAgentTask(taskStore, {
+      description: "Write tests",
+      column: "todo",
+      assignedAgentId: "agent-002",
+    });
+
+    expect(result.wasDuplicate).toBe(true);
+    expect(result.task).toBe(moved);
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-old", { assignedAgentId: "agent-002" });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-old", "todo");
   });
 
   it("returns success message with task ID and agent name", async () => {

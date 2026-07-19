@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyTestModeOverrides,
   resolveExecutionSettingsModel,
+  resolveExecutorFallbackModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
+  resolveTaskMergerModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
+  resolveMergerFallbackModel,
   resolveMergerSettingsModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
@@ -14,6 +17,26 @@ import {
 } from "../model-resolution.js";
 
 describe("model-resolution", () => {
+  it("uses only a complete task merger pair before settings and preserves test mode", () => {
+    const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
+    expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });
+    expect(resolveTaskMergerModel({ mergerModelProvider: "partial-provider" }, settings)).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveTaskMergerModel({}, settings)).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, { ...settings, testMode: true })).toEqual(TEST_MODE_RESOLVED);
+  });
+
+  it("resolves executor fallback before the shared fallback and forces mock in test mode", () => {
+    expect(resolveExecutorFallbackModel({
+      executionFallbackProvider: "executor-provider",
+      executionFallbackModelId: "executor-model",
+      fallbackProvider: "global-provider",
+      fallbackModelId: "global-model",
+    })).toEqual({ provider: "executor-provider", modelId: "executor-model" });
+    expect(resolveExecutorFallbackModel({ fallbackProvider: "global-provider", fallbackModelId: "global-model" })).toEqual({ provider: "global-provider", modelId: "global-model" });
+    expect(resolveExecutorFallbackModel({})).toEqual({ provider: undefined, modelId: undefined });
+    expect(resolveExecutorFallbackModel({ testMode: true, fallbackProvider: "global-provider", fallbackModelId: "global-model" })).toEqual(TEST_MODE_RESOLVED);
+  });
+
   it("prefers the project default override over the global default", () => {
     expect(
       resolveProjectDefaultModel({
@@ -142,6 +165,29 @@ describe("model-resolution", () => {
       defaultProviderOverride: "project-default-provider",
       defaultModelIdOverride: "project-default-model",
     })).toEqual({ provider: "project-merger-provider", modelId: "project-merger-model" });
+  });
+
+  it("resolves merger fallback project pair, global fallback, partial pairs, and test mode", () => {
+    expect(resolveMergerFallbackModel({
+      mergerFallbackProvider: "project-merger-fallback-provider",
+      mergerFallbackModelId: "project-merger-fallback-model",
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "project-merger-fallback-provider", modelId: "project-merger-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      mergerFallbackProvider: "partial-provider",
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "global-fallback-provider", modelId: "global-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "global-fallback-provider", modelId: "global-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      testMode: true,
+      mergerFallbackProvider: "project-merger-fallback-provider",
+      mergerFallbackModelId: "project-merger-fallback-model",
+    })).toEqual(TEST_MODE_RESOLVED);
   });
 
   it("does not mix partial project lane pairs with lower precedence model fields", () => {

@@ -39,11 +39,13 @@ vi.mock("@fusion/core", () => ({
 }));
 /*
 FNXC:DashboardChatTests 2026-07-12-08:15:
-chat.ts has 14 named runtime imports + `import * as engineModule` from @fusion/engine (lines 43-59).
 The engine module transitively imports many @fusion/core exports (AWAITING_APPROVAL_PAUSE_REASON,
 THINKING_LEVELS, etc.), so loading the real engine against a partial @fusion/core mock throws.
 Since this test only exercises resolveFileReferences (no real AI calls), stub every engine export
 chat.ts references so the real engine module never loads.
+
+FNXC:DashboardChatTests 2026-07-15-16:15:
+chat.ts now has 25 named runtime imports plus `import * as engineModule` from @fusion/engine. Keep this isolated mock complete as chat gains tool factories so the Gate's mock-completeness invariant does not regress.
 */
 vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
@@ -57,9 +59,45 @@ vi.mock("@fusion/engine", () => ({
   createAskQuestionTool: vi.fn(() => ({})),
   createChatArtifactTools: vi.fn(() => []),
   createChatTaskDocumentTools: vi.fn(() => []),
+  createChatTaskLogsReadTool: vi.fn(() => ({})),
   createWorkflowAuthoringTools: vi.fn(() => []),
+  createTaskCreateTool: vi.fn(),
+  createTaskListTool: vi.fn(),
+  createTaskShowTool: vi.fn(),
+  createTaskSearchTool: vi.fn(),
+  createListAgentsTool: vi.fn(),
+  createDelegateTaskTool: vi.fn(),
+  createTaskAssignTool: vi.fn(),
+  createGetAgentConfigTool: vi.fn(),
+  createWebFetchTool: vi.fn(),
+  createGoalRetrievalTools: vi.fn(() => []),
+  createMissionTools: vi.fn(() => []),
+  createMemoryTools: vi.fn(() => []),
+  createResearchTools: vi.fn(() => []),
   resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
   resolveExecutorThinkingLevel: vi.fn(() => undefined),
+  wrapToolsWithActionGate: vi.fn((tools) => tools),
+  /*
+  FNXC:ChatToolset 2026-07-15-16:35:
+  FN-7987 exposed the shared fusion toolset to chat agents, adding these `@fusion/engine` imports to
+  chat.ts without extending this hardcoded factory — which red-lit the `check-mock-completeness` gate.
+  Shapes must match the call sites: the singular `create*Tool` factories are pushed as one tool each,
+  while the plural factories are spread (and `createMemoryTools(...)` is `.filter`ed by `tool.name`),
+  so they must return arrays.
+  */
+  createTaskCreateTool: vi.fn(() => ({})),
+  createTaskListTool: vi.fn(() => ({})),
+  createTaskShowTool: vi.fn(() => ({})),
+  createTaskSearchTool: vi.fn(() => ({})),
+  createListAgentsTool: vi.fn(() => ({})),
+  createDelegateTaskTool: vi.fn(() => ({})),
+  createTaskAssignTool: vi.fn(() => ({})),
+  createGetAgentConfigTool: vi.fn(() => ({})),
+  createWebFetchTool: vi.fn(() => ({})),
+  createGoalRetrievalTools: vi.fn(() => []),
+  createIdeationTools: vi.fn(() => []),
+  createMemoryTools: vi.fn(() => []),
+  createResearchTools: vi.fn(() => []),
 }));
 
 describe("resolveFileReferences", () => {

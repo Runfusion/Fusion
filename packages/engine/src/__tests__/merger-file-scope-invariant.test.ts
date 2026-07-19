@@ -203,7 +203,7 @@ describe("assertSquashOverlapsFileScope", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       "file-scope invariant bypassed via scopeOverride",
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -227,7 +227,7 @@ describe("assertSquashOverlapsFileScope", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       "file-scope invariant bypassed via scopeOverride — reason: hotfix",
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -262,7 +262,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       expect.stringContaining("Warning only — continuing merge."),
-      "text",
+      "status",
       expect.stringContaining("declaredScope:"),
       "merger",
     );
@@ -321,7 +321,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       expect.stringContaining("File-scope invariant violation"),
-      "text",
+      "status",
       expect.stringContaining("declaredScope:"),
       "merger",
     );
@@ -380,7 +380,7 @@ describe("file-scope invariant wiring", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       expect.stringContaining("Warning only — continuing merge."),
-      "text",
+      "status",
       expect.stringContaining("declaredScope:"),
       "merger",
     );
@@ -460,7 +460,7 @@ describe("file-scope invariant wiring", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       "file-scope invariant bypassed via scopeOverride — reason: hotfix",
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -500,7 +500,7 @@ describe("file-scope invariant wiring", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       expect.stringContaining("Warning only — continuing merge."),
-      "text",
+      "status",
       expect.stringContaining("stagedFiles:"),
       "merger",
     );

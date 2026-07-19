@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -11,6 +11,11 @@ import { TriageProcessor } from "../triage.js";
  * the planner prompt must be seeded from the most recent Plan Review REVISE output
  * stored in workflowStepResults — otherwise the planner re-plans with
  * `feedback: undefined` and regenerates the same rejected plan.
+ *
+ * FNXC:PlanReviewReplan 2026-07-15-11:15:
+ * Also seed the rejected PROMPT.md body so buildSpecificationPrompt uses surgical
+ * revision mode (Existing Specification + Revision Feedback) instead of a full
+ * rewrite from title/description — the main non-convergence failure mode.
  */
 
 const { mockCreateResolvedAgentSession, mockPromptWithFallback } = vi.hoisted(() => ({
@@ -155,6 +160,7 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
 
   it("seeds the planner prompt from the latest plan-review REVISE output when no comment feedback exists", async () => {
     const reviseOutput = "PLAN-REVIEW-REVISE-MARKER: the plan omits the required migration step and must add it.";
+    const rejectedDraft = "# Existing rejected plan\n\n## Mission\nDo not lose this body during replan.\n";
     const task = createTask({
       id: "FN-REPLAN-FEEDBACK-WSR",
       // No user comments and no "AI spec revision requested" log entry — the only
@@ -173,6 +179,7 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
       ],
     });
     rootDir = await createRoot(task.id);
+    await writeFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), rejectedDraft, "utf-8");
     const harness = createMutableStore(task);
     const processor = new TriageProcessor(harness.store, rootDir);
 
@@ -188,11 +195,18 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(mockPromptWithFallback).toHaveBeenCalled();
     expect(capturedPrompt).toBeDefined();
     expect(capturedPrompt).toContain(reviseOutput);
+    // Surgical revision: rejected PROMPT body + feedback, not a fresh respec from title alone.
+    expect(capturedPrompt).toContain("Revise this task");
+    expect(capturedPrompt).toContain("Existing Specification");
+    expect(capturedPrompt).toContain("Do not lose this body during replan");
+    expect(capturedPrompt).toContain("Converge — do not rewrite from scratch");
+    expect(capturedPrompt).not.toContain("Re-specify this task");
   });
 
   it("prefers an explicit AI spec revision comment over the workflowStepResults fallback", async () => {
     const reviseOutput = "PLAN-REVIEW-REVISE-MARKER: stale fallback that must not win.";
     const explicitFeedback = "EXPLICIT-COMMENT-FEEDBACK: address the auth edge case first.";
+    const rejectedDraft = "# Rejected plan body\n\nKeep this under surgical revision.\n";
     const task = createTask({
       id: "FN-REPLAN-FEEDBACK-PRECEDENCE",
       log: [
@@ -214,6 +228,7 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
       ],
     });
     rootDir = await createRoot(task.id);
+    await writeFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), rejectedDraft, "utf-8");
     const harness = createMutableStore(task);
     const processor = new TriageProcessor(harness.store, rootDir);
 
@@ -228,5 +243,7 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(capturedPrompt).toBeDefined();
     expect(capturedPrompt).toContain(explicitFeedback);
     expect(capturedPrompt).not.toContain(reviseOutput);
+    expect(capturedPrompt).toContain("Existing Specification");
+    expect(capturedPrompt).toContain("Keep this under surgical revision");
   });
 });

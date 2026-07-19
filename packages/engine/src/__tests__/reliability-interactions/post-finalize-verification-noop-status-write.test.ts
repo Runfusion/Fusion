@@ -30,6 +30,13 @@ vi.mock("../../runtimes/in-process-runtime.js", () => ({
       getRoutineRunner: vi.fn(),
       getHeartbeatMonitor: vi.fn(),
       getTriggerScheduler: vi.fn(),
+      /*
+      FNXC:EngineTests 2026-07-15-11:50:
+      ProjectEngine.merge forwards pluginRunner via runtime.getPluginRunner(); incomplete
+      runtime mocks throw during AI merge and force tasks to failed instead of exercising
+      the post-finalize verification noop path under test.
+      */
+      getPluginRunner: vi.fn(() => undefined),
     };
   }),
 }));

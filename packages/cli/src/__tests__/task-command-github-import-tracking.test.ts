@@ -8,6 +8,7 @@ vi.mock("@fusion/core", async (importActual) => {
   const actual = await importActual<typeof import("@fusion/core")>();
   return {
     ...actual,
+    createTaskStoreForBackend: vi.fn(async () => null),
     TaskStore: taskStoreCtorMock,
   };
 });
@@ -31,6 +32,7 @@ vi.mock("../project-context.js", () => ({
       // best-effort, mirrors production closeProjectStore
     }
   }),
+  createLocalStore: vi.fn(async () => new (taskStoreCtorMock as unknown as new () => unknown)()),
   asLocalProjectContext: vi.fn((store: unknown) => ({
     projectId: process.cwd(),
     projectPath: process.cwd(),
@@ -38,6 +40,7 @@ vi.mock("../project-context.js", () => ({
     isRegistered: false,
     store,
   })),
+  createLocalStore: vi.fn(async () => new (taskStoreCtorMock as any)()),
 }));
 
 vi.mock("@fusion/dashboard", () => ({
@@ -48,9 +51,15 @@ vi.mock("@fusion/dashboard", () => ({
   buildGitLabTaskProvenance: vi.fn(() => ({})),
   isGitLabAlreadyImported: vi.fn(),
   buildGitLabTaskDescription: vi.fn(),
+  buildGitHubIssueSource: vi.fn((owner: string, repo: string, issue: { number: number; html_url: string }) => ({
+    sourceIssue: { provider: "github", repository: `${owner}/${repo}`, externalIssueId: String(issue.number), issueNumber: issue.number, url: issue.html_url },
+    sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
+  })),
+  isGitHubIssueAlreadyImported: vi.fn(() => false),
 }));
 
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   createFnAgent: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),

@@ -20,6 +20,7 @@ import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-dri
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
+import {applyOriginalDescription} from "../original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
@@ -364,6 +365,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.graphResumeRetryCount !== undefined) {
         task.graphResumeRetryCount = updates.graphResumeRetryCount;
       }
+      if (updates.consecutiveToolFailureRetryCount === null) task.consecutiveToolFailureRetryCount = null;
+      else if (updates.consecutiveToolFailureRetryCount !== undefined) task.consecutiveToolFailureRetryCount = updates.consecutiveToolFailureRetryCount;
+      if (updates.executorEscalationAttempted === null) task.executorEscalationAttempted = null;
+      else if (updates.executorEscalationAttempted !== undefined) task.executorEscalationAttempted = updates.executorEscalationAttempted;
+      if (updates.toolFailureDetectorLogCursor === null) task.toolFailureDetectorLogCursor = null;
+      else if (updates.toolFailureDetectorLogCursor !== undefined) task.toolFailureDetectorLogCursor = updates.toolFailureDetectorLogCursor;
+      if (updates.toolFailureRetryExhaustedAuditEmitted === null) task.toolFailureRetryExhaustedAuditEmitted = null;
+      else if (updates.toolFailureRetryExhaustedAuditEmitted !== undefined) task.toolFailureRetryExhaustedAuditEmitted = updates.toolFailureRetryExhaustedAuditEmitted;
       if (updates.resumeLimboTipSha === null) {
         task.resumeLimboTipSha = undefined;
       } else if (updates.resumeLimboTipSha !== undefined) {
@@ -403,6 +412,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.taskDoneRetryCount = undefined;
       } else if (updates.taskDoneRetryCount !== undefined) {
         task.taskDoneRetryCount = updates.taskDoneRetryCount;
+      }
+      // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; null clears the taint.
+      if (updates.bulkCompletionRefusalAt === null) {
+        task.bulkCompletionRefusalAt = undefined;
+      } else if (updates.bulkCompletionRefusalAt !== undefined) {
+        task.bulkCompletionRefusalAt = updates.bulkCompletionRefusalAt;
       }
       if (updates.worktreeSessionRetryCount === null) {
         task.worktreeSessionRetryCount = undefined;
@@ -499,6 +514,10 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.planningModelId !== undefined) {
         task.planningModelId = updates.planningModelId;
       }
+      if (updates.mergerModelProvider === null) task.mergerModelProvider = undefined;
+      else if (updates.mergerModelProvider !== undefined) task.mergerModelProvider = updates.mergerModelProvider;
+      if (updates.mergerModelId === null) task.mergerModelId = undefined;
+      else if (updates.mergerModelId !== undefined) task.mergerModelId = updates.mergerModelId;
       if (updates.validatorThinkingLevel === null) {
         task.validatorThinkingLevel = undefined;
       } else if (updates.validatorThinkingLevel !== undefined) {
@@ -509,6 +528,8 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.planningThinkingLevel !== undefined) {
         task.planningThinkingLevel = updates.planningThinkingLevel as import("../types.js").ThinkingLevel;
       }
+      if (updates.mergerThinkingLevel === null) task.mergerThinkingLevel = undefined;
+      else if (updates.mergerThinkingLevel !== undefined) task.mergerThinkingLevel = updates.mergerThinkingLevel as import("../types.js").ThinkingLevel;
       if (updates.thinkingLevel === null) {
         task.thinkingLevel = undefined;
       } else if (updates.thinkingLevel !== undefined) {
@@ -518,6 +539,15 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.executionMode = undefined;
       } else if (updates.executionMode !== undefined) {
         task.executionMode = updates.executionMode as import("../types.js").ExecutionMode;
+      }
+      /*
+      FNXC:PlannerOversight 2026-07-14-18:11:
+      sessionAdvisorEnabled: null clears to inherit project default; boolean sets override.
+      */
+      if (updates.sessionAdvisorEnabled === null) {
+        task.sessionAdvisorEnabled = undefined;
+      } else if (updates.sessionAdvisorEnabled !== undefined) {
+        task.sessionAdvisorEnabled = updates.sessionAdvisorEnabled;
       }
       if (updates.error === null) {
         task.error = undefined;
@@ -747,7 +777,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
                 next = rewriteHeadingLine(next, heading);
               }
               if (updates.description !== undefined) {
+                // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+                // Keep ## Mission and ## Original Description in sync with task.description
+                // on real specs so operator edits stay visible at the top of PROMPT.md.
                 next = rewriteMissionSection(next, task.description);
+                next = applyOriginalDescription(next, task.description ?? "");
               }
               if (next !== existingPrompt) {
                 await writeFile(promptPath, next);

@@ -253,3 +253,13 @@ FN-7020 requires the needs-input banner to stay visible when relevant without co
   }
 }
 
+
+/*
+FNXC:SessionBanner 2026-07-16-20:55:
+FN-8229 uses the established banner icon treatment for non-planning work that
+is still generating after the footer pill is removed. Keep progress semantic
+rather than introducing a separate component or hard-coded status color.
+*/
+.session-notification-banner__type-icon--progress {
+  color: var(--color-accent);
+}

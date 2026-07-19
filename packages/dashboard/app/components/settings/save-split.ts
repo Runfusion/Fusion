@@ -26,7 +26,7 @@
  * the actual `updateGlobalSettings`/`updateSettings` writes.
  */
 import { isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import type { GlobalSettings, Settings } from "@fusion/core";
+import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core";
 
 /**
  * Project-scoped model-override keys whose overrides track inheritance
@@ -43,15 +43,29 @@ import type { GlobalSettings, Settings } from "@fusion/core";
  * null-as-delete instead of being dropped as an unchanged inherited value.
  *
  * FNXC:Settings-MergerModel 2026-07-13-07:52:
- * Merger project lane (provider/model/thinking) is project-scoped like
- * title summarizer — not workflow-moved — so it participates in the same
- * changed-only/null-as-delete project-branch write path.
+ * Merger primary and merger-fallback lanes (provider/model/thinking) are project-scoped
+ * like title summarizer — not workflow-moved — so set edits and null-as-delete resets
+ * participate in the same changed-only project-branch write path instead of being dropped.
+ *
+ * FNXC:GitHubImportTranslate 2026-07-15-09:30:
+ * The import auto-translation settings are PROJECT-scoped: which language a repo's
+ * issues get translated into, and whether to translate at all, is a per-project
+ * decision, so they must route to the project patch and inherit when untouched.
+ * The lane's provider/model/thinking trio travels with the two non-model keys
+ * (`githubImportAutoTranslate`, `importTranslateTargetLocale`) so that clearing the
+ * toggle or the target locale serializes as null-as-delete (restoring inheritance)
+ * instead of being dropped as an unchanged inherited value. The companion
+ * `importTranslateGlobal*` keys are deliberately NOT listed here — they are global
+ * scope and are gated by GLOBAL_SECTION_KEYS below.
  */
 export const MODEL_LANE_KEYS = [
   "defaultProviderOverride", "defaultModelIdOverride",
   "titleSummarizerProvider", "titleSummarizerModelId",
   "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
   "mergerProvider", "mergerModelId", "mergerThinkingLevel",
+  "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackThinkingLevel",
+  "githubImportAutoTranslate", "importTranslateTargetLocale",
+  "importTranslateProvider", "importTranslateModelId", "importTranslateThinkingLevel",
 ] as const;
 
 const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
@@ -86,6 +100,8 @@ which GLOBAL keys belong to which settings section, instead of duplicating
 the list for the "Reset this menu" feature.
 */
 export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
+  /* FNXC:SettingsBackups 2026-07-16-14:35: shared PostgreSQL backup policy may only write through its global Database Backups section. */
+  "backups-global": new Set(["autoBackupEnabled", "autoBackupSchedule", "autoBackupRetention", "autoBackupDir", "embeddedPostgresMaxConnections"]),
   appearance: new Set([
     "themeMode",
     "colorTheme",
@@ -94,6 +110,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   ]),
   notifications: new Set([
     "ntfyEnabled",
+    "agentClarificationEnabled",
     "ntfyTopic",
     "ntfyBaseUrl",
     "ntfyAccessToken",
@@ -108,16 +125,25 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "notificationProviders",
   ]),
   experimental: new Set(["experimentalFeatures"]),
-  "global-general": new Set([
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The global GitLab fallbacks and the global default tracking repo moved out of "global-general" into their own "source-control-global" section, paired with the project "source-control" section under the Integrations nav group.
+  This set is not just reset bookkeeping: `isGlobalKeyAllowedForSection` gates the SAVE path on it, so these keys reach the global patch only while their owning section is active.
+  */
+  "source-control-global": new Set([
     "githubTrackingDefaultRepo",
     "gitlabEnabled",
     "gitlabInstanceUrl",
     "gitlabApiBaseUrl",
     "gitlabAuthToken",
     "gitlabAuthTokenType",
+  ]),
+  "global-general": new Set([
     "language",
     "dismissModalsOnOutsideClick",
+    "skipConfirmationDialogs",
     "persistAgentToolOutput",
+    "proactiveTaskChatEnabled",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",
     "fnBinaryCheckEnabled",
@@ -157,6 +183,15 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "mergerGlobalProvider",
     "mergerGlobalModelId",
     "mergerGlobalThinkingLevel",
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-09:30:
+    The import-translate GLOBAL lane keys must be section-allowlisted in both Models
+    sections (mirroring merger), otherwise the section gate in the global branch of
+    splitSettingsSave silently drops an operator's global lane edit on Save.
+    */
+    "importTranslateGlobalProvider",
+    "importTranslateGlobalModelId",
+    "importTranslateGlobalThinkingLevel",
   ]),
   "project-models": new Set([
     "defaultProvider",
@@ -184,6 +219,9 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "mergerGlobalProvider",
     "mergerGlobalModelId",
     "mergerGlobalThinkingLevel",
+    "importTranslateGlobalProvider",
+    "importTranslateGlobalModelId",
+    "importTranslateGlobalThinkingLevel",
   ]),
   "node-sync": new Set([
     "settingsSyncEnabled",
@@ -225,13 +263,33 @@ export interface SaveSplitInput {
   initialValues: Settings | null;
   /** Initial scoped values, used to detect changed/cleared project overrides. */
   initialScopedValues: { global: GlobalSettings; project: Partial<Settings> } | null;
-  /** The active section id; gates where `githubTrackingDefaultRepo` is written. */
+  /** The active section id; gates where section-owned values are written. */
   activeSection: string;
+  /** Current raw MCP values for both scopes, preserved even after section navigation. */
+  scopedMcpValues?: { global: McpServersSettings | undefined; project: McpServersSettings | undefined };
 }
 
 export interface SaveSplitResult {
   globalPatch: Partial<GlobalSettings>;
   projectPatch: Partial<Settings>;
+}
+
+export type McpSettingsScope = "global" | "project";
+export type ScopedSettingsValues = { global: GlobalSettings; project: Partial<Settings> };
+
+/**
+ * Return the raw MCP value owned by one settings scope.
+ *
+ * FNXC:McpSettingsScopes 2026-07-14-21:59:
+ * SettingsModal's general form is project-effective, so MCP editing and saving must use the raw values returned by `/api/settings/scopes`. Preserve `undefined` for an absent project override: normalizing it to `{ enabled: false, servers: [] }` would replace global inheritance with an explicit disabled project setting on a no-op save.
+ */
+export function resolveScopedMcpSettings(
+  scope: McpSettingsScope,
+  scopedSettings: ScopedSettingsValues | null,
+): McpServersSettings | undefined {
+  return scope === "global"
+    ? scopedSettings?.global.mcpServers
+    : scopedSettings?.project.mcpServers;
 }
 
 function hasOwn(obj: object | null | undefined, key: string): boolean {
@@ -356,6 +414,7 @@ export function splitSettingsSave({
   initialValues,
   initialScopedValues,
   activeSection,
+  scopedMcpValues,
 }: SaveSplitInput): SaveSplitResult {
   const globalPatch: Partial<GlobalSettings> = {};
 
@@ -371,10 +430,17 @@ export function splitSettingsSave({
   }
 
   for (const [key, value] of Object.entries(payload)) {
-    if (key === "githubTrackingDefaultRepo" && activeSection !== "global-general") {
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    These six keys are dual-scope (declared in both DEFAULT_GLOBAL_SETTINGS and DEFAULT_PROJECT_SETTINGS), so the ACTIVE SECTION — not the key — decides which patch they land in: the global fallbacks are editable only from "source-control-global", and every other section's copy of the key is the project override. The id moved with the controls (was "global-general"); it must track whichever section renders the global GitLab/tracking-repo rows, or a global edit would silently be written as a project override.
+    */
+    if (key === "githubTrackingDefaultRepo" && activeSection !== "source-control-global") {
       continue;
     }
-    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "global-general") {
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "source-control-global") {
+      continue;
+    }
+    if (key === "mcpServers" && scopedMcpValues) {
       continue;
     }
     if (key === "mcpServers" && activeSection !== "global-mcp") {
@@ -435,8 +501,12 @@ export function splitSettingsSave({
   for (const [key, value] of Object.entries(payload)) {
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
     if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
-    if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
-    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "global-general") continue;
+    // Mirror of the global branch's dual-scope gate: while the global source-control
+    // section is active these six keys are the GLOBAL fallbacks, so they must not
+    // also be written as project overrides. See the FNXC note in the global branch.
+    if (key === "githubTrackingDefaultRepo" && activeSection === "source-control-global") continue;
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "source-control-global") continue;
+    if (key === "mcpServers" && scopedMcpValues) continue;
     if (key === "mcpServers" && activeSection === "global-mcp") continue;
     if (!isProjectSettingsKey(key)) continue;
 
@@ -463,6 +533,22 @@ export function splitSettingsSave({
           (projectPatch as Record<string, unknown>)[key] = value;
         }
       }
+    }
+  }
+
+  /*
+  FNXC:McpSettingsScopes 2026-07-14-22:10:
+  Saving must not discard scoped MCP edits merely because the initial scoped snapshot is unavailable. Compare against an undefined baseline in that case so the current raw scoped values are still persisted.
+  */
+  if (scopedMcpValues) {
+    const initialGlobalMcp = resolveScopedMcpSettings("global", initialScopedValues);
+    if (!settingsValueEquals(scopedMcpValues.global, initialGlobalMcp)) {
+      (globalPatch as Record<string, unknown>).mcpServers = scopedMcpValues.global ?? null;
+    }
+
+    const initialProjectMcp = resolveScopedMcpSettings("project", initialScopedValues);
+    if (!settingsValueEquals(scopedMcpValues.project, initialProjectMcp)) {
+      (projectPatch as Record<string, unknown>).mcpServers = scopedMcpValues.project ?? null;
     }
   }
 

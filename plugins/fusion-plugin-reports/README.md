@@ -107,7 +107,7 @@ Aggregation is deterministic:
 
 ## Report Archive
 
-The plugin persists generated reports in SQLite via `ensureReportSchema(db)` and `ReportStore`.
+The plugin persists generated reports in the project PostgreSQL schema through the shared `ReportStore` provider. Rows are scoped by canonical project identity.
 
 ### Schema
 

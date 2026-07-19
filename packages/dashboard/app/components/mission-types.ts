@@ -63,6 +63,8 @@ export interface Mission {
   taskPrefix?: string | null;
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
+  /** Mission-level auto-merge override for linked task branches. */
+  autoMerge?: boolean;
   autoAdvance?: boolean;
   autopilotEnabled?: boolean;
   autopilotState?: AutopilotState;

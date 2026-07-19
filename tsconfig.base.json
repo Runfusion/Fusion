@@ -6,6 +6,15 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    /*
+    FNXC:WorkspaceBuild 2026-07-15-03:30:
+    Full program tsc of core/engine (~700-1000 files) dominated root builds. Enable incremental so warm rebuilds only recheck changed files.
+
+    FNXC:WorkspaceBuild 2026-07-15-08:40:
+    Use ${configDir} for tsBuildInfoFile so each package that extends this base writes its own dist/.tsbuildinfo. A plain relative path would resolve against this base file (repo root) and collide across packages.
+    */
+    "incremental": true,
+    "tsBuildInfoFile": "${configDir}/dist/.tsbuildinfo",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

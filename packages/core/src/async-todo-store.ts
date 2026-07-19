@@ -84,7 +84,8 @@ function rowToTodoItem(row: TodoItemRow): TodoItem {
 
 const todoListColumns = {
   id: schema.project.todoLists.id,
-  projectId: schema.project.todoLists.projectId,
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: the TodoList domain projectId reads from owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+  projectId: schema.project.todoLists.ownerProjectId,
   title: schema.project.todoLists.title,
   createdAt: schema.project.todoLists.createdAt,
   updatedAt: schema.project.todoLists.updatedAt,
@@ -111,7 +112,8 @@ export async function createTodoList(
 ): Promise<TodoList> {
   await handle.insert(schema.project.todoLists).values({
     id: list.id,
-    projectId: list.projectId,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition, and domain writes into it desynced the composite FK partitions of todo_items.
+    ownerProjectId: list.projectId,
     title: list.title,
     createdAt: list.createdAt,
     updatedAt: list.updatedAt,
@@ -137,7 +139,7 @@ export async function listTodoLists(handle: QueryHandle, projectId: string): Pro
   const rows = await handle
     .select(todoListColumns)
     .from(schema.project.todoLists)
-    .where(eq(schema.project.todoLists.projectId, projectId))
+    .where(eq(schema.project.todoLists.ownerProjectId, projectId))
     .orderBy(asc(schema.project.todoLists.createdAt), asc(schema.project.todoLists.id));
   return rows.map((row) => rowToTodoList(row as TodoListRow));
 }
@@ -181,13 +183,18 @@ export async function createTodoItem(
   handle: QueryHandle,
   item: { id: string; listId: string; text: string; completed: boolean; completedAt: string | null; sortOrder: number | undefined; createdAt: string; updatedAt: string },
 ): Promise<TodoItem> {
+  // FNXC:MultiProjectIsolation 2026-07-16-00:10: read the parent list's project_id
+  // partition (NOT owner_project_id) so the item explicitly inherits it. The ambient
+  // fusion.project_id GUC is not guaranteed to match the list's partition — unbound or
+  // RLS-bypass handles can read a list from any partition, and letting the trigger stamp
+  // the GUC would put the item in a different partition and break the composite
+  // (project_id, list_id) FK with SQLSTATE 23503.
   const listRows = await handle
-    .select({ projectId: schema.project.todoLists.projectId })
+    .select({ id: schema.project.todoLists.id, projectId: schema.project.todoLists.projectId })
     .from(schema.project.todoLists)
     .where(eq(schema.project.todoLists.id, item.listId))
     .limit(1);
-  const projectId = listRows[0]?.projectId;
-  if (!projectId) throw new Error(`Todo list not found: ${item.listId}`);
+  if (!listRows[0]) throw new Error(`Todo list not found: ${item.listId}`);
   let sortOrder = item.sortOrder;
   if (sortOrder === undefined) {
     const maxRows = await handle
@@ -197,7 +204,10 @@ export async function createTodoItem(
     sortOrder = (maxRows[0]?.maxSortOrder ?? -1) + 1;
   }
   await handle.insert(schema.project.todoItems).values({
-    projectId,
+    // FNXC:MultiProjectIsolation 2026-07-16-00:10: explicit non-blank project_id is safe —
+    // the assign trigger only rewrites blanks, and RLS WITH CHECK holds because a bound
+    // session can only have read a parent list from its own partition.
+    projectId: listRows[0].projectId,
     id: item.id,
     listId: item.listId,
     text: item.text,
@@ -379,6 +389,23 @@ export class AsyncTodoStore extends EventEmitter<TodoStoreEvents> {
 
   async getListsWithItems(projectId: string): Promise<TodoListWithItems[]> {
     return getTodoListsWithItems(this.layer.db, projectId);
+  }
+
+  /*
+  FNXC:TodoStore 2026-07-16-00:48:
+  The /api/todos single-resource GET and create-task routes need the same
+  read-side methods for PostgreSQL as the sync TodoStore exposes.
+  */
+  async getList(id: string): Promise<TodoList | undefined> {
+    return getTodoList(this.layer.db, id);
+  }
+
+  async getItem(id: string): Promise<TodoItem | undefined> {
+    return getTodoItem(this.layer.db, id);
+  }
+
+  async listItems(listId: string): Promise<TodoItem[]> {
+    return listTodoItems(this.layer.db, listId);
   }
 
   async createList(projectId: string, input: TodoListCreateInput): Promise<TodoList> {

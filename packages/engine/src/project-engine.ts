@@ -33,6 +33,7 @@ import {
   resolveEffectivePlannerOversightLevel,
   resolveEffectiveSettings,
   resolveMaxAutoMergeRetries,
+  resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
@@ -45,6 +46,12 @@ import { PrMonitor } from "./pr-monitor.js";
 import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./planner-overseer.js";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./planner-recovery-controller.js";
 import { evaluateOverseerHumanControl } from "./overseer-human-control-policy.js";
+import {
+  OverseerAdvisorService,
+  createParsingOverseerAgent,
+} from "./overseer-advisor-service.js";
+import { extractAdvisorAssistantText } from "./overseer-advise-tool.js";
+import { createResolvedAgentSession } from "./agent-session-helpers.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
@@ -59,6 +66,11 @@ import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
+import { canStartNextMergeBody } from "./merge-reclaim-policy.js";
+import {
+  registerProjectVerificationLimit,
+  unregisterProjectVerificationLimit,
+} from "./verification-concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -380,6 +392,14 @@ export class ProjectEngine {
    * safeguards beyond the userPaused skip are FN-7514's responsibility.
    */
   private plannerRecoveryController?: PlannerRecoveryController;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor service (OMP advisor parity). Soft-disabled until workflow
+  plannerOverseerAdvisorProvider + plannerOverseerAdvisorModelId are both set.
+  */
+  private sessionAdvisor?: OverseerAdvisorService;
+  /** Per-task agent-log cursor for poll-fed session-advisor deltas. */
+  private readonly sessionAdvisorLogCursor = new Map<string, number>();
   /**
    * FNXC:PlannerOversight 2026-07-04-19:45:
    * FN-7551 requirement: real overseer decision points (observation,
@@ -441,6 +461,13 @@ export class ProjectEngine {
   private mergeRunning = false;
   private activeMergeSession: { dispose: () => void } | null = null;
   private activeMergeTaskId: string | null = null;
+  /** Wall-clock when `activeMergeTaskId` was claimed; self-healing uses this when agent logs are silent. */
+  private activeMergeStartedAtMs: number | null = null;
+  /*
+  FNXC:MergeQueue 2026-07-15-10:05:
+  Tracks the underlying merge body promise (not the abort race). After force-abort the race rejects so drain can continue, but the orphan body may still be mid-tool. The next claim waits for this latch so two runAiMerge/land paths cannot advance main concurrently.
+  */
+  private mergeBodyInFlight: Promise<unknown> | null = null;
   private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private autostashSweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -470,6 +497,13 @@ export class ProjectEngine {
   // would let a second caller overwrite the first, stranding its promise.
   private manualMergeResolvers = new Map<string, Array<MergeResolver>>();
   private shuttingDown = false;
+  /**
+   * FNXC:FasterStartup 2026-07-15-00:20:
+   * stop() clears shuttingDown so the engine can restart, which would otherwise
+   * let in-flight deferred startup work resume after stop. Bump this generation
+   * on stop (and capture it when scheduling deferred work) so post-stop tails abort.
+   */
+  private startupGeneration = 0;
 
   private addMergeResolver(taskId: string, r: MergeResolver): void {
     const list = this.manualMergeResolvers.get(taskId);
@@ -507,9 +541,19 @@ export class ProjectEngine {
   }
 
   /** FN-5697/FN-5674: cap transient provider/network abort retries in auto-merge.
-   *  Examples: "This operation was aborted", "socket hang up", `server_error`.
-   *  After this cap, the task is parked failed for human visibility. */
-  private static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = 3;
+   *  Examples: "This operation was aborted", "socket hang up", `server_error`,
+   *  and (FN-8004) ACP provider turn failures such as `acp rpc code -32603`.
+   *  After this cap, the task is parked failed for human visibility.
+   *
+   *  FNXC:MergeReliability 2026-07-15-18:50 (FN-8004):
+   *  Raised 3 → 5. Applies only to errors already classified transient, and each retry
+   *  is spaced by exponential backoff (5s/10s/20s/40s/80s — ~2.5 min total), so the
+   *  widened budget rides out provider incidents lasting minutes rather than seconds
+   *  without meaningfully delaying a genuinely broken merge's park.
+   *
+   *  Readable (not private) so tests derive the cap from this single source of truth rather
+   *  than hardcoding it — the FN-8004 bump broke two suites that had baked in the old `3`. */
+  static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = 5;
   private static readonly MERGE_REQUEST_RETRY_EXHAUSTED_AGE_MS = 30 * 60 * 1000;
   /** Cap on outer in-review→in-progress bounces caused by deterministic
    *  verification failures during auto-merge. After this many failed merges
@@ -560,16 +604,14 @@ export class ProjectEngine {
     //
     // Tests substitute a minimal runtime mock that may not implement this hook.
     this.runtime.setActiveMergeTaskIdProvider?.(() => this.getActiveMergeTaskId());
+    this.runtime.setActiveMergeStartedAtMsProvider?.(() => this.activeMergeStartedAtMs);
+    this.runtime.setActiveMergeAborter?.((taskId, reason) => this.abortActiveMerge(taskId, reason));
     this.runtime.setMergeEnqueuer?.((taskId) => {
       // If the wedged attempt was the active one, abort its in-flight signal
       // and dispose its session so subsequent code paths can release file
       // handles / child processes promptly.
       if (this.activeMergeTaskId === taskId) {
-        this.mergeAbortController?.abort();
-        this.mergeAbortController = null;
-        this.activeMergeSession?.dispose();
-        this.activeMergeSession = null;
-        this.activeMergeTaskId = null;
+        this.abortActiveMerge(taskId, "merge-enqueuer-reclaim");
       }
       this.mergeActive.delete(taskId);
       return this.internalEnqueueMerge(taskId);
@@ -589,6 +631,95 @@ export class ProjectEngine {
 
   getActiveMergeTaskId(): string | null {
     return this.activeMergeTaskId;
+  }
+
+  getActiveMergeStartedAtMs(): number | null {
+    return this.activeMergeStartedAtMs;
+  }
+
+  /*
+  FNXC:MergeQueue 2026-07-15-09:50:
+  Self-healing reclaim path for a wedged single-flight merge. Always abort + dispose + clear identity so raceMergeWithAbort can settle drainMergeQueue even when the agent ignores cooperative abort.
+  */
+  abortActiveMerge(taskId: string, reason: string): boolean {
+    if (this.activeMergeTaskId !== taskId) return false;
+    runtimeLog.log(`Aborting active merge for ${taskId} (${reason})`);
+    this.mergeAbortController?.abort();
+    this.mergeAbortController = null;
+    if (this.activeMergeSession) {
+      this.activeMergeSession.dispose();
+      this.activeMergeSession = null;
+    }
+    this.mergeActive.delete(taskId);
+    this.activeMergeTaskId = null;
+    this.activeMergeStartedAtMs = null;
+    return true;
+  }
+
+  private claimActiveMerge(taskId: string): AbortSignal {
+    this.activeMergeTaskId = taskId;
+    this.activeMergeStartedAtMs = Date.now();
+    this.mergeAbortController = new AbortController();
+    return this.mergeAbortController.signal;
+  }
+
+  private clearActiveMergeClaim(taskId: string): void {
+    if (this.activeMergeTaskId === taskId) {
+      this.activeMergeTaskId = null;
+      this.activeMergeStartedAtMs = null;
+    }
+  }
+
+  /*
+  FNXC:MergeQueue 2026-07-15-10:05:
+  Bound how long drain waits for an orphan body after abort. If the agent ignores abort forever, a hard settle timeout releases the latch so the board does not stay permanently blocked — last-resort only; prefer clean body settle. Overridable in tests via mergeBodySettleTimeoutMs.
+  */
+  private mergeBodySettleTimeoutMs = 60_000;
+
+  private trackMergeBody<T>(body: Promise<T>): Promise<T> {
+    const tracked = body.finally(() => {
+      if (this.mergeBodyInFlight === tracked) {
+        this.mergeBodyInFlight = null;
+      }
+    });
+    this.mergeBodyInFlight = tracked;
+    return tracked;
+  }
+
+  private async awaitPriorMergeBodySettle(): Promise<void> {
+    const prior = this.mergeBodyInFlight;
+    if (canStartNextMergeBody(prior)) return;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = this.mergeBodySettleTimeoutMs;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      timeoutHandle.unref?.();
+    });
+    try {
+      const winner = await Promise.race([
+        prior!.then(() => "settled" as const).catch(() => "settled" as const),
+        timeout,
+      ]);
+      if (winner === "timeout") {
+        runtimeLog.warn(
+          `Prior merge body did not settle within ${timeoutMs}ms after abort — releasing latch for next generation`,
+        );
+        if (this.mergeBodyInFlight === prior) {
+          this.mergeBodyInFlight = null;
+        }
+      }
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
+  /**
+   * Race a merge body with abort, while tracking the underlying body so the next
+   * generation cannot start until the orphan work settles.
+   */
+  private runAbortableMergeBody<T>(bodyFactory: () => Promise<T>, signal: AbortSignal, taskId: string): Promise<T> {
+    const body = this.trackMergeBody(bodyFactory());
+    return this.raceMergeWithAbort(body, signal, taskId);
   }
 
   /*
@@ -618,6 +749,14 @@ export class ProjectEngine {
     if (this.started) {
       return;
     }
+
+    /*
+    FNXC:EngineShutdown 2026-07-17-16:35:
+    stop() is a hard lifecycle boundary: public merge requests must remain
+    rejected after it settles. Reset the shutdown guard only when a subsequent
+    start begins a new lifecycle, never at the end of stop().
+    */
+    this.shuttingDown = false;
 
     // 1. Start the core runtime (TaskStore, Scheduler, Executor, Triage, etc.)
     await this.runtime.start();
@@ -718,9 +857,7 @@ export class ProjectEngine {
       // through the FN-7520 façade for each real observation the monitor
       // records, using the real TaskStore. Best-effort — never throws (the
       // monitor already swallows callback errors around `onObservation`).
-      onObservation: (observation) => {
-        this.emitOverseerObservationDeduped(store, observation);
-      },
+      onObservation: (observation) => this.emitOverseerObservationDeduped(store, observation),
     });
     // FN-7512: bounded autonomous-recovery dispatcher, wired to the existing
     // steering-comment API + store retry/re-enqueue path only — no new
@@ -730,6 +867,15 @@ export class ProjectEngine {
       snapshotProvider: this.plannerOverseer,
       handlers: this.buildPlannerRecoveryHandlers(store),
     });
+    // FNXC:PlannerOversight 2026-07-13-23:05: session advisor (transcript review) alongside lifecycle supervisor.
+    this.sessionAdvisor = this.buildSessionAdvisorService(store);
+    try {
+      this.runtime.getExecutor?.()?.setOnExecutorLogFlushed?.((taskId, entries) => {
+        this.notifySessionAdvisorLogDelta(taskId, entries);
+      });
+    } catch {
+      /* executor may not expose the setter on older shims */
+    }
     this.startPlannerOverseerPoll(store);
 
     // 2. Initialize PrMonitor + PrCommentHandler
@@ -757,10 +903,21 @@ export class ProjectEngine {
       this.prReconciler.start();
     }
 
-    // 3. Initialize notification services (unless caller manages them externally)
+    /*
+    FNXC:FasterStartup 2026-07-14-23:55:
+    Route-critical path constructs AutomationStore/CronRunner and wires merge
+    listeners so createServer closures bind real subsystems. Notifiers, OAuth
+    (refresh-before-monitor order preserved), automation schedule syncs, and
+    startupMergeSweep run in the background so ensureEngine returns sooner.
+    Do not reintroduce a timed race that hands createServer an undefined engine.
+    */
+    const engineStartT0 = Date.now();
+
+    // 3. Construct notification services (start deferred — see startDeferredStartupWork)
+    let deferredAgentNameResolver: ((agentId: string) => Promise<string | null>) | undefined;
     if (!this.options.skipNotifier) {
       const agentStore = this.runtime.getAgentStore();
-      const agentNameResolver = agentStore
+      deferredAgentNameResolver = agentStore
         ? async (agentId: string): Promise<string | null> => {
           const agent = await agentStore.getAgent(agentId);
           const name = typeof agent?.name === "string" ? agent.name.trim() : "";
@@ -772,59 +929,20 @@ export class ProjectEngine {
         projectId: this.options.projectId,
         ntfyBaseUrl: this.options.ntfyBaseUrl,
         messageStore: this.runtime.getMessageStore(),
-        agentNameResolver,
+        agentNameResolver: deferredAgentNameResolver,
       });
-      await this.notificationService.start();
       const authStorage = createFusionAuthStorage();
       this.authStorage = authStorage;
-      const oauthAlertState = new OAuthAlertStateStore({
-        statePath: getFusionOAuthAlertStatePath(),
-      });
-      /*
-      FNXC:ClaudeOAuth 2026-07-05-00:00:
-      FN-7574: proactively refresh OAuth access tokens ahead of expiry (widened window,
-      see OAUTH_REFRESH_BUFFER_MS in auth-storage.ts) so a healthy subscription session
-      never lapses waiting for something else to request a runtime API key. Reuses the
-      same authStorage instance as OAuthExpiryMonitor below so detection/notification and
-      proactive refresh observe a consistent, single credential source.
-
-      FNXC:ClaudeOAuth 2026-07-08-12:10:
-      Start the proactive refresher BEFORE OAuthExpiryMonitor. Both are awaited on startup
-      and share this authStorage; the monitor's OAuthExpiryMonitor.start() runs its first
-      check() synchronously, and that check is refresh-blind (it only reads the stored
-      `expires` timestamp, with no refresh token or getApiKey in its interface). If the
-      monitor ran first, a stale-but-refreshable access token (the normal state after the
-      app has been closed a while) fired a false "OAuth token expired" ntfy push even
-      though the connection was fine — the refresher would silently renew the token moments
-      later. Refreshing first means the scheduler's awaited initial tick() renews the token
-      and the monitor (which reload()s authStorage at the top of check()) sees the fresh
-      `expires`, so the alarm only fires when refresh genuinely fails.
-      */
-      this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage });
-      await this.oauthRefreshScheduler.start();
-      this.oauthExpiryMonitor = new OAuthExpiryMonitor({
-        authStorage,
-        notificationService: this.notificationService,
-        alertState: oauthAlertState,
-      });
-      await this.oauthExpiryMonitor.start();
-      this.oauthValidityLogger = new OAuthValidityLogger({
-        authStorage,
-        alertState: oauthAlertState,
-      });
-      await this.oauthValidityLogger.start();
-
-      // Backward-compatibility shim for gridlock notifications.
+      // Backward-compatibility shim for gridlock notifications (started in deferred work).
       this.notifier = new NtfyNotifier(
         store,
         {
           projectId: this.options.projectId,
           ntfyBaseUrl: this.options.ntfyBaseUrl,
-          agentNameResolver,
+          agentNameResolver: deferredAgentNameResolver,
         },
         this.notificationService,
       );
-      await this.notifier.start();
     }
 
     this.gridlockDetector = new GridlockDetector(store, {
@@ -833,20 +951,24 @@ export class ProjectEngine {
     });
     this.gridlockDetector.start();
 
-    // 4. Initialize AutomationStore + CronRunner
+    // 4. Initialize AutomationStore + CronRunner (syncs deferred)
     this.setAutomationSubsystemHealth(
       "initializing",
       "Initializing AutomationStore and CronRunner",
     );
+    let coreAutomationModule: typeof import("@fusion/core") | undefined;
     try {
-      const coreAutomationModule = await import("@fusion/core");
+      coreAutomationModule = await import("@fusion/core");
       const { AutomationStore } = coreAutomationModule;
       // FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:05:
       // Propagate the backend mode (asyncLayer) from the owning TaskStore so
       // AutomationStore does not construct a SQLite file under PostgreSQL. The
       // `?? undefined` coerces the `AsyncDataLayer | null` to the optional
       // option shape (null would be a type error; undefined = "not provided").
-      this.automationStore = new AutomationStore(cwd, { asyncLayer: store.getAsyncLayer() ?? undefined });
+      const automationLayer = store.getAsyncLayer();
+      if (!automationLayer) throw new Error("ProjectEngine AutomationStore requires the project PostgreSQL AsyncDataLayer");
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Engine automation schedules share the authoritative project PostgreSQL layer. */
+      this.automationStore = new AutomationStore(cwd, { asyncLayer: automationLayer });
       await this.automationStore.init();
 
       const aiPromptExecutor = await createAiPromptExecutor(cwd, store);
@@ -858,76 +980,17 @@ export class ProjectEngine {
         scope: "project", // Project-scoped execution — global schedules run separately
       });
 
-      const settings = await store.getSettings();
-      const startupSyncFailures: string[] = [];
-
-      // Sync insight extraction automation on startup
-      if (typeof coreAutomationModule.syncInsightExtractionAutomation === "function") {
-        try {
-          await coreAutomationModule.syncInsightExtractionAutomation(this.automationStore, settings);
-        } catch (err) {
-          const { message, detail } = formatErrorDetails(err);
-          startupSyncFailures.push(`insight extraction: ${message}`);
-          runtimeLog.warn(`Insight extraction automation startup sync failed:\n${detail}`);
-        }
-      } else {
-        runtimeLog.warn("syncInsightExtractionAutomation is unavailable; skipping startup sync");
-      }
-
-      // Sync auto-summarize automation on startup
-      if (typeof coreAutomationModule.syncAutoSummarizeAutomation === "function") {
-        try {
-          await coreAutomationModule.syncAutoSummarizeAutomation(this.automationStore, settings);
-        } catch (err) {
-          const { message, detail } = formatErrorDetails(err);
-          startupSyncFailures.push(`auto-summarize: ${message}`);
-          runtimeLog.warn(`Auto-summarize automation startup sync failed:\n${detail}`);
-        }
-      } else {
-        runtimeLog.warn("syncAutoSummarizeAutomation is unavailable; skipping startup sync");
-      }
-
-      // Sync memory dreams automation on startup
-      if (typeof coreAutomationModule.syncMemoryDreamsAutomation === "function") {
-        try {
-          await coreAutomationModule.syncMemoryDreamsAutomation(this.automationStore, settings);
-        } catch (err) {
-          const { message, detail } = formatErrorDetails(err);
-          startupSyncFailures.push(`memory dreams: ${message}`);
-          runtimeLog.warn(`Memory dreams automation startup sync failed:\n${detail}`);
-        }
-      } else {
-        runtimeLog.warn("syncMemoryDreamsAutomation is unavailable; skipping startup sync");
-      }
-
-      // Sync scheduled eval batch automation on startup
-      if (typeof coreAutomationModule.syncScheduledEvalBatchAutomation === "function") {
-        try {
-          await coreAutomationModule.syncScheduledEvalBatchAutomation(this.automationStore, settings);
-        } catch (err) {
-          const { message, detail } = formatErrorDetails(err);
-          startupSyncFailures.push(`scheduled eval: ${message}`);
-          runtimeLog.warn(`Scheduled eval automation startup sync failed:\n${detail}`);
-        }
-      } else {
-        runtimeLog.warn("syncScheduledEvalBatchAutomation is unavailable; skipping startup sync");
-      }
-
-      this.cronRunner.start();
-
-      if (startupSyncFailures.length > 0) {
-        this.setAutomationSubsystemHealth(
-          "degraded",
-          `CronRunner started with startup sync warnings: ${startupSyncFailures.join("; ")}`,
-        );
-      } else {
-        this.setAutomationSubsystemHealth(
-          "ready",
-          "CronRunner initialized and startup automation sync completed",
-        );
-      }
-
-      runtimeLog.log("CronRunner initialized and started");
+      /*
+      FNXC:FasterStartup 2026-07-15-00:40:
+      Do not start CronRunner until deferred automation schedule syncs finish.
+      start() ticks immediately; running it before sync can fire one overdue
+      schedule with stale settings from the previous process (Greptile P1).
+      */
+      this.setAutomationSubsystemHealth(
+        "initializing",
+        "AutomationStore ready; CronRunner starts after schedule sync",
+      );
+      runtimeLog.log("AutomationStore initialized; CronRunner start deferred until schedule sync");
     } catch (err) {
       // Non-fatal — automations are optional
       const { message, detail } = formatErrorDetails(err);
@@ -944,16 +1007,40 @@ export class ProjectEngine {
 
     // 5. Wire settings event listeners
     this.wireSettingsListeners(store);
+    /*
+    FNXC:VerificationConcurrency 2026-07-15-08:20:
+    Apply maxConcurrentVerifications once at start (and on settings:updated) so verification
+    slots do not re-race last-writer-wins on every fn_run_verification / merge command.
+
+    FNXC:VerificationConcurrency 2026-07-15-09:05:
+    Register per-project so multi-engine hosts take the MIN of all caps (most restrictive wins).
+    */
+    registerProjectVerificationLimit(this.config.projectId, settings.maxConcurrentVerifications ?? 1);
 
     // 6. Wire auto-merge on task:moved and task:updated pause interruptions
     this.wireAutoMerge(store, cwd);
     this.wireTaskPauseMergeInterruption(store);
     this.wireAutostashOrphanRecovery(store);
 
-    // 7. Auto-merge startup sweep
-    await this.startupMergeSweep(store);
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Clear crash-leftover merging/merging-pr statuses on the critical path so
+    manual merge is not blocked while deferred work finishes. Auto-merge enqueue
+    stays deferred (pause-aware) after the engine handle is returnable.
+    */
+    const statusClearT0 = Date.now();
+    await this.clearStaleMergingStatuses(store);
+    runtimeLog.log(`ProjectEngine stale merging status clear: ${Date.now() - statusClearT0}ms`);
 
-    // 8. Start periodic merge retry sweep
+    // 7–9. Deferred: notifiers/OAuth (ordered), automation syncs, merge enqueue
+    const deferredGeneration = this.startupGeneration;
+    void this.startDeferredStartupWork(store, coreAutomationModule, deferredGeneration).catch((err) => {
+      if (this.shuttingDown || this.startupGeneration !== deferredGeneration) return;
+      const message = err instanceof Error ? err.message : String(err);
+      runtimeLog.error(`Deferred ProjectEngine startup work failed: ${message}`);
+    });
+
+    // 8. Start periodic merge retry sweep (does not require merge enqueue to have finished)
     this.scheduleMergeRetry(store);
     this.scheduleMergeActiveReconciliation(settings.maintenanceIntervalMs ?? 900_000);
 
@@ -962,7 +1049,171 @@ export class ProjectEngine {
     this.scheduleStaleAutostashSweep(store);
 
     this.started = true;
-    runtimeLog.log(`ProjectEngine started for ${this.config.projectId}`);
+    runtimeLog.log(
+      `ProjectEngine started for ${this.config.projectId} (critical path ${Date.now() - engineStartT0}ms; deferred work in background)`,
+    );
+  }
+
+  /**
+   * Non-route-critical startup work. Runs after the engine handle is returnable.
+   * OAuth refresh must still complete before the expiry monitor's first check.
+   * Aborts cleanly when stop() sets shuttingDown.
+   */
+  private deferredStartupAborted(generation: number): boolean {
+    return this.shuttingDown || this.startupGeneration !== generation;
+  }
+
+  private async startDeferredStartupWork(
+    store: TaskStore,
+    coreAutomationModule: typeof import("@fusion/core") | undefined,
+    generation: number,
+  ): Promise<void> {
+    if (this.deferredStartupAborted(generation)) return;
+    const t0 = Date.now();
+
+    /*
+    FNXC:FasterStartup 2026-07-15-00:40:
+    Isolate notifier/OAuth failures so automation schedule sync and merge
+    enqueue still run (Greptile: one reject must not skip reconciliation).
+    OAuth refresh still precedes expiry monitor inside the try block.
+    */
+    if (!this.options.skipNotifier && this.notificationService && this.authStorage) {
+      try {
+        const notifiersT0 = Date.now();
+        await this.notificationService.start();
+        if (this.deferredStartupAborted(generation)) return;
+        const oauthAlertState = new OAuthAlertStateStore({
+          statePath: getFusionOAuthAlertStatePath(),
+        });
+        /*
+        FNXC:ClaudeOAuth 2026-07-05-00:00 / 2026-07-08-12:10 / FNXC:FasterStartup 2026-07-14-23:55:
+        FN-7574: proactively refresh OAuth before expiry. Refresh scheduler still
+        starts BEFORE OAuthExpiryMonitor so a stale-but-refreshable token does not
+        fire a false "OAuth token expired" ntfy on restart. Only the await moved
+        off the ensureEngine critical path — relative order is unchanged.
+        */
+        this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage: this.authStorage });
+        await this.oauthRefreshScheduler.start();
+        if (this.deferredStartupAborted(generation)) return;
+        this.oauthExpiryMonitor = new OAuthExpiryMonitor({
+          authStorage: this.authStorage,
+          notificationService: this.notificationService,
+          alertState: oauthAlertState,
+        });
+        await this.oauthExpiryMonitor.start();
+        if (this.deferredStartupAborted(generation)) return;
+        this.oauthValidityLogger = new OAuthValidityLogger({
+          authStorage: this.authStorage,
+          alertState: oauthAlertState,
+        });
+        await this.oauthValidityLogger.start();
+        if (this.deferredStartupAborted(generation)) return;
+        if (this.notifier) {
+          await this.notifier.start();
+        }
+        runtimeLog.log(`ProjectEngine deferred notifiers+oauth: ${Date.now() - notifiersT0}ms`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        runtimeLog.error(`Deferred notifiers/OAuth failed (continuing automation/merge startup): ${message}`);
+      }
+    }
+
+    if (this.deferredStartupAborted(generation)) return;
+
+    if (this.automationStore && coreAutomationModule) {
+      const syncT0 = Date.now();
+      const settings = await store.getSettings();
+      if (this.deferredStartupAborted(generation)) return;
+      const startupSyncFailures: string[] = [];
+
+      if (typeof coreAutomationModule.syncInsightExtractionAutomation === "function") {
+        try {
+          await coreAutomationModule.syncInsightExtractionAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`insight extraction: ${message}`);
+          runtimeLog.warn(`Insight extraction automation startup sync failed:\n${detail}`);
+        }
+      } else {
+        runtimeLog.warn("syncInsightExtractionAutomation is unavailable; skipping startup sync");
+      }
+
+      if (this.deferredStartupAborted(generation)) return;
+
+      if (typeof coreAutomationModule.syncAutoSummarizeAutomation === "function") {
+        try {
+          await coreAutomationModule.syncAutoSummarizeAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`auto-summarize: ${message}`);
+          runtimeLog.warn(`Auto-summarize automation startup sync failed:\n${detail}`);
+        }
+      } else {
+        runtimeLog.warn("syncAutoSummarizeAutomation is unavailable; skipping startup sync");
+      }
+
+      if (this.deferredStartupAborted(generation)) return;
+
+      if (typeof coreAutomationModule.syncMemoryDreamsAutomation === "function") {
+        try {
+          await coreAutomationModule.syncMemoryDreamsAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`memory dreams: ${message}`);
+          runtimeLog.warn(`Memory dreams automation startup sync failed:\n${detail}`);
+        }
+      } else {
+        runtimeLog.warn("syncMemoryDreamsAutomation is unavailable; skipping startup sync");
+      }
+
+      if (this.deferredStartupAborted(generation)) return;
+
+      if (typeof coreAutomationModule.syncScheduledEvalBatchAutomation === "function") {
+        try {
+          await coreAutomationModule.syncScheduledEvalBatchAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`scheduled eval: ${message}`);
+          runtimeLog.warn(`Scheduled eval automation startup sync failed:\n${detail}`);
+        }
+      } else {
+        runtimeLog.warn("syncScheduledEvalBatchAutomation is unavailable; skipping startup sync");
+      }
+
+      if (this.deferredStartupAborted(generation)) return;
+
+      // Start CronRunner only after schedule sync so the first tick is not stale.
+      if (this.cronRunner && !this.deferredStartupAborted(generation)) {
+        this.cronRunner.start();
+        runtimeLog.log("CronRunner started after schedule sync");
+      }
+
+      if (startupSyncFailures.length > 0) {
+        this.setAutomationSubsystemHealth(
+          "degraded",
+          `CronRunner started with startup sync warnings: ${startupSyncFailures.join("; ")}`,
+        );
+      } else {
+        this.setAutomationSubsystemHealth(
+          "ready",
+          "CronRunner initialized and startup automation sync completed",
+        );
+      }
+      runtimeLog.log(`ProjectEngine deferred automation syncs: ${Date.now() - syncT0}ms`);
+    } else if (this.cronRunner && !this.deferredStartupAborted(generation)) {
+      // No sync module/store — still start the runner so schedules are not stuck offline.
+      this.cronRunner.start();
+      this.setAutomationSubsystemHealth("ready", "CronRunner started without schedule sync module");
+    }
+
+    if (this.deferredStartupAborted(generation)) return;
+
+    const mergeT0 = Date.now();
+    await this.startupMergeEnqueue(store);
+    if (this.deferredStartupAborted(generation)) return;
+    runtimeLog.log(
+      `ProjectEngine deferred mergeEnqueue: ${Date.now() - mergeT0}ms (total deferred ${Date.now() - t0}ms)`,
+    );
   }
 
   /**
@@ -973,12 +1224,17 @@ export class ProjectEngine {
    * promptly without continuing git/verification work after shutdown starts.
    */
   async stop(): Promise<void> {
-    if (!this.started) {
-      return;
-    }
-
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Always raise shuttingDown first so deferred startup work (OAuth, automation
+    sync, merge enqueue) observes the flag even if start() has not flipped
+    started yet — prevents unhandled post-stop side effects on fast recycle.
+    */
     this.shuttingDown = true;
+    this.startupGeneration += 1;
 
+    // FNXC:VerificationConcurrency 2026-07-15-09:05: Drop this project's cap so it no longer pins process min.
+    unregisterProjectVerificationLimit(this.config.projectId);
     // Stop merge retry timer
     if (this.mergeRetryTimer) {
       clearTimeout(this.mergeRetryTimer);
@@ -994,10 +1250,34 @@ export class ProjectEngine {
     }
     this.stopPlannerOverseerPoll();
 
+    /*
+    FNXC:FasterStartup 2026-07-15-00:40:
+    Even when start() never flipped started (partial/failed start), stop any
+    critical-path timers already running (gridlock, cron) so abandon/stop does
+    not leak intervals (Greptile partial-start cleanup).
+    */
+    if (!this.started) {
+      try {
+        this.gridlockDetector?.stop();
+        this.cronRunner?.stop();
+        this.oauthExpiryMonitor?.stop();
+        this.oauthRefreshScheduler?.stop();
+        this.oauthValidityLogger?.stop();
+        this.notificationService?.stop();
+        this.notifier?.stop();
+        this.setAutomationSubsystemHealth("not-initialized", "Automation subsystem stopped (partial start)");
+      } catch {
+        // Best-effort partial cleanup
+      }
+      return;
+    }
+
     // Abort active/pending merge work before tearing down sessions.
     this.mergeAbortController?.abort();
     this.mergeAbortController = null;
     this.activeMergeTaskId = null;
+    this.activeMergeStartedAtMs = null;
+    this.mergeBodyInFlight = null;
     this.pausedReviewTaskIds.clear();
 
     const queuedTaskIds = [...this.mergeQueue];
@@ -1088,7 +1368,6 @@ export class ProjectEngine {
     await this.runtime.stop();
 
     this.started = false;
-    this.shuttingDown = false;
     runtimeLog.log(`ProjectEngine stopped for ${this.config.projectId}`);
   }
 
@@ -1188,7 +1467,34 @@ export class ProjectEngine {
    * task (nothing to show on the card).
    */
   getPlannerOverseerRuntimeSnapshot(taskId: string): PlannerOverseerRuntimeSnapshot | null {
-    return assemblePlannerOverseerRuntimeSnapshot(taskId, this.plannerOverseer, this.plannerRecoveryController);
+    const base = assemblePlannerOverseerRuntimeSnapshot(taskId, this.plannerOverseer, this.plannerRecoveryController);
+    if (!base) return null;
+    const advisor = this.sessionAdvisor?.getTaskAdvisorSnapshot(taskId);
+    if (!advisor?.active) return base;
+    return {
+      ...base,
+      advisorActive: true,
+      advisorBacklog: advisor.backlog,
+      lastAdviceSeverity: advisor.lastAdviceSeverity,
+    };
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Feed executor agent-log entries into the session advisor (AgentLogger hook).
+   * Fail-soft; never throws into the logger.
+   */
+  notifySessionAdvisorLogDelta(taskId: string, entries: Array<{ type?: string; text?: string; detail?: string; agent?: string }>): void {
+    try {
+      // FNXC:PlannerOversight 2026-07-14-14:00: CodeRabbit — attach .catch so async rejections cannot become unhandled rejections (sync try/catch is not enough).
+      void this.sessionAdvisor?.onExecutorLogDelta(taskId, entries)?.catch((err) => {
+        runtimeLog.warn(
+          `session advisor log-delta notification failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -1253,6 +1559,12 @@ export class ProjectEngine {
    * recovery-controller ring buffers for this task (mirrors the poll's
    * leave-in-flight cleanup). This is a user action; it never mutates task
    * lifecycle/column and never performs a merge/PR/destructive side effect.
+   *
+   * FNXC:PlannerOversight 2026-07-18-12:00:
+   * FN-8247 requires Stop to disable BOTH lifecycle oversight and the
+   * independently-gated session advisor. Persisting explicit false wins over
+   * project/workflow defaults, then immediate runtime teardown prevents a
+   * live advisor from spending or injecting after the operator stops it.
    */
   async stopOverseerTask(taskId: string): Promise<{ applied: boolean; reason: string; task?: Task }> {
     try {
@@ -1267,9 +1579,14 @@ export class ProjectEngine {
         this.plannerRecoveryController?.recordManualAction(taskId, observation.stage, "manual_stop");
       }
 
-      const updatedTask = await store.updateTask(taskId, { plannerOversightLevel: "off" });
+      const updatedTask = await store.updateTask(taskId, {
+        plannerOversightLevel: "off",
+        sessionAdvisorEnabled: false,
+      });
       this.plannerOverseer?.clear(taskId);
       this.plannerRecoveryController?.clear(taskId);
+      this.sessionAdvisor?.clear(taskId);
+      this.sessionAdvisorLogCursor.delete(taskId);
       // FN-7551: release the observation/escalation emission-dedup state too,
       // so if oversight is later re-enabled for this task, the first new
       // observation/escalation emits rather than staying suppressed by stale
@@ -1329,9 +1646,9 @@ export class ProjectEngine {
    * try/catch-degrade-to-no-op contract every FN-7512/FN-7513/FN-7514
    * handler already follows).
    */
-  private emitOverseerInterventionSafe(fn: () => void): void {
+  private async emitOverseerInterventionSafe(fn: () => unknown | Promise<unknown>): Promise<void> {
     try {
-      fn();
+      await fn();
     } catch (err) {
       runtimeLog.warn(`Failed to emit overseer intervention: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1346,7 +1663,7 @@ export class ProjectEngine {
    * `(stage, signal)` pair emits. Best-effort: any store/façade failure is
    * swallowed so it never breaks `PlannerOverseerMonitor#observeTask`/the poll.
    */
-  private emitOverseerObservationDeduped(store: TaskStore, observation: import("./planner-overseer.js").OverseerStageObservation): void {
+  private async emitOverseerObservationDeduped(store: TaskStore, observation: import("./planner-overseer.js").OverseerStageObservation): Promise<void> {
     try {
       const dedupKey = `${observation.stage}:${observation.signal}`;
       const last = this.plannerObservationEmitDedup.get(observation.taskId);
@@ -1354,7 +1671,7 @@ export class ProjectEngine {
         return;
       }
       this.plannerObservationEmitDedup.set(observation.taskId, dedupKey);
-      emitOverseerObservation({
+      await emitOverseerObservation({
         store,
         taskId: observation.taskId,
         stage: observation.stage,
@@ -1378,18 +1695,18 @@ export class ProjectEngine {
    * clears the dedup entry and may escalate again in a future exhaustion).
    * Best-effort; never throws out of the poll.
    */
-  private emitOverseerEscalationDeduped(
+  private async emitOverseerEscalationDeduped(
     store: TaskStore,
     taskId: string,
     decision: { watchedStage: PlannerOversightStage | null; reason: string; attemptCount: number; attemptLimit: number; sourceLinks: ReadonlyArray<{ kind: string; ref: string; url?: string }> },
-  ): void {
+  ): Promise<void> {
     if (!decision.watchedStage) return;
     const dedupKey = `${taskId}::${decision.watchedStage}`;
     if (this.plannerEscalationEmitDedup.has(dedupKey)) {
       return;
     }
     this.plannerEscalationEmitDedup.add(dedupKey);
-    this.emitOverseerInterventionSafe(() =>
+    await this.emitOverseerInterventionSafe(() =>
       emitOverseerEscalation({
         store,
         taskId,
@@ -1431,13 +1748,15 @@ export class ProjectEngine {
         // FN-7551: emit the steering intervention entry AFTER the steering
         // comment succeeds, through the real store, so the timeline reflects
         // the same guidance the agent actually saw.
-        this.emitOverseerInterventionSafe(() =>
+        // FNXC:PlannerOversight 2026-07-13-23:05: tag lifecycle source for timeline vs session-advisor.
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerSteering({
             store,
             taskId: task.id,
             stage: (decision.watchedStage ?? "executor") as PlannerOversightStage,
             reason: decision.reason,
             sourceLinks: this.toInterventionSourceLinks(decision.sourceLinks),
+            source: "lifecycle",
           }),
         );
       },
@@ -1445,7 +1764,7 @@ export class ProjectEngine {
         await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerRetry({
             store,
             taskId: task.id,
@@ -1463,7 +1782,7 @@ export class ProjectEngine {
           ? `[planner-oversight] targeted-fix requested: ${decision.reason} (source: ${sourceRef})`
           : `[planner-oversight] targeted-fix requested: ${decision.reason}`;
         await store.addSteeringComment(task.id, text, "agent");
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerRecoveryAttempt({
             store,
             taskId: task.id,
@@ -1496,7 +1815,7 @@ export class ProjectEngine {
       requestConfirmation: async (task, request) => {
         const text = `[planner-oversight] merge checkpoint (${request.sideEffectClass}): ${request.reason}`;
         await store.addSteeringComment(task.id, text, "agent");
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerConfirmation({
             store,
             taskId: task.id,
@@ -1513,7 +1832,7 @@ export class ProjectEngine {
       // the timeline shows both the request and its resolution. Never touches
       // the approve/deny execution path itself.
       onConfirmationResolved: async (taskId, request, resolution) => {
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerConfirmation({
             store,
             taskId,
@@ -2315,7 +2634,7 @@ export class ProjectEngine {
   }
 
   private internalEnqueueMerge(taskId: string): boolean {
-    if (this.shuttingDown) return false;
+    if (this.shuttingDown || !this.started) return false;
     if (this.mergeActive.has(taskId)) {
       // Distinguish "actually being processed" (queued or active) from a
       // leaked entry. Reconcile leaks immediately so recovery paths and fresh
@@ -2340,6 +2659,39 @@ export class ProjectEngine {
       );
     });
     return true;
+  }
+
+  /*
+  FNXC:MergeQueue 2026-07-15-09:41:
+  Operator-visible hang: pause/cancel aborted the merge AbortController and disposed the session, but runAiMerge/promptWithFallback often keeps awaiting a wedged agent tool (e.g. fn_task_show) that never observes the signal. drainMergeQueue stayed parked on that await with mergeRunning=true, so no card got a merging badge and later enqueues no-op'd. Race the merge work with the abort signal so pause always unblocks the single-flight pump even when the agent ignores abort; dispose remains best-effort cleanup for the orphan session.
+  */
+  private createMergeAbortedError(taskId: string): Error {
+    // Name-tagged Error (not a class import) so test mocks of merger.js stay compatible and catch paths that match err.name === "MergeAbortedError" keep working.
+    const err = new Error(`Merge aborted for ${taskId}: pause or cancel requested`);
+    err.name = "MergeAbortedError";
+    return err;
+  }
+
+  private raceMergeWithAbort<T>(work: Promise<T>, signal: AbortSignal, taskId: string): Promise<T> {
+    if (signal.aborted) {
+      return Promise.reject(this.createMergeAbortedError(taskId));
+    }
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = (): void => {
+        reject(this.createMergeAbortedError(taskId));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      work.then(
+        (value) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (err: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(err);
+        },
+      );
+    });
   }
 
   /**
@@ -2460,6 +2812,8 @@ export class ProjectEngine {
       // consult `allowsAutoMergeProcessing(task, settings)` — the same
       // FN-5147 predicate `self-healing.ts` gates lifecycle mutation on.
       const engineSettings = await store.getSettings().catch(() => undefined);
+      // FNXC:PlannerOversight 2026-07-14-00:10: keep session-advisor human-control on live settings.
+      this.sessionAdvisor?.setSettings(engineSettings);
 
       for (const task of inFlight) {
         try {
@@ -2469,6 +2823,18 @@ export class ProjectEngine {
             workflowEffective.plannerOversightLevel as string | undefined,
           );
           if (level === "off") {
+            /*
+             * FNXC:PlannerOversight 2026-07-17-00:00:
+             * FN-8221 requires tasks whose effective oversight resolves to off to discard retained
+             * observations plus recovery/advisor runtime. This makes getPlannerOverseerRuntimeSnapshot
+             * return null and prevents the TaskCard eye badge on oversight-off in-progress/in-review tasks.
+             */
+            overseer.clear(task.id);
+            this.plannerRecoveryController?.clear(task.id);
+            this.sessionAdvisor?.clear(task.id);
+            this.sessionAdvisorLogCursor.delete(task.id);
+            this.plannerObservationEmitDedup.delete(task.id);
+            this.clearPlannerEscalationDedup(task.id);
             continue;
           }
           // FN-7743: resolve the executor-stall threshold from the task's
@@ -2493,7 +2859,27 @@ export class ProjectEngine {
             // event — emit exactly one `escalate` entry per (taskId, stage)
             // while the stage remains exhausted across subsequent polls.
             if (decision?.exhausted && decision.watchedStage) {
-              this.emitOverseerEscalationDeduped(store, task.id, decision);
+              await this.emitOverseerEscalationDeduped(store, task.id, decision);
+            }
+          }
+
+          /*
+          FNXC:PlannerOversight 2026-07-14-18:11:
+          Session-advisor log feed when effective enable resolves true for the task
+          (task override → project default → workflow flag → off). Still needs model.
+          */
+          if (task.column === "in-progress" && this.sessionAdvisor) {
+            const advisorEnabled = resolveTaskSessionAdvisorEnabled(
+              task,
+              engineSettings,
+              workflowEffective.plannerOverseerAdvisorEnabled === true,
+            ).enabled;
+            if (advisorEnabled) {
+              await this.feedSessionAdvisorFromAgentLogs(store, task);
+            } else if (this.sessionAdvisor.getTaskAdvisorSnapshot(task.id).active) {
+              // Operator turned it off mid-flight — drop runtime so no further model spend.
+              this.sessionAdvisor.clear(task.id);
+              this.sessionAdvisorLogCursor.delete(task.id);
             }
           }
         } catch {
@@ -2507,6 +2893,8 @@ export class ProjectEngine {
         if (!inFlightIds.has(taskId)) {
           overseer.clear(taskId);
           this.plannerRecoveryController?.clear(taskId);
+          this.sessionAdvisor?.clear(taskId);
+          this.sessionAdvisorLogCursor.delete(taskId);
           this.plannerObservationEmitDedup.delete(taskId);
           this.clearPlannerEscalationDedup(taskId);
         }
@@ -2520,6 +2908,170 @@ export class ProjectEngine {
     if (this.plannerOverseerPollTimer) {
       clearInterval(this.plannerOverseerPollTimer);
       this.plannerOverseerPollTimer = null;
+    }
+    this.sessionAdvisor?.clearAll();
+    this.sessionAdvisorLogCursor.clear();
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Construct the session-advisor service with model gate + LLM complete path
+   * via createResolvedAgentSession (mock-safe under testMode).
+   */
+  private buildSessionAdvisorService(store: TaskStore): OverseerAdvisorService {
+    /*
+    FNXC:PlannerOversight 2026-07-14-00:10:
+    Greptile P1: pass live engine settings into the advisor so
+    evaluateOverseerHumanControl honors autoMerge:false / human-review
+    (undefined settings previously defaulted autoMerge:true).
+    */
+    /*
+    FNXC:PlannerOversight 2026-07-14-14:00:
+    Shared per-task workflow settings loader for session-advisor resolve*
+    callbacks (avoids three independent resolveEffectiveSettings shapes with
+    diverging fallbacks). Still one store round-trip per callback invocation.
+    */
+    const loadWorkflowForTask = async (task: Task): Promise<Record<string, unknown>> =>
+      resolveEffectiveSettings(store, { id: task.id }).catch(() => ({}) as Record<string, unknown>);
+
+    const resolveAdvisorCwd = (task: Task | undefined): string => {
+      if (task && typeof task.worktree === "string" && task.worktree.length > 0) return task.worktree;
+      return this.config?.workingDirectory ?? process.cwd();
+    };
+
+    const service = new OverseerAdvisorService({
+      store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
+      /*
+      FNXC:PlannerOversight 2026-07-14-18:11:
+      Session LLM advisor enable: task.sessionAdvisorEnabled → project
+      sessionAdvisorEnabledByDefault → workflow plannerOverseerAdvisorEnabled → false.
+      Model still requires provider + model id from workflow settings.
+      */
+      resolveEnabled: async (task) => {
+        const workflowEffective = await loadWorkflowForTask(task);
+        const projectSettings = await store.getSettings().catch(() => undefined);
+        return resolveTaskSessionAdvisorEnabled(
+          task,
+          projectSettings,
+          workflowEffective.plannerOverseerAdvisorEnabled === true,
+        ).enabled;
+      },
+      resolveLevel: async (task) => {
+        const workflowEffective = await loadWorkflowForTask(task);
+        return resolveEffectivePlannerOversightLevel(
+          task.plannerOversightLevel,
+          workflowEffective.plannerOversightLevel as string | undefined,
+        );
+      },
+      resolveModel: async (task) => {
+        const workflowEffective = await loadWorkflowForTask(task);
+        const projectSettings = await store.getSettings().catch(() => undefined);
+        const enabled = resolveTaskSessionAdvisorEnabled(
+          task,
+          projectSettings,
+          workflowEffective.plannerOverseerAdvisorEnabled === true,
+        ).enabled;
+        if (!enabled) return null;
+        const provider = String(workflowEffective.plannerOverseerAdvisorProvider ?? "").trim();
+        const modelId = String(workflowEffective.plannerOverseerAdvisorModelId ?? "").trim();
+        if (!provider || !modelId) return null;
+        return { provider, modelId };
+      },
+      resolveCwd: (task) => resolveAdvisorCwd(task),
+      agentFactory: async ({ taskId, model, systemPrompt, onAdvice }) => {
+        const task = await store.getTask(taskId).catch(() => undefined);
+        const cwd = resolveAdvisorCwd(task);
+        return createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async (sys, user) => {
+            try {
+              const settings = await store.getSettings().catch(() => undefined);
+              /*
+              FNXC:PlannerOversight 2026-07-14-00:10 / 2026-07-14-14:00:
+              CodeRabbit critical: do not use sessionPurpose "executor" (coding
+              tool surface). Use "reviewer" + tools:"readonly" so the advisor is
+              investigative-only; systemPrompt is the advisor contract; user
+              batch is the session-update delta only.
+              */
+              /*
+              FNXC:GrokCliRouting 2026-07-15-09:58:
+              Session-advisor createResolvedAgentSession must forward the engine PluginRunner so grok-cli advisor models use the same no-visible-key CLI runtime path as chat/executor/merge.
+              */
+              const { session } = await createResolvedAgentSession({
+                sessionPurpose: "reviewer",
+                cwd: String(cwd),
+                systemPrompt: sys,
+                tools: "readonly",
+                defaultProvider: model.provider,
+                defaultModelId: model.modelId,
+                settings,
+                pluginRunner: this.getPluginRunner(),
+              });
+              try {
+                await session.prompt(user);
+                // FNXC:PlannerOversight 2026-07-14-14:00: runtime-agnostic assistant text extraction.
+                return extractAdvisorAssistantText(session);
+              } finally {
+                try {
+                  (session as { dispose?: () => void }).dispose?.();
+                } catch {
+                  /* ignore */
+                }
+              }
+            } catch (err) {
+              runtimeLog.warn(
+                `session advisor complete failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return '{"silence":true}';
+            }
+          },
+        });
+      },
+    });
+
+    // Best-effort initial settings; poll refreshes each cycle.
+    void store.getSettings().then((s) => service.setSettings(s)).catch(() => undefined);
+    return service;
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Poll-backed log cursor: push only new agent-log rows into the session advisor.
+   */
+  private async feedSessionAdvisorFromAgentLogs(store: TaskStore, task: Task): Promise<void> {
+    if (!this.sessionAdvisor) return;
+    if (typeof store.getAgentLogs !== "function") return;
+    try {
+      await this.sessionAdvisor.ensureTask(task);
+      // FNXC:PlannerOversight 2026-07-13-23:20:
+      // getAgentLogs returns chronological entries (oldest→newest within the
+      // trailing window). Cursor tracks durable log count so we only feed
+      // new rows and never reverse/replay a sliding window incorrectly.
+      const total =
+        typeof store.getAgentLogCount === "function"
+          ? await store.getAgentLogCount(task.id).catch(() => 0)
+          : 0;
+      if (!Number.isFinite(total) || total <= 0) return;
+
+      const cursor = this.sessionAdvisorLogCursor.get(task.id);
+      if (cursor === undefined) {
+        // First observation: seed without replaying history (OMP seedTo parity).
+        this.sessionAdvisorLogCursor.set(task.id, total);
+        return;
+      }
+      if (total <= cursor) return;
+
+      const need = Math.min(80, total - cursor);
+      const logs = await store.getAgentLogs(task.id, { limit: need }).catch(() => [] as Array<{ type?: string; text?: string; detail?: string; agent?: string }>);
+      if (!Array.isArray(logs) || logs.length === 0) {
+        this.sessionAdvisorLogCursor.set(task.id, total);
+        return;
+      }
+      this.sessionAdvisorLogCursor.set(task.id, total);
+      await this.sessionAdvisor.onExecutorLogDelta(task.id, logs, task);
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -3084,14 +3636,26 @@ export class ProjectEngine {
           const mergeCandidate = await store.getTask(taskId).catch(() => null);
           const routeWorkspaceDirect = !!mergeCandidate && isWorkspaceTask(mergeCandidate);
 
+          // FNXC:MergeQueue 2026-07-15-10:05: Wait for any orphan body from a prior abort race before claiming the next generation.
+          await this.awaitPriorMergeBodySettle();
+
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge && !routeWorkspaceDirect) {
-            this.activeMergeTaskId = taskId;
+            /*
+            FNXC:MergeQueue 2026-07-15-10:05:
+            PR merge dispatch shares the single-flight pump. Race the PR body with abort so pause/reclaim unblocks drainMergeQueue even when processPullRequestMerge ignores cooperative abort.
+            */
+            const abortSignal = this.claimActiveMerge(taskId);
             runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
-            const result = await this.options.processPullRequestMerge(
-              store,
-              cwd,
+            const result = await this.runAbortableMergeBody(
+              () =>
+                this.options.processPullRequestMerge!(
+                  store,
+                  cwd,
+                  taskId,
+                  (this.runtime as any).worktreePool,
+                ),
+              abortSignal,
               taskId,
-              (this.runtime as any).worktreePool,
             );
             if (result === "merged") {
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
@@ -3137,19 +3701,30 @@ export class ProjectEngine {
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
 
             const rawMerge = async () => {
-              this.activeMergeTaskId = taskId;
-              this.mergeAbortController = new AbortController();
+              const abortSignal = this.claimActiveMerge(taskId);
+              /*
+              FNXC:GrokCliRouting 2026-07-15-09:45:
+              AI merge creates sessions via createResolvedAgentSession with the same Grok CLI no-visible-key auto-derive seam as chat/executor. Without pluginRunner, getRuntimeById("grok") is unavailable and grok-cli merger/fallback selections throw "Grok CLI models require the bundled Grok CLI runtime" even when chat works (ChatManager already receives engine.getPluginRunner()). Forward the engine PluginRunner so merge can route to the logged-in grok CLI like every other lane.
+              */
               const mergerOptions = {
                 manual: hasManualResolver,
                 pool,
                 usageLimitPauser,
                 agentStore,
-                signal: this.mergeAbortController.signal,
+                pluginRunner: this.getPluginRunner(),
+                signal: abortSignal,
                 syncGroupPr: this.options.syncGroupPr,
                 onSession: (session: { dispose: () => void }) => {
                   this.activeMergeSession = session;
                 },
               };
+              /*
+              FNXC:MergeQueue 2026-07-15-09:41:
+              Always race the merge body with the pause/cancel abort signal. Cooperative abort inside runAiMerge is best-effort; without this outer race a wedged agent tool parks drainMergeQueue forever (no merging badge board-wide).
+              FNXC:MergeQueue 2026-07-15-10:05:
+              Track the underlying body so abort-race reject does not allow a concurrent second generation while orphan work still runs.
+              */
+              return this.runAbortableMergeBody(async () => {
               // FNXC:Workspace 2026-06-21-23:40 (Phase C U1, KTD2):
               // Engine merge dispatch door. A workspace-mode task (non-empty
               // `workspaceWorktrees`) routes to the per-repo merge loop
@@ -3232,6 +3807,7 @@ export class ProjectEngine {
                 allowDirtyLocalCheckoutSync: settings.merger?.allowDirtyLocalCheckoutSync === true,
               };
               return runAiMerge(store, cwd, taskId, mergeOptionsWithSettings);
+              }, abortSignal, taskId);
             };
 
             let result: MergeResult;
@@ -4015,9 +4591,7 @@ export class ProjectEngine {
             }
           }
         } finally {
-          if (this.activeMergeTaskId === taskId) {
-            this.activeMergeTaskId = null;
-          }
+          this.clearActiveMergeClaim(taskId);
           this.mergeAbortController = null;
           this.mergeActive.delete(taskId);
           // If a manual merge was requested while this task was already in-flight,
@@ -4239,16 +4813,11 @@ export class ProjectEngine {
           return;
         }
 
-        runtimeLog.log(`Paused in-review task interrupting active merge: ${task.id}`);
-        this.mergeAbortController?.abort();
-        this.mergeAbortController = null;
-
-        if (this.activeMergeSession) {
-          this.activeMergeSession.dispose();
-          this.activeMergeSession = null;
-        }
-
-        this.mergeActive.delete(task.id);
+        /*
+        FNXC:MergeQueue 2026-07-15-09:41:
+        Pause of the active merge must free the single-flight lane the same way soft-delete does. Abort + dispose alone left activeMergeTaskId set and, when the agent ignored abort, drainMergeQueue wedged with mergeRunning=true (no merging badge on any card). Clear identity now; raceMergeWithAbort rejects the parked await so the drain finally settles and later enqueues can start.
+        */
+        this.abortActiveMerge(task.id, "task-paused");
         return;
       }
 
@@ -4293,49 +4862,63 @@ export class ProjectEngine {
         return;
       }
 
-      runtimeLog.log(`Soft-deleted task interrupting active merge: ${task.id}`);
-      this.mergeAbortController?.abort();
-      this.mergeAbortController = null;
-
-      if (this.activeMergeSession) {
-        this.activeMergeSession.dispose();
-        this.activeMergeSession = null;
-      }
-
-      this.mergeActive.delete(task.id);
-      this.activeMergeTaskId = null;
+      this.abortActiveMerge(task.id, "task-soft-deleted");
     };
 
     store.on("task:updated", this.taskUpdatedHandler);
     store.on("task:deleted", this.taskDeletedHandler);
   }
 
-  private async startupMergeSweep(store: TaskStore): Promise<void> {
-    try {
-      const tasks = await store.listTasks({ column: "in-review" });
-
-      // Clear stale "merging"/"merging-pr" statuses left by a prior crash.
-      // No merge is actually running at startup, so any task still marked
-      // as merging is a leftover from a previous engine lifecycle.
-      // This runs unconditionally (regardless of autoMerge setting) because
-      // stale statuses block manual merges too.
-      const staleStatuses = new Set(["merging", "merging-pr"]);
-      for (const t of tasks) {
-        if (t.status && staleStatuses.has(t.status)) {
-          runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
-          await store.updateTask(t.id, { status: null });
-          // Update in-memory object so canMergeTask sees the cleared status
-
-          (t as any).status = null;
-        }
+  /**
+   * Clear crash-leftover merging statuses so manual merge is unblocked.
+   * Unconditional (not gated on autoMerge). Safe to run on the critical path.
+   */
+  private async clearStaleMergingStatuses(store: TaskStore): Promise<Task[]> {
+    const tasks = await store.listTasks({ column: "in-review" });
+    // No merge is actually running at startup, so any task still marked
+    // as merging is a leftover from a previous engine lifecycle.
+    const staleStatuses = new Set(["merging", "merging-pr"]);
+    for (const t of tasks) {
+      if (t.status && staleStatuses.has(t.status)) {
+        runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
+        await store.updateTask(t.id, { status: null });
+        // Update in-memory object so canMergeTask sees the cleared status
+        (t as any).status = null;
       }
+    }
+    return tasks as Task[];
+  }
 
+  /**
+   * Enqueue auto-merge-eligible in-review tasks. Pause-aware; deferred after
+   * status clear so ensureEngine is not blocked by enqueue work.
+   */
+  private async startupMergeEnqueue(store: TaskStore): Promise<void> {
+    if (this.shuttingDown) return;
+    try {
       const settings = await store.getSettings();
-
+      if (settings.globalPause || settings.enginePaused) {
+        runtimeLog.log("Auto-merge startup enqueue skipped: pause active");
+        return;
+      }
+      const tasks = await store.listTasks({ column: "in-review" });
+      if (this.shuttingDown) return;
       const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${enqueued} task(s)`);
       }
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `Auto-merge startup enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Full startup merge sweep (status clear + enqueue). Kept for tests/callers. */
+  private async startupMergeSweep(store: TaskStore): Promise<void> {
+    try {
+      await this.clearStaleMergingStatuses(store);
+      await this.startupMergeEnqueue(store);
     } catch (err: unknown) {
       runtimeLog.warn(
         `Auto-merge startup sweep failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -4423,7 +5006,26 @@ export class ProjectEngine {
     store: TaskStore,
     settings: Settings,
     source: "Global unpause" | "Engine unpause",
+    engineLastActiveAtOverride?: string,
   ): Promise<void> {
+    /*
+    FNXC:TaskTiming 2026-07-15-00:00:
+    Reconcile paused wall-clock before resuming agentic work or sweeping tasks.
+    Settings listeners do not await one another, so a detached reconcile lets a
+    task leave in-progress before its anchor shifts and incorrectly accrues the
+    paused span. The captured heartbeat preserves the FN-7011 downtime proof
+    even if the scheduler writes a fresh heartbeat during this await.
+    */
+    try {
+      await this.getSelfHealingManager()?.reconcileEngineDowntimeActiveTiming({
+        engineLastActiveAtOverride,
+      });
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `${source}: failed to reconcile engine downtime active timing: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     try {
       const runtime = this.runtime as any;
       runtime.resumeAfterUnpause?.().catch((err: Error) =>
@@ -4478,7 +5080,7 @@ export class ProjectEngine {
 
     // 1. Unified pause lifecycle — detector only resumes once BOTH pause sources
     // are clear, and pauses when either source engages.
-    const onPauseLifecycleTransition = ({
+    const onPauseLifecycleTransition = async ({
       settings: s,
       previous: prev,
     }: {
@@ -4495,6 +5097,13 @@ export class ProjectEngine {
 
       if (wasPaused && !isPaused) {
         const source = prev.globalPause && !s.globalPause ? "Global unpause" : "Engine unpause";
+        runtimeLog.log(`${source} — resuming agentic activity`);
+        await this.resumeAfterUnpauseAndSweepInReview(
+          store,
+          s,
+          source,
+          prev.engineLastActiveAt,
+        );
         applyDetectorPauseLifecycle(false, source);
       }
     };
@@ -4538,39 +5147,11 @@ export class ProjectEngine {
     store.on("settings:updated", onAutoMergeDisabled);
     this.settingsHandlers.push(onAutoMergeDisabled);
 
-    // 4. Global unpause — resume orphaned tasks + sweep in-review
-    const onGlobalUnpause = async ({
-      settings: s,
-      previous: prev,
-    }: {
-      settings: Settings;
-      previous: Settings;
-    }) => {
-      if (prev.globalPause && !s.globalPause) {
-        runtimeLog.log("Global unpause — resuming agentic activity");
-        await this.resumeAfterUnpauseAndSweepInReview(store, s, "Global unpause");
-      }
-    };
-    store.on("settings:updated", onGlobalUnpause);
-    this.settingsHandlers.push(onGlobalUnpause);
+    // 4. The unified lifecycle listener above owns unpause. It waits for timing
+    // reconciliation before any agentic resume, avoiding duplicate work when
+    // globalPause and enginePaused clear in one settings update.
 
-    // 5. Engine unpause — same as global unpause
-    const onEngineUnpause = async ({
-      settings: s,
-      previous: prev,
-    }: {
-      settings: Settings;
-      previous: Settings;
-    }) => {
-      if (prev.enginePaused && !s.enginePaused) {
-        runtimeLog.log("Engine unpaused — resuming agentic activity");
-        await this.resumeAfterUnpauseAndSweepInReview(store, s, "Engine unpause");
-      }
-    };
-    store.on("settings:updated", onEngineUnpause);
-    this.settingsHandlers.push(onEngineUnpause);
-
-    // 6. Maintenance interval change — reschedule mergeActive reconciliation
+    // 5. Maintenance interval change — reschedule mergeActive reconciliation
     const onMaintenanceIntervalChange = ({
       settings: s,
       previous: prev,
@@ -4615,6 +5196,23 @@ export class ProjectEngine {
     };
     store.on("settings:updated", onStuckTimeoutChange);
     this.settingsHandlers.push(onStuckTimeoutChange);
+
+    // 7b. Verification concurrency — process-wide slot cap (clamped 1–8, min across projects)
+    const onVerificationConcurrencyChange = ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
+      if (s.maxConcurrentVerifications === prev.maxConcurrentVerifications) return;
+      registerProjectVerificationLimit(this.config.projectId, s.maxConcurrentVerifications ?? 1);
+      runtimeLog.log(
+        `maxConcurrentVerifications updated for ${this.config.projectId} to ${s.maxConcurrentVerifications ?? 1}`,
+      );
+    };
+    store.on("settings:updated", onVerificationConcurrencyChange);
+    this.settingsHandlers.push(onVerificationConcurrencyChange);
 
     // 8. Memory maintenance settings change — sync automations
     const onInsightSettingsChange = async ({

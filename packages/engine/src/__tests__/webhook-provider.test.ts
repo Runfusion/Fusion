@@ -160,7 +160,7 @@ describe("WebhookNotificationProvider", () => {
     ["in-review", "ready for review"],
     ["merged", "has been merged to main"],
     ["failed", "has failed and needs attention"],
-    ["awaiting-approval", "needs your approval before it can proceed"],
+    ["awaiting-approval", "needs your approval before implementation can start"],
     ["awaiting-user-review", "needs human review before it can proceed"],
     ["planning-awaiting-input", "is awaiting your input during planning"],
     ["cli-agent-awaiting-input", "has a CLI agent waiting for permission_request"],

@@ -52,6 +52,17 @@ Show full details for a task including steps, progress, and log entries.
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID (e.g. FN-001) |
 
+### fn_task_logs_read
+
+Read a task's full persisted agent log with pagination and optional type filtering.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Task ID (e.g. FN-001) |
+| `limit` | number | — | Maximum matching entries to return (default 100). |
+| `offset` | number | — | Number of matching entries to skip from newest (default 0). |
+| `type` | union | — | Only return entries of this agent-log type. |
+
 ### fn_task_attach
 
 Attach a file to a task. Supports images (png, jpg, gif, webp) and text files (txt, log, json, yaml, yml, toml, csv, xml).
@@ -303,7 +314,7 @@ Import GitHub issues as Fusion tasks. Fetches open issues from a repository and 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `ownerRepo` | string | ✓ | Repository in owner/repo format (e.g., 'dustinbyrne/fusion') |
-| `limit` | number | — | Max issues to import (default: 30, max: 100) |
+| `limit` | number | — | Max issues to import (default: 30, max: 50) |
 | `labels` | array | — | Label names to filter by |
 
 ### fn_task_import_github_issue
@@ -324,7 +335,7 @@ List open GitHub issues from a repository to browse before importing. Returns is
 |-----------|------|----------|-------------|
 | `owner` | string | ✓ | Repository owner (e.g., 'dustinbyrne') |
 | `repo` | string | ✓ | Repository name (e.g., 'fusion') |
-| `limit` | number | — | Max issues to show (default: 30, max: 100) |
+| `limit` | number | — | Max issues to show (default: 30, max: 50) |
 | `labels` | array | — | Label names to filter by |
 
 ## Mission Tools
@@ -738,49 +749,6 @@ Read a secret by key using per-secret access policy.
 |-----------|------|----------|-------------|
 | `key` | string | ✓ | Secret key |
 | `scope` | union | — | Optional scope |
-
-### fn_research_run
-
-Cited-research pipeline: create a bounded search/fetch/synthesis run (not an autonomous experiment loop) and optionally wait for completion.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | ✓ | Research query or question |
-| `wait_for_completion` | boolean | — | Wait for the run to complete before returning (default: false) |
-| `max_wait_ms` | number | — | Max wait time when wait_for_completion=true (default: 90000, capped by settings) |
-
-### fn_research_list
-
-Cited-research pipeline: list recent search/fetch/synthesis runs (not experiment-loop sessions).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `status` | string(enum) | — | Filter by run status |
-| `limit` | number | — | Max runs to return (default: 10) |
-
-### fn_research_get
-
-Cited-research pipeline: get one run with structured findings and citations (not experiment-loop state).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
-
-### fn_research_cancel
-
-Cited-research pipeline: cancel an in-flight run; terminal runs return INVALID_TRANSITION (does not control experiment loops).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
-
-### fn_research_retry
-
-Cited-research pipeline: retry a failed run when lifecycle marks it retryable (not an autonomous experiment loop retry).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
 
 ### fn_experiment_finalize
 

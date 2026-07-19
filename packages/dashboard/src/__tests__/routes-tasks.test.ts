@@ -150,6 +150,20 @@ vi.mock("@fusion/engine", async () => {
   Route tests mock @fusion/engine wholesale, but planning/subtask helpers now resolve MCP servers before creating read-only AI sessions. Keep the default MCP result shaped so unrelated route assertions do not fail on the fallback vi.fn() returning undefined.
   */
   resolveMcpServersForStore: vi.fn().mockResolvedValue({ servers: [], errors: [] }),
+  createAgentTask: vi.fn(async (
+    taskStore: TaskStore,
+    input: Parameters<TaskStore["createTask"]>[0],
+    options?: { sourceTaskId?: string },
+  ) => ({
+    task: await taskStore.createTask({
+      ...input,
+      source: input.source ?? {
+        sourceType: "api",
+        sourceParentTaskId: options?.sourceTaskId,
+      },
+    }),
+    wasDuplicate: false,
+  })),
   AgentReflectionService: class MockAgentReflectionService {
     async generateReflection(): Promise<import("@fusion/core").AgentReflection | null> {
       throw new Error("Reflection service unavailable in route tests");
@@ -163,7 +177,7 @@ vi.mock("@fusion/engine", async () => {
 });
 
 import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
-import { createFnAgent } from "@fusion/engine";
+import { createAgentTask, createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
@@ -2165,6 +2179,66 @@ describe("POST /subtasks/*", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-102", { dependencies: ["FN-101"] });
   });
 
+  it("checks for a parent-scoped duplicate before persisting a planned task", async () => {
+    const existing = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-EXISTING",
+      title: "Existing child",
+      column: "triage",
+      sourceParentTaskId: "FN-PARENT",
+    };
+    vi.mocked(createAgentTask).mockResolvedValueOnce({ task: existing, wasDuplicate: true });
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-PARENT" });
+
+    const start = await REQUEST(buildApp(), "POST", "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Break this feature into subtasks" }), { "Content-Type": "application/json" });
+    const createRes = await REQUEST(buildApp(), "POST", "/api/subtasks/create-tasks", JSON.stringify({
+      sessionId: start.body.sessionId,
+      parentTaskId: "fn-parent",
+      subtasks: [{ tempId: "subtask-1", title: "Existing child", description: "Do existing work", size: "L" }],
+    }), { "Content-Type": "application/json" });
+
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.tasks[0].id).toBe("FN-EXISTING");
+    expect(createAgentTask).toHaveBeenCalledWith(store, expect.objectContaining({
+      source: expect.objectContaining({ sourceParentTaskId: "FN-PARENT" }),
+    }), expect.objectContaining({ sourceTaskId: "FN-PARENT" }));
+    expect(store.createTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
+  it("keeps updates for the created sibling when a later input reuses it", async () => {
+    const canonical = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-CANONICAL",
+      title: "Canonical child",
+      column: "triage",
+      sourceParentTaskId: "FN-PARENT",
+    };
+    vi.mocked(createAgentTask)
+      .mockResolvedValueOnce({ task: canonical, wasDuplicate: false })
+      .mockResolvedValueOnce({ task: canonical, wasDuplicate: true });
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-PARENT" });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...canonical, size: "S" });
+
+    const start = await REQUEST(buildApp(), "POST", "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Break this feature into subtasks" }), { "Content-Type": "application/json" });
+    const createRes = await REQUEST(buildApp(), "POST", "/api/subtasks/create-tasks", JSON.stringify({
+      sessionId: start.body.sessionId,
+      parentTaskId: "FN-PARENT",
+      subtasks: [
+        { tempId: "subtask-1", title: "Canonical child", description: "Do the work", size: "S" },
+        { tempId: "subtask-2", title: "Canonical child rewritten", description: "Do the same work", size: "L" },
+      ],
+    }), { "Content-Type": "application/json" });
+
+    expect(createRes.status).toBe(201);
+    expect(store.updateTask).toHaveBeenCalledTimes(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-CANONICAL", { size: "S" });
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+  });
+
   it("subtask batch creation succeeds without explicit tracking issue creation", async () => {
     const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
       owner: "task",
@@ -2536,9 +2610,9 @@ describe("POST /subtasks/*", () => {
       "/api/subtasks/create-tasks",
       JSON.stringify({
         sessionId: start.body.sessionId,
-        parentTaskId: "FN-PARENT",
+        parentTaskId: "fn-parent",
         subtasks: [
-          { tempId: "subtask-1", title: "Child", description: "Do it", dependsOn: ["FN-PARENT"] },
+          { tempId: "subtask-1", title: "Child", description: "Do it", dependsOn: ["fn-parent"] },
         ],
       }),
       { "Content-Type": "application/json" },
@@ -2554,10 +2628,11 @@ describe("POST /subtasks/*", () => {
       });
     for (const call of depUpdateCalls) {
       expect((call[1] as { dependencies: string[] }).dependencies).not.toContain("FN-PARENT");
+      expect((call[1] as { dependencies: string[] }).dependencies).not.toContain("fn-parent");
     }
     // The response surfaces the dropped dep instead of silently swallowing it.
     expect(createRes.body.droppedDependencies).toEqual([
-      { taskId: "FN-CHILD", dropped: ["FN-PARENT"] },
+      { taskId: "FN-CHILD", dropped: ["fn-parent"] },
     ]);
   });
 

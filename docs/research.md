@@ -332,7 +332,7 @@ See [Agents → Research Tools](./agents.md) for more details.
 
 ## Storage
 
-Research data is persisted in the project SQLite database (`.fusion/fusion.db`) using three tables:
+Research data is persisted in the project PostgreSQL schema, isolated by `project_id`, using three tables:
 
 ### `research_runs`
 
@@ -346,15 +346,15 @@ Primary table for research run state.
 | `status` | TEXT | Current run status |
 | `projectId` | TEXT | Optional project scope |
 | `trigger` | TEXT | Optional trigger source |
-| `providerConfig` | TEXT (JSON) | Provider configuration used |
-| `sources` | TEXT (JSON) | Array of research sources |
-| `events` | TEXT (JSON) | Array of run events |
-| `results` | TEXT (JSON) | Research results (findings, summary, citations) |
+| `providerConfig` | JSONB | Provider configuration used |
+| `sources` | JSONB | Array of research sources |
+| `events` | JSONB | Array of run events |
+| `results` | JSONB | Research results (findings, summary, citations) |
 | `error` | TEXT | Error message if failed |
-| `tokenUsage` | TEXT (JSON) | Token usage metrics |
-| `tags` | TEXT (JSON) | String array of tags |
-| `metadata` | TEXT (JSON) | Arbitrary metadata |
-| `lifecycle` | TEXT (JSON) | Lifecycle details (attempts, retry info, failure class) |
+| `tokenUsage` | JSONB | Token usage metrics |
+| `tags` | JSONB | String array of tags |
+| `metadata` | JSONB | Arbitrary metadata |
+| `lifecycle` | JSONB | Lifecycle details (attempts, retry info, failure class) |
 | `createdAt` | TEXT | ISO timestamp |
 | `updatedAt` | TEXT | ISO timestamp |
 | `startedAt` | TEXT | When execution began |
@@ -389,7 +389,7 @@ Append-only event log for run lifecycle tracking.
 | `message` | TEXT | Human-readable message |
 | `status` | TEXT | Run status at event time |
 | `classification` | TEXT | Failure classification if applicable |
-| `metadata` | TEXT (JSON) | Arbitrary metadata |
+| `metadata` | JSONB | Arbitrary metadata |
 | `createdAt` | TEXT NOT NULL | ISO timestamp |
 
 Index: `(runId, seq)` for ordered retrieval.
@@ -457,3 +457,7 @@ When all retries are exhausted, the run transitions to `retry_exhausted`.
 | All retries exhausted | Persistent provider error | Check provider status; create a fresh run |
 | Research view not visible in dashboard | Feature flag disabled | Set `experimentalFeatures.researchView` to `true` |
 | Settings modal missing Research sections | Feature flag disabled | Enable `researchView` feature flag first |
+
+## Promoting findings to mission features
+
+Completed findings can be promoted into a destination slice through **Promote to roadmap** or the action-gated `fn_research_promote_finding` tool. Promotion stores the research run ID, a position-independent finding ID, and that finding's cited source URLs on the canonical feature. Repeating the same run/finding promotion in the same slice reuses the existing feature. Pending, failed, cancelled, timed-out, retry-exhausted, disabled, and unconfigured research cannot mutate a mission.

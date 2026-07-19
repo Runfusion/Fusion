@@ -18,6 +18,7 @@ import { Bar, type BarDatum } from "../charts/Bar";
 import { Sparkline } from "../charts/Sparkline";
 import { PieChart } from "../charts/recharts";
 import { resolveOrgChartLayoutMode, type OrgChartLayoutMode } from "../../agentsOrgChartLayout";
+import { OrgPortabilityControls } from "../OrgPortabilityControls";
 import { AreaShell } from "./AreaShell";
 import { useAnalyticsArea } from "./useAnalyticsArea";
 import { formatCost, formatCount } from "./areaShared";
@@ -178,6 +179,7 @@ export function TeamArea({
     globalPaused,
     enginePaused,
     toggleEnginePause,
+    refresh,
   } = useAppSettings(projectId);
   /*
   FNXC:CommandCenter 2026-06-22-00:00:
@@ -595,6 +597,12 @@ export function TeamArea({
           </div>
         </section>
       </div>
+
+      {/*
+      FNXC:CommandCenter 2026-07-18-18:18:
+      FN-8351 moves organization export/import and configuration rollback portability from Overview controls into the Team tab. Keep the existing project and settings-refresh contract unchanged so all card operations retain their established wiring.
+      */}
+      <OrgPortabilityControls projectId={projectId} onSettingsRefresh={refresh} />
 
       <AreaShell
       testId="team"

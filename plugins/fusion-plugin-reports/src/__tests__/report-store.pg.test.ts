@@ -11,9 +11,14 @@ import {
   createTaskStoreForTest,
   pgDescribe,
 } from "../../../../packages/core/src/__test-utils__/pg-test-harness.js";
+import type { AsyncDataLayer } from "@fusion/core";
 import { ReportStore } from "../store/report-store.js";
 import type { ReportStatus } from "../store/report-types.js";
 import type { CombinedReview } from "../review-types.js";
+
+function projectLayer(layer: AsyncDataLayer, projectId = "reports-project-a"): AsyncDataLayer {
+  return { ...layer, projectId };
+}
 
 pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("reports table is materialized by the schema-init hook", async () => {
@@ -33,7 +38,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("createReportAsync + getReportAsync round-trip", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_crud" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const created = await store.createReportAsync({
         cadence: "weekly",
         periodStart: "2026-07-01",
@@ -55,10 +60,41 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
     }
   });
 
+  it("isolates identical report ids and mutations between two bound projects", async () => {
+    const h = await createTaskStoreForTest({ prefix: "fusion_reports_isolation" });
+    try {
+      const projectA = new ReportStore(null, { asyncLayer: projectLayer(h.layer, "reports-project-a") });
+      const projectB = new ReportStore(null, { asyncLayer: projectLayer(h.layer, "reports-project-b") });
+      const report = await projectA.createReportAsync({
+        cadence: "daily",
+        periodStart: "2026-07-14",
+        periodEnd: "2026-07-14",
+        title: "Project A",
+      });
+      await h.adminDb.execute(sql`
+        INSERT INTO project.reports
+        SELECT 'reports-project-b', id, cadence, period_start, period_end, 'Project B', status,
+          generation_started_at, generation_completed_at, review_started_at, review_completed_at,
+          approved_at, approved_by, published_at, archived_at, failure_reason, approval_state,
+          approval_history, draft_markdown, rendered_html_path, rendered_html,
+          rendered_html_generated_at, metadata_json, combined_review_json, created_at, updated_at
+        FROM project.reports WHERE project_id='reports-project-a' AND id=${report.id}
+      `);
+
+      expect((await projectA.getReportAsync(report.id))?.title).toBe("Project A");
+      expect((await projectB.getReportAsync(report.id))?.title).toBe("Project B");
+      await projectB.updateReportAsync(report.id, { title: "Project B updated" });
+      expect((await projectA.getReportAsync(report.id))?.title).toBe("Project A");
+      expect((await projectB.getReportAsync(report.id))?.title).toBe("Project B updated");
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("getReportAsync returns null for unknown id", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_miss" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const fetched = await store.getReportAsync("rep_nonexistent");
       expect(fetched).toBeNull();
     } finally {
@@ -69,7 +105,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("listReportsAsync with filters, ordering, and pagination", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_list" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       for (let i = 0; i < 5; i++) {
         await store.createReportAsync({
           cadence: i < 3 ? "daily" : "weekly",
@@ -107,7 +143,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("setStatusAsync validates transitions and sets timestamps", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_status" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const created = await store.createReportAsync({
         cadence: "daily",
         periodStart: "2026-07-01",
@@ -135,7 +171,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("attachReviewAsync requires review_in_progress and stores combined review", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_review" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const created = await store.createReportAsync({
         cadence: "daily",
         periodStart: "2026-07-01",
@@ -162,7 +198,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("updateReportAsync + setRenderedHtmlAsync update fields", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_update" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const created = await store.createReportAsync({
         cadence: "daily",
         periodStart: "2026-07-01",
@@ -184,7 +220,7 @@ pgDescribe("ReportStore (PostgreSQL / backend mode)", () => {
   it("deleteReportAsync removes the report", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_reports_delete" });
     try {
-      const store = new ReportStore(null, { asyncLayer: h.layer });
+      const store = new ReportStore(null, { asyncLayer: projectLayer(h.layer) });
       const created = await store.createReportAsync({
         cadence: "daily",
         periodStart: "2026-07-01",

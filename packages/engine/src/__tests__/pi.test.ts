@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
-import { createAgentSession, ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
@@ -20,7 +20,7 @@ vi.mock("../skill-resolver.js", () => {
 
 // Mock pi-coding-agent imports
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: vi.fn(() => ({
       getCredentials: vi.fn().mockResolvedValue({}),
     })),
@@ -52,22 +52,17 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   DefaultPackageManager: vi.fn(),
   discoverAndLoadExtensions: vi.fn().mockResolvedValue({ errors: [], runtime: { pendingProviderRegistrations: [] } }),
   getAgentDir: vi.fn(() => "/test/agent-dir"),
-  ModelRegistry: Object.assign(
-    vi.fn().mockImplementation(() => ({
-      find: vi.fn().mockReturnValue({ provider: "test", id: "test-model" }),
+  ModelRuntime: {
+    create: vi.fn(async () => ({ getAuth: vi.fn(async () => undefined) })),
+  },
+  ModelRegistry: vi.fn().mockImplementation(function () {
+    return {
+      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
       getAll: vi.fn().mockReturnValue([]),
       registerProvider: vi.fn(),
       refresh: vi.fn(),
-    })),
-    {
-      create: vi.fn().mockReturnValue({
-        find: vi.fn().mockReturnValue({ provider: "test", id: "test-model" }),
-        getAll: vi.fn().mockReturnValue([]),
-        registerProvider: vi.fn(),
-        refresh: vi.fn(),
-      }),
-    },
-  ),
+    };
+  }),
   SessionManager: {
     inMemory: vi.fn(() => ({})),
   },
@@ -75,7 +70,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
     inMemory: vi.fn(() => ({})),
   },
 }));
-// FNXC:McpConfig 2026-07-13: Mock connectMcpSessionTools so createFnAgent doesn't attempt real MCP server bootstrap (which fails in tests because the server binary doesn't exist). MAIN-008 made bootstrap failures throw McpSessionBootstrapError; this mock returns a clean toolset so the MCP forwarding path is exercised without a live server.
+// FNXC:McpConfig 2026-07-13: Mock connectMcpSessionTools so createFnAgent doesn't attempt real MCP server bootstrap (the configured test binary doesn't exist). The clean toolset keeps MCP forwarding tests deterministic without a live server.
 vi.mock("../mcp-session-tools.js", () => ({
   connectMcpSessionTools: vi.fn().mockResolvedValue({
     tools: [],
@@ -83,14 +78,6 @@ vi.mock("../mcp-session-tools.js", () => ({
     skipped: [],
     dispose: vi.fn().mockResolvedValue(undefined),
   }),
-  McpSessionBootstrapError: class McpSessionBootstrapError extends Error {
-    failures: Array<{ name: string; reason: string }>;
-    constructor(failures: Array<{ name: string; reason: string }>) {
-      super("MCP session bootstrap failed");
-      this.name = "McpSessionBootstrapError";
-      this.failures = failures;
-    }
-  },
 }));
 
 // Import mock accessors after mocking (must use dynamic import for hoisted mocks)
@@ -1049,8 +1036,8 @@ describe("piLog structured diagnostics", () => {
     expect(onFallbackModelUsed).toHaveBeenCalledWith(
       expect.objectContaining({
         triggerPoint: "session-creation",
-        primaryModel: "test/test-model",
-        fallbackModel: "test/test-model",
+        primaryModel: "test/primary-model",
+        fallbackModel: "test/fallback-model",
         taskId: "FN-1",
       }),
     );
@@ -1148,12 +1135,6 @@ describe("piLog structured diagnostics", () => {
 
   it("throws a bounded fallback exhaustion error when prompt-time fallback also fails", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
 
     const primarySession = {
@@ -1176,9 +1157,15 @@ describe("piLog structured diagnostics", () => {
     } as unknown as AgentSession;
 
     createAgentSessionMock.mockReset();
+    const primaryRetrySession = {
+      model: { provider: "openai", id: "gpt-4o" },
+      prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")),
+      subscribe: vi.fn(), dispose: vi.fn(), setThinkingLevel: vi.fn(), sessionFile: undefined,
+    } as unknown as AgentSession;
     createAgentSessionMock
       .mockResolvedValueOnce({ session: primarySession } as any)
-      .mockResolvedValueOnce({ session: fallbackSession } as any);
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockResolvedValueOnce({ session: primaryRetrySession } as any);
 
     const { session } = await createFnAgent({
       cwd: "/test/project",
@@ -1193,15 +1180,17 @@ describe("piLog structured diagnostics", () => {
 
     await expect((session as any).promptWithFallback("prompt text")).rejects.toMatchObject({
       name: "ModelFallbackExhaustedError",
-      attempts: 2,
+      attempts: 3,
       primaryModel: "openai/gpt-4o",
       fallbackModel: "anthropic/claude-3-5-haiku-20241022",
       triggerPoint: "prompt-time",
     });
 
-    expect(createAgentSessionMock).toHaveBeenCalledTimes(2);
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(3);
     expect(primarySession.prompt).toHaveBeenCalledTimes(1);
     expect(fallbackSession.prompt).toHaveBeenCalledTimes(1);
+    expect(primaryRetrySession.prompt).toHaveBeenCalledTimes(1);
+    expect((createAgentSessionMock.mock.calls[2]?.[0] as any).model.id).toBe("gpt-4o");
     expect(onFallbackModelUsed).toHaveBeenCalledTimes(1);
     expect(onFallbackModelUsed).toHaveBeenCalledWith(expect.objectContaining({
       triggerPoint: "prompt-time",
@@ -1213,12 +1202,6 @@ describe("piLog structured diagnostics", () => {
 
   it("does not create a meaningless prompt-time fallback when primary and fallback match", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
     const primarySession = {
       model: { provider: "openai", id: "gpt-4o" },
@@ -1311,12 +1294,6 @@ describe("piLog structured diagnostics", () => {
 
   it("swaps once to fallback for Anthropic Sonnet 5 not_found_error without retaining the primary failure", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
     const sonnet5NotFoundError =
       'Error: 404 {"type":"error","error":{"type":"not_found_error","message":"Not found"},"request_id":"req_011CcawcZ3Ra9CennJXM8oWC"}';
@@ -1496,6 +1473,12 @@ describe("isRetryableModelSelectionError", () => {
     expect(isRetryableModelSelectionError("invalid api key")).toBe(true);
     expect(isRetryableModelSelectionError("HTTP 429 too many requests")).toBe(true);
     expect(isRetryableModelSelectionError("model is overloaded")).toBe(true);
+  });
+
+  it("treats a provider-not-configured failure as model-selection retryable so the fallback model is tried", () => {
+    // pi-ai surfaces an unresolved provider credential as this exact string (ModelsError code "auth").
+    // A configured fallback on a different provider can recover, so it must enter the single-swap path.
+    expect(isRetryableModelSelectionError("Provider is not configured: anthropic")).toBe(true);
   });
 
   it("does not match unrelated errors", () => {

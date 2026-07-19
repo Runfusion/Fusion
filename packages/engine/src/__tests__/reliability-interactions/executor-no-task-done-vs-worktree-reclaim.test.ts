@@ -164,4 +164,72 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       expect.objectContaining({ status: "failed" }),
     );
   });
+
+  /*
+  FNXC:ExecutorTaskDonePark 2026-07-15-16:10:
+  FN-7965 symptom verification. The in-session `fn_task_done` refusal handler parks the row terminally
+  (status=failed + cleared worktree/branch/sessionFile) once the refusal budget is exhausted. The retry
+  loop never observed that park and spawned a fresh session, which completed and marked the task done
+  against a worktree-less row — stranding the pre-merge graph on `no-worktree-for-write-node`.
+  Surface enumeration: the park must be honored whichever way the cleared binding surfaces (the real
+  store maps a cleared column to `undefined` via `row.worktree || undefined`, never `null`), and the
+  park must NOT be laundered into the FN-4806 silent requeue, which would clear the failure and
+  re-park on the next pickup in a todo→execute→park loop.
+  */
+  it.each([
+    ["binding cleared to undefined (real store contract)", { worktree: undefined, branch: undefined }],
+    ["binding cleared to null (mirror/legacy shape)", { worktree: null, branch: null }],
+    ["binding still present", {}],
+  ])("honors a terminal fn_task_done park instead of retrying — %s", async (_label, cleared) => {
+    const store = createMockStore();
+    const initial = makeTask({ taskDoneRetryCount: 3 });
+    let getTaskCalls = 0;
+    // Mutate only what the STORE returns, never the object passed to execute(): in production the
+    // in-session tool handler writes the park while this loop still holds its original `task`.
+    store.getTask.mockImplementation(async () => {
+      getTaskCalls++;
+      return getTaskCalls >= 2
+        ? { ...initial, status: "failed", error: "fn_task_done refused (bulk-step-completion-without-review)", ...cleared }
+        : { ...initial };
+    });
+
+    mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
+
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+    await executor.execute(makeTask({ taskDoneRetryCount: 3 }));
+
+    // No resurrection: the park must abort before a second session spawns.
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-4601",
+      expect.stringContaining("honoring park, not retrying"),
+      undefined,
+      expect.any(Object),
+    );
+    // The park must survive: never laundered into the FN-4806 silent requeue...
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true });
+    // ...and never handed off to review, which is what dragged the worktree-less row into the graph.
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4601", "in-review");
+  });
+
+  it("still retries when the task has not been parked", async () => {
+    // Negative control: the park check must not abort a healthy retry, or every no-fn_task_done
+    // session would degrade into a premature stop.
+    const store = createMockStore();
+    const state = makeTask();
+    store.getTask.mockImplementation(async () => ({ ...state }));
+
+    mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
+
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+    await executor.execute(state);
+
+    expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThan(1);
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-4601",
+      expect.stringContaining("honoring park, not retrying"),
+      undefined,
+      expect.any(Object),
+    );
+  });
 });

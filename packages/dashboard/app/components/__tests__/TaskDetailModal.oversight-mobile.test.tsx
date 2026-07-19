@@ -72,6 +72,108 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     setViewportWidth(DESKTOP_WIDTH);
   });
 
+  it("lights the shared trigger from the project advisor default while oversight is off", async () => {
+    const api = await import("../../api");
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      sessionAdvisorEnabledByDefault: true,
+    } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+      flagEnabled: true,
+      defaultWorkflowId: "WF-8263-mobile-project-default",
+      workflows: [{ id: "WF-8263-mobile-project-default", name: "Mobile project default workflow" } as any],
+      taskWorkflowIds: { "FN-8263-mobile-project-default": "WF-8263-mobile-project-default" },
+    });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: {},
+      effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: false },
+      defaults: {},
+    });
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-8263-mobile-project-default", column: "todo", plannerOversightLevel: undefined, sessionAdvisorEnabled: undefined })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+    });
+    fireEvent.click(trigger);
+    expect((await screen.findByTestId("detail-session-advisor-toggle"))).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("repaints the shared trigger and menu toggle after disabling a workflow-enabled advisor", async () => {
+    const api = await import("../../api");
+    let currentTask = makeTask({
+      id: "FN-8247-mobile",
+      column: "in-progress",
+      plannerOversightLevel: "off",
+      sessionAdvisorEnabled: undefined,
+    });
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      sessionAdvisorEnabledByDefault: false,
+    } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+      flagEnabled: true,
+      defaultWorkflowId: "WF-advisor-mobile",
+      workflows: [{ id: "WF-advisor-mobile", name: "Advisor workflow" } as any],
+      taskWorkflowIds: { [currentTask.id]: "WF-advisor-mobile" },
+    });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: {},
+      effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: true },
+      defaults: {},
+    });
+    vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
+      currentTask = makeTask({ ...currentTask, ...patch });
+      return currentTask as any;
+    });
+
+    let rerenderModal: (nextTask: typeof currentTask) => void;
+    const renderModal = (nextTask: typeof currentTask) => (
+      <TaskDetailModal
+        task={nextTask}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)}
+        addToast={noop}
+      />
+    );
+    const rendered = render(renderModal(currentTask));
+    rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+    });
+    fireEvent.click(trigger);
+    const toggle = await screen.findByTestId("detail-session-advisor-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(api.updateTask).toHaveBeenCalledWith(currentTask.id, { sessionAdvisorEnabled: false }, undefined);
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+      expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "false");
+    });
+  });
+
   it("renders a single overflow trigger (no inline action buttons) when oversight actions are available", async () => {
     render(
       <TaskDetailModal
@@ -88,6 +190,10 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
     expect(trigger).toHaveAttribute("aria-haspopup", "menu");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveClass("btn", "btn-icon", "btn-sm");
+    expect(trigger).toHaveAccessibleName("Oversight actions");
+    expect(trigger).toHaveAttribute("title", "Oversight actions");
+    expect(trigger).not.toHaveTextContent("Oversight");
     // Actions are not directly in the DOM until the menu opens.
     expect(screen.queryByTestId("detail-overseer-nudge")).not.toBeInTheDocument();
     expect(screen.queryByTestId("detail-overseer-stop")).not.toBeInTheDocument();
@@ -402,7 +508,14 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
   ever present, across both the active-overseer state and the oversight-off
   (level-only) state.
   */
-  it("auto-focuses the first button menuitem (never the native select) when nudge/stop/explain are available", async () => {
+  /*
+  FNXC:PlannerOversight 2026-07-17-15:58:
+  FN-8245 asserts the invariant against the actual first actionable menu item,
+  including the session-advisor toggle that precedes Nudge. This replaces the
+  stale Nudge-specific expectation without weakening the select-focus guard.
+  */
+  it.each([["mobile", MOBILE_WIDTH], ["desktop", DESKTOP_WIDTH]] as const)("auto-focuses the first actionable button menuitem (never the native select) at %s width", async (_viewport, width) => {
+    setViewportWidth(width);
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
@@ -419,10 +532,11 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     fireEvent.click(trigger);
 
     const select = await screen.findByTestId("detail-oversight-level-select");
-    const nudgeBtn = await screen.findByTestId("detail-overseer-nudge");
+    const firstAction = await screen.findByTestId("detail-session-advisor-toggle");
+    await screen.findByTestId("detail-overseer-nudge");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(nudgeBtn);
+      expect(document.activeElement).toBe(firstAction);
     });
     expect(document.activeElement).not.toBe(select);
 
@@ -432,7 +546,8 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     expect(screen.getAllByRole("menu")).toHaveLength(1);
   });
 
-  it("does not fall back to focusing the native select when oversight is off and only the level control renders", async () => {
+  it.each([["mobile", MOBILE_WIDTH], ["desktop", DESKTOP_WIDTH]] as const)("does not fall back to focusing the native select when oversight is off and only the level control renders at %s width", async (_viewport, width) => {
+    setViewportWidth(width);
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-214", column: "todo", plannerOversightLevel: "off" })}

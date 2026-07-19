@@ -8,6 +8,10 @@ import {
   renderTriagePolicyPlaceholders,
 } from "../builtin-workflow-settings.js";
 import { MOVED_SETTINGS_KEYS } from "../moved-settings.js";
+import {
+  resolveEffectiveSettingValues,
+  validateSettingValuePatch,
+} from "../workflow-settings.js";
 
 const expectedDefaults: Record<string, { type: string; default: unknown }> = {
   triageProactiveSubtaskSplittingEnabled: { type: "boolean", default: true },
@@ -24,8 +28,8 @@ const expectedDefaults: Record<string, { type: string; default: unknown }> = {
     type: "multi-enum",
     default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
   },
-  triageDecisionOnlyWorkflowId: { type: "enum", default: "builtin:quick-fix" },
-  triageDefaultWorkflowId: { type: "enum", default: "builtin:coding" },
+  triageDecisionOnlyWorkflowId: { type: "string", default: "builtin:quick-fix" },
+  triageDefaultWorkflowId: { type: "string", default: "" },
   leanPlanning: { type: "boolean", default: false },
   autoApproveSpec: { type: "boolean", default: false },
 };
@@ -59,6 +63,7 @@ describe("workflow-native built-in workflow settings", () => {
       "reviewerInlineFixes",
       "planReviewMaxRevisions",
       "codeReviewMaxRevisions",
+      "planReviewReplanCap",
     ]);
     const inlineFixes = revisionById.get("reviewerInlineFixes");
     expect(inlineFixes).toMatchObject({
@@ -68,17 +73,39 @@ describe("workflow-native built-in workflow settings", () => {
     expect(fullIds.has("reviewerInlineFixes")).toBe(true);
     expect(movedIds.has("reviewerInlineFixes")).toBe(false);
     expect(movedKeyIds.has("reviewerInlineFixes")).toBe(false);
-    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions"]) {
+    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions", "planReviewReplanCap"]) {
       const setting = revisionById.get(id);
       expect(setting, `${id} should be declared`).toBeDefined();
       expect(setting?.type).toBe("number");
       expect(setting).not.toHaveProperty("default");
-      expect(setting?.description).toMatch(/Leave unset for unbounded|Leave unset|unbounded/i);
+      if (id === "planReviewReplanCap") {
+        expect(setting).toMatchObject({ minimum: 0, integer: true });
+      }
+      expect(setting?.description).toMatch(/Leave unset|unset|unbounded/i);
       expect(setting?.description).toContain("0");
       expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
       expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
       expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
     }
+  });
+
+  it("rejects fractional and negative values for the Plan Review replan cap", () => {
+    const invalid = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: -1,
+    });
+    expect(invalid.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+
+    const fractionalCap = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 2.5,
+    });
+    expect(fractionalCap.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+    expect(validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 0,
+    }).accepted).toEqual({ planReviewReplanCap: 0 });
   });
 
   it("declares planner oversight level as a workflow-native enum outside moved/project settings", () => {
@@ -90,7 +117,16 @@ describe("workflow-native built-in workflow settings", () => {
       "plannerOversightLevel",
       "plannerOversightNotificationLevel",
       "plannerOverseerExecutorStuckAfterMs",
+      "plannerOverseerAdvisorEnabled",
+      "plannerOverseerAdvisorProvider",
+      "plannerOverseerAdvisorModelId",
+      "plannerHeartbeatPatrolEnabled",
     ]);
+    // FNXC:PlannerOversight 2026-07-14-12:00: LLM session advisor must default OFF.
+    expect(BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOverseerAdvisorEnabled")).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
     const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
     expect(oversight).toMatchObject({
       type: "enum",
@@ -166,6 +202,43 @@ describe("workflow-native built-in workflow settings", () => {
       movedKeyIds.has("plannerOverseerExecutorStuckAfterMs"),
       "plannerOverseerExecutorStuckAfterMs should not be in MOVED_SETTINGS_KEYS",
     ).toBe(false);
+
+    const heartbeatPatrol = BUILTIN_OVERSIGHT_SETTINGS[6];
+    expect(heartbeatPatrol).toMatchObject({
+      id: "plannerHeartbeatPatrolEnabled",
+      type: "boolean",
+      default: true,
+    });
+    expect(heartbeatPatrol.description).toMatch(/idle\/no-task heartbeat proactive patrol/i);
+    expect(
+      fullIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+  });
+
+  it("accepts custom triage workflow ids and retains them as effective values", () => {
+    const patch = validateSettingValuePatch(BUILTIN_TRIAGE_POLICY_SETTINGS, {
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+
+    expect(patch.rejections).toEqual([]);
+    expect(patch.accepted).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+    expect(resolveEffectiveSettingValues(BUILTIN_TRIAGE_POLICY_SETTINGS, patch.accepted)).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
   });
 
   it("renders placeholders from resolved settings and rejects dangling tokens", () => {
@@ -186,6 +259,24 @@ describe("workflow-native built-in workflow settings", () => {
     expect(rendered).toContain("verbs: Audit, Confirm");
     expect(rendered).not.toContain("{{");
     expect(() => renderTriagePolicyPlaceholders("{{unknownTriageToken}}", {})).toThrow(/Unresolved triage policy placeholder/);
+  });
+
+  it("renders the triage default workflow from project settings unless explicitly overridden", () => {
+    const prompt = "Keep the project default workflow (`{{triageDefaultWorkflowId}}`)";
+
+    expect(renderTriagePolicyPlaceholders(prompt, { defaultWorkflowId: "WF-005" })).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "builtin:coding",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "WF-009",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-009`");
+
+    const fallback = renderTriagePolicyPlaceholders(prompt, {});
+    expect(fallback).toContain("`builtin:coding`");
+    expect(fallback).not.toContain("{{");
   });
 
   it("renders proactive splitting policy as enabled by default", () => {

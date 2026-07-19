@@ -27,6 +27,8 @@ import {
 } from "./routine.js";
 import { assertProjectRootDir } from "./project-root-guard.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import { appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration } from "./async-configuration-revision-store.js";
+import type { ConfigChangedBy, ConfigurationRevision } from "./types.js";
 /*
  * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
  * Async Drizzle helpers for backend-mode (PostgreSQL) RoutineStore operations.
@@ -110,6 +112,11 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
     super();
     assertProjectRootDir(rootDir, "RoutineStore");
     this.asyncLayer = options?.asyncLayer ?? null;
+  }
+
+  private requireVersionedConfigurationBackend(): void {
+    /* FNXC:ConfigVersioning 2026-07-18-19:10: legacy SQLite routine writes have no durable atomic revision transaction, so reject before mutation rather than create non-rollbackable configuration. */
+    if (!this.backendMode) throw new Error("Routine configuration changes require the PostgreSQL revision store");
   }
 
   // ── Database Access ────────────────────────────────────────────────
@@ -325,10 +332,18 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
 
   // ── CRUD ──────────────────────────────────────────────────────────
 
+  /*
+   * FNXC:ConfigVersioning 2026-07-18-12:15:
+   * Preserve the legacy SQLite CRUD seam while installations migrate. The
+   * PostgreSQL branch below journals mutations atomically; compatibility
+   * callers must not lose their pre-existing ability to manage routines.
+   */
+
   /**
    * Create a new routine.
    */
-  async createRoutine(input: RoutineCreateInput): Promise<Routine> {
+  async createRoutine(input: RoutineCreateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+    this.requireVersionedConfigurationBackend();
     if (!input.name?.trim()) {
       throw new Error("Name is required and cannot be empty");
     }
@@ -368,7 +383,29 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       routine.nextRunAt = this.computeNextRun(routine.trigger.cronExpression);
     }
 
-    await this.upsertRoutine(routine);
+    /*
+    FNXC:ConfigVersioning 2026-07-18-00:30:
+    FN-8282 requires routine creation and its immutable snapshot to commit in
+    one PostgreSQL transaction, so a failed revision insert cannot expose a
+    routine with no restore point.
+    */
+    if (this.backendMode) {
+      await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await upsertRoutineAsync(tx, routine);
+        const revision = createConfigurationRevision({
+          projectId: this.asyncLayer!.projectId ?? "",
+          ownerScope: "project",
+          configKind: "routine",
+          configTarget: { routineId: routine.id },
+          before: null,
+          after: routine,
+          changedBy,
+        });
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+    } else {
+      await this.upsertRoutine(routine);
+    }
     this.emit("routine:created", routine);
     return routine;
   }
@@ -409,9 +446,11 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /**
    * Update an existing routine.
    */
-  async updateRoutine(id: string, updates: RoutineUpdateInput): Promise<Routine> {
+  async updateRoutine(id: string, updates: RoutineUpdateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+    this.requireVersionedConfigurationBackend();
     return this.withRoutineLock(id, async () => {
       const routine = await this.getRoutine(id);
+      const before = structuredClone(routine);
 
       if (updates.name !== undefined) {
         if (!updates.name.trim()) throw new Error("Name cannot be empty");
@@ -456,16 +495,56 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       }
 
       routine.updatedAt = new Date().toISOString();
-      await this.upsertRoutine(routine);
+      if (this.backendMode) {
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+          await upsertRoutineAsync(tx, routine);
+          const revision = createConfigurationRevision({
+            projectId: this.asyncLayer!.projectId ?? "",
+            ownerScope: "project",
+            configKind: "routine",
+            configTarget: { routineId: routine.id },
+            before,
+            after: routine,
+            changedBy,
+          });
+          if (revision) await appendConfigurationRevision(tx, revision);
+        });
+      } else {
+        await this.upsertRoutine(routine);
+      }
       this.emit("routine:updated", routine);
       return routine;
     });
   }
 
   /**
+   * Restore a routine snapshot by stable id, including deletion when the
+   * selected revision predates creation. The replacement and forward revision
+   * share one backend transaction.
+   */
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+    if (!this.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
+    const layer = this.asyncLayer!;
+    return layer.transactionImmediate((tx) => rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
+      readCurrent: async () => {
+        const revision = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+        if (!revision || revision.configKind !== "routine") throw new Error(`Routine configuration revision ${revisionId} was not found`);
+        try { return await getRoutineAsync(tx, String(revision.configTarget.routineId)); } catch (error) { if ((error as { code?: string }).code === "ENOENT") return null; throw error; }
+      },
+      replace: async (snapshot) => {
+        const target = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+        const id = String(target?.configTarget.routineId ?? "");
+        if (snapshot === null) await deleteRoutineAsync(tx, id);
+        else await upsertRoutineAsync(tx, snapshot as Routine);
+      },
+    }));
+  }
+
+  /**
    * Delete a routine.
    */
-  async deleteRoutine(id: string): Promise<Routine> {
+  async deleteRoutine(id: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+    this.requireVersionedConfigurationBackend();
     return this.withRoutineLock(id, async () => {
       const routine = await this.getRoutine(id);
       /*
@@ -473,7 +552,19 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
        * Backend-mode: delegate to the async Drizzle deleteRoutine helper.
        */
       if (this.backendMode) {
-        await deleteRoutineAsync(this.asyncLayer!.db, id);
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+          await deleteRoutineAsync(tx, id);
+          const revision = createConfigurationRevision({
+            projectId: this.asyncLayer!.projectId ?? "",
+            ownerScope: "project",
+            configKind: "routine",
+            configTarget: { routineId: routine.id },
+            before: routine,
+            after: null,
+            changedBy,
+          });
+          if (revision) await appendConfigurationRevision(tx, revision);
+        });
       } else {
         this.db.prepare("DELETE FROM routines WHERE id = ?").run(id);
         this.db.bumpLastModified();

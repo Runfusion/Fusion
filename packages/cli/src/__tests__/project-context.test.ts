@@ -13,6 +13,7 @@ import {
   detectProjectFromCwd,
   formatProjectLine,
   getStoreForProject,
+  closeProjectStore,
   clearStoreCache,
 } from "../project-context.js";
 import { CentralCore, GlobalSettingsStore, type RegisteredProject } from "@fusion/core";
@@ -23,16 +24,32 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { beforeAll, afterAll } from "vitest";
 
-describe("project-context", () => {
+/*
+FNXC:ProjectContextTests 2026-07-16-09:00:
+CentralCore tests require PostgreSQL, but booting its embedded postmaster for every test races other forked CLI files under load. Use the shared external pg test harness and skip only CentralCore coverage when PostgreSQL is unavailable; pure formatting coverage remains ungated below.
+*/
+pgDescribe("project-context (PostgreSQL-backed detection)", () => {
+  let h: PgTestHarness;
   let tempDir: string;
   let homeDir: string;
   let central: CentralCore;
+  let previousDatabaseUrl: string | undefined;
   const createdProjectIds: string[] = [];
 
+  beforeAll(async () => {
+    h = await createTaskStoreForTest({ prefix: "fusion_cli_project_ctx_detection" });
+  });
+
+  afterAll(async () => {
+    await h.teardown();
+  });
+
   beforeEach(async () => {
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = h.testUrl;
     tempDir = mkdtempSync(join(tmpdir(), "kb-test-"));
     homeDir = mkdtempSync(join(tmpdir(), "kb-home-"));
-    central = new CentralCore(homeDir);
+    central = new CentralCore(homeDir, { asyncLayer: h.layer });
     await central.init();
   });
 
@@ -54,7 +71,12 @@ describe("project-context", () => {
     } catch {
       // Ignore close errors
     }
-    clearStoreCache();
+    await clearStoreCache();
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
 
     // Filesystem cleanup last
     try {
@@ -97,6 +119,19 @@ describe("project-context", () => {
       expect(found?.name).toBe("legacy-project");
     });
 
+    it("detects an unregistered project.json marker without fusion.db", async () => {
+      const projectPath = join(tempDir, "postgres-project");
+      mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+      writeFileSync(join(projectPath, ".fusion", "project.json"), JSON.stringify({
+        id: "proj_1234567890abcdef",
+        createdAt: "2026-07-14T00:00:00.000Z",
+      }));
+
+      const found = await detectProjectFromCwd(projectPath, central);
+
+      expect(found).toMatchObject({ path: resolve(projectPath), name: "postgres-project" });
+    });
+
     it("should not inherit an unregistered parent project from a nested cwd", async () => {
       const projectPath = createMockProject("legacy-project");
       const nestedDir = join(projectPath, "src", "components");
@@ -115,45 +150,6 @@ describe("project-context", () => {
       const found = await detectProjectFromCwd(projectPath, central);
 
       expect(found).toBeUndefined();
-    });
-  });
-
-  describe("formatProjectLine", () => {
-    it("should format default project with asterisk", () => {
-      const project: RegisteredProject = {
-        id: "proj_123",
-        name: "my-app",
-        path: "/path/to/app",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      };
-
-      const line = formatProjectLine(project, true);
-
-      expect(line).toContain("* ");
-      expect(line).toContain("my-app");
-      expect(line).toContain("/path/to/app");
-      expect(line).toContain("[active]");
-    });
-
-    it("should format non-default project without asterisk", () => {
-      const project: RegisteredProject = {
-        id: "proj_456",
-        name: "other-app",
-        path: "/path/to/other",
-        status: "paused",
-        isolationMode: "child-process",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      };
-
-      const line = formatProjectLine(project, false);
-
-      expect(line).not.toContain("*");
-      expect(line).toContain("other-app");
-      expect(line).toContain("[paused]");
     });
   });
 
@@ -178,6 +174,45 @@ describe("project-context", () => {
         "No fusion project found"
       );
     });
+  });
+});
+
+describe("formatProjectLine", () => {
+  it("should format default project with asterisk", () => {
+    const project: RegisteredProject = {
+      id: "proj_123",
+      name: "my-app",
+      path: "/path/to/app",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const line = formatProjectLine(project, true);
+
+    expect(line).toContain("* ");
+    expect(line).toContain("my-app");
+    expect(line).toContain("/path/to/app");
+    expect(line).toContain("[active]");
+  });
+
+  it("should format non-default project without asterisk", () => {
+    const project: RegisteredProject = {
+      id: "proj_456",
+      name: "other-app",
+      path: "/path/to/other",
+      status: "paused",
+      isolationMode: "child-process",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const line = formatProjectLine(project, false);
+
+    expect(line).not.toContain("*");
+    expect(line).toContain("other-app");
+    expect(line).toContain("[paused]");
   });
 });
 
@@ -224,7 +259,7 @@ pgDescribe("project-context (PostgreSQL-backed CentralCore)", () => {
     } catch {
       // Ignore close errors
     }
-    clearStoreCache();
+    await clearStoreCache();
     try {
       rmSync(tempDir, { recursive: true, force: true });
       rmSync(homeDir, { recursive: true, force: true });
@@ -285,7 +320,11 @@ pgDescribe("project-context (PostgreSQL-backed CentralCore)", () => {
       expect(context.projectPath).toBe(resolve(projectPath));
       expect(context.projectName).toBe("legacy-project");
       expect(context.isRegistered).toBe(false);
-      await context.store.close();
+      /*
+      FNXC:PostgresCliLifecycle 2026-07-14-22:25:
+      A resolved ProjectContext owns both its factory-backed TaskStore and the CentralCore retained during resolution. Tests and commands must close that aggregate through closeProjectStore so the central PostgreSQL pool cannot outlive the context and block database teardown.
+      */
+      await closeProjectStore(context);
     } finally {
       if (prevDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

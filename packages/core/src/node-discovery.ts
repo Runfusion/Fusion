@@ -18,6 +18,28 @@ const DEFAULT_DISCOVERY_CONFIG: DiscoveryConfig = {
 const STALE_CLEANUP_INTERVAL_MS = 60_000;
 const FUSION_VERSION = "0.1.0";
 
+function normalizeMdnsHost(host: string): string {
+  return host.trim().replace(/\.local\.?$/i, "").toLowerCase();
+}
+
+/**
+ * Returns a bounded, DNS-label-safe hostname owned by Fusion rather than the OS.
+ */
+function deriveFusionMdnsHost(nodeId: string): string {
+  const suffix = nodeId
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(-8)
+    .replace(/^-+|-+$/g, "") || "node";
+  const host = `fusion-${suffix}`;
+
+  // An unusually named host can equal the naïve Fusion label; retain ownership
+  // while guaranteeing that Fusion never claims the OS hostname.
+  return normalizeMdnsHost(host) === normalizeMdnsHost(os.hostname())
+    ? `${host}-service`
+    : host;
+}
+
 interface NodeDiscoveryEvents {
   "node:discovered": [node: DiscoveredNode];
   "node:updated": [node: DiscoveredNode];
@@ -111,10 +133,26 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
 
     const bonjour = this.getBonjour();
     const serviceType = this.parseServiceType(this.config.serviceType);
+    const host = deriveFusionMdnsHost(nodeId);
 
     try {
+      /*
+       * FNXC:NodeDiscovery 2026-07-17-12:00:
+       * bonjour-service probes the DNS-SD instance FQDN but not its advertised
+       * A/SRV host. FN-8202 found that re-announcing the OS hostname made macOS
+       * mDNSResponder self-conflict and rename the host, so publish a
+       * Fusion-owned target instead of os.hostname().
+       */
       this.broadcastService = bonjour.publish({
-        name: nodeName.trim() || os.hostname(),
+        /*
+         * FNXC:NodeDiscovery 2026-07-15-18:05:
+         * Multiple local Fusion dashboards may share a friendly node name.
+         * DNS-SD requires each advertised service name to be unique, so retain
+         * the readable name while suffixing stable node identity to prevent an
+         * optional mDNS collision from disrupting the dashboard process.
+         */
+        name: `${nodeName.trim() || os.hostname()}-${nodeId.slice(-8)}`,
+        host,
         type: serviceType.type,
         protocol: serviceType.protocol,
         port: this.config.port,
@@ -124,9 +162,9 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
           version: FUSION_VERSION,
         },
       });
+      this.broadcastService.on("error", this.onBroadcastError);
     } catch (error) {
-      this.warn("Failed to start mDNS broadcast", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to start mDNS broadcast", error);
     }
   }
 
@@ -136,10 +174,10 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
     }
 
     try {
+      this.broadcastService.off("error", this.onBroadcastError);
       this.broadcastService.stop?.();
     } catch (error) {
-      this.warn("Failed to stop mDNS broadcast", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to stop mDNS broadcast", error);
     } finally {
       this.broadcastService = null;
     }
@@ -161,8 +199,7 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
       this.browser.on("up", this.onServiceUp);
       this.browser.on("down", this.onServiceDown);
     } catch (error) {
-      this.warn("Failed to start mDNS listening", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to start mDNS listening", error);
     }
   }
 
@@ -178,8 +215,7 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
       browser.off("down", this.onServiceDown);
       browser.stop();
     } catch (error) {
-      this.warn("Failed to stop mDNS listening", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to stop mDNS listening", error);
     } finally {
       this.browser = null;
     }
@@ -250,6 +286,10 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
 
     this.discoveredNodes.delete(service.name);
     this.emit("node:lost", service.name);
+  };
+
+  private onBroadcastError = (error: unknown): void => {
+    this.reportError("mDNS broadcast failed", error);
   };
 
   private getBonjour(): Bonjour {
@@ -327,6 +367,16 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
     }
 
     console.warn(`[node-discovery] ${message}`);
+  }
+
+  private reportError(message: string, error: unknown): void {
+    this.warn(message, error);
+    // EventEmitter reserves "error" for fatal exceptions when nobody is
+    // listening. Discovery is optional, so preserve observability for callers
+    // that subscribe without allowing a network collision to crash the host.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", this.asError(error));
+    }
   }
 
   private asError(error: unknown): Error {

@@ -21,7 +21,7 @@
  */
 
 import { CronExpressionParser } from "cron-parser";
-import type { Routine, RoutineStore, TaskStore } from "@fusion/core";
+import { GlobalRoutineStore, type Routine, type RoutineStore, type TaskStore } from "@fusion/core";
 import { RoutineRunner } from "./routine-runner.js";
 import { createLogger } from "./logger.js";
 
@@ -37,6 +37,8 @@ export interface RoutineSchedulerOptions {
   routineStore: RoutineStore;
   /** RoutineRunner for executing routines */
   routineRunner: RoutineRunner;
+  /** Central owner for globally shared PostgreSQL backup routines. */
+  globalRoutineStore?: GlobalRoutineStore;
   /** Polling interval in milliseconds. Default: 60000 (60s). Minimum: 10000 (10s). */
   pollIntervalMs?: number;
   /**
@@ -55,6 +57,7 @@ export class RoutineScheduler {
   private taskStore: TaskStore;
   private routineStore: RoutineStore;
   private routineRunner: RoutineRunner;
+  private globalRoutineStore?: GlobalRoutineStore;
   private pollIntervalMs: number;
   /** Scope to poll: "global", "project", or "all". */
   private scope: "global" | "project" | "all";
@@ -67,6 +70,8 @@ export class RoutineScheduler {
     this.taskStore = options.taskStore;
     this.routineStore = options.routineStore;
     this.routineRunner = options.routineRunner;
+    this.globalRoutineStore = options.globalRoutineStore
+      ?? (this.routineStore.asyncLayer ? new GlobalRoutineStore(this.routineStore.asyncLayer) : undefined);
     this.pollIntervalMs = Math.max(10000, options.pollIntervalMs ?? 60000);
     this.scope = options.scope ?? "project";
   }
@@ -149,11 +154,23 @@ export class RoutineScheduler {
         dueRoutines = await this.routineStore.getDueRoutines(this.scope);
       }
 
-      if (dueRoutines.length === 0) {
+      // FNXC:SettingsBackups 2026-07-16-17:00:
+      // Every project engine polls the central backup row, but claimDue serializes
+      // dispatch and advances its central next-run state so only one engine runs it.
+      const dueGlobalRoutines = this.globalRoutineStore ? await this.globalRoutineStore.listDue() : [];
+      if (dueRoutines.length === 0 && dueGlobalRoutines.length === 0) {
         return;
       }
 
-      logger.log(`Found ${dueRoutines.length} due routines (scope: ${this.scope})`);
+      logger.log(`Found ${dueRoutines.length} project and ${dueGlobalRoutines.length} central global due routines (scope: ${this.scope})`);
+
+      for (const candidate of dueGlobalRoutines) {
+        try {
+          await this.processGlobalRoutine(candidate);
+        } catch (err) {
+          logger.error(`[${candidate.id}] Failed to process central global routine: ${err}`);
+        }
+      }
 
       // Track executed routine IDs to prevent double-execution when polling all scopes
       const executedIds = new Set<string>();
@@ -193,6 +210,18 @@ export class RoutineScheduler {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * Claim, execute, and persist a central routine independently of the
+   * project-partitioned RoutineStore.
+   */
+  private async processGlobalRoutine(candidate: Routine): Promise<void> {
+    if (!this.globalRoutineStore) return;
+    const routine = await this.globalRoutineStore.claimDue(candidate.id);
+    if (!routine) return;
+    const result = await this.routineRunner.executeGlobalRoutine(routine, "cron");
+    await this.globalRoutineStore.completeExecution(routine.id, result);
   }
 
   /**

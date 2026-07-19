@@ -1,7 +1,0 @@
----
-"@runfusion/fusion": patch
----
-
-summary: Standalone CLI, GitLab analytics, and plugin stores now run on PostgreSQL.
-category: fix
-dev: Orchestrated audit + fix of remaining un-migrated SQLite surfaces. CLI: project-context/project-resolver + the fn task/agent/git/research/settings/desktop/experiment commands now boot via createTaskStoreForBackend and inject asyncLayer into AgentStore; fn_agent_update/fn_mission_list/mission-list gained backendMode branches. Core: 15 task-store Impls (merge-request record, commit-association upsert/read, stale-branch cleanup, run-audit-events read, task-document delete/revisions, github-tracking reconcile, activity/run-audit snapshots, occupants, stranded-refinements, orphaned-task-dir reconcile) gained backendMode branches (8 real Drizzle, 7 graceful sync-safe-defaults following the getTaskWorkflowSelection precedent); AgentStore gained backendMode branches for 9 snapshot/blocked-state/config-revision methods. Dashboard: GitLab analytics gained an async variant (aggregateGitlabIssueAnalyticsAsync) + the agent-token-totals + OTLP exporter paths now use the async layer. Plugins (compound-engineering pipeline-store, reports, cli-printing-press) gained isBackendMode degrade-guards. Added the missing project.chat_token_usage PG table (schema + migration + registry + created_at index) that the upstream merge referenced but never defined. Merge gate green (engine-core 287 + core pg-gate 94 + ci-shape 63); all packages typecheck clean.

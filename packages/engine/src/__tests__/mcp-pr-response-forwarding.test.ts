@@ -22,6 +22,7 @@ vi.mock("../agent-session-helpers.js", () => ({
   // The mock must surface it or every PR-response run throws on the missing
   // export. Neutral undefined return — no test asserts on thinking level.
   resolveMergerThinkingLevel: vi.fn(() => undefined),
+  resolveMergerFallbackThinkingLevel: vi.fn((settings: Settings) => settings.mergerFallbackThinkingLevel ?? settings.fallbackThinkingLevel),
 }));
 
 vi.mock("../pi.js", () => ({
@@ -37,6 +38,14 @@ const settings = {
 
 function createStore(enabled: boolean): TaskStore {
   return {
+    /*
+    FNXC:EngineTests 2026-07-17-11:45:
+    pr-response-run-ops now loads the task via store.getTask so merger model resolution
+    can honor per-task overrides. Stub a minimal task for the MCP-forwarding path.
+    */
+    async getTask(taskId: string) {
+      return { id: taskId, column: "in-review" } as any;
+    },
     async getSettingsByScope() {
       return {
         global: { mcpServers: { enabled: true, servers: [] } },

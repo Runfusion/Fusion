@@ -1,23 +1,21 @@
-import { describe, it, expect } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
-import kbExtension, { closeCachedStores } from "../extension.js";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+  registerExtension,
+  requireTool,
+} from "./pg-extension-harness";
 
-function createMockAPI() {
-  const tools = new Map<string, any>();
-  return {
-    registerTool(def: any) {
-      tools.set(def.name, def);
-    },
-    registerCommand() {},
-    registerShortcut() {},
-    registerFlag() {},
-    on() {},
-    tools,
-  } as any;
-}
+/*
+FNXC:PostgresCutover 2026-07-16-08:45:
+Instruction-tool fixtures seed the PG TaskStore cache injected for the extension,
+so its AgentStore avoids the removed SQLite path and tools observe the same data.
+*/
+
+const h = createPgExtensionHarness("extension-agent-set-instructions");
 
 async function withOrg(
   run: (ctx: {
@@ -27,8 +25,11 @@ async function withOrg(
     ids: { manager: string; middle: string; leaf: string; peer: string };
   }) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "fn-ext-agent-instructions-"));
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion") });
+  const cwd = h.rootDir();
+  const agentStore = new AgentStore({
+    rootDir: join(cwd, ".fusion"),
+    asyncLayer: h.store().getAsyncLayer()!,
+  });
   try {
     await agentStore.init();
     const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
@@ -46,10 +47,9 @@ async function withOrg(
     });
     const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
 
-    const api = createMockAPI();
-    kbExtension(api);
-    const tool = api.tools.get("fn_agent_set_instructions");
-    expect(tool).toBeTruthy();
+    const api = createMockApi();
+    registerExtension(api);
+    const tool = requireTool(api, "fn_agent_set_instructions");
 
     await run({
       cwd,
@@ -58,13 +58,15 @@ async function withOrg(
       ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
     });
   } finally {
-    await closeCachedStores();
     agentStore.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 }
 
-describe("fn_agent_set_instructions", () => {
+pgDescribe("fn_agent_set_instructions", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
   it("allows a manager to set inline instructions for a direct report", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(

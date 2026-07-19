@@ -1,8 +1,9 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
+import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 
 vi.mock("../../api", () => ({
@@ -131,6 +132,10 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders seven top-level tab buttons (command center + tasks + agents + missions + chat + mailbox + more) and keeps skills in More when showSkillsTab is true", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} />);
 
@@ -146,6 +151,49 @@ describe("MobileNavBar", () => {
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.getByTestId("mobile-more-item-skills")).toBeDefined();
+  });
+
+  it("promotes Planning and routes demoted Missions to More without an empty tab", () => {
+    const { container } = render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["command-center", "tasks", "agents", "planning", "chat", "mailbox"]} />);
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-nav-tab-missions")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="mobile-nav-tab-missions"]')).toBeNull();
+  });
+
+  it("promotes eligible settings and always keeps More", () => {
+    render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["settings", "planning"]} />);
+    expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
+  });
+
+  it("renders every available selectable destination exactly once across tab and More", () => {
+    const gated = new Set(["skills", "insights", "memory", "research", "evals", "ideation", "goals", "todos", "dev-server"]);
+    const moreTestIds: Record<string, string> = { automation: "schedules", "github-import": "github", workflows: "workflow" };
+    for (const item of MOBILE_NAV_SELECTABLE_ITEMS) {
+      const { unmount } = render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={[item]} showSkillsTab experimentalFeatures={{ insights: true, memoryView: true, researchView: true, evalsView: true, ideationView: true, goalsView: true, todoView: true, devServerView: true }} />);
+      if (item === "ideation") {
+        expect(screen.queryByTestId("mobile-nav-tab-ideation")).toBeNull();
+        fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+        expect(screen.getAllByTestId("mobile-more-item-ideation")).toHaveLength(1);
+      } else {
+        expect(screen.getAllByTestId(`mobile-nav-tab-${item}`)).toHaveLength(1);
+        fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+        expect(screen.queryByTestId(`mobile-more-item-${moreTestIds[item] ?? item}`)).toBeNull();
+      }
+      unmount();
+    }
+    expect(gated.size).toBe(9);
+  });
+
+  it("keeps enabled Ideation in More when persisted customization lists it", () => {
+    render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["ideation"]} experimentalFeatures={{ ideationView: true }} />);
+
+    expect(screen.queryByTestId("mobile-nav-tab-ideation")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getAllByTestId("mobile-more-item-ideation")).toHaveLength(1);
   });
 
   it("does not render legacy roadmaps tab", () => {
@@ -669,6 +717,28 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
+  it("pins omitted Settings below the More divider as the final selectable item", () => {
+    const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+
+    const sheet = container.querySelector(".mobile-more-sheet");
+    const separator = sheet?.querySelector(".mobile-more-separator");
+    const settings = screen.getByTestId("mobile-more-item-settings");
+
+    expect(sheet).toBeInTheDocument();
+    expect(separator).toBeInTheDocument();
+    expect(separator!.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(Array.from(sheet!.querySelectorAll(".mobile-more-item")).at(-1)).toBe(settings);
+  });
+
+  it("does not duplicate Settings in More when Settings is a primary tab", () => {
+    render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["settings"]} />);
+
+    expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-settings")).toBeNull();
+  });
+
   it("shows the stash orphan badge on the Git Manager item instead of a Stash Recovery item", () => {
     render(<MobileNavBar {...createDefaultProps()} stashOrphanCount={8} />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
@@ -741,6 +811,23 @@ describe("MobileNavBar", () => {
     render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{ researchView: true }} />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.getByTestId("mobile-more-item-research")).toBeDefined();
+  });
+
+  it("shows Ideation in More only when ideationView is enabled and routes to it", () => {
+    const props = createDefaultProps();
+    const { container } = render(<MobileNavBar {...props} experimentalFeatures={{ ideationView: true }} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-ideation"));
+
+    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    expect(props.onChangeView).toHaveBeenCalledWith("ideation");
+  });
+
+  it("does not show Ideation in more sheet when ideationView is disabled", () => {
+    render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{ ideationView: false }} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-ideation")).toBeNull();
   });
 
   it("does not show research in more sheet when experimentalFeatures.researchView is false", () => {
@@ -896,6 +983,136 @@ describe("MobileNavBar", () => {
 
     await waitFor(() => {
       expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+  });
+
+  describe("More-sheet drag dismissal", () => {
+    const openSheet = (container: HTMLElement) => {
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      const sheet = container.querySelector<HTMLDivElement>(".mobile-more-sheet");
+      if (!sheet) throw new Error("Expected the More sheet to open");
+      Object.defineProperty(sheet, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ height: 400 }),
+      });
+      return sheet;
+    };
+
+    const startDrag = (target: Element, startY = 100) => {
+      fireEvent.touchStart(target, { touches: [{ clientY: startY }] });
+    };
+
+    const moveDrag = (sheet: Element, currentY: number) =>
+      fireEvent.touchMove(sheet, { touches: [{ clientY: currentY }] });
+
+    const endDrag = (sheet: Element, endY: number) => {
+      fireEvent.touchEnd(sheet, { changedTouches: [{ clientY: endY }] });
+    };
+
+    it("dismisses a top-anchored downward drag past the distance threshold", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      expect(moveDrag(sheet, 300)).toBe(false);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("preserves interior scrolling and does not prevent its downward touchmove", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+      sheet.scrollTop = 20;
+
+      startDrag(sheet);
+      expect(moveDrag(sheet, 300)).toBe(true);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+    });
+
+    it("snaps back after a slow below-threshold drag", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-16T12:00:00Z"));
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 150);
+      vi.advanceTimersByTime(500);
+      endDrag(sheet, 150);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+      expect(sheet.style.transform).toBe("translateY(0px)");
+    });
+
+    it("dismisses when a handle-anchored drag starts while the sheet is scrolled", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+      sheet.scrollTop = 20;
+      const handle = sheet.querySelector(".mobile-more-sheet-handle");
+      expect(handle).not.toBeNull();
+
+      startDrag(handle!);
+      expect(moveDrag(sheet, 300)).toBe(false);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("dismisses with the scripts submenu open without swallowing its normal toggle tap", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({});
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+      await waitFor(() => expect(screen.getByTestId("mobile-more-scripts-manage")).toBeInTheDocument());
+
+      startDrag(sheet);
+      moveDrag(sheet, 300);
+      endDrag(sheet, 300);
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("never dismisses for an upward drag", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet, 300);
+      expect(moveDrag(sheet, 100)).toBe(true);
+      endDrag(sheet, 100);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+    });
+
+    it("dismisses on a fast downward flick below the distance threshold", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-16T12:00:00Z"));
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 160);
+      vi.advanceTimersByTime(50);
+      endDrag(sheet, 160);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("resets a cancelled drag to the open position", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 300);
+      expect(sheet.className).toContain("mobile-more-sheet--dragging");
+      expect(sheet.style.transform).toBe("translateY(200px)");
+
+      fireEvent.touchCancel(sheet);
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+      expect(sheet.className).not.toContain("mobile-more-sheet--dragging");
+      expect(sheet.style.transform).toBe("translateY(0px)");
     });
   });
 

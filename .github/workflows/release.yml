@@ -110,6 +110,47 @@ jobs:
           $hash = (Get-FileHash ${{ matrix.binary }} -Algorithm SHA256).Hash.ToLower()
           "$hash  ${{ matrix.binary }}" | Out-File -Encoding ascii ${{ matrix.binary }}.sha256
 
+      # FNXC:Release 2026-07-17-13:45:
+      # The bare binary alone cannot boot: the compiled exe resolves PostgreSQL
+      # migrations and the embedded-postgres runtime payload execPath-relative
+      # (see packages/core/src/postgres/schema-applier.ts and
+      # embedded-lifecycle.ts). Ship a self-contained tarball (binary +
+      # migrations/ + runtime/<platform>/) per target so a downloaded release
+      # asset works out of the box. The bare binary + .sha256 continue to be
+      # uploaded unchanged so existing download links stay valid.
+      - name: Package release tarball
+        shell: bash
+        run: |
+          cd packages/cli/dist
+          BASE="${{ matrix.binary }}"
+          BASE="${BASE%.exe}"
+          PLAT="${{ matrix.target }}"
+          PLAT="${PLAT#bun-}"
+          STAGE="tarball-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/runtime"
+          cp "${{ matrix.binary }}" "$STAGE/"
+          if [ -d migrations ]; then
+            cp -R migrations "$STAGE/migrations"
+          else
+            echo "::warning::packages/cli/dist/migrations missing; tarball will lack schema migrations"
+          fi
+          if [ -d "runtime/$PLAT" ]; then
+            cp -R "runtime/$PLAT" "$STAGE/runtime/$PLAT"
+          else
+            echo "::warning::packages/cli/dist/runtime/$PLAT missing; tarball will lack native runtime assets"
+          fi
+          if [ -d client ]; then
+            cp -R client "$STAGE/client"
+          fi
+          tar -czf "$BASE.tar.gz" -C "$STAGE" .
+          rm -rf "$STAGE"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$BASE.tar.gz" > "$BASE.tar.gz.sha256"
+          else
+            shasum -a 256 "$BASE.tar.gz" > "$BASE.tar.gz.sha256"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -117,6 +158,9 @@ jobs:
           path: |
             packages/cli/dist/${{ matrix.binary }}
             packages/cli/dist/${{ matrix.binary }}.sha256
+            packages/cli/dist/*.tar.gz
+            packages/cli/dist/*.tar.gz.sha256
+            packages/cli/dist/migrations/**/*
             packages/cli/dist/runtime/**/*
 
   # ── Build Windows desktop EXE artifacts ──────────────────────────────
@@ -332,6 +376,13 @@ jobs:
             echo "No Fusion Linux x64 AppImage artifacts produced" >&2
             exit 1
           fi
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-15-00:20:
+      # AppImage filename presence is not enough — v0.60.0 shipped without
+      # embedded-postgres / main-bootstrap / omp-runtime. Inspect the linux-*-unpacked
+      # trees electron-builder leaves beside the AppImage.
+      - name: Verify Linux AppImage embedded Postgres packaging
+        run: node scripts/verify-desktop-linux-pg-packaging.mjs
 
       - name: Sign Linux desktop artifacts
         if: ${{ env.LINUX_GPG_PRIVATE_KEY != '' }}
@@ -561,7 +612,14 @@ jobs:
         id: collect
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.apk" -o -name "*.aab" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" \) -exec cp {} release-files/ \;
+          # FNXC:Release 2026-07-17-13:45:
+          # Prune the CLI runtime/ and migrations/ staging trees: they exist in the
+          # artifact only as tarball inputs and contain files that would otherwise
+          # match the flat collection globs (e.g. embedded-postgres postgres.exe).
+          # The self-contained fn-cli-<platform>.tar.gz (+ .sha256) matches the
+          # existing *.tar.gz globs and reaches the release alongside the bare
+          # fn-cli-* binaries.
+          find artifacts \( -path "*/runtime/*" -o -path "*/migrations/*" \) -prune -o -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.apk" -o -name "*.aab" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" \) -print -exec cp {} release-files/ \;
           ls -la release-files/
           count=$(find release-files -type f | wc -l | tr -d ' ')
           echo "count=$count" >> "$GITHUB_OUTPUT"

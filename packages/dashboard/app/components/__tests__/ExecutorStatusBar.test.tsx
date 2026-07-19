@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fs from "fs";
 import path from "path";
@@ -9,7 +9,9 @@ const viewportModeMock = vi.hoisted(() => ({ value: "desktop" as "desktop" | "ta
 const mockFetchScripts = vi.hoisted(() => vi.fn());
 
 vi.mock("../../hooks/useViewportMode", () => ({
-  useViewportMode: () => viewportModeMock.value,
+    isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
+useViewportMode: () => viewportModeMock.value,
 }));
 
 vi.mock("../../api", () => ({
@@ -102,7 +104,6 @@ function makeBackgroundSession(id: string, status: AiSessionSummary["status"]): 
     status,
     title: `Background ${id}`,
     projectId: "project-1",
-    lockedByTab: null,
     updatedAt: "2026-07-03T12:00:00.000Z",
   };
 }
@@ -197,7 +198,6 @@ describe("ExecutorStatusBar", () => {
       expectSegmentCount("In Review", "1");
       expect(statusBar).toHaveTextContent("Overlap queue");
       expect(statusBar).toHaveTextContent("FN-010 · 5 todo");
-      expect(statusBar).toHaveTextContent("AI 2");
       expect(statusBar).not.toHaveTextContent("Done");
       expect(statusBar.firstElementChild).not.toHaveClass("executor-status-bar__divider");
       expect(statusBar.lastElementChild).toHaveClass("executor-status-bar__segment--engine-controls");
@@ -473,6 +473,136 @@ describe("ExecutorStatusBar", () => {
       const statusBar = screen.getByRole("status");
       expect(statusBar).toHaveTextContent("Stuck");
       expect(statusBar).toHaveTextContent("2");
+    });
+  });
+
+  describe("mobile stat tooltips", () => {
+    const mobileStatIds = ["queued", "running", "blocked", "review"] as const;
+
+    beforeEach(() => {
+      viewportModeMock.value = "mobile";
+    });
+
+    it.each([
+      ["queued", "Queued"],
+      ["running", "Running"],
+      ["blocked", "Blocked"],
+      ["review", "In Review"],
+    ] as const)("reveals the %s stat name on tap", async (id, label) => {
+      const user = userEvent.setup();
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+
+      await user.click(screen.getByTestId(`executor-stat-${id}`));
+
+      expect(screen.getByRole("tooltip")).toHaveTextContent(label);
+      expect(screen.getByTestId(`executor-stat-${id}`)).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("uses the mobile-mode class and tap targets for mobile including short landscape", () => {
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+
+      const statusBar = screen.getByRole("status");
+      expect(statusBar).toHaveClass("executor-status-bar--mobile");
+      mobileStatIds.forEach((id) => expect(screen.getByTestId(`executor-stat-${id}`)).toBeInTheDocument());
+    });
+
+    it("dismisses the tooltip on a second tap, outside tap, Escape, and scroll", async () => {
+      const user = userEvent.setup();
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+      const queued = screen.getByTestId("executor-stat-queued");
+
+      await user.click(queued);
+      expect(screen.getByRole("tooltip")).toBeInTheDocument();
+      await user.click(queued);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+
+      await user.click(queued);
+      await user.click(document.body);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+
+      await user.click(queued);
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("tooltip")).toBeNull();
+
+      await user.click(queued);
+      act(() => window.dispatchEvent(new Event("scroll")));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    });
+
+    it("portals the fixed tooltip outside the clipped footer", async () => {
+      const user = userEvent.setup();
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+      const statusBar = screen.getByRole("status");
+
+      await user.click(screen.getByTestId("executor-stat-queued"));
+
+      const tooltip = screen.getByRole("tooltip");
+      expect(statusBar.contains(tooltip)).toBe(false);
+      const tooltipRule = getCssRuleBlock(executorStatusBarCss, ".executor-status-bar__stat-tooltip");
+      expect(tooltipRule).toContain("position: fixed");
+      expect(tooltipRule).toContain("z-index: var(--z-popover, 60)");
+      expectNoHardcodedColors(tooltipRule);
+    });
+
+    it("adds stat tooltips only for conditional segments that exist", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<ExecutorStatusBar tasks={emptyTasks} />);
+      expect(screen.queryByTestId("executor-stat-stuck")).toBeNull();
+      expect(screen.queryByTestId("executor-stat-fanout")).toBeNull();
+
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: { ...defaultStats, stuckTaskCount: 1 },
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+      const fanoutTasks = [
+        makeTask("FN-010", "in-progress"),
+        makeTask("FN-101", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-102", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-103", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-104", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-105", "todo", { blockedBy: "FN-010" }),
+      ];
+      rerender(<ExecutorStatusBar tasks={fanoutTasks} />);
+
+      await user.click(screen.getByTestId("executor-stat-stuck"));
+      expect(screen.getByRole("tooltip")).toHaveTextContent("Stuck");
+      await user.click(screen.getByTestId("executor-stat-fanout"));
+      expect(screen.getByRole("tooltip")).toHaveTextContent("Overlap queue");
+    });
+
+    it("keeps desktop and tablet labels inline without mobile tap controls", () => {
+      viewportModeMock.value = "desktop";
+      const { rerender } = render(<ExecutorStatusBar tasks={emptyTasks} />);
+
+      const desktopStatus = screen.getByRole("status");
+      expect(desktopStatus).not.toHaveClass("executor-status-bar--mobile");
+      expect(getSegmentByLabel("Queued").tagName).toBe("DIV");
+      expect(desktopStatus.querySelectorAll("button.executor-status-bar__segment--stat")).toHaveLength(0);
+
+      viewportModeMock.value = "tablet";
+      rerender(<ExecutorStatusBar tasks={emptyTasks} />);
+      expect(screen.getByRole("status")).not.toHaveClass("executor-status-bar--mobile");
+      expect(screen.getByRole("status").querySelectorAll("button.executor-status-bar__segment--stat")).toHaveLength(0);
+    });
+
+    it("keeps the label-hiding and tooltip styles tied to the mobile modifier", () => {
+      const labelRule = getCssRuleBlock(executorStatusBarCss, ".executor-status-bar--mobile .executor-status-bar__label");
+      expect(labelRule).toContain("display: none");
+      expect(executorStatusBarCss).not.toMatch(/@media \(max-width: 768px\)[\s\S]*?\.executor-status-bar__label\s*\{\s*display:\s*none/);
+    });
+
+    it("renders zero-count mobile stats without error", () => {
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: { ...defaultStats, queuedTaskCount: 0, runningTaskCount: 0, blockedTaskCount: 0, inReviewCount: 0 },
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+      mobileStatIds.forEach((id) => expect(screen.getByTestId(`executor-stat-${id}`)).toBeInTheDocument());
     });
   });
 

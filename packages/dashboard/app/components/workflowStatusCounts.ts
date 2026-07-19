@@ -1,4 +1,9 @@
 import type { Task } from "@fusion/core";
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+Vite aliases `@fusion/core` to types.ts only in the dashboard app build; import the active-merge predicate from its source module (same pattern as resolveEffectiveAutoMerge).
+*/
+import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload } from "../api";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
@@ -18,7 +23,10 @@ const EMPTY_COUNTS = (): WorkflowStatusCounts => ({
 
 type WorkflowStatusBucket = keyof WorkflowStatusCounts | "excluded";
 
-const MERGING_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+AI merge uses reviewing/landing for most of the live merge window; count them with merging* so the workflow switcher flash indicator is not blank while the pump is busy.
+*/
 
 /**
  * FNXC:WorkflowSwitcher 2026-06-20-00:09:
@@ -97,10 +105,13 @@ export function computeWorkflowStatusCounts(
     const counts = countsByWorkflow.get(workflow.id) ?? EMPTY_COUNTS();
     counts[bucket] += 1;
     aggregateCounts[bucket] += 1;
-    if (MERGING_STATUSES.has(task.status ?? "")) {
+    if (isActiveMergeStatus(task.status)) {
       /*
       FNXC:WorkflowSwitcher 2026-06-22-20:30:
       Workflow boards need a visible flashing indicator in the workflow dropdown when any task assigned to that workflow is actively merging, independent of whether the workflow's review/merge column buckets as Todo or In Progress.
+
+      FNXC:MergeQueue 2026-07-15-10:40:
+      Include AI-merge reviewing/landing so the indicator matches the single-flight merge owner the engine already tracks.
       */
       counts.merging += 1;
       aggregateCounts.merging += 1;

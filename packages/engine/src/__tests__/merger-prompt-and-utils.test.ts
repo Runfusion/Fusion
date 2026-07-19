@@ -661,7 +661,10 @@ describe("push-after-merge", () => {
       if (cmdStr.includes("git diff --name-only --diff-filter=U")) {
         return hasConflicts ? "src/app.ts" as any : "" as any;
       }
-      if (cmdStr.startsWith("git diff-tree -p -w")) return "@@\n-foo\n+bar" as any;
+      // FNXC:MergeSafety 2026-07-16-08:10: whitespace classification uses `git diff -p -w :2: :3:` via execFile.
+      if (cmdStr.startsWith("git diff-tree -p -w") || (cmdStr.startsWith("git diff") && cmdStr.includes("-w") && cmdStr.includes(":2:"))) {
+        return "@@\n-foo\n+bar" as any;
+      }
       if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
         if (rebaseInProgress) return "rebasehead" as any;
         const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
@@ -832,7 +835,10 @@ describe("push-after-merge", () => {
         throw err;
       }
       if (cmdStr.includes("git diff --name-only --diff-filter=U")) return "src/app.ts" as any;
-      if (cmdStr.startsWith("git diff-tree -p -w")) return "@@\n-foo\n+bar" as any;
+      // FNXC:MergeSafety 2026-07-16-08:10: whitespace classification uses `git diff -p -w :2: :3:` via execFile.
+      if (cmdStr.startsWith("git diff-tree -p -w") || (cmdStr.startsWith("git diff") && cmdStr.includes("-w") && cmdStr.includes(":2:"))) {
+        return "@@\n-foo\n+bar" as any;
+      }
       if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
         if (rebaseInProgress) return "rebasehead" as any;
         const err = new Error("fatal: Needed a single revision") as Error & { status?: number };

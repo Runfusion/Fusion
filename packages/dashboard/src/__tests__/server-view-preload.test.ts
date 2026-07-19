@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
-import { afterEach, describe, expect, it } from "vitest";
-import { TaskStore } from "@fusion/core";
+import { afterEach, expect, it } from "vitest";
+import type { TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { buildViewPreloadInjection, createServer } from "../server.js";
 import { createLoopbackIntegrationTest } from "./loopback-integration-test.js";
 
@@ -54,24 +55,35 @@ function runPreloadBootstrap(injection: string, taskView: string, projectId?: st
 }
 
 async function startServerWithFixture(clientDir: string) {
-  const rootDir = makeTempDir("fn-4782-root-");
-  const globalDir = makeTempDir("fn-4782-global-");
-  const store = new TaskStore(rootDir, globalDir);
-  await store.init();
+  // FNXC:PostgresCutover 2026-07-16-06:50: preload integration starts the
+  // real server against an isolated async TaskStore, never a retired SQLite store.
+  const harness = await createTaskStoreForTest();
+  const store = harness.store;
 
   const previousClientDir = process.env.FUSION_CLIENT_DIR;
   process.env.FUSION_CLIENT_DIR = clientDir;
 
-  const app = createServer(store);
+  // FNXC:PostgresCutover 2026-07-16-07:30: preload tests exercise static HTML
+  // injection, not AI-session recovery. Supply the async satellite contract so
+  // its fire-and-forget recovery cannot outlive this fixture's isolated database.
+  const aiSessionStore = {
+    on: () => undefined,
+    off: () => undefined,
+    recoverStaleSessions: async () => 0,
+    listRecoverable: async () => [],
+    cleanupStaleSessions: async () => ({ terminalDeleted: 0, orphanedDeleted: 0 }),
+    stopScheduledCleanup: () => undefined,
+  };
+  const app = createServer(store, { aiSessionStore: aiSessionStore as never });
   const server = await new Promise<import("node:http").Server>((resolve) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));
   });
-
   return {
     server,
     restoreEnv: () => {
       process.env.FUSION_CLIENT_DIR = previousClientDir;
     },
+    teardown: () => harness.teardown(),
   };
 }
 
@@ -82,7 +94,7 @@ afterEach(() => {
   tempRoots = [];
 });
 
-describe("server index preload injection", () => {
+pgDescribe("server index preload injection", () => {
   serverViewPreloadIntegrationTest("injects view chunk map and modulepreload bootstrap", async () => {
     const clientDir = makeTempDir("fn-4782-client-");
     mkdirSync(join(clientDir, ".vite"), { recursive: true });
@@ -98,7 +110,7 @@ describe("server index preload injection", () => {
       }),
     );
 
-    const { server, restoreEnv } = await startServerWithFixture(clientDir);
+    const { server, restoreEnv, teardown } = await startServerWithFixture(clientDir);
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -117,6 +129,7 @@ describe("server index preload injection", () => {
     } finally {
       restoreEnv();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await teardown();
     }
   });
 
@@ -164,7 +177,7 @@ describe("server index preload injection", () => {
       }),
     );
 
-    const { server, restoreEnv } = await startServerWithFixture(clientDir);
+    const { server, restoreEnv, teardown } = await startServerWithFixture(clientDir);
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -180,6 +193,7 @@ describe("server index preload injection", () => {
     } finally {
       restoreEnv();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await teardown();
     }
   });
 
@@ -229,7 +243,7 @@ describe("server index preload injection", () => {
       JSON.stringify({ "components/AgentsView.tsx": { file: "assets/AgentsView-marker.js" } }),
     );
 
-    const { server, restoreEnv } = await startServerWithFixture(clientDir);
+    const { server, restoreEnv, teardown } = await startServerWithFixture(clientDir);
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -242,6 +256,7 @@ describe("server index preload injection", () => {
     } finally {
       restoreEnv();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await teardown();
     }
   });
 
@@ -249,7 +264,7 @@ describe("server index preload injection", () => {
     const clientDir = makeTempDir("fn-4782-client-no-manifest-");
     writeFileSync(join(clientDir, "index.html"), "<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>");
 
-    const { server, restoreEnv } = await startServerWithFixture(clientDir);
+    const { server, restoreEnv, teardown } = await startServerWithFixture(clientDir);
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -262,6 +277,7 @@ describe("server index preload injection", () => {
     } finally {
       restoreEnv();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await teardown();
     }
   });
 
@@ -274,7 +290,7 @@ describe("server index preload injection", () => {
       JSON.stringify({ "components/AgentsView.tsx": { file: "assets/AgentsView-</script>-abc.js" } }),
     );
 
-    const { server, restoreEnv } = await startServerWithFixture(clientDir);
+    const { server, restoreEnv, teardown } = await startServerWithFixture(clientDir);
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -288,6 +304,7 @@ describe("server index preload injection", () => {
     } finally {
       restoreEnv();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await teardown();
     }
   });
 });

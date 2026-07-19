@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { DependencyCycleError } from "@fusion/core";
+import { DependencyCycleError, detectSelfDefeatingDependency } from "@fusion/core";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
@@ -23,8 +23,9 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     } as any);
     const child = await fx.store.createTask({ id: "FN-5256-C", title: "Foundation child", description: "child" } as any);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([child.id]), umbrella.id);
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([umbrella.id]), child.id);
+    await fx.store.listTasks({ slim: true });
+    await fx.seedRawTaskColumns(umbrella.id, { dependencies: [child.id] });
+    await fx.seedRawTaskColumns(child.id, { dependencies: [umbrella.id] });
 
     const recovered = await fx.manager.reconcileDependencyCycles();
     expect(recovered).toBe(1);
@@ -35,7 +36,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     expect(updatedUmbrella?.dependencies).toEqual([child.id]);
     expect(updatedChild?.log.some((entry) => JSON.stringify(entry).includes("Auto-cleared umbrella back-edge"))).toBe(true);
 
-    const repairedAudit = fx.store.getRunAuditEvents({
+    const repairedAudit = await fx.store.getRunAuditEventsAsync({
       taskId: child.id,
       domain: "database",
       mutationType: "task:auto-reconciled-dependency-cycle",
@@ -55,9 +56,10 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const b = await fx.store.createTask({ id: "FN-5241", title: "Task B", description: "B" } as any);
     const c = await fx.store.createTask({ id: "FN-5242", title: "Task C", description: "C" } as any);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([b.id]), a.id);
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([c.id]), b.id);
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([a.id]), c.id);
+    await fx.store.listTasks({ slim: true });
+    await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
+    await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
+    await fx.seedRawTaskColumns(c.id, { dependencies: [a.id] });
 
     const recovered = await fx.manager.reconcileDependencyCycles();
     expect(recovered).toBe(0);
@@ -66,12 +68,12 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     expect((await fx.store.getTask(b.id))?.dependencies).toEqual([c.id]);
     expect((await fx.store.getTask(c.id))?.dependencies).toEqual([a.id]);
 
-    const detected = fx.store.getRunAuditEvents({
+    const detected = await fx.store.getRunAuditEventsAsync({
       taskId: a.id,
       domain: "database",
       mutationType: "task:dependency-cycle-detected",
     });
-    const unrepaired = fx.store.getRunAuditEvents({
+    const unrepaired = await fx.store.getRunAuditEventsAsync({
       taskId: a.id,
       domain: "database",
       mutationType: "task:dependency-cycle-unrepaired",
@@ -92,17 +94,20 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
       dependencies: [child.id],
     } as any);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET title = ?, dependencies = ? WHERE id = ?").run(
-      `Finalize ${child.id}: close loop`,
-      JSON.stringify([child.id]),
-      child.id,
-    );
+    await fx.store.listTasks({ column: "todo", slim: true });
+    await fx.seedRawTaskColumns(child.id, { title: "Finalize FN-100: close loop", dependencies: ["FN-100"], column: "todo" });
+    expect(await fx.store.getTask(child.id)).toMatchObject({
+      title: "Finalize FN-100: close loop", dependencies: ["FN-100"], column: "todo",
+    });
+    const seededChild = (await fx.store.listTasks({ column: "todo", slim: true })).find((task) => task.id === child.id)!;
+    expect(seededChild).toMatchObject({ title: "Finalize FN-100: close loop", dependencies: ["FN-100"], column: "todo" });
+    expect(detectSelfDefeatingDependency(seededChild.title, seededChild.dependencies)).toEqual({ matchedVerb: "finalize", operandTaskId: "FN-100" });
 
     const selfDefRecovered = await fx.manager.reconcileSelfDefeatingDependencies();
     expect(selfDefRecovered).toBe(1);
     expect((await fx.store.getTask(child.id))?.dependencies).toEqual([]);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([umbrella.id]), child.id);
+    await fx.seedRawTaskColumns(child.id, { dependencies: [umbrella.id] });
 
     const cycleRecovered = await fx.manager.reconcileDependencyCycles();
     expect(cycleRecovered).toBe(1);
@@ -110,12 +115,12 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const updatedChild = await fx.store.getTask(child.id);
     expect(updatedChild?.dependencies).toEqual([]);
 
-    const selfDefAudit = fx.store.getRunAuditEvents({
+    const selfDefAudit = await fx.store.getRunAuditEventsAsync({
       taskId: child.id,
       domain: "database",
       mutationType: "task:auto-reconciled-self-defeating-dep",
     });
-    const cycleAudit = fx.store.getRunAuditEvents({
+    const cycleAudit = await fx.store.getRunAuditEventsAsync({
       taskId: child.id,
       domain: "database",
       mutationType: "task:auto-reconciled-dependency-cycle",
@@ -135,11 +140,11 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-C", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-D", title: "Task D", description: "D" } as any);
 
-    const db = fx.store.getDatabase();
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([b.id]), a.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([c.id]), b.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([d.id]), c.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([a.id]), d.id);
+    await fx.store.listTasks({ slim: true });
+    await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
+    await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
+    await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });
+    await fx.seedRawTaskColumns(d.id, { dependencies: [a.id] });
 
     const recovered = await fx.manager.reconcileDependencyCycles();
     expect(recovered).toBe(0);
@@ -149,10 +154,10 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     expect((await fx.store.getTask(c.id))?.dependencies).toEqual([d.id]);
     expect((await fx.store.getTask(d.id))?.dependencies).toEqual([a.id]);
 
-    const repaired = fx.store.getRunAuditEvents({ domain: "database", mutationType: "task:auto-reconciled-dependency-cycle" });
+    const repaired = await fx.store.getRunAuditEventsAsync({ domain: "database", mutationType: "task:auto-reconciled-dependency-cycle" });
     expect(repaired).toHaveLength(0);
 
-    const unrepaired = fx.store.getRunAuditEvents({ domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
+    const unrepaired = await fx.store.getRunAuditEventsAsync({ domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
     expect(unrepaired).toHaveLength(1);
     const cyclePath = unrepaired[0]?.metadata?.cyclePath as string[];
     expect(Array.isArray(cyclePath)).toBe(true);
@@ -170,11 +175,11 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-RC", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-RD", title: "Task D", description: "D" } as any);
 
-    const db = fx.store.getDatabase();
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([b.id]), a.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([c.id]), b.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([d.id]), c.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([a.id]), d.id);
+    await fx.store.listTasks({ slim: true });
+    await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
+    await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
+    await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });
+    await fx.seedRawTaskColumns(d.id, { dependencies: [a.id] });
 
     const sweepPromise = fx.manager.reconcileDependencyCycles();
     const x = await fx.store.createTask({ id: "FN-5432-RX", title: "Task X", description: "X", dependencies: [a.id] } as any);
@@ -192,25 +197,31 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const p = await fx.store.createTask({ title: "Task P", description: "P" } as any);
     const q = await fx.store.createTask({ title: "Task Q", description: "Q", dependencies: [p.id] } as any);
 
-    const db = fx.store.getDatabase();
-    db.prepare("UPDATE tasks SET title = ?, dependencies = ? WHERE id = ?").run(`Finalize ${p.id}: now`, JSON.stringify([p.id]), p.id);
+    await fx.store.listTasks({ column: "todo", slim: true });
+    await fx.seedRawTaskColumns(p.id, { title: "Finalize FN-101: now", dependencies: ["FN-101"], column: "todo" });
+    expect(await fx.store.getTask(p.id)).toMatchObject({
+      title: "Finalize FN-101: now", dependencies: ["FN-101"], column: "todo",
+    });
+    const seededP = (await fx.store.listTasks({ column: "todo", slim: true })).find((task) => task.id === p.id)!;
+    expect(seededP).toMatchObject({ title: "Finalize FN-101: now", dependencies: ["FN-101"], column: "todo" });
+    expect(detectSelfDefeatingDependency(seededP.title, seededP.dependencies)).toEqual({ matchedVerb: "finalize", operandTaskId: "FN-101" });
 
     const selfDefRecovered = await fx.manager.reconcileSelfDefeatingDependencies();
     expect(selfDefRecovered).toBe(1);
     expect((await fx.store.getTask(p.id))?.dependencies).toEqual([]);
 
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([q.id]), p.id);
+    await fx.seedRawTaskColumns(p.id, { dependencies: [q.id] });
     const cycleRecovered = await fx.manager.reconcileDependencyCycles();
     expect(cycleRecovered).toBe(0);
 
-    const selfDefAudit = fx.store.getRunAuditEvents({ taskId: p.id, domain: "database", mutationType: "task:auto-reconciled-self-defeating-dep" });
-    const unrepairedP = fx.store.getRunAuditEvents({ taskId: p.id, domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
+    const selfDefAudit = await fx.store.getRunAuditEventsAsync({ taskId: p.id, domain: "database", mutationType: "task:auto-reconciled-self-defeating-dep" });
+    const unrepairedP = await fx.store.getRunAuditEventsAsync({ taskId: p.id, domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
     expect(selfDefAudit).toHaveLength(1);
     expect(unrepairedP).toHaveLength(1);
     const unrepairedPath = unrepairedP[0]?.metadata?.cyclePath as string[];
     expect(unrepairedPath).toEqual([p.id, q.id, p.id]);
 
-    const cycleDetected = fx.store.getRunAuditEvents({ taskId: p.id, domain: "database", mutationType: "task:dependency-cycle-detected" });
+    const cycleDetected = await fx.store.getRunAuditEventsAsync({ taskId: p.id, domain: "database", mutationType: "task:dependency-cycle-detected" });
     expect(cycleDetected).toHaveLength(1);
   });
 
@@ -223,15 +234,15 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-SC", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-SD", title: "Task D", description: "D" } as any);
 
-    const db = fx.store.getDatabase();
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([b.id]), a.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([c.id]), b.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([d.id]), c.id);
-    db.prepare("UPDATE tasks SET dependencies = ? WHERE id = ?").run(JSON.stringify([a.id]), d.id);
+    await fx.store.listTasks({ slim: true });
+    await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
+    await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
+    await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });
+    await fx.seedRawTaskColumns(d.id, { dependencies: [a.id] });
 
     await fx.manager.reconcileDependencyCycles();
 
-    const unrepaired = fx.store.getRunAuditEvents({ domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
+    const unrepaired = await fx.store.getRunAuditEventsAsync({ domain: "database", mutationType: "task:dependency-cycle-unrepaired" });
     expect(unrepaired.length).toBeGreaterThan(0);
 
     for (const event of unrepaired) {

@@ -5,6 +5,7 @@
 import { expect, it, vi } from "vitest";
 import type { AsyncDataLayer } from "@fusion/core";
 import type { PluginContext } from "@fusion/plugin-sdk";
+import { sql } from "drizzle-orm";
 import {
   createTaskStoreForTest,
   pgDescribe,
@@ -90,6 +91,28 @@ pgDescribe("WhatsAppPersistence PostgreSQL", () => {
       expect(claims.filter(Boolean)).toHaveLength(1);
       expect(await a.wasProcessed("same-message")).toBe(true);
       expect(await b.claimMessage("same-message", "15551234", 7)).toBe(true);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("prunes only expired dedupe rows inside the bound project", async () => {
+    const h = await createTaskStoreForTest({ prefix: "whatsapp_retention" });
+    try {
+      const persistence = createWhatsAppPersistence(context(bind(h.layer, "project-a")));
+      const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const recent = new Date(Date.now() - 3_600_000).toISOString();
+      await h.adminDb.execute(sql`INSERT INTO project.whatsapp_chat_dedupe(project_id, message_id, sender, received_at)
+        VALUES ('project-a', 'old-id', 'sender', ${old}), ('project-a', 'recent-id', 'sender', ${recent}),
+          ('project-b', 'old-id', 'sender', ${old})`);
+
+      await persistence.markProcessed("new-id", "sender", 7);
+
+      expect(await persistence.wasProcessed("old-id")).toBe(false);
+      expect(await persistence.wasProcessed("recent-id")).toBe(true);
+      expect(await persistence.wasProcessed("new-id")).toBe(true);
+      const otherProject = createWhatsAppPersistence(context(bind(h.layer, "project-b")));
+      expect(await otherProject.wasProcessed("old-id")).toBe(true);
     } finally {
       await h.teardown();
     }

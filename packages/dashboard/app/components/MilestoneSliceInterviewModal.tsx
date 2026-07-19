@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningQuestion } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -28,12 +28,11 @@ import {
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
-import { useSessionLock } from "../hooks/useSessionLock";
+import { MailboxMessageContent } from "./MailboxMessageContent";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "../hooks/useViewportMode";
-import { getSessionTabId } from "../utils/getSessionTabId";
 
 const WARNING_ICON = "⚠️";
 const MILESTONE_SLICE_OTHER_RESPONSE_KEY = "_other";
@@ -106,18 +105,13 @@ export function MilestoneSliceInterviewModal({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
-  const trackedLockSessionRef = useRef<string | null>(null);
-  const [lockSessionId, setLockSessionId] = useState<string | null>(null);
-  const sessionTabId = useMemo(() => getSessionTabId(), []);
-  useSessionLock(isOpen ? lockSessionId : null);
-  const {
-    activeTabMap,
-    broadcastUpdate,
-    broadcastCompleted,
-    broadcastLock,
-    broadcastUnlock,
-    broadcastHeartbeat,
-  } = useAiSessionSync();
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  No tab lock: the persisted session row is the shared source of truth, so every tab may read
+  and interact with this interview. The lock state, ownership broadcasts, heartbeat, and the
+  "active in another tab" banner were removed; only session-status sync remains.
+  */
+  const { broadcastUpdate, broadcastCompleted } = useAiSessionSync();
 
   // Select the right API functions based on targetType
   const startInterview = targetType === "milestone" ? startMilestoneInterview : startSliceInterview;
@@ -143,7 +137,6 @@ export function MilestoneSliceInterviewModal({
             sessionId,
             status: "generating",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: interviewType,
             title: targetTitle,
             projectId: projectId ?? null,
@@ -159,7 +152,6 @@ export function MilestoneSliceInterviewModal({
             sessionId,
             status: "awaiting_input",
             needsInput: true,
-            owningTabId: sessionTabId,
             type: interviewType,
             title: targetTitle,
             projectId: projectId ?? null,
@@ -176,7 +168,6 @@ export function MilestoneSliceInterviewModal({
             sessionId,
             status: "complete",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: interviewType,
             title: targetTitle,
             projectId: projectId ?? null,
@@ -194,7 +185,6 @@ export function MilestoneSliceInterviewModal({
             sessionId,
             status: "error",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: interviewType,
             title: targetTitle,
             projectId: projectId ?? null,
@@ -213,7 +203,7 @@ export function MilestoneSliceInterviewModal({
 
       streamConnectionRef.current = connection;
     },
-    [broadcastCompleted, broadcastUpdate, connectToStream, interviewType, projectId, sessionTabId, targetTitle],
+    [broadcastCompleted, broadcastUpdate, connectToStream, interviewType, projectId, targetTitle],
   );
 
   const clearSummary = () => {
@@ -232,14 +222,12 @@ export function MilestoneSliceInterviewModal({
     try {
       const { sessionId } = await startInterview(targetId, projectId);
       currentSessionIdRef.current = sessionId;
-      setLockSessionId(sessionId);
       connectToInterviewStream(sessionId);
     } catch (err) {
       setIsReconnecting(false);
       setError(getErrorMessage(err) || t("interview.error.failedToStart", "Failed to start {{targetLabel}} interview", { targetLabel: targetLabel.toLowerCase() }));
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
-      setLockSessionId(null);
     }
   }, [connectToInterviewStream, projectId, startInterview, targetId, targetLabel]);
 
@@ -275,7 +263,6 @@ export function MilestoneSliceInterviewModal({
 
       const parsedHistory = parseConversationHistory(session.conversationHistory);
       setConversationHistory(parsedHistory);
-      setLockSessionId(session.id);
       setResponseHistory(
         parsedHistory
           .map((entry) => entry.response)
@@ -330,57 +317,16 @@ export function MilestoneSliceInterviewModal({
   useEffect(() => {
     if (!isOpen) {
       setIsReconnecting(false);
-      setLockSessionId(null);
     }
   }, [isOpen]);
-
-  // Session locking
-  useEffect(() => {
-    if (!isOpen || !lockSessionId) return;
-
-    if (trackedLockSessionRef.current !== lockSessionId) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      }
-      broadcastLock(lockSessionId, sessionTabId);
-      trackedLockSessionRef.current = lockSessionId;
-      return;
-    }
-
-    if (!lockSessionId && trackedLockSessionRef.current) {
-      broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      trackedLockSessionRef.current = null;
-    }
-  }, [broadcastLock, broadcastUnlock, isOpen, lockSessionId, sessionTabId]);
-
-  // Keep heartbeat alive
-  useEffect(() => {
-    if (!isOpen || !lockSessionId || trackedLockSessionRef.current !== lockSessionId) {
-      return;
-    }
-
-    broadcastHeartbeat(sessionTabId);
-    const timer = setInterval(() => {
-      broadcastHeartbeat(sessionTabId);
-    }, 30_000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [broadcastHeartbeat, isOpen, lockSessionId, sessionTabId]);
 
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
-
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
     };
-  }, [broadcastUnlock, sessionTabId]);
+  }, []);
 
   const handleSendToBackground = useCallback(() => {
     streamConnectionRef.current?.close();
@@ -395,7 +341,6 @@ export function MilestoneSliceInterviewModal({
     setView({ type: "initial" });
     setError(null);
     currentSessionIdRef.current = null;
-    setLockSessionId(null);
     onClose();
   }, [onClose]);
 
@@ -418,7 +363,7 @@ export function MilestoneSliceInterviewModal({
 
       try {
         connectToInterviewStream(sessionId);
-        await respondToInterview(sessionId, responses, projectId, sessionTabId);
+        await respondToInterview(sessionId, responses, projectId);
       } catch (err) {
         streamConnectionRef.current?.close();
         streamConnectionRef.current = null;
@@ -426,7 +371,7 @@ export function MilestoneSliceInterviewModal({
         setView({ type: "question", sessionId, question: view.question });
       }
     },
-    [connectToInterviewStream, projectId, respondToInterview, sessionTabId, view],
+    [connectToInterviewStream, projectId, respondToInterview, view],
   );
 
   const handleApply = useCallback(async () => {
@@ -457,10 +402,6 @@ export function MilestoneSliceInterviewModal({
     view.type === "question" ||
     view.type === "summary" ||
     view.type === "error";
-
-  const activeLockInfo = lockSessionId ? activeTabMap.get(lockSessionId) : null;
-  const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
-  const activeInAnotherTab = Boolean(activeRemoteTab && !activeLockInfo.stale);
 
   if (!isOpen) return null;
 
@@ -499,12 +440,11 @@ export function MilestoneSliceInterviewModal({
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
-          {isReconnecting && <div className="form-hint text-muted">{t("interview.reconnecting", "Reconnecting…")}</div>}
-          {activeInAnotherTab && (
-            <div className="form-hint text-muted" data-testid="session-active-another-tab-banner">
-              {t("interview.sessionActiveAnotherTab", "Session is active in another tab.")}
-            </div>
-          )}
+          {/*
+          FNXC:MilestoneSliceInterview 2026-07-15-00:00:
+          Awaiting-input questions render persisted database state, so transient idle SSE reconnects must not imply that the question is being regenerated. Reserve this hint for the active loading view, mirroring the FN-8002 Planning Mode invariant.
+          */}
+          {isReconnecting && view.type === "loading" && <div className="form-hint text-muted">{t("interview.reconnecting", "Reconnecting…")}</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">
@@ -746,9 +686,16 @@ function InterviewQuestionForm({ question, progress, historyEntries, onSubmit }:
           </div>
 
           <div className="planning-question-content">
-            <h4 className="planning-question-text">{question.question}</h4>
+            <MailboxMessageContent
+              className="planning-question-text markdown-body"
+              content={question.question}
+              testId="planning-question-text"
+            />
             {question.description && (
-              <p className="planning-question-desc">{question.description}</p>
+              <MailboxMessageContent
+                className="planning-question-desc markdown-body"
+                content={question.description}
+              />
             )}
 
             <div className="planning-options">

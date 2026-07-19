@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFusionAuthStorage, getFusionAuthPath } from "../auth-storage.js";
+import lockfile from "proper-lockfile";
+import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth-storage.js";
 
 /*
 FNXC:ProviderAuth 2026-07-07-00:00:
@@ -48,16 +49,63 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     vi.restoreAllMocks();
   });
 
+  async function releaseHeldLockAfter(path: string, holdMs = 40): Promise<void> {
+    const release = await lockfile.lock(path, { realpath: false });
+    setTimeout(() => { void release(); }, holdMs);
+  }
+
+  it("waits for an independently held lock before set persists the credential", async () => {
+    const storage = createFusionAuthStorage();
+    const authPath = getFusionAuthPath(homeDir);
+    await releaseHeldLockAfter(authPath);
+
+    await expect(storage.set("openrouter", { type: "api_key", key: "held-lock-key" })).resolves.toBeUndefined();
+
+    const onDisk = readAuthFile(homeDir);
+    expect((onDisk.openrouter as { type?: string } | undefined)?.type).toBe("api_key");
+    const freshStorage = createFusionAuthStorage();
+    expect(freshStorage.has("openrouter")).toBe(true);
+  });
+
+  it("waits for held locks before remove and CredentialStore.delete", async () => {
+    const storage = createFusionAuthStorage();
+    const authPath = getFusionAuthPath(homeDir);
+    await storage.set("openrouter", { type: "api_key", key: "present" });
+    await storage.set("groq", { type: "api_key", key: "present" });
+
+    await releaseHeldLockAfter(authPath);
+    await expect(storage.remove("openrouter")).resolves.toBeUndefined();
+
+    const credentialStore = createFusionCredentialStore(storage);
+    await releaseHeldLockAfter(authPath);
+    await expect(credentialStore.delete("groq")).resolves.toBeUndefined();
+
+    const onDisk = readAuthFile(homeDir);
+    expect(onDisk.openrouter).toBeUndefined();
+    expect(onDisk.groq).toBeUndefined();
+  });
+
+  it("releases the per-path queue after a failed lock acquisition", async () => {
+    const storage = createFusionAuthStorage();
+    const lockSpy = vi.spyOn(lockfile, "lock").mockRejectedValueOnce(new Error("injected lock failure"));
+
+    await expect(storage.set("openrouter", { type: "api_key", key: "fails" })).rejects.toThrow("injected lock failure");
+    lockSpy.mockRestore();
+    await expect(storage.set("openrouter", { type: "api_key", key: "succeeds" })).resolves.toBeUndefined();
+
+    expect(storage.has("openrouter")).toBe(true);
+  });
+
   it("survives an unrelated oauth set from a second instance (missing-file baseline)", async () => {
     // Baseline: no auth.json exists yet when both instances are constructed.
     const instanceA = createFusionAuthStorage();
-    instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
-    instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
+    await instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
+    await instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
 
     // Instance B (e.g. the desktop app) constructs its own storage AFTER A's writes
     // are already on disk, then writes an unrelated provider's OAuth credential.
     const instanceB = createFusionAuthStorage();
-    instanceB.set("anthropic-subscription", {
+    await instanceB.set("anthropic-subscription", {
       type: "oauth",
       access: "desktop-access",
       refresh: "desktop-refresh",
@@ -76,18 +124,18 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
 
   it("survives instance B writing a NEW provider after loading a stale snapshot", async () => {
     const instanceA = createFusionAuthStorage();
-    instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
+    await instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
 
     // B constructs (and thus snapshots) BEFORE A's second write below.
     const instanceB = createFusionAuthStorage();
 
     // A saves a new provider key while B is alive holding a stale in-memory snapshot —
     // this is the exact "web app writing while the desktop process is alive" scenario.
-    instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
+    await instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
 
     // B performs its own write for a THIRD, different provider. Historically a
     // whole-file snapshot flush from B would wipe out A's mid-session write.
-    instanceB.set("groq", { type: "api_key", key: "desktop-groq-key" });
+    await instanceB.set("groq", { type: "api_key", key: "desktop-groq-key" });
 
     const onDisk = readAuthFile(homeDir);
     expect(onDisk.openai).toEqual({ type: "api_key", key: "web-openai-key" });
@@ -102,15 +150,15 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
 
   it("survives instance B's logout(\"anthropic\") for unrelated providers", async () => {
     const instanceA = createFusionAuthStorage();
-    instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
-    instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
+    await instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
+    await instanceA.set("openrouter", { type: "api_key", key: "web-openrouter-key" });
 
     const instanceB = createFusionAuthStorage();
-    instanceA.set("groq", { type: "api_key", key: "web-groq-key" });
+    await instanceA.set("groq", { type: "api_key", key: "web-groq-key" });
 
     // B logs out of a provider it never touched via A — this exercises the remove()
     // proxy trap's persistProviderChange path.
-    instanceB.logout("anthropic");
+    await instanceB.logout("anthropic");
 
     const onDisk = readAuthFile(homeDir);
     expect(onDisk.openai).toEqual({ type: "api_key", key: "web-openai-key" });
@@ -130,18 +178,18 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     writeFileSync(getFusionAuthPath(homeDir), "{}");
 
     const instanceA = createFusionAuthStorage();
-    instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
+    await instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
 
     const instanceB = createFusionAuthStorage();
-    instanceA.set("mistral", { type: "api_key", key: "web-mistral-key" });
+    await instanceA.set("mistral", { type: "api_key", key: "web-mistral-key" });
 
-    instanceB.set("anthropic-subscription", {
+    await instanceB.set("anthropic-subscription", {
       type: "oauth",
       access: "desktop-access",
       refresh: "desktop-refresh",
       expires: Date.now() + 3_600_000,
     });
-    instanceB.remove("anthropic-subscription");
+    await instanceB.remove("anthropic-subscription");
 
     const onDisk = readAuthFile(homeDir);
     expect(onDisk.openai).toEqual({ type: "api_key", key: "web-openai-key" });
@@ -170,7 +218,7 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     );
 
     const instanceA = createFusionAuthStorage();
-    instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
+    await instanceA.set("openai", { type: "api_key", key: "web-openai-key" });
 
     // B constructs after A's write; construction runs syncSupplementalOauthCredentials(),
     // which itself calls primary.set() for the hydrated legacy OAuth provider — this is
@@ -189,7 +237,7 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     // A logs in to Anthropic OAuth with a credential that is already due for refresh
     // (past the 5-minute proactive-refresh buffer).
     const instanceA = createFusionAuthStorage();
-    instanceA.set("anthropic", {
+    await instanceA.set("anthropic", {
       type: "oauth",
       access: "old-access",
       refresh: "old-refresh",
@@ -200,7 +248,7 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     const instanceB = createFusionAuthStorage();
 
     // The user re-logs in via A with a fresh, long-lived credential AFTER B snapshotted.
-    instanceA.set("anthropic", {
+    await instanceA.set("anthropic", {
       type: "oauth",
       access: "new-access-from-relogin",
       refresh: "new-refresh-from-relogin",
@@ -230,5 +278,90 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
 
     const instanceC = createFusionAuthStorage();
     expect(await instanceC.getApiKey("anthropic")).not.toBe("refreshed-from-stale-old-token");
+  });
+
+  it("single-flights a rotating Anthropic refresh token across auth storage instances", async () => {
+    const now = Date.now();
+    const instanceA = createFusionAuthStorage();
+    await instanceA.set("anthropic-subscription", {
+      type: "oauth",
+      access: "expiring-access",
+      refresh: "single-use-refresh",
+      expires: now + 1_000,
+    });
+
+    // Each agent session constructs its own auth storage instance. Anthropic refresh
+    // tokens rotate, so concurrent refresh requests using the same token cannot both
+    // succeed: the second request observes an already-consumed refresh token.
+    const instanceB = createFusionAuthStorage();
+    let refreshConsumed = false;
+    const fetchMock = vi.fn(async () => {
+      if (refreshConsumed) {
+        return {
+          ok: false,
+          text: async () => JSON.stringify({ error: "invalid_grant" }),
+        };
+      }
+      refreshConsumed = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          access_token: "rotated-access",
+          refresh_token: "next-single-use-refresh",
+          expires_in: 3600,
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const [keyA, keyB] = await Promise.all([
+      instanceA.getApiKey("anthropic"),
+      instanceB.getApiKey("anthropic"),
+    ]);
+
+    expect(keyA).toBe("rotated-access");
+    expect(keyB).toBe("rotated-access");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readAuthFile(homeDir)["anthropic-subscription"]).toMatchObject({
+      type: "oauth",
+      access: "rotated-access",
+      refresh: "next-single-use-refresh",
+    });
+  });
+
+  it("single-flights one rotating token across legacy and subscription Anthropic aliases", async () => {
+    const instanceA = createFusionAuthStorage();
+    await instanceA.set("anthropic", {
+      type: "oauth",
+      access: "legacy-expiring-access",
+      refresh: "shared-alias-refresh",
+      expires: Date.now() + 1_000,
+    });
+    const instanceB = createFusionAuthStorage();
+
+    let refreshConsumed = false;
+    const fetchMock = vi.fn(async () => {
+      if (refreshConsumed) {
+        return { ok: false, text: async () => JSON.stringify({ error: "invalid_grant" }) };
+      }
+      refreshConsumed = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          access_token: "alias-rotated-access",
+          refresh_token: "next-alias-refresh",
+          expires_in: 3600,
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(Promise.all([
+      instanceA.getApiKey("anthropic"),
+      instanceB.getApiKey("anthropic-subscription"),
+    ])).resolves.toEqual(["alias-rotated-access", "alias-rotated-access"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -74,6 +74,17 @@ function parseSsePayload<T>(event: MessageEvent): T | null {
   }
 }
 
+/*
+FNXC:ChatRooms 2026-07-16-00:00:
+Room transcripts must render oldest-first, even though the room API fetches the newest
+window first with `order: "desc"`. FN-8062 normalizes every fetched snapshot here so
+optimistic, delivered, SSE, read-tracking, and render paths can consistently append/use
+`messages[messages.length - 1]` as the newest message.
+*/
+function toAscending(messages: ChatRoomMessage[]): ChatRoomMessage[] {
+  return messages.slice().reverse();
+}
+
 function createOptimisticRoomMessage(roomId: string, content: string, attachments?: ChatAttachment[]): ChatRoomMessage {
   return {
     id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -205,12 +216,13 @@ export function useChatRooms(
       timer.mark("members-fetch");
       timer.mark("messages-fetch");
       writeCache(membersCacheKey(room.id), membersData.members, { maxBytes: 500_000 });
-      // Snapshot mirrors server `order: desc` shape.
-      writeCache(messagesCacheKey(room.id), messagesData.messages, { maxBytes: 500_000 });
+      const ascendingMessages = toAscending(messagesData.messages);
+      // Cache snapshots are normalized oldest-first so warm hydration cannot reintroduce server order.
+      writeCache(messagesCacheKey(room.id), ascendingMessages, { maxBytes: 500_000 });
 
       if (activeRoomRef.current?.id === room.id) {
         setActiveRoomMembers(membersData.members);
-        setMessages(messagesData.messages);
+        setMessages(ascendingMessages);
         timer.mark("hydrate");
       }
     } catch {
@@ -349,7 +361,7 @@ export function useChatRooms(
     if (activeRoomRef.current?.id === roomId) {
       setMessages((previous) => {
         const next = [...previous, optimisticMessage];
-        // Snapshot mirrors server `order: desc` shape.
+        // Cache snapshots are stored oldest-first, matching the room display contract.
         writeCache(messagesCacheKey(roomId), next, { maxBytes: 500_000 });
         return next;
       });
@@ -385,36 +397,37 @@ export function useChatRooms(
       if (activeRoomRef.current?.id === roomId) {
         setMessages((previous) => {
           const next = reconcileOptimisticUserMessage(previous, postResult.message, optimisticMessage.id);
-          // Snapshot mirrors server `order: desc` shape.
+          // Cache snapshots are stored oldest-first, matching the room display contract.
           writeCache(messagesCacheKey(roomId), next, { maxBytes: 500_000 });
           return next;
         });
       }
 
       const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100, order: "desc" }, projectId);
-      // Snapshot mirrors server `order: desc` shape.
-      writeCache(messagesCacheKey(roomId), latestMessages.messages, { maxBytes: 500_000 });
+      const ascendingMessages = toAscending(latestMessages.messages);
+      // Cache snapshots are normalized oldest-first for display and warm hydration.
+      writeCache(messagesCacheKey(roomId), ascendingMessages, { maxBytes: 500_000 });
       if (activeRoomRef.current?.id !== roomId) {
         return;
       }
-      setMessages(latestMessages.messages);
+      setMessages(ascendingMessages);
       timer.mark("hydrate");
     } catch (error) {
       let recoveredMessages: ChatRoomMessage[] | null = null;
       try {
         const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100, order: "desc" }, projectId);
-        recoveredMessages = latestMessages.messages;
-        // Snapshot mirrors server `order: desc` shape.
-        writeCache(messagesCacheKey(roomId), latestMessages.messages, { maxBytes: 500_000 });
+        recoveredMessages = toAscending(latestMessages.messages);
+        // Cache snapshots are normalized oldest-first for display and warm hydration.
+        writeCache(messagesCacheKey(roomId), recoveredMessages, { maxBytes: 500_000 });
         if (activeRoomRef.current?.id === roomId) {
-          setMessages(latestMessages.messages);
+          setMessages(recoveredMessages);
           timer.mark("hydrate");
         }
       } catch {
         if (!userMessageDelivered && activeRoomRef.current?.id === roomId) {
           setMessages((previous) => {
             const next = previous.filter((message) => message.id !== optimisticMessage.id);
-            // Snapshot mirrors server `order: desc` shape.
+            // Cache snapshots are stored oldest-first, matching the room display contract.
             writeCache(messagesCacheKey(roomId), next, { maxBytes: 500_000 });
             return next;
           });
@@ -549,7 +562,7 @@ export function useChatRooms(
             if (next === previous) {
               return previous;
             }
-            // Snapshot mirrors server `order: desc` shape.
+            // Cache snapshots are stored oldest-first, matching the room display contract.
             writeCache(messagesCacheKey(message.roomId), next, { maxBytes: 500_000 });
             return next;
           });
@@ -560,7 +573,7 @@ export function useChatRooms(
           if (!message || activeRoomRef.current?.id !== message.roomId) return;
           setMessages((previous) => {
             const next = previous.map((candidate) => (candidate.id === message.id ? message : candidate));
-            // Snapshot mirrors server `order: desc` shape.
+            // Cache snapshots are stored oldest-first, matching the room display contract.
             writeCache(messagesCacheKey(message.roomId), next, { maxBytes: 500_000 });
             return next;
           });
@@ -573,7 +586,7 @@ export function useChatRooms(
             const next = previous.filter((message) => message.id !== payload.id);
             const activeRoomId = activeRoomRef.current?.id;
             if (activeRoomId) {
-              // Snapshot mirrors server `order: desc` shape.
+              // Cache snapshots are stored oldest-first, matching the room display contract.
               writeCache(messagesCacheKey(activeRoomId), next, { maxBytes: 500_000 });
             }
             return next;

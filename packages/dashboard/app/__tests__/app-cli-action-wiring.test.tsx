@@ -14,7 +14,6 @@ function cliSession(overrides: Partial<AiSessionSummary> = {}): AiSessionSummary
     status: overrides.status ?? "needs_attention",
     title: overrides.title ?? "CLI session needs attention",
     projectId: overrides.projectId ?? "proj-1",
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-06-14T19:32:00.000Z",
     cliVariant: overrides.cliVariant ?? "userExited",
     cliSessionId: Object.prototype.hasOwnProperty.call(overrides, "cliSessionId")

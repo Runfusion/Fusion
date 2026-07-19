@@ -26,15 +26,22 @@ import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.j
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
+import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./remaining-ops-8.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async-workflow-workitems.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async-comments-attachments.js";
 import type { ArtifactRow } from "./row-types.js";
 import type {MergeQueueRow, CompletionHandoffMarkerRow, ActivityLogRow} from "../task-store/row-types.js";
+import {appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration} from "../async-configuration-revision-store.js";
+import {readProjectConfig, writeProjectConfig} from "./async-settings.js";
+import {publishSettingsUpdated} from "./settings-ops.js";
+import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -42,9 +49,9 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "worktree", "blockedBy", "overlapBlockedBy", "paused", "pausedReason", "userPaused", "baseBranch", "branch", "autoMerge", "autoMergeProvenance", "executionStartBranch", "baseCommitSha",
       "modelPresetId", "modelProvider", "modelId",
       "validatorModelProvider", "validatorModelId",
-      "planningModelProvider", "planningModelId",
-      "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
-      "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "executionMode",
+      "planningModelProvider", "planningModelId", "mergerModelProvider", "mergerModelId",
+      "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
+      "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "mergerThinkingLevel", "executionMode",
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
@@ -452,14 +459,10 @@ export async function listTasksForGitlabTrackingReconcileImpl(store: TaskStore, 
         .offset(deletedOffset);
       const deletedTasks = deletedRowsRaw.map((row) => {
         const raw = row as unknown as Record<string, unknown>;
+        // FNXC:GitLabTracking 2026-07-16-05:36: rowToTask now hydrates GitLab
+        // tracking through the shared persistence registry, so reconcile uses
+        // the same authoritative mapper as every other live-task read.
         const task = store.rowToTask(store.pgRowToTaskRow(raw));
-        // FNXC:GitLabTracking 2026-07-12-00:00: the generic row mapper does not
-        // yet include gitlabTracking (the feature is partial on this branch).
-        // Manually attach it from the raw jsonb column so reconcile callers get
-        // the tracking item they need to reconcile.
-        if (raw.gitlabTracking != null) {
-          task.gitlabTracking = raw.gitlabTracking as Task["gitlabTracking"];
-        }
         task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
         task.log = [];
         return task;
@@ -497,7 +500,7 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
       const layer = store.asyncLayer!;
       const dir = store.taskDir(taskId);
       const outcome = await layer.transactionImmediate(async (tx) => {
-        const row = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true });
+        const row = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true }, layer.projectId);
         if (row?.deletedAt) {
           return { deletedAt: row.deletedAt as string, current: undefined };
         }
@@ -512,7 +515,7 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
         if (result.length === 0) {
           return { deletedAt: undefined, current: undefined };
         }
-        const fresh = await readTaskRowInTransaction(tx, taskId);
+        const fresh = await readTaskRowInTransaction(tx, taskId, undefined, layer.projectId);
         return { deletedAt: undefined, current: fresh };
       });
 
@@ -605,7 +608,20 @@ export function getWorkflowPromptOverridesImpl(store: TaskStore, workflowId: str
     return store.parseWorkflowPromptOverrideJson(row?.overrides);
   }
 
-export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>,): Promise<Record<string, unknown>> {
+export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" },): Promise<Record<string, unknown>> {
+    /*
+    FNXC:ConfigVersioning 2026-07-18-19:10:
+    Workflow values are rollbackable only with the PostgreSQL target mutation
+    and revision in one transaction. Reject the legacy SQLite writer before it
+    can persist an unjournaled configuration change.
+    */
+    if (!store.backendMode) throw new Error("Workflow configuration changes require the PostgreSQL revision store");
+    /*
+    FNXC:ConfigVersioning 2026-07-18-12:15:
+    Preserve the established SQLite workflow-value writer for compatibility.
+    PostgreSQL installations take the transaction-backed journal branch below;
+    legacy projects retain their supported write behavior during migration.
+    */
     const declarations = await store.resolveWorkflowSettingDeclarations(workflowId);
     const result = validateSettingValuePatch(declarations, patch);
     if (result.rejections.length > 0) {
@@ -625,7 +641,7 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
      */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async (tx) => {
+      const committed = await layer.transactionImmediate(async (tx) => {
         const rows = await tx
           .select({ values: schema.project.workflowSettings.values })
           .from(schema.project.workflowSettings)
@@ -663,8 +679,28 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
               updatedAt: now,
             },
           });
-        return next;
+        /* FNXC:ConfigVersioning 2026-07-18-00:00: workflow values and their revision commit together. */
+        const revision = createConfigurationRevision({
+          projectId,
+          ownerScope: "project",
+          configKind: "workflow-settings",
+          configTarget: { workflowId, projectId },
+          before: current,
+          after: next,
+          changedBy,
+        });
+        if (revision) await appendConfigurationRevision(tx, revision);
+        return { next, revision };
       });
+      if (committed.revision) {
+        store.emit("workflow:setting-values-updated", {
+          workflowId,
+          projectId,
+          settingIds: committed.revision.diffs.map((diff) => diff.field),
+          mutationId: committed.revision.id,
+        });
+      }
+      return committed.next;
     }
     return store.db.transactionImmediate(() => {
       const current = store.getWorkflowSettingValues(workflowId, projectId);
@@ -690,6 +726,68 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
       return next;
     });
   }
+
+export async function rollbackConfigurationImpl(store: TaskStore, revisionId: string, changedBy: ConfigChangedBy = {kind: "human", id: "local-user"}): Promise<ConfigurationRevision> {
+  if (!store.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
+  const layer = store.asyncLayer!;
+  // First resolve project ownership without a bypass. The selected snapshot and
+  // current target are then read through one immediate transaction below.
+  const projectRevision = await getConfigurationRevision(layer.db, layer.projectId ?? "", revisionId);
+  if (!projectRevision) {
+    // Global revisions live in the reserved central partition and are queried
+    // through GlobalSettingsStore's privileged writer/reader.
+    const previous = await store.getSettings();
+    const rollback = await store.globalSettingsStore.rollbackConfiguration(revisionId, changedBy);
+    await publishSettingsUpdated(store, previous, await store.getSettings());
+    return rollback;
+  }
+  const previous = await store.getSettings();
+  const rollback = await layer.transactionImmediate(async (tx) => {
+    /* FNXC:ConfigVersioning 2026-07-18-02:00: read both the selected revision and current config via tx so rollback's forward `before` snapshot cannot race a concurrent settings write. */
+    const revision = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+    if (!revision) throw new Error(`Configuration revision ${revisionId} was not found`);
+    return rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
+    readCurrent: async () => {
+      if (revision.configKind === "project-settings") return (await readProjectConfig(layer, tx)).settings ?? {};
+      if (revision.configKind === "workflow-settings") {
+        const workflowId = String(revision.configTarget.workflowId);
+        const projectId = String(revision.configTarget.projectId);
+        const rows = await tx.select({values: schema.project.workflowSettings.values}).from(schema.project.workflowSettings).where(and(eq(schema.project.workflowSettings.workflowId, workflowId), eq(schema.project.workflowSettings.projectId, projectId))).limit(1);
+        return rows[0]?.values ?? {};
+      }
+      throw new Error(`Configuration revision ${revisionId} belongs to ${revision.configKind}; use its resource store rollback API`);
+    },
+    replace: async (snapshot) => {
+      if (revision.configKind === "project-settings") {
+        await writeProjectConfig(layer, snapshot as Record<string, unknown>, undefined, tx);
+        return;
+      }
+      if (revision.configKind === "workflow-settings") {
+        const workflowId = String(revision.configTarget.workflowId);
+        const projectId = String(revision.configTarget.projectId);
+        await tx.insert(schema.project.workflowSettings).values({workflowId, projectId, values: snapshot as Record<string, unknown>, updatedAt: new Date().toISOString()}).onConflictDoUpdate({target: [schema.project.workflowSettings.workflowId, schema.project.workflowSettings.projectId], set: {values: snapshot as Record<string, unknown>, updatedAt: new Date().toISOString()}});
+        return;
+      }
+      throw new Error(`Configuration revision ${revisionId} cannot be restored by TaskStore`);
+    },
+    });
+  });
+  /* FNXC:ConfigVersioning 2026-07-18-14:20: exact replacement commits first; only then notify caches/listeners, matching forward settings writes. */
+  if (projectRevision.configKind === "project-settings") {
+    await publishSettingsUpdated(store, previous, await store.getSettings());
+  } else {
+    // Workflow VALUE changes do not alter the merged project settings object,
+    // but settings consumers still need the standard invalidation signal.
+    store.emit("settings:updated", { settings: await store.getSettings(), previous });
+    store.emit("workflow:setting-values-updated", {
+      workflowId: String(projectRevision.configTarget.workflowId),
+      projectId: String(projectRevision.configTarget.projectId),
+      settingIds: rollback.diffs.map((diff) => diff.field),
+      mutationId: rollback.id,
+    });
+  }
+  return rollback;
+}
 
 export async function cancelActiveWorkflowWorkItemsForTaskImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null; excludeIds?: string[] } = {}, tx?: import("../postgres/data-layer.js").DbTransaction): Promise<WorkflowWorkItem[]> {
     // FNXC:PostgresCutover 2026-06-27-10:20:
@@ -943,7 +1041,7 @@ export async function cleanupBranchForTaskImpl(store: TaskStore, task: Task): Pr
       }
     }
     if (deleted.length > 0) {
-      store.clearStaleExecutionStartBranchReferences(deleted, task.id);
+      await store.clearStaleExecutionStartBranchReferences(deleted, task.id);
     }
     return deleted;
   }
@@ -1244,6 +1342,62 @@ export async function unlinkGithubIssueImpl(store: TaskStore, id: string): Promi
   }
 
 export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string[]> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+    Backend-mode port. `cleanupArchivedTasks` is the hard-removal path for tasks
+    already in the `archived` column (the CLI documents it as such): it snapshots
+    each to cold storage, hard-deletes the live project row, and removes the task
+    directory. In PostgreSQL, archived rows are soft-deleted (`deleted_at` set), so
+    enumeration MUST pass `includeDeleted`. The cold snapshot upsert is idempotent
+    (archive already holds it from archive time); the project-row DELETE fires the
+    ON DELETE CASCADE that purges the task's documents/artifacts, matching the
+    SQLite path's dir removal. Selection rows are purged via the async helper.
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-17-17:40:
+      Enumerate the archived rows with an EXPLICIT project predicate. `listTasks()`
+      derives its scope from `taskProjectScope(layer)`, which is a NO-OP when the
+      layer is unbound (projectId absent) — i.e. it would read archived rows across
+      every project, and this destructive sweep (snapshot + dir removal + cache
+      evict) would then touch tasks it must never own. Scoping the read here to the
+      same `projectId` the DELETE below uses keeps enumerate+delete lockstep: a bound
+      store sees only its project, an unbound store only the `__legacy_unscoped__`
+      quarantine partition.
+      */
+      const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+      const archivedRows = await layer.db
+        .select()
+        .from(schema.project.tasks)
+        .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.column, "archived")));
+      const cleanedUpIds: string[] = [];
+      const { rm } = await import("node:fs/promises");
+
+      for (const row of archivedRows) {
+        const task = store.rowToTask(store.pgRowToTaskRow(row));
+        const dir = store.taskDir(task.id);
+        // Guarantee a cold-storage snapshot before the destructive delete.
+        const entry = await store.taskToArchiveEntry(task, task.deletedAt ?? new Date().toISOString());
+        await upsertArchivedTaskEntry(layer.db, entry, layer.projectId);
+
+        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, task.id);
+        await layer.db
+          .delete(schema.project.tasks)
+          .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, task.id)));
+
+        if (existsSync(dir)) {
+          await rm(dir, { recursive: true, force: true });
+        }
+        if (store.isWatching) {
+          store.taskCache.delete(task.id);
+        }
+        cleanedUpIds.push(task.id);
+      }
+
+      return cleanedUpIds;
+    }
+
     const archivedTasks = await store.listTasks({ column: "archived" });
 
     const cleanedUpIds: string[] = [];
@@ -1315,7 +1469,49 @@ ${deps}
 ${stepsSection}`;
   }
 
-export function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflowId: string, includeNullSelection: boolean): string[] {
+export async function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflowId: string, includeNullSelection: boolean): Promise<string[]> {
+    /*
+    FNXC:PostgresWorkflowOccupancy 2026-07-14-17:44:
+    Workflow edits and deletes must discover occupants from PostgreSQL before changing an IR or clearing selection rows. Archived and soft-deleted tasks are never occupants; optionally include live tasks whose selection resolves implicitly to the default workflow.
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const selected = await layer.db
+        .select({ taskId: schema.project.taskWorkflowSelection.taskId })
+        .from(schema.project.taskWorkflowSelection)
+        .innerJoin(schema.project.tasks, and(
+          eq(schema.project.tasks.id, schema.project.taskWorkflowSelection.taskId),
+          eq(schema.project.tasks.projectId, schema.project.taskWorkflowSelection.projectId),
+        ))
+        .where(and(
+          eq(schema.project.taskWorkflowSelection.workflowId, workflowId),
+          isNull(schema.project.tasks.deletedAt),
+          taskProjectScope(layer),
+          layer.projectId
+            ? eq(schema.project.taskWorkflowSelection.projectId, layer.projectId)
+            : undefined,
+        ));
+      const ids = selected.map((row) => row.taskId);
+      if (includeNullSelection) {
+        const unselected = await layer.db
+          .select({ id: schema.project.tasks.id })
+          .from(schema.project.tasks)
+          .leftJoin(
+            schema.project.taskWorkflowSelection,
+            and(
+              eq(schema.project.taskWorkflowSelection.taskId, schema.project.tasks.id),
+              eq(schema.project.taskWorkflowSelection.projectId, schema.project.tasks.projectId),
+            ),
+          )
+          .where(and(
+            isNull(schema.project.tasks.deletedAt),
+            isNull(schema.project.taskWorkflowSelection.taskId),
+            taskProjectScope(layer),
+          ));
+        ids.push(...unselected.map((row) => row.id));
+      }
+      return ids;
+    }
     const ids: string[] = [];
     const selected = store.db
       .prepare(
@@ -1347,9 +1543,14 @@ export async function evacuateCustomColumnsToLegacyImpl(store: TaskStore, trigge
     // (triage). Falls back to "triage" defensively if the IR can't be resolved.
     const targetColumn = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR) ?? "triage";
 
-    const rows = store.db
-      .prepare(`SELECT id, "column" AS col FROM tasks WHERE deletedAt IS NULL`)
-      .all() as Array<{ id: string; col: string }>;
+    const rows: Array<{ id: string; col: string }> = store.backendMode
+      ? (await store.asyncLayer!.db
+          .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
+          .from(schema.project.tasks)
+          .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!))))
+      : store.db
+          .prepare(`SELECT id, "column" AS col FROM tasks WHERE deletedAt IS NULL`)
+          .all() as Array<{ id: string; col: string }>;
 
     for (const { id, col } of rows) {
       scanned += 1;

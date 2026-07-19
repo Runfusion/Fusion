@@ -59,7 +59,11 @@ function createRetryTask(overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function createStore(task: Task, settingsOverrides: Partial<Settings> = {}): TaskStore {
+function createStore(
+  task: Task,
+  settingsOverrides: Partial<Settings> = {},
+  workflowSettings: Record<string, unknown> = {},
+): TaskStore {
   return {
     getTask: vi.fn().mockResolvedValue(task),
     listTasks: vi.fn().mockResolvedValue([task]),
@@ -87,7 +91,7 @@ function createStore(task: Task, settingsOverrides: Partial<Settings> = {}): Tas
     addSteeringComment: vi.fn(),
     getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
     getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
-    getWorkflowSettingValues: vi.fn().mockReturnValue({}),
+    getWorkflowSettingValues: vi.fn().mockReturnValue(workflowSettings),
     getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-plan-review-replan-cap"),
     on: vi.fn(),
     emit: vi.fn(),
@@ -139,12 +143,40 @@ describe("Plan Review replan cap", () => {
     }));
   });
 
-  it("escalates to awaiting-approval instead of replanning once the cap is reached", async () => {
+  it("uses a workflow-configured replan cap before escalating to manual approval", async () => {
     const rootDir = await createFixtureRoot();
     roots.push(rootDir);
-    // Cap is 3: a task that has already consumed 3 consecutive REVISE replans must
-    // escalate on the next REVISE rather than replanning a 4th time.
-    const task = createRetryTask({ id: "FN-REPLAN-CAP-HIT", planReviewReplanCount: 3 });
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-CONFIGURED",
+      planReviewReplanCount: 1,
+    });
+    const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
+    await writePrompt(rootDir, task.id, prompt);
+    const store = createStore(task, {}, { planReviewReplanCap: 1 });
+    mockReviewStep.mockResolvedValue({ verdict: "REVISE", review: "One configured attempt was enough.", summary: "Needs revision." });
+
+    await runGate(rootDir, task, store);
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      "Plan Review replan cap reached — escalating to manual approval",
+      expect.stringContaining("cap 1"),
+    );
+  });
+
+  it("falls back to the source cap when the workflow setting is unset", async () => {
+    const rootDir = await createFixtureRoot();
+    roots.push(rootDir);
+    // The workflow-value map intentionally omits planReviewReplanCap. A task that has
+    // consumed the source-default cap must still escalate on the next REVISE.
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-HIT",
+      planReviewReplanCount: 8,
+    });
     const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
     await writePrompt(rootDir, task.id, prompt);
     const store = createStore(task);
@@ -165,6 +197,84 @@ describe("Plan Review replan cap", () => {
       "Plan Review replan cap reached — escalating to manual approval",
       expect.stringContaining(feedback),
     );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      "Plan Review replan cap reached — escalating to manual approval",
+      expect.stringContaining("cap 8"),
+    );
+  });
+
+  it("still replans from seven consecutive REVISE verdicts", async () => {
+    const rootDir = await createFixtureRoot();
+    roots.push(rootDir);
+    /*
+    FNXC:PlanReviewReplan 2026-07-15-11:30:
+    Keep this boundary literal rather than deriving it from the production constant. FN-7986
+    requires proof that the default is truly 8: with the former cap of 3, seven prior REVISE
+    verdicts would escalate instead of returning the task to `needs-replan` at count 8.
+    */
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-LAST",
+      planReviewReplanCount: 7,
+    });
+    const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
+    await writePrompt(rootDir, task.id, prompt);
+    const store = createStore(task);
+    mockReviewStep.mockResolvedValue({ verdict: "REVISE", review: "One more try.", summary: "Needs revision." });
+
+    await runGate(rootDir, task, store);
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      status: "needs-replan",
+      planReviewReplanCount: 8,
+    }));
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({
+      status: "awaiting-approval",
+    }));
+  });
+
+  /*
+  FNXC:TriagePlanReviewConvergence 2026-07-16-19:40:
+  Prove the spec-gate convergence inputs are derived from the latest Plan Review REVISE and passed
+  to reviewStep: priorSpecReviewFeedback = latest REVISE output with a `|| notes` fallback (FIX B —
+  an empty-string output must fall through to notes, not be treated as present), and
+  specReviewAttempt = planReviewReplanCount + 1. `mockReviewStep.mock.calls[0][7]` is the options bag.
+  */
+  it("passes prior REVISE feedback (empty-output -> notes fallback) and attempt to reviewStep", async () => {
+    const rootDir = await createFixtureRoot();
+    roots.push(rootDir);
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-CONVERGE",
+      planReviewReplanCount: 1,
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "failed",
+          verdict: "REVISE",
+          // Empty output must NOT win under `||`; notes is the real feedback.
+          output: "",
+          notes: "NOTES-FALLBACK-MARKER: add the missing Surface Enumeration section.",
+        },
+      ],
+    } as Partial<Task>);
+    const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
+    await writePrompt(rootDir, task.id, prompt);
+    const store = createStore(task);
+    mockReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "Approved.", summary: "Ready." });
+
+    await runGate(rootDir, task, store);
+
+    expect(mockReviewStep).toHaveBeenCalled();
+    const options = mockReviewStep.mock.calls[0][7] as {
+      priorSpecReviewFeedback?: string;
+      specReviewAttempt?: number;
+    };
+    expect(options.priorSpecReviewFeedback).toBe(
+      "NOTES-FALLBACK-MARKER: add the missing Surface Enumeration section.",
+    );
+    expect(options.specReviewAttempt).toBe(2);
   });
 
   it("resets the replan counter when Plan Review passes", async () => {

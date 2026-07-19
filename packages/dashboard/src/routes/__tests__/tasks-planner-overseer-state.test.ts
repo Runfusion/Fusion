@@ -6,38 +6,37 @@
 // snapshot, omit entirely (byte-identical payload) otherwise, and never
 // fail the board load even when the accessor throws.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../../core/src/__test-utils__/pg-test-harness.js";
 import type { ProjectEngine } from "@fusion/engine";
 import { createApiRoutes } from "../../routes.js";
 import { request as REQUEST } from "../../test-request.js";
 
-describe("GET /tasks — plannerOverseerState enrichment", () => {
+pgDescribe("GET /tasks — plannerOverseerState enrichment", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
-  let rootDir: string;
-  let globalDir: string;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "planner-overseer-state-root-"));
-    globalDir = mkdtempSync(join(tmpdir(), "planner-overseer-state-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    // FNXC:PostgresCutover 2026-07-16-06:50: planner state API coverage must
+    // exercise the PostgreSQL TaskStore rather than the removed SQLite mode.
+    harness = await createTaskStoreForTest();
+    store = harness.store;
   });
 
-  afterEach(() => {
-    store.close();
-    rmSync(rootDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await harness.teardown();
   });
 
   function buildApp(engine: Partial<ProjectEngine> | undefined): express.Express {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store, engine ? { engine: engine as unknown as ProjectEngine } : undefined));
+    app.use("/api", createApiRoutes(store, engine ? {
+      // FNXC:PostgresCutover 2026-07-16-06:55: project-aware route enrichment
+      // resolves engine state only when the test double supplies its project id.
+      engine: { getProjectId: () => "test-project", ...engine } as unknown as ProjectEngine,
+    } : undefined));
     return app;
   }
 
@@ -118,28 +117,29 @@ describe("GET /tasks — plannerOverseerState enrichment", () => {
 // modal's Overseer/Nudge controls read the snapshot from the full-detail
 // payload, not the list payload, so the detail route previously never
 // carried it and Nudge always showed the periodic-observation disabled copy.
-describe("GET /tasks/:id — plannerOverseerState enrichment", () => {
+pgDescribe("GET /tasks/:id — plannerOverseerState enrichment", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
-  let rootDir: string;
-  let globalDir: string;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "planner-overseer-state-detail-root-"));
-    globalDir = mkdtempSync(join(tmpdir(), "planner-overseer-state-detail-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    // FNXC:PostgresCutover 2026-07-16-06:50: detail-route state enrichment
+    // shares the isolated async-store fixture used by the board-list surface.
+    harness = await createTaskStoreForTest();
+    store = harness.store;
   });
 
-  afterEach(() => {
-    store.close();
-    rmSync(rootDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await harness.teardown();
   });
 
   function buildApp(engine: Partial<ProjectEngine> | undefined): express.Express {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store, engine ? { engine: engine as unknown as ProjectEngine } : undefined));
+    app.use("/api", createApiRoutes(store, engine ? {
+      // FNXC:PostgresCutover 2026-07-16-06:55: project-aware route enrichment
+      // resolves engine state only when the test double supplies its project id.
+      engine: { getProjectId: () => "test-project", ...engine } as unknown as ProjectEngine,
+    } : undefined));
     return app;
   }
 

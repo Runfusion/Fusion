@@ -16,9 +16,13 @@ const getAllMock = vi.fn(() => [] as any[]);
 const registerProviderMock = vi.fn();
 const refreshMock = vi.fn();
 // FNXC:SessionRouting 2026-06-24-11:30:
-// #1675: capture model-registry auth resolution + session id so the wiring
+// #1675: capture model-runtime auth resolution + session id so the wiring
 // test can assert X-Session-Id/X-Session-Affinity precedence end-to-end.
+// FNXC:SessionRouting 2026-07-16-19:05: FN-8142 moved the routing-header seam from
+// ModelRegistry.getApiKeyAndHeaders to ModelRuntime.getAuth; base getAuth returns a
+// resolvable auth so attachSessionRoutingHeaders' header merge is observable.
 const getApiKeyAndHeadersMock = vi.fn(async () => ({ ok: true, apiKey: undefined, headers: undefined }));
+const modelRuntimeGetAuthMock = vi.fn(async (..._args: unknown[]) => ({ auth: { headers: {} as Record<string, string> } }));
 const sessionManagerGetSessionIdMock = vi.fn(() => undefined);
 const settingsManagerCreateMock = vi.fn(() => ({ kind: "settings-manager-create" }));
 const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
@@ -42,6 +46,7 @@ const realpathSyncNativeMock = vi.fn((path: PathLike) => String(path));
 const readCustomProvidersMock = vi.fn(() => []);
 const packageManagerCwdCapture = vi.fn();
 const packageManagerSettingsCapture = vi.fn();
+const resourceLoaderOptionsCapture = vi.fn();
 
 // Route async `exec` through the `execSync` mock so the promisify bridge works.
 // Use Symbol.for("nodejs.util.promisify.custom") directly to avoid async imports
@@ -97,7 +102,7 @@ vi.mock("../custom-providers.js", () => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: () => ({
       setFallbackResolver: setFallbackResolverMock,
       getApiKey: authStorageGetApiKeyMock,
@@ -124,6 +129,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createReadTool: () => ({ name: "read" }),
   createWriteTool: () => ({ name: "write" }),
   DefaultResourceLoader: class {
+    constructor(options: any) {
+      resourceLoaderOptionsCapture(options);
+    }
     async reload() {
       await reloadMock();
     }
@@ -143,6 +151,15 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
   getAgentDir: () => "/mock-agent-dir",
+  /*
+  FNXC:ModelRegistry 2026-07-16-19:05:
+  pi 0.80.8+ (FN-8142 migration) made model init async via ModelRuntime; createFusionModelRegistry
+  now awaits ModelRuntime.create(...) before constructing the registry. The stale ^0.80.6 pin masked
+  this until FN-8142's SDK bump (this PR); mock ModelRuntime so createFnAgent's registry path resolves.
+  */
+  ModelRuntime: {
+    create: async () => ({ getAuth: modelRuntimeGetAuthMock }),
+  },
   ModelRegistry: class {
     static create(...args: unknown[]) {
       return new (this as unknown as new () => unknown)();
@@ -1223,6 +1240,7 @@ describe("createFnAgent", () => {
     authStorageGetAllMock.mockReturnValue({});
     authStorageListMock.mockReturnValue([]);
     getApiKeyAndHeadersMock.mockResolvedValue({ ok: true, apiKey: undefined, headers: undefined });
+    modelRuntimeGetAuthMock.mockImplementation(async () => ({ auth: { headers: {} as Record<string, string> } }));
     sessionManagerGetSessionIdMock.mockReturnValue(undefined);
     createBashToolMock.mockClear();
     createAgentSessionMock.mockResolvedValue({
@@ -1233,6 +1251,50 @@ describe("createFnAgent", () => {
         setThinkingLevel: vi.fn(),
       },
     });
+  });
+
+  it("skips host extensions for merger sessions so dual-store fn_* tools cannot wedge merge", async () => {
+    /*
+    FNXC:MergeQueue 2026-07-15-11:08:
+    FN-7956 hung AI merge review on extension fn_task_show (second TaskStore boot, no tool timeout).
+    Merger sessions must not receive host @runfusion/fusion extension paths even with tools:coding.
+    */
+    const { createFnAgent, setHostExtensionPaths } = await import("../pi.js");
+    setHostExtensionPaths(["/mock/fusion-extension"]);
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "merge",
+      tools: "coding",
+      sessionPurpose: "merger",
+    });
+
+    expect(resourceLoaderOptionsCapture).toHaveBeenCalled();
+    const loaderOpts = resourceLoaderOptionsCapture.mock.calls.at(-1)?.[0] as {
+      additionalExtensionPaths?: string[];
+    };
+    expect(loaderOpts.additionalExtensionPaths).toBeUndefined();
+
+    setHostExtensionPaths([]);
+  });
+
+  it("still injects host extensions for coding non-merger sessions", async () => {
+    const { createFnAgent, setHostExtensionPaths } = await import("../pi.js");
+    setHostExtensionPaths(["/mock/fusion-extension"]);
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "execute",
+      tools: "coding",
+      sessionPurpose: "executor",
+    });
+
+    const loaderOpts = resourceLoaderOptionsCapture.mock.calls.at(-1)?.[0] as {
+      additionalExtensionPaths?: string[];
+    };
+    expect(loaderOpts.additionalExtensionPaths).toEqual(["/mock/fusion-extension"]);
+
+    setHostExtensionPaths([]);
   });
 
   it("passes task-scoped env into bash spawn hook when provided", async () => {
@@ -2338,33 +2400,52 @@ describe("createFnAgent", () => {
   it.each([
     ["connect", "TypeError"],
     ["list", "RangeError"],
-  ] as const)("fails configured MCP session bootstrap explicitly on %s failure and closes once", async (phase, reason) => {
-    const close = vi.fn(async () => undefined);
-    const mcpClient = {
-      connect: vi.fn(async () => {
-        if (phase === "connect") throw new TypeError("sensitive connection detail");
-      }),
-      listTools: vi.fn(async () => {
-        if (phase === "list") throw new RangeError("sensitive listing detail");
-        return { tools: [] };
-      }),
-      callTool: vi.fn(),
-      close,
-    };
+  ] as const)("continues without an MCP server after bounded %s retries are exhausted", async (phase, reason) => {
+    const clients: Array<{ close: ReturnType<typeof vi.fn> }> = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mcpClientFactory = vi.fn(() => {
+      const client = {
+        connect: vi.fn(async () => {
+          if (phase === "connect") throw new TypeError("sensitive connection detail");
+        }),
+        listTools: vi.fn(async () => {
+          if (phase === "list") throw new RangeError("sensitive listing detail");
+          return { tools: [] };
+        }),
+        callTool: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      clients.push(client);
+      return client;
+    });
     const { createFnAgent } = await import("../pi.js");
 
-    await expect(createFnAgent({
-      cwd: "/test/project",
-      systemPrompt: "test",
-      tools: "coding",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-4-5",
-      mcpServers: [{ name: "postiz", transport: "stdio", command: "redacted", enabled: true }],
-      mcpClientFactory: () => mcpClient as any,
-    })).rejects.toThrow(`MCP session bootstrap failed: server=postiz reason=${reason}`);
+    try {
+      await expect(createFnAgent({
+        cwd: "/test/project",
+        systemPrompt: "test",
+        tools: "coding",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        mcpServers: [{ name: "postiz", transport: "stdio", command: "redacted", enabled: true }],
+        mcpClientFactory: mcpClientFactory as any,
+        mcpBootstrapRetryDelayMs: 0,
+      })).resolves.toBeDefined();
 
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(createAgentSessionMock).not.toHaveBeenCalled();
+      expect(mcpClientFactory).toHaveBeenCalledTimes(3);
+      expect(clients).toHaveLength(3);
+      for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
+      expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+      const logs = [...consoleError.mock.calls, ...consoleWarn.mock.calls].flat().join("\n");
+      expect(logs).toContain(`reason=${reason}`);
+      expect(logs).toContain("MCP session continuing with unavailable servers: count=1");
+      expect(logs).not.toContain("sensitive connection detail");
+      expect(logs).not.toContain("sensitive listing detail");
+    } finally {
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
+    }
   });
 
   it("keeps MCP tools out of readonly sessions without the explicit opt-in", async () => {
@@ -2702,10 +2783,18 @@ describe("createFnAgent", () => {
   // #1675: createFnAgent must resolve sessionRoutingId = taskId ?? piSessionId and
   // wrap the registry's getApiKeyAndHeaders so outbound requests carry routing
   // headers. These assert the wiring precedence end-to-end, not just the helper.
+  /*
+  FNXC:SessionRouting 2026-07-16-19:05:
+  FN-8142 (pi 0.80.8+) moved the #1675 routing-header seam off ModelRegistry.getApiKeyAndHeaders
+  onto ModelRuntime.getAuth (attachSessionRoutingHeaders). createAgentSession now receives the
+  runtime via `modelRuntime`, so the wiring test captures that runtime and asserts the decorated
+  getAuth merges X-Session-Id/X-Session-Affinity into the resolved auth headers. Precedence
+  (taskId > pi session id > no wrap) is the invariant under test, unchanged by the migration.
+  */
   describe("session routing headers wiring (#1675)", () => {
     const anyModel = { provider: "anthropic", id: "claude" } as never;
 
-    async function createAndCaptureRegistry(overrides: Record<string, unknown> = {}) {
+    async function createAndCaptureRuntime(overrides: Record<string, unknown> = {}) {
       const { createFnAgent } = await import("../pi.js");
       await createFnAgent({
         cwd: "/tmp",
@@ -2714,18 +2803,17 @@ describe("createFnAgent", () => {
         ...overrides,
       });
       const sessionOptions = createAgentSessionMock.mock.calls.at(-1)?.[0] as {
-        modelRegistry: { getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
+        modelRuntime: { getAuth: (model: unknown) => Promise<{ auth: { headers?: Record<string, string> } } | undefined> };
       };
-      return sessionOptions.modelRegistry;
+      return sessionOptions.modelRuntime;
     }
 
     it("uses taskId as the routing id when provided", async () => {
-      const registry = await createAndCaptureRegistry({ taskId: "FN-7788" });
+      const runtime = await createAndCaptureRuntime({ taskId: "FN-7788" });
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.ok).toBe(true);
-      expect(result.headers).toEqual({
+      expect(result?.auth.headers).toEqual({
         "X-Session-Id": "FN-7788",
         "X-Session-Affinity": "FN-7788",
       });
@@ -2733,24 +2821,24 @@ describe("createFnAgent", () => {
 
     it("falls back to the pi session id when taskId is absent", async () => {
       sessionManagerGetSessionIdMock.mockReturnValue("pi-session-abc");
-      const registry = await createAndCaptureRegistry();
+      const runtime = await createAndCaptureRuntime();
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.headers).toEqual({
+      expect(result?.auth.headers).toEqual({
         "X-Session-Id": "pi-session-abc",
         "X-Session-Affinity": "pi-session-abc",
       });
     });
 
-    it("does not wrap getApiKeyAndHeaders when neither taskId nor a session id is available", async () => {
-      // getApiKeyAndHeadersMock returns { ok: true, headers: undefined }; if the
-      // wrapper were applied, headers would be populated with X-Session-*.
-      const registry = await createAndCaptureRegistry();
+    it("does not wrap getAuth when neither taskId nor a session id is available", async () => {
+      // Base getAuth resolves { auth: { headers: {} } }; if the wrapper were
+      // applied, headers would be populated with X-Session-*.
+      const runtime = await createAndCaptureRuntime();
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.headers).toBeUndefined();
+      expect(result?.auth.headers).toEqual({});
     });
   });
 
@@ -2763,7 +2851,7 @@ describe("createFnAgent", () => {
     it("without skillSelection does not pass skillsOverride to resource loader", async () => {
       let capturedResourceLoaderOptions: any;
       vi.doMock("@earendil-works/pi-coding-agent", () => ({
-        AuthStorage: {
+        LegacyCredentialStorage: {
           create: () => ({
             setFallbackResolver: setFallbackResolverMock,
           }),
@@ -2796,6 +2884,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();
@@ -2850,7 +2942,7 @@ describe("createFnAgent", () => {
 
       let capturedResourceLoaderOptions: any;
       vi.doMock("@earendil-works/pi-coding-agent", () => ({
-        AuthStorage: {
+        LegacyCredentialStorage: {
           create: () => ({
             setFallbackResolver: setFallbackResolverMock,
           }),
@@ -2883,6 +2975,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();
@@ -2934,7 +3030,7 @@ describe("createFnAgent", () => {
     it("with skillSelection (specific requested names) activates skill filtering", async () => {
       let capturedResourceLoaderOptions: any;
       vi.doMock("@earendil-works/pi-coding-agent", () => ({
-        AuthStorage: {
+        LegacyCredentialStorage: {
           create: () => ({
             setFallbackResolver: setFallbackResolverMock,
           }),
@@ -2967,6 +3063,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();

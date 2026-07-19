@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.60.0",
+  "version": "0.72.0",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -33,9 +33,12 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
+    "dist/migrations/**",
+    "dist/registry-manifest.json",
     "dist/client/**",
     "dist/desktop/**",
     "dist/pi-claude-cli/**",
+    "dist/pi-llama-cpp/**",
     "dist/droid-cli/**",
     "dist/plugins/**",
     "skill/**",
@@ -47,6 +50,7 @@
     "prepack": "node ./scripts/prepare-publish-manifest.mjs prepack",
     "postpack": "node ./scripts/prepare-publish-manifest.mjs postpack",
     "build": "tsup",
+    "build:package": "cross-env FUSION_CLI_FULL_PACKAGE=1 tsup",
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",
     "typecheck": "tsc --noEmit",
@@ -59,12 +63,13 @@
     "test:pre-release": "pnpm test:slow-cli && pnpm test:build-exe"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "claude-code-cli-acp": "0.1.1",
     "dockerode": "^4.0.12",
+    "electron": "^33.4.11",
     "embedded-postgres": "15.18.0-beta.17",
     "express": "^5.1.0",
-    "electron": "^33.4.11",
     "i18next": "^26.3.1",
     "ink": "^7.0.5",
     "ink-spinner": "^5.0.0",
@@ -74,7 +79,8 @@
     "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
     "react": "^19.2.0",
     "react-i18next": "^17.0.8",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "playwright-core": "^1.60.0"
   },
   "peerDependencies": {
     "typebox": "*"

@@ -1,6 +1,12 @@
 import { definePlugin } from "@fusion/plugin-sdk";
 import type { FusionPlugin } from "@fusion/plugin-sdk";
-import { killAllProcesses } from "./acp/index.js";
+/*
+FNXC:ProcessLifecycle 2026-07-16-07:00 / 2026-07-18-08:10:
+Exit-hook ownership lives in ./acp/process-manager (Symbol.for guard + shared
+registry). Import that module from the plugin entry so plugin load still arms
+the process.exit reaper; re-evaluation stays bounded by the Symbol.for guard.
+*/
+import "./acp/process-manager.js";
 import { probeOmpBinary } from "./probe.js";
 import { discoverOmpProviderModels } from "./provider.js";
 import { OmpRuntimeAdapter } from "./runtime-adapter.js";
@@ -16,10 +22,6 @@ This shells out to an operator-installed `omp` binary on PATH — Fusion does no
 download or bundle it. Upstream: https://omp.sh/docs/acp
 https://github.com/can1357/oh-my-pi
 */
-
-// Reap OMP ACP agent subprocesses on hard process exit (registry SIGKILL is
-// authoritative). Scoped to ACP-tracked agent children only — never port 4040.
-process.on("exit", killAllProcesses);
 
 const plugin: FusionPlugin = definePlugin({
   manifest: {
@@ -89,6 +91,7 @@ const plugin: FusionPlugin = definePlugin({
 export default plugin;
 export { probeOmpBinary } from "./probe.js";
 export { discoverOmpProviderModels } from "./provider.js";
+export { discoverOmpModels, resolveOmpModelSelector } from "./process-manager.js";
 export { OmpRuntimeAdapter } from "./runtime-adapter.js";
 export type { OmpBinaryStatus } from "./types.js";
 export {

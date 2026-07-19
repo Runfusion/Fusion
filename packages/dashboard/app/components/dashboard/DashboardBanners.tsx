@@ -5,13 +5,13 @@ DashboardBanners is the conditional banner cluster rendered above the dashboard-
 import type { DashboardBannersProps } from "./types";
 import type { SectionId } from "../SettingsModal";
 import { TestModeBanner } from "../TestModeBanner";
+import { MigrationInProgressBanner } from "../MigrationInProgressBanner";
 import { SqliteMigrationBanner } from "../SqliteMigrationBanner";
 import { EngineUnavailableBanner } from "../EngineUnavailableBanner";
 import { EngineStatusBanner } from "../EngineStatusBanner";
 import { OAuthReloginBanner } from "../OAuthReloginBanner";
 import { SessionNotificationBanner } from "../SessionNotificationBanner";
 import { CliBinaryInstallBanner } from "../CliBinaryInstallBanner";
-import { StorageMigrationNoticeBanner } from "../StorageMigrationNoticeBanner";
 import { OnboardingResumeCard } from "../OnboardingResumeCard";
 import { PostOnboardingRecommendations } from "../PostOnboardingRecommendations";
 import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
@@ -77,6 +77,15 @@ export function DashboardBanners({
 
   return (
     <>
+      {/* FNXC:MigrationHoldingPage 2026-07-17-12:45: Rendered OUTSIDE the
+          project gate — while the boot-window holding server reports
+          status "migrating", project data is not fetchable, yet the open tab
+          must still explain the outage. Clears on the next health poll of the
+          real server. */}
+      <MigrationInProgressBanner
+        isActive={dashboardHealth?.status === "migrating"}
+        progressLabel={dashboardHealth?.migration?.label}
+      />
       {viewMode === "project" && currentProject && (
         <>
           <TestModeBanner isActive={isTestMode} />
@@ -96,7 +105,13 @@ export function DashboardBanners({
           />
         </>
       )}
-      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
+      {/*
+       * FNXC:SessionBanner 2026-07-16-21:10:
+       * FN-8229 removed the always-visible footer AI pill, so active non-planning
+       * sessions must override the appearance preference that hides idle banners.
+       * Per-session dismissal still lets operators suppress an individual entry.
+       */}
+      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && (!sessionBannersHidden || sessionsNeedingInput.length > 0) && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}
@@ -108,8 +123,7 @@ export function DashboardBanners({
       )}
       {viewMode === "project" && currentProject && (
         <>
-          {/* FNXC:StorageMigrationNotice 2026-07-12-00:00: Keep the one-time storage-backend announcement beside other project-scoped passive notices while its localStorage dismissal remains app-wide. */}
-          <StorageMigrationNoticeBanner />
+          {/* FNXC:PostgresMigrationNotice 2026-07-14-18:36: The PostgreSQL cutover is complete, so the dashboard must not advertise it as a future release. Active migration failures remain visible through SqliteMigrationBanner above. */}
           <CliBinaryInstallBanner
             onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
           />
@@ -146,7 +160,7 @@ export function DashboardBanners({
               return {
                 ...current,
                 status:
-                  report.status === "anomaly"
+                  report.status !== "ok"
                   || !current.database.healthy
                   || current.database.corruptionDetected
                     ? "degraded"

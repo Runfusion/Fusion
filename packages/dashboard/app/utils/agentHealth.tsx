@@ -58,9 +58,23 @@ type AgentHealthInput = Pick<
  * and agents that were explicitly configured both get consistent treatment,
  * differing only by their scheduled cadence.
  */
-function getStalenessThresholdMs(runtimeConfig?: Record<string, unknown>): number {
+function getStalenessThresholdMs(
+  runtimeConfig?: Record<string, unknown>,
+  heartbeatMultiplier: number = 1,
+): number {
   const intervalMs = resolveHeartbeatIntervalMs(runtimeConfig?.heartbeatIntervalMs);
-  return Math.max(intervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
+  const resolvedMultiplier = Number.isFinite(heartbeatMultiplier) && heartbeatMultiplier > 0
+    ? heartbeatMultiplier
+    : 1;
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-17-00:25:
+  FN-8190 requires dashboard health labels to use the project-resolved heartbeat
+  multiplier exactly once. The dashboard cannot import engine timing helpers, so
+  callers supply this settings value and raw persisted intervals remain the input.
+  */
+  const effectiveIntervalMs = Math.max(1000, Math.round(intervalMs * resolvedMultiplier));
+  return Math.max(effectiveIntervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
 }
 
 /** Format milliseconds into a human-readable duration string (e.g. "5m", "1h 20m", "2h"). */
@@ -100,8 +114,8 @@ function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
  * - "Heartbeat Disabled" — durable agent with `runtimeConfig.enabled === false`
  * - "Starting..." — state === "active" && no lastHeartbeatAt
  * - "Idle" — state !== "active" && no lastHeartbeatAt
- * - "Healthy" — heartbeat is fresh within 2× the configured interval
- * - "Unresponsive" — heartbeat exceeded 2× the configured interval
+ * - "Healthy" — heartbeat is fresh within the configured interval's 4× grace window
+ * - "Unresponsive" — heartbeat exceeded the configured interval's 4× grace window
  *
  * @param agent - The agent object (partial Agent shape is accepted)
  * @returns A health status object with label, icon, color, and stateDerived metadata
@@ -122,7 +136,10 @@ function getHeartbeatRepairMetadata(agent: AgentHealthInput): {
   };
 }
 
-export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus {
+export function getAgentHealthStatus(
+  agent: AgentHealthInput,
+  heartbeatMultiplier: number = 1,
+): AgentHealthStatus {
   const { state, lastHeartbeatAt, lastError, pauseReason, runtimeConfig } = agent;
   const isTaskWorker = isTaskWorkerAgent(agent);
   const isHeartbeatEnabled = isTaskWorker || runtimeConfig?.enabled !== false;
@@ -194,9 +211,27 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
   // configured, or the scheduler's 1h default. Compare elapsed time to that
   // interval (with grace) rather than to `heartbeatTimeoutMs`, which is the
   // per-run work budget and has nothing to do with between-tick freshness.
-  const lastHeartbeat = new Date(lastHeartbeatAt).getTime();
-  const elapsed = Date.now() - lastHeartbeat;
-  const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig);
+  const lastHeartbeat = Date.parse(lastHeartbeatAt);
+  const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig, heartbeatMultiplier);
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-15-18:00:
+  A persisted but unparseable heartbeat cannot prove agent freshness. Treat it
+  as Unresponsive rather than letting NaN bypass the elapsed-time comparison,
+  matching the engine's persisted-heartbeat classification surfaces. Future
+  timestamps clamp to zero so clock skew does not create a false stale label.
+  */
+  if (!Number.isFinite(lastHeartbeat)) {
+    return {
+      label: "Unresponsive",
+      icon: <Activity size={14} />,
+      color: "var(--state-error-text)",
+      stateDerived: false,
+      reason: "Last heartbeat timestamp is invalid",
+    };
+  }
+
+  const elapsed = Math.max(0, Date.now() - lastHeartbeat);
 
   if (elapsed > stalenessThresholdMs) {
     const reason = `No heartbeat for ${formatDuration(elapsed)} (threshold: ${formatDuration(stalenessThresholdMs)})`;

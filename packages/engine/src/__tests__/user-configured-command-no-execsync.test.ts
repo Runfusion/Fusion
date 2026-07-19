@@ -39,9 +39,15 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
+    /*
+    FNXC:EngineProcessRules 2026-07-15-11:40:
+    runVerificationCommand is a concurrency-slot wrapper; the actual user-configured
+    command spawn lives in runVerificationCommandUnlocked (execWithProcessGroup + bounds).
+    Guard the unlocked body so slot extraction cannot reintroduce unbounded exec.
+    */
     file: "src/verification-utils.ts",
-    name: "runVerificationCommand",
-    signature: "export async function runVerificationCommand(",
+    name: "runVerificationCommandUnlocked",
+    signature: "async function runVerificationCommandUnlocked(",
     requiredSafeguards: [
       { label: "execWithProcessGroup async runner", pattern: /execWithProcessGroup\(/ },
       { label: "timeout option", pattern: /timeout\s*:\s*timeoutMs/ },
@@ -49,12 +55,30 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
+    file: "src/verification-utils.ts",
+    name: "runVerificationCommand",
+    signature: "export async function runVerificationCommand(",
+    requiredSafeguards: [
+      { label: "verification slot wrapper", pattern: /withVerificationSlot\(/ },
+      { label: "unlocked runner", pattern: /runVerificationCommandUnlocked\(/ },
+    ],
+  },
+  {
+    file: "src/run-verification-tool.ts",
+    name: "runVerificationCommandUnlocked",
+    signature: "async function runVerificationCommandUnlocked(",
+    requiredSafeguards: [
+      { label: "superviseSpawn async runner", pattern: /superviseSpawn\(/ },
+      { label: "process lifetime cap", pattern: /maxLifetimeMs\s*:/ },
+    ],
+  },
+  {
     file: "src/run-verification-tool.ts",
     name: "runVerificationCommand",
     signature: "export async function runVerificationCommand(",
     requiredSafeguards: [
-      { label: "superviseSpawn async runner", pattern: /superviseSpawn\(/ },
-      { label: "process lifetime cap", pattern: /maxLifetimeMs\s*:/ },
+      { label: "verification slot wrapper", pattern: /withVerificationSlot\(/ },
+      { label: "unlocked runner", pattern: /runVerificationCommandUnlocked\(/ },
     ],
   },
   {

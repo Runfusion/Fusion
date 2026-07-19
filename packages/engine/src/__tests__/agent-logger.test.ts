@@ -145,7 +145,7 @@ describe("AgentLogger", () => {
     expect(calls[1]).toEqual(["FN-003", "Bash", "tool", undefined, undefined]);
   });
 
-  it("omits tool detail by default when persistAgentToolOutput is unset", async () => {
+  it("omits tool and successful result detail by default when persistAgentToolOutput is unset", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({ store, taskId: "FN-004" });
 
@@ -156,7 +156,7 @@ describe("AgentLogger", () => {
 
     expect(store.appendAgentLog).toHaveBeenNthCalledWith(1, "FN-004", "Read", "tool", undefined, undefined);
     expect(store.appendAgentLog).toHaveBeenNthCalledWith(2, "FN-004", "Read", "tool_result", undefined, undefined, { durationMs: 0, timeToFirstTokenMs: undefined });
-    expect(store.appendAgentLog).toHaveBeenNthCalledWith(3, "FN-004", "Read", "tool_error", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(3, "FN-004", "Read", "tool_error", "err", undefined);
   });
 
   it("logs tool detail using summarizeToolArgs when explicitly enabled", async () => {
@@ -169,7 +169,7 @@ describe("AgentLogger", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith("FN-004A", "Read", "tool", "src/index.ts", undefined);
   });
 
-  it("omits tool detail when persistAgentToolOutput is disabled", async () => {
+  it("persists tool_error detail while persistAgentToolOutput is disabled", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
@@ -184,7 +184,40 @@ describe("AgentLogger", () => {
 
     expect(store.appendAgentLog).toHaveBeenNthCalledWith(1, "FN-004B", "Read", "tool", undefined, undefined);
     expect(store.appendAgentLog).toHaveBeenNthCalledWith(2, "FN-004B", "Read", "tool_result", undefined, undefined, { durationMs: 0, timeToFirstTokenMs: undefined });
-    expect(store.appendAgentLog).toHaveBeenNthCalledWith(3, "FN-004B", "Read", "tool_error", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(3, "FN-004B", "Read", "tool_error", "err", undefined);
+  });
+
+  it("persists bounded error detail for edit and Bash with default tool-output persistence", async () => {
+    const store = createMockStore();
+    const logger = new AgentLogger({ store, taskId: "FN-7995" });
+    const oversizedError = `Bash failed: ${"x".repeat(5_000)}`;
+
+    logger.onToolStart("edit", { path: "src/file.ts" });
+    logger.onToolEnd("edit", true, "edit failed: replacement text did not match");
+    logger.onToolStart("Bash", { command: "pnpm test" });
+    logger.onToolEnd("Bash", true, oversizedError);
+    await logger.flush();
+
+    const calls = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]).toEqual(["FN-7995", "edit", "tool", undefined, undefined]);
+    expect(calls[1]?.slice(0, 5)).toEqual(["FN-7995", "edit", "tool_error", "edit failed: replacement text did not match", undefined]);
+    expect(calls[2]).toEqual(["FN-7995", "Bash", "tool", undefined, undefined]);
+    expect(calls[3]?.[2]).toBe("tool_error");
+    expect(calls[3]?.[3]).toContain("Bash failed:");
+    expect(calls[3]?.[3]).toContain("[tool output truncated to keep dashboard log views responsive]");
+    expect(calls[3]?.[3].length).toBeLessThan(5_000);
+  });
+
+  it("omits absent error detail and preserves an empty error result without crashing", async () => {
+    const store = createMockStore();
+    const logger = new AgentLogger({ store, taskId: "FN-7995-EMPTY" });
+
+    logger.onToolEnd("Write", true);
+    logger.onToolEnd("unknown_tool", true, "");
+    await logger.flush();
+
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(1, "FN-7995-EMPTY", "Write", "tool_error", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(2, "FN-7995-EMPTY", "unknown_tool", "tool_error", "", undefined);
   });
 
   it("logs tool with undefined detail for unknown args", async () => {

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import lockfile from "proper-lockfile";
 import {
   choosePreferredStoredCredential,
   getClaudeCodeCredentialPaths,
@@ -9,12 +10,210 @@ import {
   shouldHydrateStoredCredential,
   type StoredAuthCredential,
 } from "@fusion/core";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { AuthCredential } from "@earendil-works/pi-coding-agent";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AuthInteraction, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 
 type StoredCredential = StoredAuthCredential;
+
+export interface FusionAuthStorage {
+  reload(): void;
+  get(provider: string): StoredCredential | undefined;
+  getAll(): Record<string, StoredCredential>;
+  list(): string[];
+  has(provider: string): boolean;
+  hasAuth(provider: string): boolean;
+  set(provider: string, credential: StoredCredential): Promise<void>;
+  remove(provider: string): Promise<void>;
+  logout(provider: string): Promise<void>;
+  getApiKey(provider: string): Promise<string | undefined>;
+  getOAuthProviders(): Array<{ id: string; name: string }>;
+  login(provider: string, callbacks: unknown): Promise<void>;
+  modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined>;
+  setModelRuntime(modelRuntime: ModelRuntime): void;
+}
+
+/*
+FNXC:ProviderAuth 2026-07-17-08:30:
+FN-8205 replaces the immediate-fail `lockSync` write path: proper-lockfile rejects
+synchronous retries with ESYNC, so a held shared auth.json lock used to surface ELOCKED
+straight through set/remove/logout. Writes now share this asynchronous retry policy with
+modify() and queue per resolved auth path before taking the cross-process file lock. This
+prevents same-engine sessions from self-contending while preserving fresh read-modify-merge
+under the lock for independent Fusion processes. The vendored pi-coding-agent synchronous
+lock defect from Runfusion/Fusion#2167 remains a separately tracked upstream follow-up.
+*/
+const AUTH_LOCK_OPTIONS = {
+  realpath: false,
+  stale: 30_000,
+  retries: {
+    retries: 10,
+    factor: 2,
+    minTimeout: 20,
+    maxTimeout: 10_000,
+    randomize: true,
+  },
+} as const;
+
+const authWriteQueues = new Map<string, Promise<void>>();
+
+function enqueueAuthWrite<T>(authPath: string, write: () => Promise<T>): Promise<T> {
+  const queueKey = resolve(authPath);
+  const previous = authWriteQueues.get(queueKey) ?? Promise.resolve();
+  const operation = previous.catch(() => undefined).then(write);
+  const tail = operation.then(() => undefined, () => undefined);
+  authWriteQueues.set(queueKey, tail);
+  void tail.finally(() => {
+    if (authWriteQueues.get(queueKey) === tail) authWriteQueues.delete(queueKey);
+  });
+  return operation;
+}
+
+async function withOAuthRefreshLock<T>(
+  authPath: string,
+  providerId: string,
+  refresh: () => Promise<T>,
+): Promise<T> {
+  const safeProviderId = providerId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  // Use a distinct lock target, not authPath with a custom lockfilePath. proper-lockfile
+  // tracks held locks by target path internally, so two lock domains sharing authPath
+  // would corrupt each other's renewal/release bookkeeping.
+  const release = await lockfile.lock(`${authPath}.${safeProviderId}.refresh`, AUTH_LOCK_OPTIONS);
+  try {
+    return await refresh();
+  } finally {
+    await release();
+  }
+}
+
+class FusionFileAuthStorage implements FusionAuthStorage {
+  private data: Record<string, StoredCredential> = {};
+  private modelRuntime: ModelRuntime | undefined;
+
+  constructor(private readonly authPath: string) {
+    this.reload();
+  }
+
+  private ensureFile(): void {
+    const parent = dirname(this.authPath);
+    if (!existsSync(parent)) mkdirSync(parent, { recursive: true, mode: 0o700 });
+    if (!existsSync(this.authPath)) {
+      writeFileSync(this.authPath, "{}", { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.authPath, 0o600);
+    }
+  }
+
+  private readCurrent(): Record<string, StoredCredential> {
+    try {
+      return JSON.parse(readFileSync(this.authPath, "utf-8")) as Record<string, StoredCredential>;
+    } catch {
+      return {};
+    }
+  }
+
+  private async withLock<T>(fn: (current: Record<string, StoredCredential>) => Promise<T>): Promise<T> {
+    return enqueueAuthWrite(this.authPath, async () => {
+      this.ensureFile();
+      const release = await lockfile.lock(this.authPath, AUTH_LOCK_OPTIONS);
+      try {
+        // Always merge the on-disk state observed after acquiring the lock, never this.data.
+        const current = this.readCurrent();
+        const result = await fn(current);
+        writeFileSync(this.authPath, JSON.stringify(current, null, 2), { encoding: "utf-8", mode: 0o600 });
+        chmodSync(this.authPath, 0o600);
+        this.data = current;
+        return result;
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  reload(): void {
+    this.ensureFile();
+    this.data = this.readCurrent();
+  }
+
+  get(provider: string): StoredCredential | undefined { return this.data[provider]; }
+  getAll(): Record<string, StoredCredential> { return { ...this.data }; }
+  list(): string[] { return Object.keys(this.data); }
+  has(provider: string): boolean { return Boolean(this.data[provider]); }
+  hasAuth(provider: string): boolean { return this.has(provider); }
+  async set(provider: string, credential: StoredCredential): Promise<void> {
+    await this.withLock(async (current) => { current[provider] = credential; });
+  }
+  async remove(provider: string): Promise<void> {
+    await this.withLock(async (current) => { delete current[provider]; });
+  }
+  async logout(provider: string): Promise<void> { await this.remove(provider); }
+  async getApiKey(provider: string): Promise<string | undefined> {
+    return resolveStoredCredentialApiKey(provider, this.get(provider));
+  }
+  getOAuthProviders(): Array<{ id: string; name: string }> {
+    return [
+      { id: "anthropic", name: "Anthropic" },
+      { id: "openai-codex", name: "OpenAI Codex" },
+      { id: "github-copilot", name: "GitHub Copilot" },
+    ];
+  }
+  setModelRuntime(modelRuntime: ModelRuntime): void {
+    this.modelRuntime = modelRuntime;
+  }
+  async login(provider: string, callbacks: unknown): Promise<void> {
+    if (!this.modelRuntime) throw new Error("OAuth login requires a ModelRuntime-backed Fusion auth storage");
+    const legacy = callbacks as {
+      onAuth?: (info: { url: string; instructions?: string }) => void;
+      onDeviceCode?: (info: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }) => void;
+      onPrompt?: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
+      onProgress?: (message: string) => void;
+      signal?: AbortSignal;
+    };
+    const interaction: AuthInteraction = {
+      signal: legacy.signal,
+      prompt: async (prompt) => legacy.onPrompt?.({
+        message: prompt.message,
+        placeholder: "placeholder" in prompt ? prompt.placeholder : undefined,
+      }) ?? "",
+      notify: (event) => {
+        if (event.type === "auth_url") legacy.onAuth?.({ url: event.url, instructions: event.instructions });
+        else if (event.type === "device_code") legacy.onDeviceCode?.(event);
+        else if (event.type === "progress") legacy.onProgress?.(event.message);
+      },
+    };
+    await this.modelRuntime.login(provider, "oauth", interaction);
+    this.reload();
+  }
+  async modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined> {
+    return this.withLock(async (current) => {
+      const next = await fn(current[provider]);
+      if (next !== undefined) current[provider] = next;
+      return current[provider];
+    });
+  }
+}
+
+export function createFusionCredentialStore(authStorage: FusionAuthStorage): CredentialStore {
+  return {
+    /*
+    FNXC:ProviderAuth 2026-07-17-06:30:
+    pi >=0.80.8 moved session request auth from `ModelRegistry.getApiKeyAndHeaders` (which called fusion's `getApiKey(provider)`) to `ModelRuntime.getAuth` -> pi-ai `resolveProviderAuth`, which reads the credential store directly (`credentials.read(provider.id)`) and, for an OAuth credential, refreshes it ITSELF via `credentials.modify(provider.id, ...)`. That refresh path is broken for Anthropic: fusion persists the subscription login under `anthropic-subscription` (there is NO raw `anthropic` row), so `modify("anthropic")` reads `current === undefined`, the refresh callback bails, and `resolveStoredOAuth` returns undefined -> the task fails with `Provider is not configured: anthropic` (then falls back). The status card still shows "connected" because status uses a different path (hasVisibleAnthropicCredential). Fix: resolve Anthropic auth through fusion's `getApiKey("anthropic")`, the battle-tested path that already handles token refresh + the raw-key/legacy-oauth/subscription/fallback precedence (see resolveAnthropicRuntimeApiKey), and hand pi-ai a ready-to-use api_key credential. pi-ai's anthropic-messages layer routes by token prefix — `sk-ant-oat*` -> OAuth Bearer + Claude Code identity headers, otherwise x-api-key — so a subscription OAuth token still runs as OAuth, and returning it as `api_key` deliberately bypasses pi-ai's own (broken-for-us) OAuth refresh-via-modify. Other OAuth providers (openai-codex, github-copilot) are stored under their own provider id, so read/modify share an id and pi-ai's refresh works — only Anthropic needs this indirection.
+    */
+    read: async (providerId) => {
+      if (providerId === ANTHROPIC_PROVIDER_ID) {
+        const token = await authStorage.getApiKey(ANTHROPIC_PROVIDER_ID);
+        return token ? ({ type: "api_key", key: token } as Credential) : undefined;
+      }
+      return authStorage.get(providerId) as Credential | undefined;
+    },
+    list: async () => authStorage.list().flatMap((providerId): CredentialInfo[] => {
+      const credential = authStorage.get(providerId);
+      return credential?.type === "api_key" || credential?.type === "oauth"
+        ? [{ providerId, type: credential.type }]
+        : [];
+    }),
+    modify: async (providerId, fn) => authStorage.modify(providerId, async (current) => fn(current as Credential | undefined) as Promise<StoredCredential | undefined>) as Promise<Credential | undefined>,
+    delete: async (providerId) => { await authStorage.remove(providerId); },
+  };
+}
 
 /*
 FNXC:ProviderAuth 2026-07-07-00:00:
@@ -128,7 +327,10 @@ function resolveOAuthApiKey(providerId: string, credential: StoredCredential): s
     return undefined;
   }
 
-  return getOAuthProvider(getOAuthResolutionProviderId(providerId))?.getApiKey(credential as OAuthCredentials);
+  // pi 0.80.8 moved provider OAuth conversion behind ModelRuntime. The legacy
+  // dashboard adapter only needs the stored bearer access token; ModelRuntime handles
+  // provider-specific `toAuth` conversion for actual model requests.
+  return credential.access;
 }
 
 function shouldRefreshOAuthCredential(credential: StoredCredential): boolean {
@@ -161,14 +363,24 @@ async function refreshAnthropicOAuthCredential(credential: StoredCredential): Pr
     FNXC:ClaudeOAuth 2026-07-14-14:25:
     Refresh through pi-ai's registered Anthropic provider—the same implementation that performs login and owns the endpoint, client id, expiry buffer, and response contract. Fusion's duplicated HTTP implementation drifted, so expired subscription OAuth degraded into a misleading missing-API-key failure after restart or PostgreSQL migration. Preserve Fusion's recorded scopes because the provider refresh result intentionally contains only runtime token fields.
     */
-    const provider = getOAuthProvider(ANTHROPIC_PROVIDER_ID);
-    if (!provider?.refreshToken) return undefined;
-    const refreshed = await provider.refreshToken(credential as OAuthCredentials);
-
+    const response = await fetch("https://platform.claude.com/v1/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Do not include scope: RFC 6749 refreshes preserve the granted scope only when omitted.
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        refresh_token: credential.refresh,
+      }),
+    });
+    if (!response.ok) return undefined;
+    const payload = JSON.parse(await response.text()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+    if (!payload.access_token || !payload.refresh_token || typeof payload.expires_in !== "number") return undefined;
     return {
       ...credential,
-      ...refreshed,
-      ...(credential.scopes ? { scopes: credential.scopes } : {}),
+      access: payload.access_token,
+      refresh: payload.refresh_token,
+      expires: Date.now() + payload.expires_in * 1000 - OAUTH_REFRESH_BUFFER_MS,
     };
   } catch {
     return undefined;
@@ -235,16 +447,30 @@ function readModelsJsonApiKeys(home = getHomeDir()): Map<string, string> {
  * FNXC:ModelRegistry 2026-07-03-07:00:
  * Shared model-registry factory so non-CLI hosts (the desktop embedded runtime) can wire the
  * dashboard's models API without depending on @earendil-works/pi-coding-agent directly. Mirrors the
- * CLI's ModelRegistry.create(authStorage, getModelRegistryModelsPath()). Without a ModelRegistry the
+ * CLI's the pre-0.80.8 registry factory. Without a ModelRegistry the
  * /api/models endpoint returns an empty list, so the onboarding model picker shows "no models" even
  * when a provider (e.g. Anthropic) is connected.
  */
-export function createFusionModelRegistry(authStorage: AuthStorage, home?: string): ModelRegistry {
-  return ModelRegistry.create(authStorage, getModelRegistryModelsPath(home));
+export type FusionModelRegistry = ModelRegistry & { readonly modelRuntime: ModelRuntime };
+
+/**
+ * FNXC:ModelRegistry 2026-07-16-17:20:
+ * pi 0.80.8 made model initialization asynchronous and moved auth ownership to
+ * ModelRuntime. Keep Fusion's file-backed, locked credential adapter as the runtime
+ * CredentialStore so FN-7646's per-provider read-modify-merge guarantee survives.
+ */
+export async function createFusionModelRegistry(authStorage: FusionAuthStorage, home?: string): Promise<FusionModelRegistry> {
+  const modelRuntime = await ModelRuntime.create({
+    credentials: createFusionCredentialStore(authStorage),
+    modelsPath: getModelRegistryModelsPath(home),
+  });
+  authStorage.setModelRuntime(modelRuntime);
+  return Object.assign(new ModelRegistry(modelRuntime), { modelRuntime });
 }
 
-export function createFusionAuthStorage(): AuthStorage {
-  const primary = AuthStorage.create(getFusionAuthPath());
+export function createFusionAuthStorage(): FusionAuthStorage {
+  const authPath = getFusionAuthPath();
+  const primary = new FusionFileAuthStorage(authPath);
   let supplementalCredentials = readSupplementalCredentials();
   // models.json provider API keys — final fallback after primary auth and supplemental auth.json files
   let modelsJsonApiKeys = readModelsJsonApiKeys();
@@ -255,6 +481,7 @@ export function createFusionAuthStorage(): AuthStorage {
   */
   const oauthRefreshInFlight = new Map<string, Promise<StoredCredential | undefined>>();
   const oauthRefreshCooldownUntil = new Map<string, number>();
+  let supplementalHydration = Promise.resolve();
 
   // Providers the user has explicitly logged out from. These should not be
   // "resurrected" from supplemental credential files (e.g. ~/.claude/.credentials.json).
@@ -281,7 +508,14 @@ export function createFusionAuthStorage(): AuthStorage {
     }
   };
 
-  const syncSupplementalOauthCredentials = () => {
+  /*
+  FNXC:ProviderAuth 2026-07-17-08:45:
+  Supplemental hydration persists through the same per-path queue as direct writes. Construction
+  and lock-free reload intentionally start it without blocking reads; callers that require a
+  hydrated credential use getApiKey(), which awaits its own persistence. Other reads observe
+  hydrated state after this queue drains rather than racing an un-awaited file write.
+  */
+  const syncSupplementalOauthCredentials = async (): Promise<void> => {
     for (const [provider, credential] of Object.entries(supplementalCredentials)) {
       if (loggedOutProviders.has(provider)) {
         continue;
@@ -294,11 +528,11 @@ export function createFusionAuthStorage(): AuthStorage {
         if (typeof credential.expires !== "number" || Date.now() >= credential.expires) {
           continue;
         }
-        primary.set(provider, credential as AuthCredential);
+        await primary.set(provider, credential as StoredCredential);
         continue;
       }
       if (credential.type === "api_key") {
-        primary.set(provider, credential as AuthCredential);
+        await primary.set(provider, credential as StoredCredential);
       }
     }
   };
@@ -322,9 +556,67 @@ export function createFusionAuthStorage(): AuthStorage {
       return existing;
     }
 
-    const refreshPromise = refreshOAuthCredential(storageProvider, credential)
+    /*
+    FNXC:ClaudeOAuth 2026-07-18-16:50:
+    Anthropic refresh tokens rotate on use. The in-memory single-flight map above is
+    scoped to one createFusionAuthStorage() instance, while every agent session creates
+    its own instance and separate Fusion processes share the same auth.json. Refreshing
+    outside the file lock therefore let a burst of sessions submit the same refresh
+    token concurrently: one request rotated it and the losers fell back to another
+    provider with stale auth.
+
+    Hold a provider-specific cross-process refresh lock for the complete
+    read/refresh/write transaction. It deliberately differs from the auth-file write
+    lock so a manual login can persist while the network request is in flight. A waiter
+    re-reads the provider row after acquiring the refresh lock; if another session
+    already rotated it, the fresh credential is returned without a second request.
+    Re-read again before persistence so a concurrent manual login always wins.
+    */
+    // Anthropic's legacy `anthropic` row and separated `anthropic-subscription`
+    // row can refer to the same rotating refresh token, so both aliases must use
+    // one canonical refresh-lock domain.
+    const refreshLockProvider = getOAuthResolutionProviderId(storageProvider);
+    const refreshPromise = withOAuthRefreshLock(authPath, refreshLockProvider, async () => {
+      primary.reload();
+      const selectPersistedRefreshCredential = (): StoredCredential | undefined => {
+        const storedCredential = primary.get(storageProvider) as StoredCredential | undefined;
+        if (refreshLockProvider !== ANTHROPIC_PROVIDER_ID) {
+          return storedCredential;
+        }
+
+        const legacyCredential = primary.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
+        const subscriptionCredential = primary.get(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) as StoredCredential | undefined;
+        return choosePreferredStoredCredential(
+          legacyCredential?.type === "oauth" ? legacyCredential : undefined,
+          subscriptionCredential?.type === "oauth" ? subscriptionCredential : undefined,
+        );
+      };
+      const initialPersistedCredential = selectPersistedRefreshCredential();
+      const refreshCandidate = choosePreferredStoredCredential(initialPersistedCredential, credential) ?? credential;
+
+      if (!shouldRefreshOAuthCredential(refreshCandidate)) {
+        return refreshCandidate;
+      }
+
+      const refreshed = await refreshOAuthCredential(storageProvider, refreshCandidate);
+      if (!refreshed) {
+        return initialPersistedCredential;
+      }
+
+      primary.reload();
+      const latestPersistedCredential = selectPersistedRefreshCredential();
+      const changedWhileRefreshing = initialPersistedCredential
+        ? !isSameOAuthCredentialIdentity(latestPersistedCredential, initialPersistedCredential)
+        : latestPersistedCredential !== undefined;
+      if (changedWhileRefreshing) {
+        return latestPersistedCredential;
+      }
+
+      await primary.set(storageProvider, refreshed);
+      return refreshed;
+    })
       .then((refreshed) => {
-        if (refreshed) {
+        if (refreshed && !shouldRefreshOAuthCredential(refreshed)) {
           oauthRefreshCooldownUntil.delete(storageProvider);
         } else {
           oauthRefreshCooldownUntil.set(storageProvider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
@@ -472,7 +764,7 @@ export function createFusionAuthStorage(): AuthStorage {
           return resolveStoredCredentialApiKey(storageProvider, latestCredential);
         }
       }
-      primary.set(storageProvider, refreshedCredential as AuthCredential);
+      await primary.set(storageProvider, refreshedCredential as StoredCredential);
       loggedOutProviders.delete(storageProvider);
       return resolveStoredCredentialApiKey(storageProvider, refreshedCredential);
     }
@@ -528,40 +820,40 @@ export function createFusionAuthStorage(): AuthStorage {
     return undefined;
   };
 
-  syncSupplementalOauthCredentials();
+  supplementalHydration = syncSupplementalOauthCredentials();
 
   return new Proxy(primary, {
     // Forward property writes to the target so that methods like
     // `setFallbackResolver` (called by ModelRegistry) correctly update the
     // underlying AuthStorage. Without this trap, writes land on the Proxy
     // object itself and the target's fallbackResolver stays undefined.
-    set(target: AuthStorage, prop: string | symbol, value: unknown) {
+    set(target: FusionAuthStorage, prop: string | symbol, value: unknown) {
       (target as unknown as Record<string | symbol, unknown>)[prop] = value;
       return true;
     },
 
     get(target, prop, receiver) {
       if (prop === "logout") {
-        return (provider: string) => {
-          target.logout(provider);
+        return async (provider: string): Promise<void> => {
+          await target.logout(provider);
           loggedOutProviders.add(provider);
           if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
             const legacyAnthropicCredential = target.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
             if (legacyAnthropicCredential?.type === "oauth") {
-              target.logout(ANTHROPIC_PROVIDER_ID);
+              await target.logout(ANTHROPIC_PROVIDER_ID);
             }
           }
         };
       }
 
       if (prop === "remove") {
-        return (provider: string) => {
-          target.remove(provider);
+        return async (provider: string): Promise<void> => {
+          await target.remove(provider);
           loggedOutProviders.add(provider);
           if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
             const legacyAnthropicCredential = target.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
             if (legacyAnthropicCredential?.type === "oauth") {
-              target.remove(ANTHROPIC_PROVIDER_ID);
+              await target.remove(ANTHROPIC_PROVIDER_ID);
             }
           }
         };
@@ -593,8 +885,8 @@ export function createFusionAuthStorage(): AuthStorage {
       }
 
       if (prop === "set") {
-        return (provider: string, credential: AuthCredential) => {
-          target.set(provider, credential);
+        return async (provider: string, credential: StoredCredential): Promise<void> => {
+          await target.set(provider, credential);
           clearReauthenticatedLogoutState(provider, (credential as StoredCredential | undefined)?.type);
         };
       }
@@ -603,7 +895,7 @@ export function createFusionAuthStorage(): AuthStorage {
         return () => {
           target.reload();
           supplementalCredentials = readSupplementalCredentials();
-          syncSupplementalOauthCredentials();
+          supplementalHydration = syncSupplementalOauthCredentials();
           modelsJsonApiKeys = readModelsJsonApiKeys();
         };
       }
@@ -695,6 +987,7 @@ export function createFusionAuthStorage(): AuthStorage {
 
       if (prop === "getApiKey") {
         return async (provider: string) => {
+          await supplementalHydration;
           if (provider === ANTHROPIC_PROVIDER_ID) {
             return resolveAnthropicRuntimeApiKey();
           }
@@ -713,7 +1006,7 @@ export function createFusionAuthStorage(): AuthStorage {
               FNXC:ProviderAuth 2026-07-01-12:34:
               Legacy Anthropic OAuth rows are subscription credentials, not raw API keys. Hydrate them into `anthropic-subscription` before refresh so status, usage, and banner clearing share the same provider id without overwriting a raw `anthropic` API-key credential.
               */
-              primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential as AuthCredential);
+              await primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential as StoredCredential);
               loggedOutProviders.delete(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
             }
             return resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
@@ -742,5 +1035,5 @@ export function createFusionAuthStorage(): AuthStorage {
 
       return Reflect.get(target, prop, receiver);
     },
-  }) as AuthStorage;
+  }) as FusionAuthStorage;
 }

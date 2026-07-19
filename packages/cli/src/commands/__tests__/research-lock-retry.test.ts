@@ -4,9 +4,8 @@
  * command must close its resolved `TaskStore` on every exit path
  * (success/not-found/`handleError`), retry `getSettings()`/`createExport`
  * through a momentary `database is locked`, and — critically — the
- * `runResearchCreate` non-`waitForCompletion` fire-and-forget branch must
- * be exempt from the close discipline (closing it would truncate an
- * in-flight background run). Uses a mocked `TaskStore`/orchestrator (per
+ * `runResearchCreate` non-`waitForCompletion` branch must persist queued work,
+ * avoid in-process execution, and complete normal backend shutdown. Uses a mocked `TaskStore`/orchestrator (per
  * FN-5048 — no real long waits) with `retryOnLock`'s real bounded-backoff
  * implementation exercised end to end via fake timers.
  */
@@ -50,6 +49,7 @@ const researchStoreMock = Object.assign(Object.create(MockResearchStore.prototyp
   getRun: vi.fn(() => mockRun),
   listRuns: vi.fn(() => [mockRun]),
   createExport: vi.fn(),
+  updateRun: vi.fn(),
 });
 
 const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegistryMock, writeFileMock, MockResearchStore } = vi.hoisted(() => {
@@ -60,6 +60,7 @@ const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegist
     getRun: vi.fn(),
     listRuns: vi.fn(),
     createExport: vi.fn(),
+    updateRun: vi.fn(),
   });
   return {
     storeMock: {
@@ -83,7 +84,7 @@ const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegist
 
 vi.mock("@fusion/core", () => ({
   // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path; getSyncResearchStore needs the ResearchStore class for its instanceof gate.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: storeMock, shutdown: async () => storeMock.close() })),
   ResearchStore: MockResearchStore,
   TaskStore: makeConstructibleMock(() => storeMock),
   resolveResearchSettings: resolveResearchSettingsMock,
@@ -178,14 +179,20 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
     expect(storeMock.close).toHaveBeenCalled();
   });
 
-  it("does NOT close the store on runResearchCreate's non-wait fire-and-forget path (intentionally-long-lived exemption)", async () => {
-    // The background run continues to read/write the same store via
-    // `orchestrator.startRun` after this call returns — closing it here
-    // would truncate an in-flight run. This is the ONE deliberately
-    // exempted branch in the whole FN-7740 audit.
+  it("persists a queued non-wait run without starting it and completes shutdown", async () => {
     await runResearchCreate({ query: "hello" });
-    expect(storeMock.close).not.toHaveBeenCalled();
+    expect(researchStore.updateRun).toHaveBeenCalledWith("RR-002", { query: "hello" });
+    expect(orchestratorMock.startRun).not.toHaveBeenCalled();
+    expect(storeMock.close).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Created cited-research run"));
+  });
+
+  it("starts and awaits the run only for waitForCompletion", async () => {
+    orchestratorMock.startRun.mockResolvedValue({ ...mockRun, id: "RR-002", status: "completed" });
+    await runResearchCreate({ query: "hello", waitForCompletion: true, maxWaitMs: 1_000 });
+    expect(researchStore.updateRun).toHaveBeenCalledWith("RR-002", { query: "hello" });
+    expect(orchestratorMock.startRun).toHaveBeenCalledWith("RR-002", "hello");
+    expect(storeMock.close).toHaveBeenCalledTimes(1);
   });
 
   it("retries getSettings through a transient database-is-locked error and succeeds once it clears", async () => {
@@ -226,7 +233,7 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
       vi.useRealTimers();
     }
 
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed locked"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed contended"));
     expect(storeMock.close).toHaveBeenCalled();
   });
 

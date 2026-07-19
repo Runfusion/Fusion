@@ -35,7 +35,6 @@ function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiMo
     status: overrides.status ?? "generating",
     title: overrides.title ?? overrides.id,
     projectId: overrides.projectId ?? null,
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
   };
 }
@@ -77,6 +76,7 @@ describe("useBackgroundSessions", () => {
     await waitFor(() => {
       expect(result.current.sessions.map((session) => session.id).sort()).toEqual([
         "s-awaiting",
+        "s-error",
         "s-generating",
         "s-needs-attention",
         "s-waiting",
@@ -197,7 +197,7 @@ describe("useBackgroundSessions", () => {
     });
   });
 
-  it("removes session when SSE delivers error status", async () => {
+  it("retains session when SSE delivers error status until completion or dismissal", async () => {
     const { result } = renderHook(() => useBackgroundSessions());
 
     await waitFor(() => {
@@ -236,10 +236,14 @@ describe("useBackgroundSessions", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.sessions).toEqual([]);
-      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["terminal-error"]);
+      expect(result.current.sessions[0]?.status).toBe("error");
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["terminal-error"]);
       expect(result.current.generating).toBe(0);
     });
+
+    act(() => eventSource._emit("ai_session:updated", makeSession({ id: "terminal-error", type: "planning", status: "complete", updatedAt: "2026-04-08T00:00:03.000Z" })));
+    await waitFor(() => expect(result.current.sessions).toEqual([]));
   });
 
   it("removes sessions when ai_session:deleted SSE event arrives", async () => {
@@ -299,15 +303,16 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("planning-session");
     });
 
-    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined, expect.any(String));
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning cancellation is lock-free — no tabId argument.
+    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
   });
 
-  it("force-dismisses a planning session even when cancellation is lock-conflicted", async () => {
+  it("force-dismisses a planning session even when cancellation fails", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "planning-locked", status: "generating", type: "planning" }),
     ]);
-    mockCancelPlanning.mockRejectedValueOnce(new Error("locked by another tab"));
+    mockCancelPlanning.mockRejectedValueOnce(new Error("cancel failed"));
 
     const { result } = renderHook(() => useBackgroundSessions());
 
@@ -563,10 +568,10 @@ describe("useBackgroundSessions", () => {
     });
 
     /*
-     * FNXC:BackgroundTasks 2026-07-11-19:08:
+     * FNXC:SessionSync 2026-07-11-19:08:
      * A sibling tab can respond after the server has removed its planning
-     * session. Background Tasks must then remain empty because Planning reads
-     * the authoritative server list and cannot resume that stale cache entry.
+     * session. The retained session model must remain empty because Planning
+     * reads the authoritative server list and cannot resume stale cache.
      */
     act(() => {
       syncResult.current.broadcastUpdate({
@@ -602,7 +607,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("subtask-session");
     });
 
-    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined, expect.any(String));
+    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
   });
 
@@ -621,7 +626,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("interview-session");
     });
 
-    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined, expect.any(String));
+    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
   });
 
@@ -638,11 +643,13 @@ describe("useBackgroundSessions", () => {
     await waitFor(() => {
       expect(result.current.generating).toBe(1);
       expect(result.current.needsInput).toBe(1);
-      expect(result.current.planningSessions.map((session) => session.id)).toEqual([
+      expect(result.current.planningSessions.map((session) => session.id).sort()).toEqual([
+        "count-error-plan",
         "count-generating",
       ]);
       expect(result.current.sessions.map((session) => session.id).sort()).toEqual([
         "count-awaiting",
+        "count-error-plan",
         "count-generating",
       ]);
     });

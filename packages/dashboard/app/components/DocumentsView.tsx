@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ArtifactWithTask, ColumnId, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { artifactMediaUrl, fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
+import { artifactMediaUrlWithToken, fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
 import { useArtifacts } from "../hooks/useArtifacts";
 import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
@@ -113,7 +113,7 @@ function TaskArtifactInlineViewer({ artifact, projectId, content, loading, error
   const category = getArtifactCategory(artifact);
   const categoryLabel = getTaskArtifactCategoryLabel(t, category);
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const hasInlineText = category === "doc" && artifactHasInlineText(artifact);
 
   useEffect(() => {

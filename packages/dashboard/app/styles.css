@@ -120,10 +120,22 @@ html {
   /* Typography */
   --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /*
+  FNXC:DashboardStyling 2026-07-15-17:35:
+  The type scale must be complete and gap-free: every rung a component can name has to resolve to a real value.
+  `--font-size-sm` and `--font-size-md` were named by 12 declarations across AgentDetailView, DockTaskList, SetupWizardModal, and ModelOnboardingModal while never being defined anywhere, so those rules silently no-op and the elements inherit instead.
+  The command-center token-validity guard is the only gate that catches this class of omission, and it does not cover these files.
+  Rung semantics, derived from existing call sites: 2xs = badges/scope pills, xs = help and caption copy, sm = control labels and body, base = default body, md = card and section headings (h3/h4), lg = modal titles.
+  md is 1.125rem because unstyled h3 already renders at the 1.17em UA default here (no heading reset exists), so defining it holds current rendering rather than reflowing those views.
+  */
+  --font-size-2xs: 0.6875rem;
   /* FNXC:DashboardStyling 2026-06-19-05:50: FN-6703 defines the xs font-size token so tokenized mobile mailbox tabs satisfy the dashboard CSS token-validity guard without relying on an undefined fallback. */
   --font-size-xs: 0.8rem;
+  --font-size-sm: 0.875rem;
   /* FNXC:DashboardStyling 2026-06-21-11:24: Dashboard components must use defined typography tokens so the raw CSS token-validity gate catches real missing custom properties instead of shared type-scale omissions. */
   --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.25rem;
   --line-height-tight: 1.25;
 
   /* Spacing Scale */
@@ -133,6 +145,16 @@ html {
   --space-lg: 16px;
   --space-xl: 24px;
   --space-2xl: 32px;
+
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-14:00:
+  FN-8147 pins Quick Add action-row control heights to literal values rather than
+  deriving them from --space-* so shadcn's tighter spacing scale cannot shrink
+  composer controls. These match the default resolved heights: 28px desktop and
+  36px mobile.
+  */
+  --quick-entry-action-row-height-desktop: 28px;
+  --quick-entry-action-row-height-mobile: 36px;
 
   /* Border Radius Scale */
   --radius-sm: 4px;
@@ -363,6 +385,7 @@ svg.spinning {
   --provider-cursor-cli: #7c3aed;
   --provider-ollama: #d4a27f;
   /* Runtime-plugin marks. */
+  --provider-omp: var(--text);
   --provider-hermes: #d4961c;
   --provider-openclaw: #ff4f40;
   --provider-paperclip: var(--text);
@@ -474,6 +497,19 @@ svg.spinning {
   --accent: #7c5cbf;
   /* Foreground for content rendered on `--accent` (e.g., user chat bubble, primary FAB icon). Choose a value with WCAG AA contrast against the paired `--accent` in the same block. */
   --accent-text: #ffffff;
+
+  /*
+   * FNXC:DashboardTokenHygiene 2026-07-18-04:07:
+   * Workflow-status step chips use --ws-*, --color-merged, and --triage backgrounds.
+   * Their foreground must remain white across themes, unlike --accent-text, which only pairs with --accent and may be theme-variant.
+   */
+  --workflow-chip-foreground: #ffffff;
+
+  /*
+   * FNXC:DashboardPreviewCanvas 2026-07-18-04:07:
+   * Agent HTML mockups assume a light page background, so this canvas stays white in every theme.
+   */
+  --preview-page-bg: #ffffff;
 
   /* === Log Entry Background Tokens === */
   --log-tool-bg: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -1768,28 +1804,6 @@ FN-7825 makes .settings-navigation the sole owner of Settings rail width and rem
 }
 
 /* Scope banner above section content */
-.settings-scope-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-xl);
-  margin: 0 var(--space-xl) var(--space-xs);
-  font-size: 12px;
-  border-radius: var(--radius);
-  color: var(--text-muted);
-}
-.settings-scope-global {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-info) 40%, transparent);
-}
-.settings-scope-project {
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-success) 40%, transparent);
-}
-.settings-scope-mixed {
-  background: color-mix(in srgb, var(--triage) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--triage) 40%, transparent);
-}
 
 /* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
 .settings-note {
@@ -3800,10 +3814,6 @@ Toast text must contrast its status background across every dashboard theme and 
 
   .form-group {
     padding: 0 14px;
-  }
-
-  .settings-scope-banner {
-    padding: var(--space-sm) var(--space-lg);
   }
 
   .settings-empty-state {

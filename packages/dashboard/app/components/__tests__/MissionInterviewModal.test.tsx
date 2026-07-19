@@ -61,6 +61,21 @@ const SECOND_QUESTION = {
   description: "List the product surfaces that need support.",
 };
 
+const MARKDOWN_QUESTION = {
+  id: "markdown-question",
+  type: "text" as const,
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
+
 const SAMPLE_SUMMARY = {
   missionTitle: "Resilient mission planning",
   missionDescription: "Recover mission AI planning after transient stream interruptions.",
@@ -97,10 +112,8 @@ function buildMissionSession(overrides: Record<string, unknown> = {}) {
     thinkingOutput: "Continuing...",
     error: null,
     projectId: null,
-    lockedByTab: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    lockedAt: null,
     ...overrides,
   };
 }
@@ -233,9 +246,15 @@ describe("MissionInterviewModal", () => {
     expect(mobileBlock).toContain("display: none;");
   });
 
-  it("shows lock overlay and allows take-control", async () => {
-    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
-    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  Mission interviews are multi-tab: this tab must never acquire a lock, never render a lock
+  overlay or "active in another tab" banner, and must stay interactive even when another tab
+  is using the same session.
+  */
+  it("never acquires a tab lock and renders no lock overlay", async () => {
+    // A rejecting lock API would surface an overlay if any legacy lock path survived.
+    mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
 
     renderModal();
 
@@ -245,21 +264,17 @@ describe("MissionInterviewModal", () => {
     fireEvent.click(screen.getByText("Start Interview"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("session-lock-overlay")).toBeInTheDocument();
+      expect(mockStartMissionInterview).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByText("Take Control"));
-
-    await waitFor(() => {
-      expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("mission-session-1", "tab-self");
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-active-another-tab-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText("Take Control")).not.toBeInTheDocument();
+    expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+    expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
   });
 
-  it("shows reconnecting indicator without clearing current question", async () => {
+  it("shows reconnecting only during active generation, not on persisted questions", async () => {
     renderModal();
 
     fireEvent.change(screen.getByLabelText("What do you want to build?"), {
@@ -273,26 +288,38 @@ describe("MissionInterviewModal", () => {
     });
 
     act(() => {
+      streamHandlers.onConnectionStateChange?.("reconnecting");
+    });
+    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("connected");
       streamHandlers.onQuestion?.(SAMPLE_QUESTION);
     });
-
     expect(await screen.findByText("What is the target scope?")).toBeInTheDocument();
 
     act(() => {
       streamHandlers.onConnectionStateChange?.("reconnecting");
     });
 
-    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
     expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+  });
 
+  it("renders markdown formatting in AI mission interview questions", async () => {
+    renderModal();
+
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), {
+      target: { value: "Format a mission interview question" },
+    });
+    fireEvent.click(screen.getByText("Start Interview"));
+
+    await waitFor(() => expect(streamHandlers).toBeDefined());
     act(() => {
-      streamHandlers.onConnectionStateChange?.("connected");
+      streamHandlers.onQuestion?.(MARKDOWN_QUESTION);
     });
 
-    await waitFor(() => {
-      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
-    });
-    expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
+    await waitFor(expectMarkdownQuestionFormatting);
   });
 
   it("preserves streaming thinking output while reconnecting", async () => {
@@ -390,7 +417,7 @@ describe("MissionInterviewModal", () => {
       streamHandlers.onError?.("Stream error");
     });
 
-    expect(await screen.findByText("Reconnecting…")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
     expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
     expect(screen.queryByText("Stream error")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
@@ -542,7 +569,7 @@ describe("MissionInterviewModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => {
-      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined, expect.any(String));
+      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined);
     });
     await waitFor(() => {
       expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
@@ -612,7 +639,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         expect.objectContaining({ scope: "mvp", _comment: "Optimize for launch speed" }),
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -648,7 +674,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Start with discovery instead" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -689,7 +714,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Define a custom scope" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -728,7 +752,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { scope: "mvp" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -772,7 +795,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Add field research first" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -813,7 +835,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Ask customers first" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -856,7 +877,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { priorities: ["speed"], _other: "Preserve operator review" },
         undefined,
-        expect.any(String),
       );
     });
   });

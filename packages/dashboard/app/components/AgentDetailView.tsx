@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission, ThinkingLevel } from "@fusion/core";
 import { AGENT_PERMISSIONS, getErrorMessage, isEphemeralAgent } from "@fusion/core";
@@ -154,6 +154,7 @@ function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string
 export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false, showInlineBackButton = false, initialTab, initialRunId, preferActiveRun = false, onMutationSuccess }: AgentDetailViewProps) {
   const { t } = useTranslation("app");
   const [agent, setAgent] = useState<AgentDetail | null>(null);
+  const [heartbeatMultiplier, setHeartbeatMultiplier] = useState(1);
   const { confirm } = useConfirm();
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -190,6 +191,20 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   onCloseRef.current = onClose;
   addToastRef.current = addToast;
   agentRef.current = agent;
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) setHeartbeatMultiplier(settings.heartbeatMultiplier ?? 1);
+      })
+      .catch(() => {
+        if (!cancelled) setHeartbeatMultiplier(1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   const loadAgent = useCallback(async () => {
     const showLoadingSpinner = agentRef.current === null;
@@ -641,7 +656,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       };
     }
 
-    return getAgentHealthStatus(agent);
+    return getAgentHealthStatus(agent, heartbeatMultiplier);
   };
 
   /*

@@ -18,6 +18,7 @@ import {
   resolveValidatorSessionModel,
   resolveValidatorThinkingLevel,
   resolveValidatorFallbackThinkingLevel,
+  wrapCustomToolsForPluginRuntime,
 } from "../agent-session-helpers.js";
 
 const { resolveRuntimeMock } = vi.hoisted(() => ({
@@ -32,6 +33,20 @@ vi.mock("../runtime-resolution.js", async () => {
   };
 });
 
+
+describe("non-pi custom tool wrapping", () => {
+  it("preserves chat fusion tool names without an action-gate context", () => {
+    const tools = [
+      { name: "fn_task_list", description: "List tasks", parameters: {}, execute: async () => ({}) },
+      { name: "fn_delegate_task", description: "Delegate a task", parameters: {}, execute: async () => ({}) },
+      { name: "fn_list_agents", description: "List agents", parameters: {}, execute: async () => ({}) },
+      { name: "fn_web_fetch", description: "Fetch a URL", parameters: {}, execute: async () => ({}) },
+    ] as any;
+
+    expect(wrapCustomToolsForPluginRuntime(tools, {}, { runtimeId: "grok", sessionPurpose: "heartbeat" })?.map((tool) => tool.name))
+      .toEqual(tools.map((tool: { name: string }) => tool.name));
+  });
+});
 
 describe("resolve model-lane thinking levels", () => {
   it("applies node/task > workflow execution lane > global lane > project default lane > global default precedence", () => {
@@ -109,6 +124,8 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
 
+    expect(resolveMergerFallbackThinkingLevel({ mergerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", mergerThinkingLevel: "medium" }, "minimal")).toBe("minimal");
+    expect(resolveMergerFallbackThinkingLevel({ mergerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", mergerThinkingLevel: "medium" })).toBe("xhigh");
     expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
@@ -323,6 +340,13 @@ describe("resolve session model parity", () => {
       defaultProvider: "anthropic",
       defaultModelId: "claude-sonnet-4-5",
     }, staleRuntimeConfig)).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  });
+
+  it("prefers a complete per-task merger pair, ignores partial pairs, and still forces test mode", () => {
+    const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
+    expect(resolveMergerSessionModel(settings, undefined, { mergerModelProvider: "task-provider", mergerModelId: "task-model" })).toEqual({ provider: "task-provider", modelId: "task-model" });
+    expect(resolveMergerSessionModel(settings, undefined, { mergerModelProvider: "partial-provider" })).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveMergerSessionModel({ ...settings, testMode: true }, undefined, { mergerModelProvider: "task-provider", mergerModelId: "task-model" })).toEqual({ provider: "mock", modelId: "scripted" });
   });
 
   it("prefers the dedicated merger lane over default and other AI role lanes", () => {
@@ -592,6 +616,44 @@ describe("createResolvedAgentSession", () => {
     expect(createSessionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         taskEnv,
+      }),
+    );
+  });
+
+  it("forwards sessionPurpose into runtime.createSession for host-extension policy", async () => {
+    /*
+    FNXC:MergeQueue 2026-07-15-11:20:
+    FN-7956 fix requires sessionPurpose "merger" to reach createFnAgent so host extensions are skipped.
+    */
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({
+      session: mockSession,
+      sessionFile: "session.json",
+    });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "Default PI Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "mock/model"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+
+    await createResolvedAgentSession({
+      sessionPurpose: "merger",
+      pluginRunner: undefined,
+      cwd: "/tmp/project",
+      systemPrompt: "merge",
+    });
+
+    expect(createSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionPurpose: "merger",
       }),
     );
   });

@@ -1,44 +1,56 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { AgentStore, TaskStore } from "@fusion/core";
+import { postgresSchema, TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { createServer } from "../server.js";
 import { get } from "../test-request.js";
 
-describe("GET /api/agents/:id/prompt-sizes integration", () => {
-  let rootDir: string;
+pgDescribe("GET /api/agents/:id/prompt-sizes integration", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
   let agentId: string;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "fn-4928-prompt-sizes-"));
-    store = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-    await store.init();
+    // FNXC:PostgresCutover 2026-07-16-06:30: route integration fixtures use
+    // the canonical PG harness because TaskStore no longer supports SQLite.
+    harness = await createTaskStoreForTest();
+    // FNXC:PostgresCutover 2026-07-16-06:30: AgentStore persists agent runs
+    // by project, so bind the isolated harness layer before seeding telemetry.
+    (harness.layer as { projectId?: string }).projectId = "prompt-sizes-project";
+    store = harness.store;
 
-    const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
-    await agentStore.init();
-
-    const agent = await agentStore.createAgent({
+    agentId = "agent-prompt-sizes";
+    const projectId = harness.layer.projectId!;
+    await harness.layer.db.insert(postgresSchema.project.agents).values({
+      projectId,
+      id: agentId,
       name: "Prompt Sizes Agent",
       role: "executor",
-      metadata: {},
+      state: "active",
+      createdAt: "2026-05-17T12:00:00.000Z",
+      updatedAt: "2026-05-17T12:00:00.000Z",
+      data: {},
     });
-    agentId = agent.id;
-
-    await agentStore.saveRun({
+    await harness.layer.db.insert(postgresSchema.project.agentRuns).values({
+      projectId,
       id: "run-prompt-size-1",
       agentId,
       startedAt: "2026-05-17T12:00:00.000Z",
       endedAt: "2026-05-17T12:00:01.000Z",
       status: "completed",
-      systemPrompt: "sys prompt",
-      executionPrompt: "execute now",
+      data: {
+        id: "run-prompt-size-1",
+        agentId,
+        startedAt: "2026-05-17T12:00:00.000Z",
+        endedAt: "2026-05-17T12:00:01.000Z",
+        status: "completed",
+        systemPrompt: "sys prompt",
+        executionPrompt: "execute now",
+      },
     });
   });
 
-  afterEach(() => {
-    rmSync(rootDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await harness.teardown();
   });
 
   it("returns prompt-size rows derived from startedAt and run JSON", async () => {

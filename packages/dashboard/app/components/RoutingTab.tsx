@@ -7,6 +7,7 @@ import { fetchNodes, updateTask } from "../api";
 import type { NodeInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { NodeHealthDot } from "./NodeHealthDot";
+import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 interface RoutingTabProps {
   task: Task | TaskDetail;
@@ -25,8 +26,6 @@ function getRoutingPolicyLabel(policy: RoutingSettings["unavailableNodePolicy"] 
   if (policy === "fallback-local") return t("routing.policyLabel.fallback", "Fall back to local");
   return t("routing.policyLabel.notConfigured", "Not configured");
 }
-
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 
 function isUnhealthy(status: NodeInfo["status"] | undefined): boolean {
   return status !== undefined && status !== "online";

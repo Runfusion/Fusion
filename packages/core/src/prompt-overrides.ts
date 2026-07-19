@@ -301,6 +301,10 @@ For questions:
 For completion:
 {\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"]\n  }\n}`,
   },
+  /**
+   * FNXC:AgentOnboardingRuntime 2026-07-15-15:25:
+   * Agent onboarding must emit the exact `hermes` runtime hint for computer-use, desktop-automation, and UI-testing agents so runtime resolution selects the Hermes tool surface instead of treating a descriptive label as an unknown runtime.
+   */
   "agent-onboarding-system": {
     key: "agent-onboarding-system",
     name: "Agent Onboarding System",
@@ -315,13 +319,18 @@ Ask targeted questions using this JSON format:
 {"type":"question","data":{"id":"q1","type":"text|single_select|multi_select|confirm","question":"...","description":"...","options":[{"id":"x","label":"X","description":"..."}]}}
 
 When ready, return a final summary JSON in this exact format:
-{"type":"complete","data":{"name":"...","role":"executor","instructionsText":"...","thinkingLevel":"medium","maxTurns":25,"title":"...","icon":"🤖","reportsTo":"...","soul":"...","memory":"...","skills":["..."],"templateId":"...","patternAgentId":"...","rationale":"..."}}
+{"type":"complete","data":{"name":"...","role":"executor","instructionsText":"...","thinkingLevel":"medium","maxTurns":25,"title":"...","icon":"🤖","reportsTo":"...","soul":"...","memory":"...","skills":["..."],"templateId":"...","patternAgentId":"...","rationale":"...","heartbeatProcedurePath":"...","heartbeatIntervalMs":30000,"heartbeatEnabled":true,"modelHint":"...","runtimeHint":"..."}}
 
 Rules:
 - role must be one of triage|executor|reviewer|merger|scheduler|engineer|custom
 - thinkingLevel must be off|minimal|low|medium|high
 - maxTurns must be a positive integer
-- Do not include runtimeMode/model/runtimeHint; those are user review-time choices.`,
+- Use instructionsText for starter operating guidance/playbook content; do not create a separate playbook field
+- Prefer structuring instructionsText with these markdown sections when drafting: ## Description, ## Expertise, ## Priorities, ## Boundaries, ## Communication, ## Collaboration & Escalation
+- Freeform instructionsText is still acceptable for compatibility; sectioned structure is preferred for new agents
+- modelHint and runtimeHint are optional draft suggestions only (not final runtime selection)
+- When the user requests Hermes, computer use, desktop automation, or UI testing, use the exact runtimeHint "hermes"; never invent a descriptive runtime name
+- heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`,
   },
   "subtask-breakdown-system": {
     key: "subtask-breakdown-system",

@@ -95,6 +95,47 @@ describe("DesktopLaunchGate — local handoff", () => {
     expect(shell.setDesktopMode).not.toHaveBeenCalled();
   });
 
+  /*
+   * FNXC:MigrationHoldingPage 2026-07-17-13:45:
+   * While localRuntime reports state "starting" with migration progress, the gate
+   * must show the migration copy + the structured progress label instead of the
+   * static "Starting local Fusion runtime…", then still hand off once running.
+   */
+  it("shows live migration progress while starting, then navigates when running", async () => {
+    const location = stubLocation("file:///C:/app/index.html");
+    let migrationDone = false;
+    const migrating = {
+      ...localReadyState,
+      localRuntime: {
+        source: "embedded-local",
+        state: "starting",
+        migration: { active: true, phase: "table-progress", label: "[3/12] project.tasks — 500/2000 rows" },
+      },
+    };
+    const shell = {
+      getState: vi.fn(async () => (migrationDone ? localReadyState : migrating)),
+      setDesktopMode: vi.fn(async () => migrating),
+      onResetDesktopModeRequest: vi.fn(() => () => undefined),
+      resetDesktopMode: vi.fn(async () => undefined),
+    };
+    (window as unknown as { fusionShell: unknown }).fusionShell = shell;
+
+    render(
+      <DesktopLaunchGate>
+        <div data-testid="app-loaded">app</div>
+      </DesktopLaunchGate>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Database migration in progress"),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("[3/12] project.tasks — 500/2000 rows");
+
+    migrationDone = true;
+    await waitFor(() => expect(location.replace).toHaveBeenCalledTimes(1));
+    expect(location.replace.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:50123\//);
+  });
+
   it("starts the runtime when it is not running, then navigates to its origin", async () => {
     const location = stubLocation("file:///C:/app/index.html");
     // First getState: stopped. setDesktopMode starts it; subsequent polls: running.

@@ -1,5 +1,26 @@
 # Diagnostics
 
+## Debug-level engine logs (`FUSION_DEBUG`)
+
+Engine subsystem loggers (`createLogger` in `packages/engine/src/logger.ts`) expose a `debug()` level for steady-state per-poll chatter. It is **off by default** so the TUI log pane and engine stderr show state *changes* rather than the scheduler reprinting its resting state every poll.
+
+Opt in per subsystem with the logger prefix:
+
+```bash
+FUSION_DEBUG=scheduler        # one subsystem
+FUSION_DEBUG=scheduler,merger # several
+FUSION_DEBUG=1                # everything (also: true, all, *)
+```
+
+The variable is re-read per call, so it can be toggled on a long-lived process without recreating loggers. Debug lines emit under the `info` severity marker and render like any other info line.
+
+Currently debug-gated:
+
+- `Task <id> routed to node=local (source=local)` — routing to a **remote** node stays at info; only the local default is demoted.
+- `Hold release for <id> deferred — no reservable slot for <column>` — being at capacity is the expected steady state, not an event.
+
+Guidance for new log sites: if a line repeats on every scheduler poll while nothing changed, it belongs at `debug()`. Anything reporting a transition, a rejection, or something needing operator action stays at `log()`/`warn()`/`error()`.
+
 ## Goal injection diagnostics (`[goal-injection]`)
 
 Executor, heartbeat, and planning runs emit one goal-injection diagnostic with outcome `applied`, `no-goals`, or `disabled-or-failed`.

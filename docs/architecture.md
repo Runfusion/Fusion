@@ -105,9 +105,9 @@ Cross-package automated tests now lock:
                            │
           ┌────────────────▼────────────────┐
           │ Persistence                      │
-          │ - .fusion/fusion.db (SQLite/WAL)
-          │ - .fusion/tasks/* (PROMPT/logs)
-          │ - ~/.fusion/fusion-central.db │
+          │ - PostgreSQL schemas             │
+          │ - .fusion/tasks/* (artifacts)    │
+          │ - .fusion/project.json (identity)│
           └──────────────────────────────────┘
 ```
 
@@ -117,7 +117,7 @@ Cross-package automated tests now lock:
 
 | Package | Published | Role | Key files |
 |---|---|---|---|
-| `@fusion/core` | Private | Domain model, stores, SQLite adapters, settings, shared types | `packages/core/src/types.ts`, `store.ts`, `db.ts`, `central-core.ts`, `agent-store.ts` |
+| `@fusion/core` | Private | Domain model, PostgreSQL stores/adapters, settings, shared types, and legacy import tooling | `packages/core/src/types.ts`, `store.ts`, `postgres/`, `central-core.ts`, `agent-store.ts` |
 | `@fusion/engine` | Private | AI orchestration runtime (planning, scheduler, executor, merger, recovery) | planning processor, `scheduler.ts`, `executor.ts`, `merger.ts`, `project-runtime.ts` |
 | `@fusion/dashboard` | Private | Express API server + React app | `packages/dashboard/src/server.ts`, `routes.ts`, `sse.ts`, `websocket.ts`, `packages/dashboard/app/App.tsx` |
 | `@runfusion/fusion` | **Published** | CLI binary (`fn`) + Pi extension | `packages/cli/src/bin.ts`, `commands/*`, `project-resolver.ts`, `extension.ts` |
@@ -170,23 +170,22 @@ Concrete references:
 - **TaskStore**: `packages/core/src/store.ts`
   - Main task CRUD + lifecycle store
   - Emits board events (`task:created`, `task:moved`, `task:updated`, ...)
-  - Hybrid model: SQLite metadata + filesystem blobs under `.fusion/tasks/{id}`
-- **Database adapter**: `packages/core/src/db.ts`
-  - SQLite (`node:sqlite`) with WAL mode + foreign keys
-  - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
-  - Core schema tables include: `tasks`, `config`, `workflow_steps`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, approval tables (`approval_requests`, `approval_request_audit_events`), `task_documents`, `task_document_revisions`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), goals table (`goals`), plugin/routine tables (`plugins`, `routines`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), insight tables (`project_insights`, `project_insight_runs`), research tables (`research_runs`, `research_exports`, `research_run_events`), eval tables (`eval_runs`, `eval_task_results`, `eval_run_events`), todo tables (`todo_lists`, `todo_items`), `__meta`
-  - Migration-created tables include: `ai_sessions`, `messages`, `agentRatings`, `chat_sessions`, `chat_messages`, `runAuditEvents`, `mission_contract_assertions`, `mission_feature_assertions`, `mission_validator_runs`, `mission_validator_failures`, `mission_fix_feature_lineage`
+  - Hybrid model: PostgreSQL metadata + filesystem artifacts under `.fusion/tasks/{id}`
+- **Database adapter**: `packages/core/src/postgres/`
+  - Drizzle-backed PostgreSQL connection and async data layers
+  - Project-scoped rows carry `projectId`; central/plugin schemas hold shared control-plane state
+  - `packages/core/src/postgres/sqlite-migrator.ts` and SQLite adapters are legacy import tooling, not runtime authority
   - `ai_sessions.status` lifecycle includes `draft` (pre-start planning session), then `generating`, `awaiting_input`, terminal `complete` / `error`; deletion is final within a bounded tombstone window that blocks a straggling post-delete write from resurrecting the row (FN-7949) — see `docs/storage.md` "AI session delete tombstones"
 - **Roadmap feature ownership**: roadmap contracts, ordering/handoff helpers, persistence, routes, and dashboard UI live in `plugins/fusion-plugin-roadmap` (package `@fusion-plugin-examples/roadmap`, plugin id `fusion-plugin-roadmap`) rather than dashboard/core ownership.
 - **CentralCore**: `packages/core/src/central-core.ts`
   - Global project registry, health, central activity feed, global concurrency
-  - Backed by `packages/core/src/central-db.ts` (`~/.fusion/fusion-central.db`)
+  - Backed by the PostgreSQL `central` schema through `AsyncCentralDatabase`
 - **Specialized stores**:
   - `AgentStore` (`agent-store.ts`) — filesystem-based agent metadata + heartbeat run history
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
   - `GoalStore` (`goal-store.ts`) — strategic goal CRUD with server-enforced 5-active-goal cap
   - `AutomationStore` (`automation-store.ts`) — scheduled jobs with global/project scope isolation
-  - `MessageStore` (`message-store.ts`) — SQLite-backed mailbox/inbox/outbox messaging
+  - `MessageStore` (`message-store.ts`) — PostgreSQL-backed mailbox/inbox/outbox messaging
   - `ApprovalRequestStore` (`approval-request-store.ts`) — durable approval request lifecycle + append-only audit events
   - `ChatStore` (`chat-store.ts`) — session/message persistence for agent chat
   - `InsightStore` (`insight-store.ts`) — project insight persistence + dedupe/run tracking
@@ -241,8 +240,8 @@ Lifecycle contract (`types.ts` `isValidApprovalRequestTransition`):
 `SecretsStore` (`packages/core/src/secrets-store.ts`) provides encrypted key-value secret persistence for tasks/agents (FN-4791). It is designed so plaintext values are only available at explicit reveal time and are never persisted or logged in plaintext.
 
 Scope model:
-- `project` scope stores rows in `secrets` inside `.fusion/fusion.db` (project database, FN-4788).
-- `global` scope stores rows in `secrets_global` inside `~/.fusion/fusion-central.db` (central database, FN-4788).
+- `project` scope stores rows in PostgreSQL project-scoped `secrets` storage (FN-4788).
+- `global` scope stores rows in PostgreSQL central `secrets_global` storage (FN-4788).
 
 Encryption model:
 - Uses `createSecretCipher` from `packages/core/src/secrets-crypto.ts` (FN-4790).
@@ -409,9 +408,9 @@ Hybrid evaluator pipeline (FN-3389/FN-3391):
 ### Plugin System
 
 - `PluginStore` (`plugin-store.ts`) is a facade over two persistence scopes:
-  - **Global install metadata** in central DB table `plugin_installs` (`~/.fusion/fusion-central.db`) including manifest/path/settings/schema/dependencies
+  - **Global install metadata** in PostgreSQL table `central.plugin_installs`, including manifest/path/settings/schema/dependencies
   - **Per-project runtime state** in central DB table `project_plugin_states` keyed by normalized project path (`enabled`, `state`, `error`)
-- Legacy project-local `plugins` rows in `.fusion/fusion.db` are migrated lazily on plugin-store init/read; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
+- Legacy project-local `plugins` rows in `.fusion/fusion.db` are one-time migration input; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
 - Post-FN-3722, the project-local `plugins` table is legacy read-only migration input; any new install writer targeting it is a bug
 - `TaskStore.getPluginStore()` now propagates the configured `globalSettingsDir`/central directory so all CLI and dashboard install paths resolve the same central DB
 - `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules using the effective per-project plugin state
@@ -678,11 +677,12 @@ Runtime action-gate flow (v1):
 - `TransientErrorDetector` (`transient-error-detector.ts`) — retriable error classification
 - Durable agent error recovery (FN-7835/FN-7844/FN-7859/FN-7878/FN-7884): a heartbeat-managed, runtime-enabled non-ephemeral agent that lands in `state:"error"` remains timer-eligible and clears `lastError` by transitioning `error → active` at the next heartbeat run entry when `lastError` is recoverable. Generic/unknown errors are recoverable by default; immediate `error-unrecoverable` parking is reserved for operator-actionable auth/model/billing/quota failures, while stale worktree/module-resolution errors stay on their dedicated self-healing suppression/rebuild path. Recovery is bounded by one shared `heartbeatErrorRecovery` attempt budget (`MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS`, settings-overridable through the engine's optional cast-based knob) across both the timer path and `SelfHealingManager.recoverOrphanedAgents()`. Self-healing is the stale-agent backstop and still stores `durableErrorRecovery` cooldown/stale-module metadata, but it writes/reads the shared heartbeat counter and emits the same `agent:auto-recover-error-state` / `agent:error-retry-exhausted` audit surface with `source:"self-healing"`. The sweep flips `error → active` before `restartDurableAgentHeartbeat()` calls `executeHeartbeat()`, preventing run-entry recovery from re-counting or double-emitting for the same recovery. Success resets the shared counter and clears legacy sweep retry state; budget exhaustion parks the agent `paused` with `pauseReason:"error-retry-exhausted"`. On engine startup, `SelfHealingManager.resetDurableAgentErrorStateOnStartup()` runs before the steady-state sweep and treats restart as an explicit operator retry: eligible `error` and `error-retry-exhausted` durable agents have shared/legacy retry metadata reset, `lastError` and the exhaustion pause cleared, state set to `active`, heartbeat re-armed, and `agent:reset-error-state-on-startup` emitted without applying the sweep's staleness/cooldown/exhaustion gates. Non-recoverable durable heartbeat errors are not restarted; timer, startup, and sweep paths preserve exclusions for disabled runtime agents, ephemeral agents, active executions, user pauses, `error-unrecoverable` parks, operator-actionable errors, and stale worktree/module-resolution suppression.
 - `SelfHealingManager` (`self-healing.ts`) — auto-unpause/maintenance recovery actions
-  - Batch 1 maintenance now includes `reconcile-orphaned-task-dirs` (FN-6783), a paused-safe housekeeping step that calls `TaskStore.reconcileOrphanedTaskDirs()` so valid live `.fusion/tasks/{ID}/task.json` records missing from the SQLite index become visible without waiting for process restart. The store-level guard skips any ID already present in active, soft-deleted, archived, or tombstoned storage and emits `task:reconcile-orphaned-task-dir` only for recovered rows.
+  - Batch 1 maintenance includes `reconcile-orphaned-task-dirs` (FN-6783), a paused-safe housekeeping step that calls `TaskStore.reconcileOrphanedTaskDirs()` so valid live `.fusion/tasks/{ID}/task.json` records missing from PostgreSQL become visible without waiting for process restart. The guard skips any ID already present in active, soft-deleted, archived, or tombstoned storage and emits `task:reconcile-orphaned-task-dir` only for recovered rows.
   - Batch 1 maintenance also includes `reconcile-phantom-committed-reservations` (FN-7069), which calls `TaskStore.reconcilePhantomCommittedReservations()` for committed task-ID reservations that have no live/soft-deleted/archived task row and no `.fusion/tasks/{ID}/task.json`. The sweep prunes orphaned `activityLog` rows and `agents`/cascaded `agentRuns`, preserves `runAuditEvents`, and keeps the reservation `committed` per FN-5105 so the ID is permanently reserved rather than resurrected or handed out again.
+  - Startup recovery and Batch 1 both call `reconcileStaleSymbolLocks()` (FN-8305). It expires only project-scoped held locks whose lease elapsed or whose owner task is terminal/missing, preserves live owners, and does not alter task lifecycle, scheduler admission, worktrees, semaphores, or verification. The audit surface is `symbol-lock:reconcile-stale` plus a deduplicated `symbol-lock:reconcile-stale-no-action` idle signal.
   - Batch 1 maintenance now includes one `fts-maintenance` step for both search indexes. The live `tasks_fts` branch still runs `merge` every tick, `optimize` every 4th tick, and `rebuild` above `32 MiB` or `1 MiB × live task count`. The archive `archived_tasks_fts` branch is lighter because archive writes are mostly append-only: `merge` every 8th tick, `optimize` every 24th tick, and `rebuild` above `64 MiB` or `512 KiB × archived row count`. Each branch is independently guarded by `fts5Available` and emits `task:fts-maintenance` run-audit telemetry with distinct `target` values (`tasks_fts` vs `archived_tasks_fts`).
   - AI merge clean-room worktrees are created under the configured worktrees directory's hidden container, `<worktreesDir>/.ai-merge/`, as `fusion-ai-merge-fn-<id>-<random>` detached worktrees. When that container is repo-local, its relative path is added to the repo's local git exclude when possible (alongside the legacy `.fusion/ai-merge/` entry) so an in-flight clean room does not dirty the integration checkout. After `git worktree add` and before the merge/review loop, `runAiMerge` bootstraps the clean room with the shared merge dependency-sync helper: a configured `worktreeInitCommand` is authoritative and always runs, while unset settings infer `pnpm`/`npm`/`yarn`/`bun` installs from lockfiles and can skip only when the `node_modules/.fusion-install-marker` hash still matches. Failures and aborts hard-stop the AI merge before merge agents or verification run, and `merge:ai-deps-sync` records the command, skip state, and duration. Inline cleanup runs from `runAiMerge`'s clean-room `finally` for successful lands, empty/no-op finalization, concurrent-advance retries, and thrown/aborted merges. Cleanup canonicalizes the path, attempts `git worktree remove --force`, always falls back to filesystem removal, then runs `git worktree prune` so stale or partial registrations (including `git worktree add` failures) do not dangle. Cleanup emits `merge:ai-worktree-cleanup` audit events for git-remove, fs-rm, and prune phases; benign already-absent/de-registered paths are treated as idempotent success, while genuine filesystem-removal failures are logged/audited with `success: false` rather than silently swallowed.
-  - Worktrees-dir sweeps that list direct children of `<worktreesDir>` (pool idle scan, orphan cleanup/reap, self-healing unregistered-orphan reap, and cap enforcement) must exclude the `.ai-merge` container by name; those one-level sweeps never inspect or recycle clean rooms beneath it. Batch 1 sweeps stale AI merge clean-room worktrees under the new `<worktreesDir>/.ai-merge/` root and still scans legacy `.fusion/ai-merge/` plus legacy `tmpdir()` locations for pre-relocation leftovers; candidates are bounded to names starting with `fusion-ai-merge-`. `runAiMerge` registers each live clean-room worktree in `activeSessionRegistry` with kind `ai-merge` as soon as the directory exists and keeps both raw and canonical paths registered for the duration of the merge, so the dedicated periodic sweep and pre-merge prune defer when either path is active (including concurrent same-task merge attempts). The default age gate is 2 hours; task-aware cleanup uses a 10-minute grace period for `done`/`archived` tasks and for genuinely missing/deleted task rows, and every removal path is clamped by the same 10-minute minimum-age floor so a freshly created worktree is never reaped. Transient `getTask` lookup failures (for example SQLite busy/parse errors) are not treated as deletion evidence; they log a warning, emit `lookup-error` only if eventually removed, and retain the conservative 2-hour gate. The sweep canonicalizes paths before checking `activeSessionRegistry`, attempts `git worktree remove --force <path>` before filesystem removal, runs `git worktree prune` after cleanup attempts, and emits `worktree:tempdir-sweep` run-audit telemetry for removal attempts and failures. Fresh directories, active-session paths, and individual removal failures are skipped/logged without aborting the maintenance cycle.
+  - Worktrees-dir sweeps that list direct children of `<worktreesDir>` (pool idle scan, orphan cleanup/reap, self-healing unregistered-orphan reap, and cap enforcement) must exclude the `.ai-merge` container by name; those one-level sweeps never inspect or recycle clean rooms beneath it. Batch 1 sweeps stale AI merge clean-room worktrees under the new `<worktreesDir>/.ai-merge/` root and still scans legacy `.fusion/ai-merge/` plus legacy `tmpdir()` locations for pre-relocation leftovers; candidates are bounded to names starting with `fusion-ai-merge-`. `runAiMerge` registers each live clean-room worktree in `activeSessionRegistry` with kind `ai-merge` as soon as the directory exists and keeps both raw and canonical paths registered for the duration of the merge, so the dedicated periodic sweep and pre-merge prune defer when either path is active (including concurrent same-task merge attempts). The default age gate is 2 hours; task-aware cleanup uses a 10-minute grace period for `done`/`archived` tasks and for genuinely missing/deleted task rows, and every removal path is clamped by the same 10-minute minimum-age floor so a freshly created worktree is never reaped. Transient `getTask` lookup failures (for example PostgreSQL availability/transaction errors) are not treated as deletion evidence; they log a warning, emit `lookup-error` only if eventually removed, and retain the conservative 2-hour gate. The sweep canonicalizes paths before checking `activeSessionRegistry`, attempts `git worktree remove --force <path>` before filesystem removal, runs `git worktree prune` after cleanup attempts, and emits `worktree:tempdir-sweep` run-audit telemetry for removal attempts and failures. Fresh directories, active-session paths, and individual removal failures are skipped/logged without aborting the maintenance cycle.
 
   - `recoverGhostReviewTasks()` is a fallback only for idle, non-terminal `in-review` states. Terminal/actionable states (notably `status: "failed"`) are preserved and **not** auto-kicked back to `todo`.
   - `recoverPausedAbortFailures()` clears executor pause/resume abort parks only when the durable row is safe to recover. `todo`/`in-progress` rows are requeued for normal scheduling, while clean `in-review` rows (completed steps, not paused/user-paused/executing, auto-merge eligible, no confirmed or terminal merge evidence) have `status`/`error` cleared in place so review progression can continue. FN-7749 adds the manual-hold exception to the prior `autoMerge:false` guard: a benign hard-cancel pause/resume abort at a merge-region/manual-hold node is the healthy Merge & Close resting state, so already-parked rows of that exact shape are cleared in place without moving backward (FN-5147-compliant). User hard-cancel, global/user pause, terminal merge, live-execution, and other `autoMerge:false` guards remain operator-actionable. Successful recovery emits `task:auto-recover-paused-abort-park` with `preservedInReview` metadata.
@@ -706,7 +706,10 @@ If loop recovery times out during compact-and-resume and the executor does not u
   - `recoverMissingWorktreeReviewFailures()` is a narrow failed-review recovery: only `status: "failed"` `in-review` tasks with the explicit session-start signature `Refusing to start coding agent in missing worktree:` (from `assertValidWorktreeSession()`) are requeued. Recovery clears stale session metadata (`worktree`, `branch`, `sessionFile`, transient failure state), preserves valid step progress/retry counters, logs the auto-recovery reason, and moves the task back to `todo` for a clean retry.
   - `recoverMergeableReviewTasks()` only re-enqueues truly eligible tasks; retry-exhausted review tasks are skipped to avoid re-enqueue/no-op loops that keep refreshing `updatedAt`.
   - `recoverAlreadyMergedReviewTasks()` auto-finalizes retry-exhausted `in-review` tasks when self-healing can prove their work already landed on the merge target. On this landed-content path it clears soft blockers (`paused`, stale `status: "failed"`, and residual `error`) before moving to `done`; true hard blockers (for example incomplete steps, awaiting-user-review, or failed pre-merge workflow steps) still park the task in stable `in-review/failed` state with a blocker error instead of entering an auto-finalize loop. Already-merged/tip recovery must prove task ownership before setting `mergeDetails.mergeConfirmed` or moving to `done`: accepted evidence is a matching `Fusion-Task-Id`, matching `Fusion-Task-Lineage`, a task-ID anchored conventional subject, or a patch-id/tree-equal fallback from the canonical `fusion/<task-id>` branch whose tip and candidate commit are not explicitly attributed to another task/lineage. Foreign task tips (for example an FN-7143 row pointing at an FN-7187 tip) are rejected in place with `[recovery] already-merged rejected ... reason=foreign-task-tip` and `task:auto-recover-already-merged-rejected` audit metadata instead of finalizing the wrong task.
-  - `recoverTransientMergeFailures()` handles retry-exhausted `in-review` merge failures only when `classifyTransientMergeError()` returns a bounded transient class: `lease-handoff-target-not-queued`, `spurious-concurrent-advance-same-sha`, or `process-spawn-failure` (`spawn ENOTDIR`, `spawn … ENOENT`, or a clean-room path reported as `is not a working tree`). Recovery resets `mergeRetries`, clears transient `status`/`error`, increments `mergeDetails.transientRecoveryCount`, and requeues auto-merge so the next attempt recreates the AI-merge clean room. The budget stays capped by `MAX_TRANSIENT_MERGE_RECOVERIES`; exhausted tasks remain parked with the `merger:transient-failure-budget-exhausted` audit path so real structural failures cannot loop forever. FN-6278 makes this recovery mostly after-the-fact insurance for cwd spawn faults: the merge runner now preflights reuse integration roots and repairs/reacquires missing or de-registered task worktrees before the first git spawn, so a stale `task.worktree` should not consume the transient recovery budget by repeatedly producing `spawn git ENOENT`.
+  - `recoverTransientMergeFailures()` handles retry-exhausted `in-review` merge failures only when `classifyTransientMergeError()` returns a bounded transient class: `lease-handoff-target-not-queued`, `spurious-concurrent-advance-same-sha`, `process-spawn-failure` (`spawn ENOTDIR`, `spawn … ENOENT`, or a clean-room path reported as `is not a working tree`), `ai-provider-turn-failure`, or `network-transport-failure`.
+    - FN-8004 added the last two classes. `ai-provider-turn-failure` covers ACP-backed merge models (Grok/OMP/generic ACP) whose turn fails provider-side: `promptAcpSession` preserves the JSON-RPC code as `… (acp rpc code -32603, retryable)` and the classifier anchors on that envelope or the `<Runtime> ACP turn failed:` prefix. Anchoring is deliberate — the bare JSON-RPC text is `Internal error`, which must never match unanchored or it would disguise genuine application defects as retryable blips. Only provider-fault codes (`-32603`, `-32000`…`-32003`) are retryable; caller-fault codes (`-32600`…`-32602`) stay permanent because retrying repeats the failing call.
+    - `network-transport-failure` is a delegation to `isTransientError()`, closing a real asymmetry: the inline retry gate (`ProjectEngine.maybeRetryTransientMerge`) accepted `isTransientError(msg) || classifyTransientMergeError(msg)`, while this sweep consulted only the classifier. Errors such as `ECONNRESET`/`socket hang up` therefore earned inline retries but became invisible to the sweep once parked `failed` — stranding them permanently. Both gates now share one definition by construction. To keep this delegation from importing the detector's `usage-limit-detector.js → logger.js` chain (the chain FN-5627 split the classifier out to avoid), the pure predicates live in the import-free leaf `transient-error-patterns.ts`, re-exported by `transient-error-detector.ts`.
+    - Because `status:"failed"` is itself what suppresses both recovery paths, a misclassification here is not merely a missed retry — it is terminal. FN-8004's 20-second Grok blip permanently parked a task whose branch held complete, reviewed work. Recovery resets `mergeRetries`, clears transient `status`/`error`, increments `mergeDetails.transientRecoveryCount`, and requeues auto-merge so the next attempt recreates the AI-merge clean room. The budget stays capped by `MAX_TRANSIENT_MERGE_RECOVERIES`; exhausted tasks remain parked with the `merger:transient-failure-budget-exhausted` audit path so real structural failures cannot loop forever. FN-6278 makes this recovery mostly after-the-fact insurance for cwd spawn faults: the merge runner now preflights reuse integration roots and repairs/reacquires missing or de-registered task worktrees before the first git spawn, so a stale `task.worktree` should not consume the transient recovery budget by repeatedly producing `spawn git ENOENT`.
   - `reconcileTaskWorktreeMetadata()` (FN-4962) reconciles stale `task.worktree`/`task.branch` rows against authoritative `git worktree list --porcelain` branch mappings during startup recovery, periodic maintenance, and completion fan-out. The stage must run before `reclaim-stale-active-branches`: stale rows rebound to live `fusion/<id>` worktrees emit `task:auto-recover-worktree-metadata-rebound`; stale rows with no live branch mapping are nulled (`worktree=null`, `branch=null`, `baseCommitSha` unchanged) and emit `task:auto-recover-worktree-metadata-cleared`.
   - `recoverInProgressLimbo()` (FN-5219) is the safety net for stranded executor rows: reset/requeue paths must never leave a task in `in-progress` without a runnable execution context. After metadata reconcile, stale `in-progress` tasks with null branch, missing/cleared worktree metadata, no live executor claim, and all-pending steps are audited and moved back to `todo`.
 
@@ -744,6 +747,7 @@ Guardrails: this routine does **not** retry merges, does **not** apply to mixed/
 
 ### Observability and reflection
 - `AgentLogger` (`agent-logger.ts`) — structured per-agent run logging
+  - FN-8064 writes best-effort proactive `status` rows to the task-detail chat for step start, completion, intentional skips, and failure in both step-session/graph callbacks and store-accepted default `fn_task_update` transitions. Graph and legacy review paths each write one reviewer row: plan/spec APPROVE uses the plan-verified message; other real verdicts use the verdict message; `UNAVAILABLE` and reviewer exceptions write a safe operational "review could not complete" status without claiming a verdict. Failure and review-summary diagnostics are nullish-safe, secret-redacted, absolute-path/stack/newline stripped, and capped at 300 characters, so narration never blocks execution or persists raw command output.
 - `RunAudit` (`run-audit.ts`) — mutation audit tracking (DB/git/filesystem)
   - FN-7214: `task:reenter-paused-aborted-workflow-node` records executor re-entry after a typed workflow graph node was interrupted by engine pause/resume. Metadata includes `nodeId`, `fromColumn`, retry `attempt`/`maxAttempts`, `abortProvenance`, whether the task was preserved in `in-review`, and the re-entry `mode`.
   - FN-7220: `task:classify-stale-in-review-plan-pause-abort-replay` records executor classification of a stale generic `in-review` plan-node pause/resume replay. Metadata includes `nodeId`, `fromColumn`, `abortProvenance`, whether a stale failure was cleared, `graphResumeRetryCount`, and `mode: "preserved-in-review"`.
@@ -780,15 +784,20 @@ Implemented in `agent-heartbeat.ts`:
 - `WakeContext` / per-agent runtime config support
 
 ### Node/mesh runtime services
-- `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks
-- `PeerExchangeService` (`peer-exchange-service.ts`) — peer sync orchestration
-- `MeshLeaseManager` (`mesh-lease-manager.ts`) — canonical abandoned-lease detection + recovery path
+<!--
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+Under shared PostgreSQL, mesh services own membership/auth/claims — not task replication. Durable board state is the shared database; PeerExchange no longer multi-masters tasks or settings over HTTP.
+-->
+- `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks for handoff and recovery
+- `PeerExchangeService` (`peer-exchange-service.ts`) — membership gossip + optional auth material; settings/task HTTP replication disabled when nodes share Postgres
+- `MeshLeaseManager` (`mesh-lease-manager.ts`) — canonical abandoned-lease detection + recovery path (`central.task_claims` then task-row mirror)
 
-### Outage ownership boundaries (degraded reads + queued write replay)
-- `CentralCore` owns durable outage state in central persistence (`meshSharedSnapshots` + `meshWriteQueue`) and exposes stable assertion methods: `recordMeshSnapshot`, `getLatestMeshSnapshot`, `enqueueMeshWrite`, `listPendingMeshWrites`, `markMeshWriteReplayStarted`, `markMeshWriteApplied`, `markMeshWriteFailed`, and `getMeshDegradedReadState`.
-- `PeerExchangeService` owns retryability classification for sync/apply failures, queue insertion for retryable failures, replay execution (`replayPendingWritesForNode(targetNodeId)`), and observable sync results (`queuedWriteId`, `replaySummary`) for partition/replay assertions.
-- `NodeHealthMonitor` provides liveness transitions as replay hints only via deterministic recovery callback `onNodeRecovered(nodeId, previousStatus)`; `online` is a trigger to attempt replay, not proof that replay succeeded.
-- Dashboard mesh routes (`register-mesh-routes.ts`) preserve `GET /api/mesh/state` array shape and attach per-node degraded `readState` metadata so stale fallback data is explicit during partitions.
+### Outage ownership boundaries (topology/auth only)
+- Durable **task** state does not queue offline over mesh when Postgres is down. If the shared database is unavailable, nodes do not invent alternate local task truth.
+- `CentralCore` still exposes `meshSharedSnapshots` + `meshWriteQueue` for **topology / auth** retry and degraded membership reads (`recordMeshSnapshot`, `getLatestMeshSnapshot`, `enqueueMeshWrite`, `listPendingMeshWrites`, `markMeshWrite*`, `getMeshDegradedReadState`).
+- `PeerExchangeService` classifies retryable **membership/auth** sync failures, may enqueue those narrow scopes, and replays them via `replayPendingWritesForNode(targetNodeId)`. Task/settings payloads are not queued for multi-leader replay under Postgres.
+- `NodeHealthMonitor` liveness transitions may trigger membership/auth replay attempts (`onNodeRecovered`); `online` is not proof that replay succeeded.
+- Dashboard mesh routes (`register-mesh-routes.ts`) keep `GET /api/mesh/state` and attach degraded `readState` metadata when peer probes fail.
 
 ### Mesh task lease ownership and recovery
 
@@ -809,26 +818,14 @@ A lease is recoverable only when there is **no active local executor session for
 
 1. the owning node is `offline` or `error`, or
 2. the owner heartbeat/run age exceeds `max(agentHeartbeatTimeoutMs * 2, 120_000)` measured against the most recent lease renewal timestamp.
-- Canonical replication/write-coordination contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md)
-  - Defines protocol versioning, write classes, quorum/ack semantics, lease epochs/fencing, offline queue/replay, reconciliation outcomes, restart recovery hooks, and degraded-read staleness metadata.
-  - Existing `/api/mesh/sync` and settings-sync payloads remain the active exchange primitives while follow-on runtime tasks implement full v1 coordinator/quorum behavior.
-- Distributed task-ID allocation (`packages/core/src/distributed-task-id.ts`) is the first mesh-aware coordinated write primitive.
-  - Durable state lives in SQLite tables `distributed_task_id_state` (prefix sequence + authoritative committed count) and `distributed_task_id_reservations` (reservation lifecycle rows).
-  - Reserve/commit/abort execute under a process-local lock and a single SQLite transaction. Lazy reservation expiry cleanup runs inside those same transactions. `TaskStore` also uses a non-locking commit core inside its own `BEGIN IMMEDIATE` create transaction so the reservation `committed` flip and authoritative `tasks` row insert share one SQLite durability point.
-  - Default reservation TTL is `15 * 60 * 1000` ms (15 minutes). Expired/aborted reservations are **burned IDs** and are never reissued. If a post-insert create step fails after the reservation was committed (for example `task.json`/`PROMPT.md` disk materialization, file-scope validation, or duplicate-intake tombstone checks), the failed-create rollback deletes the just-created task row/partial directory, moves the reservation to `aborted`, recomputes committed reservation counters, and emits `task:reservation-commit-rolled-back`; the sequence stays burned for FN-5105 ID permanence.
-  - `committedClusterTaskCount` from allocator state is the only authoritative cluster-wide committed-task count. Local task-row counts and ID suffix math are not authoritative.
-  - Store open reconciles every known prefix in `distributed_task_id_state` to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)`. This self-heals stale counters before ordinary task creation resumes.
-  - Mesh allocator write routes (`/api/mesh/task-ids/reserve|commit|abort`) return `503` when the coordinator node is unreachable; they never fall back to local-only cluster ID issuance.
-- Cluster task creation now uses a strong-write reserve → create → replicate → commit/abort sequence.
-  - Ordinary local task creation (`TaskStore.createTask()`, duplicate, and refine flows) now allocates IDs through the same distributed reserve/commit/abort lifecycle owned by `TaskStore`; the invariant is `distributed_task_id_reservations.status = 'committed'` iff a live durable `tasks` row and task directory landed for that ID. `applyReplicatedTaskCreate(...)` remains a direct reserved-ID apply path and does not require a local reservation row.
-  - `POST /api/tasks` uses the store-owned allocator path for local creates rather than maintaining a separate route-local allocator implementation.
-  - `POST /api/tasks` reserves a distributed ID, creates the authoritative local task with that reserved ID, then POSTs authenticated replication payloads to peer nodes.
-  - All create-class writes now use conflict-raising inserts, not SQLite `ON CONFLICT ... DO UPDATE`. Existing task rows and `.fusion/tasks/{id}` contents always win over stale counters or colliding reservations.
-  - Local create paths perform a final active+archived existence check immediately before insert. If a reserved `FN-*` still collides, the reservation is aborted/burned and the create fails loudly instead of rewriting the existing task.
-  - Creation self-heals stale overlap state at the route layer: if a reserved `FN-*` collides with an existing task (`Task ID already exists...` or replicated-create collision), the route aborts that reservation, cleans up partial local state, reserves the next ID, and retries up to a bounded limit.
-  - Replica apply uses `TaskStore.applyReplicatedTaskCreate(...)`, which is idempotent by task ID: replaying the same payload returns the existing task without creating duplicates.
-  - If an incoming replicated payload conflicts with a different existing task record for the same ID, the apply path returns a deterministic collision error instead of overwriting data.
-  - Any replication/coordinator failure aborts the reservation and returns write failure (`503`), so this path does not report success for local-only partial writes.
+- Canonical multi-node contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md) (shared Postgres + claims; multi-leader HTTP task replication retired).
+- Distributed task-ID allocation is a **shared-database** primitive (not a remote mesh coordinator):
+  - Durable state lives in Postgres `project.distributed_task_id_state` / `distributed_task_id_reservations` (async allocator path).
+  - Reserve/commit/abort run against those shared rows under the project’s transactions. Default reservation TTL is `15 * 60 * 1000` ms. Expired/aborted reservations are **burned** and never reissued. Failed creates abort the still-reserved reservation (or roll back a just-committed reservation via `task:reservation-commit-rolled-back` when create materialization fails after the commit flip); once a reservation is fully committed with a durable task row, it is final and not re-aborted as an ordinary abort.
+  - `committedClusterTaskCount` is the authoritative committed-task count for a prefix within a project partition.
+  - Store open reconciles each prefix high-water mark past existing live/archived/reservation sequences.
+  - `/api/mesh/task-ids/*` always uses the local allocator under Postgres (shared rows are the coordinator). Remote coordinator forwarding is disabled.
+- Task creation: reserve → insert task (shared DB) → commit reservation (or abort on failure). HTTP peer task replication and `applyReplicatedTaskCreate` multi-node fan-out are not part of the Postgres multi-node path.
 - Process lifecycle ownership:
   - `fn serve` / `fn dashboard` start a single process-level `PeerExchangeService` and stop it during shutdown.
   - `CentralCore.startDiscovery()` is invoked from CLI startup only after HTTP bind completes so discovery advertises the actual listening port.
@@ -976,6 +973,7 @@ Key server capabilities:
 - Refinements still require normal triage specification (PROMPT.md with valid `File Scope`) before execution routing.
 - To prevent starvation under large same-priority planning backlogs (FN-4647 pattern), triage polling now prefers `task_refine` rows over non-refinement rows as an ordering tiebreaker within the same priority band.
 - **Starved refinement self-healing sweep (Lane B):** `SelfHealingManager.recoverStarvedRefinementTriageTasks()` runs in startup + maintenance sweeps and targets `sourceType: "task_refine"` tasks still in `triage` (`status` `null|planning`) that are unpaused, not actively planning, older than `STARVED_REFINEMENT_RECOVERY_GRACE_MS` (10m), and have observed peer board progress (`STARVED_PEER_PROGRESS_THRESHOLD=3` non-refinement tasks advanced to `todo` after the refinement was created). Remediation is a bounded one-step priority nudge (no direct move-to-`todo`) with cooldown idempotency (`STARVED_REFINEMENT_ESCALATION_COOLDOWN_MS = grace*4`) and run-audit emission `task:auto-recover-starved-refinement` including `{ taskId, ageMs, peerProgressCount, escalation }` metadata.
+- **Stale planning liveness invariant:** stale-processing eviction never removes a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). It therefore remains in `getProcessingTaskIds()` and cannot be finalized, cleared for replanning, or priority-nudged by planning recovery sweeps. Hung promises without a session and stuck-aborted/disposed sessions remain reclaimable after the stale threshold.
 - Approval semantics are unchanged: with `requirePlanApproval=true`, refinements stop at `status: "awaiting-approval"`; otherwise they move to `todo` after spec finalization.
 - Regression coverage lives in `packages/engine/src/__tests__/triage-refinement-routing.test.ts` and locks four guarantees: bounded promotion under backlog pressure, approval-gate preservation, PROMPT-before-`todo` invariant, and unchanged baseline ordering for non-refinement-only triage sets.
 - Task detail surface is shared through `TaskDetailContent` (exported from `TaskDetailModal.tsx`): desktop/tablet `ListView` renders it inline in the split right pane, while mobile and non-list entry points continue using `TaskDetailModal`.
@@ -1022,11 +1020,11 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 ### Health and monitoring endpoints
 - **Health check**: `GET /api/health`
   - Returns liveness status for load balancers and monitoring
-  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly", checkedAt: string | null, anomalies: [...], recommendedAction: string | null } }`
-  - Startup does not block on full `PRAGMA integrity_check(100)`; Fusion schedules it in the background shortly after boot.
-  - Background integrity checks are deduplicated process-wide per on-disk SQLite path: multiple `Database` instances sharing the same `fusion.db` join one shared run, and each instance still updates the underlying integrity state (`integrityCheckPending`, `integrityCheckLastRunAt`, `corruptionDetected`, `integrityCheckErrors`) that maps to `database.isRunning`, `database.lastCheckedAt`, `database.healthy`, `database.corruptionDetected`, and `database.corruptionErrors`.
-  - Self-healing watches `store.getDatabaseHealth()` during maintenance. Each fresh corruption detection emits a `task:auto-db-corruption-detected` run-audit database event and attempts a `db-corruption-detected` notification through the active notification service (or the ntfy fallback) with a one-hour cooldown between repeats until the health state clears.
-  - `POST /api/health/refresh` recomputes the task-ID integrity section on demand and returns the same top-level shape, including the current database corruption fields.
+  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly" | "error", checkedAt: string | null, anomalies: [...], error?: string, recommendedAction: string | null } }`
+  - PostgreSQL startup and explicit refreshes never open or inspect a SQLite file. The server derives the live async layer from its `TaskStore`; a missing layer fails health closed instead of falling back to a synchronous healthy sentinel.
+  - The compatibility-shaped `database.corruptionDetected` and `database.corruptionErrors` fields carry PostgreSQL connectivity and health-query failures so existing dashboard clients receive an actionable degraded response.
+  - The former background `PRAGMA integrity_check` scheduling, per-`fusion.db` deduplication, and SQLite corruption notification behavior are pre-cutover history only; they are not a runtime fallback.
+  - `POST /api/health/refresh` recomputes PostgreSQL connectivity and task-ID integrity on demand. Detector failures return `taskIdIntegrity.status: "error"` and degrade the top-level status; they are never rewritten as an empty healthy report.
   - No authentication required
 
 ### Custom Provider endpoints
@@ -1114,11 +1112,12 @@ The run-audit system records every mutation performed by the engine across four 
 - **Database / `task:orphan-detected-no-action`** — emitted by `recoverOrphanedExecutions` (FN-5337) when row metadata looks orphaned after grace windows; annotation-only event with no lifecycle mutation (`in-progress` task stays put).
 - **Database / `task:reattach-orphaned-execution`** — emitted by `reattachOrphanedAssignedExecutions` (FN-6336) when self-healing re-dispatches an idle assigned `in-progress` task forward via `executor.resumeTaskForAgent(agentId)` after proving the assigned agent has no active heartbeat run or active execution.
 - **Database / `task:reconcile-stale-agent-assignment`** — emitted when self-healing or heartbeat reconciliation clears stale durable `Agent.taskId`/`state` for a task parked in `todo`/`triage` without live execution proof. Metadata includes `{ agentId, taskId, taskColumn, agentState, status, blockedBy, overlapBlockedBy, hadFreshRun, hadActiveExecution, reason }`; task queue/lease fields are preserved.
+- **Database / `task:reconcile-stale-duplicate-decision`** — emitted when self-healing clears a triage-marker duplicate-decision pause whose canonical is missing, deleted, done, or archived. Metadata is ids/outcomes-only: `{ taskId, canonicalId, canonicalColumn, canonicalDeleted, priorPausedReason }`; active canonicals and user pauses are excluded.
 - **Database / `task:soft-delete-column-reconciled`** — emitted by `reconcileSoftDeletedColumnDrift` (FN-5566, re-land FN-5446) when a soft-deleted row (`deletedAt IS NOT NULL`) is found with legacy `column != 'archived'`; rewrites only `column` (no resurrection), with metadata `{ previousColumn }`.
 - **Database / `session:runtime-resolved`** — emitted once per `createResolvedAgentSession` call with metadata `{ sessionPurpose, runtimeId, wasConfigured, provider, modelId, mockProviderActive, testModeActive, runtimeHint? }` for per-lane runtime/provider attribution.
 - **Database / `task:reconcile-dependency-blocking-lease`** — emitted by `reconcileDependencyBlockingLeases()` (FN-6292) when self-healing rebounds an `in-progress` holder to `todo` because an unmet dependency is blocked by the holder's stale file-scope lease. Metadata includes the dependency ID, blocked-by marker, and unmet dependency list.
 - **Database / `task:reconcile-in-review-unmet-dependencies`** — emitted by `reconcileInReviewUnmetDependencies()` (FN-6793/FN-6797) when self-healing rebounds an `in-review` task to blocked `todo` because one or more declared dependencies are still unmet. Metadata includes `unmetDeps`, `blockedBy`, and prior review status; the `-no-action` companion is emitted when task pause/user-pause, `autoMerge:false`, live execution/checkout proof, or a failed rebound mutation prevents the backward move.
-- **Database / `task:reconcile-orphaned-task-dir`** — emitted by `TaskStore.reconcileOrphanedTaskDirs()` (FN-6783) when store open or self-healing Batch 1 re-imports a valid live `.fusion/tasks/{ID}/task.json` directory with no SQLite task row anywhere. Metadata includes the recovered ID, column, status, and task JSON path.
+- **Database / `task:reconcile-orphaned-task-dir`** — emitted by `TaskStore.reconcileOrphanedTaskDirs()` (FN-6783) when store open or self-healing Batch 1 re-imports a valid live `.fusion/tasks/{ID}/task.json` directory with no PostgreSQL task row anywhere. Metadata includes the recovered ID, column, status, and task JSON path.
 - **Database / `task:*-no-action` backward-move family (FN-5335)** — backward self-healing sweeps now emit annotation-only events when triple proof fails instead of mutating lifecycle state. New mutation types: `task:reclaim-pr-conflict-no-action`, `task:reclaim-self-owned-branch-conflict-no-action`, `task:auto-rebound-scope-decay-no-action`, `task:finalize-no-op-review-no-action`, `task:stale-incomplete-review-no-action`, `task:ghost-review-no-action`, `task:stuck-merge-deadlock-no-action`, `task:no-progress-no-task-done-no-action`, `task:missing-worktree-review-no-action`, `task:partial-progress-no-task-done-no-action`, `task:reconcile-dependency-blocking-lease-no-action`. See `docs/self-healing-backward-move-audit.md` for per-stage disposition.
 - **Filesystem** — file:write, prompt:write, attachment:create, etc.
 - **Sandbox** — backend lifecycle events from `SandboxBackend` wiring in executor/merger/routine-runner (`sandbox:prepare`, `sandbox:run`, `sandbox:failure`, `sandbox:fallback`) introduced after FN-4636.
@@ -1174,20 +1173,18 @@ For scheduler concurrency diagnostics, the queued reason now names the active li
 Fusion uses a hybrid storage model.
 
 ### Per-project storage
-- **SQLite DB**: `.fusion/fusion.db`
+- **PostgreSQL**: project-scoped rows in the `project` schema
+- **Identity marker**: `.fusion/project.json`
 - **Filesystem blobs** (task-local artifacts):
   - `.fusion/tasks/{TASK_ID}/PROMPT.md`
   - `.fusion/tasks/{TASK_ID}/agent.log`
   - `.fusion/tasks/{TASK_ID}/attachments/*`
 
-SQLite schema is initialized in `packages/core/src/db.ts` and uses:
-- WAL mode (`PRAGMA journal_mode = WAL`)
-- Foreign keys (`PRAGMA foreign_keys = ON`)
-- `__meta.lastModified` for change detection/polling
+PostgreSQL schema is initialized by `packages/core/src/postgres/schema-applier.ts`; project isolation is enforced by `projectId` keys and async data-layer binding.
 
 ### Central storage (multi-project)
-- **Central DB**: `~/.fusion/fusion-central.db`
-- Schema in `packages/core/src/central-db.ts`
+- **PostgreSQL central schema**
+- Schema in `packages/core/src/postgres/schema/central.ts`
   - `projects`, `projectHealth`, `centralActivityLog`, `globalConcurrency`, `nodes`, `peerNodes`, `projectNodePathMappings`, `settingsSyncState`, `__meta`
 - `projectHealth.inFlightAgentCount` and `globalConcurrency.currentlyActive` are persisted slot/health bookkeeping fields. They are not live read-layer running-agent counts; dashboard and CLI read surfaces derive current running agents from tasks in `column === "in-progress"` while leaving slot acquire/free semantics and DB column names unchanged.
 
@@ -1202,15 +1199,15 @@ SQLite schema is initialized in `packages/core/src/db.ts` and uses:
 Some data remains intentionally filesystem-based:
 - Agent instruction bundles and heartbeat markdown: `.fusion/agents/*` (`AgentStore`)
 
-Agent/message/approval metadata and history now persist in SQLite tables.
+Agent/message/approval metadata and history persist in PostgreSQL.
 
-### Migration from legacy file storage
-- Detection + migration: `packages/core/src/db-migrate.ts`
-- Migrates legacy task/config/log/archive/automation/agent data into SQLite
-- Creates `.bak` backups (for example `task.json.bak`, `config.json.bak`, `archive.jsonl.bak`)
+### Migration from legacy SQLite/file storage
+- Detection + migration: `packages/core/src/postgres/sqlite-migrator.ts` and startup-factory migration helpers
+- Imports legacy `fusion.db`, `archive.db`, and file records into PostgreSQL once
+- Legacy databases/backups remain recovery input and are never runtime write targets
 
 ### Archive system
-- Archived task snapshots are stored in SQLite `archivedTasks`
+- Archived task snapshots are stored in PostgreSQL cold-storage tables
 - `TaskStore` archive helpers:
   - `archiveTaskAndCleanup()`
   - `cleanupArchivedTasks()`
@@ -1295,7 +1292,7 @@ Tune sensitivity by adjusting the exported constants in `stalled-review-detector
 
 **Engine as substrate, workflows as policy.** The flag inverts the architecture: the engine becomes a **capability substrate** (worktree/git/session mechanics, persistence, crash recovery, audit, machine resource ceilings — non-configurable) and **workflows carry the operating logic** as composable column traits. The mechanism/policy line (KTD-4):
 
-- **Substrate (engine-owned, never workflow-configurable):** `AgentSemaphore`, checkout leases, worktree/git/session ops, SQLite + WAL, the crash-recovery machinery, the audit trail, the global max-sessions cap, and the three non-configurable lost-work merge guards (no sibling `fusion/fn-*` target, line-anchored attribution, no `modifiedFiles` clear on a no-op finalize).
+- **Substrate (engine-owned, never workflow-configurable):** `AgentSemaphore`, checkout leases, worktree/git/session ops, PostgreSQL transactions, the crash-recovery machinery, the audit trail, the global max-sessions cap, and the three non-configurable lost-work merge guards (no sibling `fusion/fn-*` target, line-anchored attribution, no `modifiedFiles` clear on a no-op finalize).
 - **Policy (workflow/trait-owned):** transition validity, WIP/capacity, hold/release, drag meaning, retries, merge strategy, squash posture, file-scope enforcement mode.
 
 **Transition authority.** `moveTaskInternal` remains the single transition authority. Flag-on, it swaps the `VALID_TRANSITIONS` lookup for workflow-resolved column-graph validation (`resolveAllowedColumns`/`workflowHasColumn` in `workflow-transitions.ts`) plus sync trait guards run in-lock; rejections are typed `TransitionRejection`s. `VALID_TRANSITIONS` and the closed `Column`/`COLUMNS` helpers in `types.ts` are `@deprecated` while the flag exists — retained as the flag-off authority and the parity oracle, not yet removed.
@@ -1317,6 +1314,7 @@ The columns/traits track moved *board* policy (transitions, capacity, hold, merg
 - A `parse-steps` node reads a workflow-declared **artifact** (PROMPT.md is just the default workflow's declared `step-source` artifact) and runs a registry **parser** (`step-headings`, `json-steps`, or a plugin-contributed parser) to write `Task.steps[]`. It is the only graph-side step-list writer and must dominate any `foreach`. Parsers fail closed to a routable `outcome:parse-error`.
 - A `foreach(source:"task-steps")` node instantiates an inline template subgraph once per planned step, with `mode` (sequential/parallel) and `isolation` (shared/worktree) as explicit axes and per-instance run-state pinned + persisted for crash-safe resume.
 - Resume-limbo graph failures are retried only through a narrow persisted counter (`Task.graphResumeRetryCount`, max 2). The executor classifies a failure as transient only when it happens immediately after the engine restart/unpause resume log marker, reports no graph `reason`, has no completed step progress, and the task has no durable `lastError`/`failureReason`; it clears transient `status`/`error`, logs the auto-retry, and schedules one more graph execution. Any explicit graph reason, completed step progress, durable task error, missing resume marker, or exhausted counter remains a genuine `status:"failed"` disposition and goes to review handoff, preserving the FN-5704 anti-loop contract.
+- FN-7996 uses the separate durable `Task.consecutiveToolFailureRetryCount` budget for same-model retries after threshold consecutive `tool_error` completions; it never consumes `graphResumeRetryCount`, and exhaustion falls through to the unchanged terminal graph-failure park.
 - Paused graph exits are benign only while the task is still in `in-progress`; that is the user-pause/engine-pause state where preserving the pause without requeueing is intentional. If the graph reports a pause/abort exit after the task has already advanced to another live column (for example `in-review` after an unpause/resume race), `TaskExecutor.handleGraphFailure()` surfaces the boundary as operator-actionable failure evidence (`status:"failed"`/`error` when no failure is already present, plus a task-log entry) and does **not** move, rewind, or auto-merge the task unless the graph result carries the typed interrupted-node marker. The exceptions are typed in-flight node pause aborts (FN-7214), completed/no-commit finalize-to-review teardown (FN-6625/FN-6644/FN-6647), and benign merge-seam pause/resume aborts (FN-6735). For FN-7214 node aborts, `hard-cancel` and lifted `global-pause` provenance can re-enter the interrupted node through the bounded `graphResumeRetryCount` path; explicit `userPaused`, active global pause, merge/finalize provenance, genuine node failures, `autoMerge:false` human-gated review rows, retry-exhausted tasks, and already-confirmed merges still use the protected operator-action path. For completed finalize handoff, once the persisted task row proves a completed finalize handoff (non-`in-progress`, all steps done/skipped, no live pause/status/error, and the finalize-to-review log entry), a trailing graph abort resolves as an already-advanced benign graph exit even if volatile completion markers were cleared by teardown/restart and later abort provenance was re-marked from `completion-finalize` to `hard-cancel`. For merge-seam aborts, `in-review` tasks with no persisted status/error and no confirmed merge may re-enter bounded auto-merge retry only when the failed graph node is a merge/request-merge seam, the graph value is not conflict/contamination/foreign/retry-exhaustion evidence, project settings allow auto-merge processing (or the task is a shared-branch local integration member), and the merge retry budget is not exhausted. `done` and `archived` remain terminal and keep their column/status, while existing failure details are preserved.
 - A `step-review` node surfaces reviewer verdicts (APPROVE/REVISE/RETHINK/UNAVAILABLE) as outcome edges; `rework` edges (the only legal graph cycles, bounded per instance) route REVISE/RETHINK back to `step-execute`, with RETHINK traversal triggering the reset seam.
 - A `code` node runs sandboxed TypeScript (esbuild + child process, clamped timeout, no store handle) for arbitrary computed routing/field logic — the same trust tier as project-local script steps.
@@ -1366,6 +1364,36 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
 
 ### Custom instructions
 `packages/engine/src/agent-instructions.ts` resolves per-agent instruction text/path with path-traversal and extension validation.
+
+### Planner overseer session advisor (OMP advisor parity)
+
+/*
+FNXC:PlannerOversight 2026-07-13-23:10 / 2026-07-14-12:00:
+Session-advisor layer shadows executor agent-log deltas with a second model,
+severity-routed notes, and an emission guard. **Off by default** via workflow
+setting `plannerOverseerAdvisorEnabled` (false). When enabled, also requires
+both `plannerOverseerAdvisorProvider` and `plannerOverseerAdvisorModelId`.
+Lifecycle supervisor (FN-7511–7520) remains authoritative for stage signals,
+retry, and merge confirmation and does not depend on the LLM advisor.
+*/
+
+When enabled and a model is configured, `OverseerAdvisorService` (engine) queues
+transcript deltas from `AgentLogger.onEntriesFlushed` and the planner-overseer
+poll's agent-log cursor, prompts an isolated advisor model, and — after
+`OverseerEmissionGuard` — injects `[session-advisor]` steering comments for
+levels `steer`/`autonomous` (observe logs only). The system prompt
+(`OVERSEER_ADVISOR_SYSTEM_PROMPT`) ports oh-my-pi advisor judgment policy
+(peer-programmer role, critical silence rules, nit/concern/blocker criteria)
+with Fusion anchors (PROMPT.md, File Scope, verification) and a JSON
+`note`/`severity` or `silence` reply contract. Human-control withhold still
+applies at inject time.
+
+**Watchdog / review-priority discovery** (`discoverOverseerWatchdogFiles` in
+`overseer-watchdog.ts`) loads every readable `OVERSEER.md` and `WATCHDOG.md`
+from: (1) the user agent dir when configured, (2) each directory from the task
+worktree/cwd upward to the repo root (or home), including both bare and
+`.fusion/` / `.omp/` nested variants. Multiple files concatenate; user-level
+first, then project ancestor→leaf so the leaf is most prominent.
 
 ### Planner overseer monitoring (records-only)
 
@@ -1698,6 +1726,10 @@ block right beside it: any engine error is swallowed and the un-enriched list is
 no active observation omit the field entirely (byte-identical payload). `Task.plannerOverseerState?` is a
 transient field — engine-populated at serialization time, never persisted to the store or task.json.
 
+When an in-flight task's effective planner oversight resolves to `"off"`,
+`ProjectEngine.pollPlannerOverseer` clears retained monitor observations and associated recovery/advisor
+runtime in that same poll. The snapshot therefore returns `null` rather than retaining a stale active state.
+
 FN-7516's `TaskCard` renders the badge/affordance; this task only provides the field, the engine
 accessor, and (since FN-7516 had not yet landed consumption) a minimal guarded read plus a
 memo-comparator entry so the card repaints on state change.
@@ -1868,7 +1900,7 @@ Task create/update now preserves both branch fields end-to-end:
 - **Durable persistence (core store layer):** `packages/core/src/store.ts`
   - `TaskStore.createTask()` persists both `branch` and `baseBranch` on task creation.
   - `TaskStore.updateTask()` preserves existing PATCH semantics where explicit `null` clears either field.
-  - Fields round-trip through JSON and SQLite persistence via the shared task contract in `packages/core/src/types.ts`.
+  - Fields round-trip through JSON and PostgreSQL persistence via the shared task contract in `packages/core/src/types.ts`.
 
 ### Routing activity visibility
 
@@ -1989,6 +2021,7 @@ The GitHub tracking state listener now attaches to every registered project stor
 - Each active task runs in isolated worktree under `.worktrees/*`
 - Executor creates branches like `fusion/{task-id}` (`executor.ts`)
 - `WorktreePool` can recycle idle worktrees when enabled
+- **Task-pinned worktrees (`worktreeNaming: "task-id"`)**: under task-id naming a task is pinned to exactly one derivable directory `<worktreesDir>/<lowercased-task-id>` for its entire lifecycle. `worktree-pinning.ts` (`isTaskPinnedWorktreeNaming`, `pinnedWorktreePathForTask`) derives the path purely from the task id (unique forever via committed reservations, so no dedup-suffixing is possible). `acquireTaskWorktree` runs a **derive → validate → reuse-or-recreate** flow in pinned mode: it re-derives the path, corrects a disagreeing `task.worktree` cache (emitting `worktree:pin-rederived`), then reuses the directory warm when it is a registered, usable worktree checked out on the task's own branch, otherwise reclaims it in place (`removeWorktree` + recreate at the SAME path — never a sibling name). Because the path is derived, the FN-7996 stale/foreign-pointer shape self-corrects at next dispatch without consuming worktree-session retries. Task pinning and `recycleWorktrees` are **mutually exclusive**: enabling both is rejected at the settings-write boundary (`assertWorktreeNamingRecycleExclusive`, enforced in `store.updateSettings` and the dashboard `PUT /settings` route), so pinning only applies when recycling is off. As a runtime backstop for legacy on-disk configs that carry both, `acquireTaskWorktree` gates pinned mode on `!recycleWorktrees` (recycling wins, pinning off). Worktrunk-managed layouts own their own path derivation, so pinning is bypassed when that backend is active. Non-pinned `"random"`/`"task-title"` naming and the pool acquire/release path (including `merger.ts` release) are byte-inert.
 
 #### WorktreeBackend abstraction
 - Backend contract: `WorktreeBackend` (`packages/engine/src/worktree-backend.ts`, re-exported via `packages/engine/src/worktree-pool.ts`).
@@ -2089,12 +2122,12 @@ The GitHub tracking state listener now attaches to every registered project stor
 
 ## 14) Key Design Decisions
 
-1. **SQLite + WAL for local-first reliability**
-   - Chosen for simple deployment and strong transactional behavior
-   - WAL mode enables concurrent readers/writers with low ops overhead
+1. **PostgreSQL for transactional authority**
+   - Embedded PostgreSQL preserves zero-config operation; `DATABASE_URL` supports external deployments
+   - Shared project/central schemas provide one async transactional model across runtimes
 
 2. **Hybrid persistence (DB + filesystem blobs)**
-   - Structured metadata in SQLite, large text/artifacts in task directories
+   - Structured metadata in PostgreSQL, large text/artifacts in task directories
    - Keeps DB efficient while preserving inspectable task artifacts
 
 3. **Git worktree isolation as core execution primitive**
@@ -2153,12 +2186,22 @@ UI contract boundary:
 
 Fusion derives a per-task `retrySummary` at read time by aggregating retry counters (stuck-kill, recovery, task_done, workflow-step, verification, post-review-fix, merge-conflict bounce, branch-conflict recovery, reviewer context retry, reviewer fallback retry). The engine emits a structured `retry-burned` log channel with `{ taskId, agentId, role, category, attempt, total, breakdown }` so token-cost telemetry can correlate retry burn with spend.
 
-Project settings expose per-category caps (`maxBranchConflictRecoveries`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`) plus a master cap (`maxTotalRetriesBeforeFail`). When a cap is exceeded, engine code throws `RetryStormError`; executor terminal failure handling serializes this into `task.error` so dashboard surfaces can render structured failure details.
+Project settings expose per-category caps (`maxBranchConflictRecoveries`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`) plus a master cap (`maxTotalRetriesBeforeFail`). When a cap is exceeded, engine code throws `RetryStormError`; executor and triage Plan Review terminal failure handling serialize this into `task.error` so dashboard surfaces can render structured failure details. Plan Review must terminalize this guard rather than re-queue `plan-review-unavailable`, which would otherwise continue burning the reviewer-fallback budget. Callers that hold the failure which burned the final retry pass it to `recordRetry({ cause })`; it surfaces as `underlyingError` in `serializeRetryStormError` so a cap never masks the real error (e.g. `429: overloaded_error`).
+
+### Plan Review provider failures must back off and pause (FN-8006)
+
+`reviewStep` throws `ReviewerProviderError` for usage-limit/transient provider failures so they never launder into an `UNAVAILABLE` verdict, but `runPlanReviewBeforeExecution` catches every throw inline to keep triage alive — which means provider failures still arrive at the `plan-review-unavailable` park. Two rules bound that park; both are load-bearing and neither is optional:
+
+1. **Usage limits pause every lane.** The inline catch hides the error from triage's own `isUsageLimitError` handler in `specifyTask`, so the Plan Review path fires `usageLimitPauser.onUsageLimitHit` itself. Without this, `reviewer.ts`'s escalation contract ("escalate so `UsageLimitPauser` pauses every lane") holds only on the executor path.
+2. **Every re-park uses bounded backoff.** Parks go through `computeRecoveryDecision` (60s → 120s → 240s, ±10% jitter) and terminalize at `MAX_RECOVERY_RETRIES`. The park previously used a fixed 30s `nextRecoveryAt` with no attempt counter, so a sustained outage re-ran Plan Review every 30s for hours (~1,900 requests/5h observed) — the volume that trips a provider's low-interactivity throttle and prolongs the outage being retried.
+
+Plan Review borrows the shared `recoveryRetryCount` transient-triage budget for this backoff and clears it on any real verdict (APPROVE/REVISE/RETHINK); a stale count would otherwise shorten the executor's later transient budget for a task whose only fault was surviving a reviewer outage.
 
 ## Lifecycle invariants
 
 This section preserves the detailed lifecycle/self-healing contracts that were formerly in `AGENTS.md`.
 
+- **Planning-recovery no-regression (FN-7977)**: a provider, model-selection, transport, or deterministic planning failure may only mutate a task after re-reading its live row and proving it remains in the planning stage. Execution/terminal columns, a worktree, or materialized steps prove advancement; stale triage recovery must leave that column, status, worktree, and step progress untouched. A genuine Plan Review `REVISE` remains a separate, explicit replan signal.
 - **Orphan `fusion/*` branches**: branches with zero unique commits vs `main` are pruned by `cleanupOrphanedBranches` (`branch:orphan-prune`). Branches with unique commits are not auto-rescued; operators inspect and clean them manually via standard git tooling (`git branch -D`, `git worktree remove`, etc.).
 - **Stale active branches**: self-healing's `reclaim-stale-active-branches` stage prunes a `fusion/<task-id>` branch with zero unique commits when no usable worktree mapping exists, then clears `task.branch`/`task.worktree`/`task.baseCommitSha`. It must defer reclaim (emit `branch:stale-active-reclaim-deferred`) when the task worktree is in `activeSessionRegistry`, when `executionStartedAt` is within `STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS` (10 minutes), or when the mapped worktree has uncommitted changes.
 - **Worktree metadata reconcile ordering (FN-4962)**: `reconcile-task-worktree-metadata` must run before `reclaim-stale-active-branches`; stale `task.worktree` metadata is rebound to live `fusion/<task-id>` worktrees when present (`task:auto-recover-worktree-metadata-rebound`) or cleared (`task:auto-recover-worktree-metadata-cleared`) when absent.
@@ -2178,6 +2221,7 @@ This section preserves the detailed lifecycle/self-healing contracts that were f
 - **Merge-seam abort provenance (FN-6568/FN-6735/FN-7749)**: workflow graph merge-node failures must not be classified as pause/resume aborts merely because the merge seam hard-canceled an in-flight session. `TaskExecutor` tracks paused-abort provenance separately (`global-pause`, `merge-seam`, `hard-cancel`); genuine user/global pauses still preserve FN-6478/FN-5147 parking, while non-paused merge-seam graph failures (`merge`, `requestMerge`, built-in merge-region node ids, `merge-manual-hold`, and `merge-retry`) route back into the bounded auto-merge retry path instead of being parked `status:"failed"` with `mergeRetries=NULL`. Benign pause/resume aborts at these seams are retryable when the task is already `in-review`, has no durable failure/status, has not confirmed a merge, remains auto-merge eligible (or is a shared-branch local integration), and has merge retries remaining. When auto-merge is off (`settings.autoMerge:false` or an explicit task-level `autoMerge:false`), a benign hard-cancel at a non-terminal merge-region/manual-hold node is instead preserved cleanly in `in-review` for human Merge & Close; stale pause-abort status/error of this exact shape is cleared in place and never requeued. Conflict/contamination/foreign-work/retry-exhaustion values, pre-existing failures, global/user pauses, shared-branch member integrations, and post-confirmation partial landings retain their existing terminal/retry/finalize behavior.
 - **Worktree pool exclusivity (FN-4954)**: `WorktreePool.acquire(taskId)` / `release(path, taskId?)` track a `leased` map so every pooled path is either idle or leased, never both. Cross-task double-lease detection throws `PoolDoubleLeaseError` and emits `worktree:pool-double-lease-detected`; merger Step 8 now detaches HEAD and clears `task.worktree` / `task.branch` before releasing paths back to the pool.
 - **Stale registration recovery (FN-5056)**: `NativeWorktreeBackend.create` and `executor.tryCreateWorktree` detect `missing but already registered worktree` failures, run `git worktree prune` (plus `remove --force` / `add -f` fallbacks) before retrying, and emit `worktree:stale-registration-{detected,recovered,recovery-failed}` audit events.
+- **Bare branch-collision recovery (FN-8132)**: after stale lock/registration recovery, `NativeWorktreeBackend.create` classifies a `git worktree add -b` “branch already exists” error even when its requested target path is absent. It attaches an unregistered branch only when every unique commit is attributed to the requesting task, recreates merged/subsumed or no-unique-work branches from the caller-pinned start point, and refuses foreign, unattributed, or mixed unique history without moving its ref. A live foreign worktree remains a `BranchConflictError`; recovery dispositions emit `worktree:branch-collision-recovery`.
 - **Raw worktree deletion must be paired with prune (FN-5058)**: any direct filesystem deletion of a worktree directory (`rm -rf` / `rmSync`) must be followed by best-effort `git worktree prune` via `pruneWorktreeAdminEntries` so `.git/worktrees/*` admin entries are not stranded in a missing-but-registered state (FN-5056 class).
 - **Meta-task auto-archive safety guards (FN-5064)**: `auto-archive-meta-resolved`/`auto-archive-meta-stalled` must skip archival (with `task:auto-archive-meta-*-skipped` audits) whenever guard checks detect substantive work signals such as unique branch commits, recent executor activity, pending `taskDoneRetryCount`, merge-in-progress state, or active worktree session. The corresponding `task:auto-archive-meta-resolved-skipped` and `task:auto-archive-meta-stalled-skipped` run-audit rows are transition-only per task+guard-reason signature: emit once on first skip, suppress repeated sweeps while the same reasons persist, clear when the skip no longer applies, and re-emit if a different reason later blocks archival.
 - **Scheduler fanout tiebreaker (FN-4969)**: within the same priority class, scheduler dispatch prefers runnable `todo` tasks with the highest active dependency-dependent fanout; `urgent` always outranks lower priorities regardless of fanout, and `overlapBlockedBy`/file-scope overlap blockers are excluded from unblock weight.
@@ -2200,6 +2244,7 @@ This section preserves the detailed lifecycle/self-healing contracts that were f
 - **Soft-delete in-flight abort (FN-5142)**: `task:deleted` must immediately abort/dispose active executor work (`activeSessions`, `activeStepExecutors`, `activeWorkflowStepSessions`, reviewer subagents), interrupt active merge state (`mergeAbortController`, `activeMergeSession`, `activeMergeTaskId`, `mergeActive`, `mergeQueue`, `pausedReviewTaskIds`), and abort triage specify/subagent sessions for that id. Handlers are per-task and idempotent.
 - **Archive releases active-session locks (FN-7717)**: `task:moved` with `to === "archived"` (from ANY column, including in-progress via a direct single-hop `fn_task_archive`, and triage/planning where Plan Review and other workflow-step sessions run) now disposes in-flight session surfaces via `awaitAbortInFlightTaskWork` and sweeps any remaining `activeSessionRegistry` paths for the task, so a leaked lock can never survive archive and block a successor task's `registerPath` on the same session path. The `to === "archived"` check is ordered BEFORE the `from === "in-progress"` branch so a direct in-progress→archived move gets the same full cleanup instead of falling into the narrower in-progress-only branch. `to === "done"`/`"in-review"` are deliberately excluded — those columns legitimately hold `ai-merge`/`workspace-repo-land` merge leases.
 - **Soft-delete audit + column reconcile (FN-5175)**: `TaskStore.deleteTask` records a `runAuditEvents` row (`mutationType: "task:deleted"`, `domain: "database"`) inside the same transaction that sets `deletedAt`, and sets `"column" = 'archived'` on the row. Callers without a heartbeat run context (`fn task delete`, pi extension, dashboard delete route) pass an `auditContext` with `agentId: "system"` and a synthetic `runId`. The watcher cross-instance emit path does NOT re-record the audit event. The row stays in `tasks` (not `archivedTasks`); `archiveTask` is unchanged.
+- **Soft-delete fast path cleanup (FN-7968)**: user-visible `TaskStore.deleteTask` completion is bounded by the soft-delete transaction, audit row, cache/event emission, dependency/lineage gates, and near-duplicate cleanup. Potentially slow branch cleanup (`cleanupBranchForTask` git subprocesses) is scheduled after the row is already soft-deleted; it must still clear stale execution-start branch references and persist the cleaned-branch log entry on the deleted row. Dashboard `DELETE /tasks/:id` likewise responds after `deleteTask` and schedules execution-agent binding release off the HTTP critical path; the release remains observable through warning logs on failure.
 - **Soft-delete resurrection guard (FN-5208)**: `TaskStore.readTaskJson()` must never fall back to `.fusion/tasks/<id>/task.json` when the DB row exists with `deletedAt` set — it throws `TaskDeletedError`. `atomicCreateTaskJson` / `atomicWriteTaskJson` / `atomicWriteTaskJsonWithAudit` refuse to upsert a task whose row is currently soft-deleted (unless the in-memory task carries `deletedAt` itself, for soft-delete maintenance paths), emit a `[soft-delete-resurrection-blocked]` log line, and record a `task:resurrection-blocked` run-audit event. Stale in-flight planner/triage writes for a soft-deleted ID surface `TaskDeletedError` and abort cleanly without emitting `task:created`.
 - **Exhausted in-review visibility surfaces (FN-5513/FN-6569)**: retry-exhausted merge failures (`column='in-review'`, `status='failed'`, `mergeRetries >= maxAutoMergeRetries`, default `3`) can remain soft-deleted for lifecycle safety, but are now intentionally discoverable through opt-in read paths: `TaskStore.listExhaustedInReviewTasks({ includeDeleted })`, `GET /api/tasks/exhausted-in-review`, `GET /api/tasks/:id?includeDeleted=true`, CLI `fn_task_show` soft-delete fallback marker, CLI `fn_task_list({ includeDeleted: true })`, and the dashboard ReliabilityView "Exhausted in-review (hidden blockers)" panel. This complements FN-5488/FN-5496 downstream blocker healing by surfacing the upstream blocker without mutating lifecycle state.
 - **Soft-delete stream verification gate (FN-5153)**: `docs/soft-delete-verification-matrix.md` is the authoritative checklist for the FN-5105 → FN-5143 soft-delete stream. Every scenario × layer cell must be GREEN (or have a linked follow-up FN) before the stream is closed; `packages/engine/src/__tests__/reliability-interactions/soft-delete-end-to-end.test.ts` is the cross-layer regression backstop.
@@ -2239,3 +2284,7 @@ Reliability-layer changes are in scope. Interaction regression backstops live in
 - FN-5223 backstop: `packages/engine/src/__tests__/reliability-interactions/engine-active-since-floor.test.ts` covers engine-activation floor + grace composition across startup, pause/unpause, global-pause gating, and StuckTaskDetector lifecycle interactions.
 
 The auto-recovery dispatcher at `packages/engine/src/auto-recovery.ts` (FN-4533) composes on top of existing layers (FN-4500 fast-path, FN-4508 deterministic branch-conflict, FN-4499 bootstrap-misbinding, FN-4428 contamination, `mergeAuditAutoRecovery` Stages 1–5, self-healing) to handle six residual classes: file-scope violation at squash, branch misbinding / ghost worktree, verification-fix scope leak, contamination, `branch-conflict-unrecoverable` residuals, and room-post/message-send failures. Invocation is additive — no existing layer's behavior changes.
+
+### Concurrent soft-delete heartbeat races (FN-8004)
+
+A heartbeat `moveTask` failure with the typed `TaskDeletedError` soft-delete message is a benign board miss: the durable agent stays active, clears `lastError` and heartbeat recovery metadata, and emits `agent:heartbeat-move-skipped-soft-delete`. Its audit metadata is structured only: `agentId`, `taskId`, `deletedAt`, `moveAttemptedAt`, and `source`.

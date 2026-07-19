@@ -833,6 +833,55 @@ describe("ChatManager.sendMessage", () => {
     );
   });
 
+  it("passes action and permanent-agent gates to bound Mission chat sessions", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+    const taskStore = {
+      getSettings: vi.fn().mockResolvedValue({
+        defaultAgentPermissionPolicy: { rules: { task_agent_mutation: "block" } },
+      }),
+      getAsyncLayer: vi.fn(() => ({})),
+      getFusionDir: () => "/tmp/test/.fusion",
+    };
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      undefined,
+      undefined,
+      taskStore as any,
+    );
+    await chatManager.sendMessage("chat-001", "Create a mission");
+
+    /*
+    FNXC:ChatMissionGatingTests 2026-07-29-15:30:
+    Mission mutations in a bound chat session are safe only when both wrappers
+    receive the bound agent policy. The engine gating suites assert block and
+    approval execution; this dashboard seam asserts chat cannot omit either context.
+    */
+    expect(createOptions.actionGateContext).toMatchObject({
+      agentId: "agent-001",
+      permissionPolicy: { rules: { task_agent_mutation: "block" } },
+    });
+    expect(createOptions.permanentAgentGating).toMatchObject({
+      requester: { actorId: "agent-001" },
+      permissionPolicy: { rules: { task_agent_mutation: "block" } },
+    });
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_mission_create");
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_ideation_converge");
+  });
+
   it("exposes fn_task_document_* tools to the chat agent when a task store is present", async () => {
     let capturedTools: Array<{ name: string; execute?: (...args: any[]) => Promise<any> }> = [];
     __setCreateFnAgent(async (options: any) => {
@@ -847,6 +896,7 @@ describe("ChatManager.sendMessage", () => {
     });
 
     const taskStore = {
+      getSettings: vi.fn().mockResolvedValue({}),
       upsertTaskDocument: vi.fn().mockResolvedValue({
         id: "doc-1",
         taskId: "FN-6635",
@@ -873,6 +923,31 @@ describe("ChatManager.sendMessage", () => {
     const names = capturedTools.map((tool) => tool.name);
     expect(names).toContain("fn_task_document_write");
     expect(names).toContain("fn_task_document_read");
+    for (const required of [
+      "fn_task_list",
+      "fn_task_show",
+      "fn_task_search",
+      "fn_task_create",
+      "fn_delegate_task",
+      "fn_task_assign",
+      "fn_list_agents",
+      "fn_get_agent_config",
+      "fn_web_fetch",
+      "fn_goal_list",
+      "fn_goal_show",
+      "fn_memory_search",
+      "fn_memory_get",
+      "fn_research_run",
+      "fn_research_list",
+      "fn_research_get",
+    ]) {
+      expect(names).toContain(required);
+    }
+    expect(names).not.toContain("fn_agent_create");
+    expect(names).not.toContain("fn_agent_delete");
+    expect(names).not.toContain("fn_agent_update");
+    expect(names).not.toContain("fn_memory_append");
+    expect(new Set(names).size).toBe(names.length);
 
     const writeTool = capturedTools.find((tool) => tool.name === "fn_task_document_write");
     const writeResult = await writeTool?.execute?.("call-doc-write", {
@@ -3609,7 +3684,33 @@ describe("ChatManager generation isolation", () => {
     const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
     await chatManager.sendRoomMessage("room-1", "How many tokens did FN-7310 use?");
 
-    expect(capturedTools.map((tool) => tool.name)).not.toContain("fn_task_planner_get_task_metrics");
+    const names = capturedTools.map((tool) => tool.name);
+    expect(names).not.toContain("fn_task_planner_get_task_metrics");
+    for (const required of [
+      "fn_task_list",
+      "fn_task_show",
+      "fn_task_search",
+      "fn_task_create",
+      "fn_delegate_task",
+      "fn_task_assign",
+      "fn_list_agents",
+      "fn_get_agent_config",
+      "fn_web_fetch",
+      "fn_goal_list",
+      "fn_goal_show",
+      "fn_memory_search",
+      "fn_memory_get",
+      "fn_research_run",
+      "fn_research_list",
+      "fn_research_get",
+    ]) {
+      expect(names).toContain(required);
+    }
+    expect(names).not.toContain("fn_agent_create");
+    expect(names).not.toContain("fn_agent_delete");
+    expect(names).not.toContain("fn_agent_update");
+    expect(names).not.toContain("fn_memory_append");
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("sendRoomMessage persists assistant room replies", async () => {

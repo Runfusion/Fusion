@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "./src",
+    "jsx": "react-jsx",
+    "types": ["react", "node"],
+    "paths": {
+      "@fusion/dashboard/app/components/ViewHeader": ["./src/dashboard-interop.d.ts"],
+      "@fusion/dashboard/app/api/task-content": ["./src/dashboard-interop.d.ts"],
+      "@fusion/dashboard/app/plugins/types": ["./src/dashboard-interop.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
+  "exclude": ["src/**/__tests__/**"]
+}

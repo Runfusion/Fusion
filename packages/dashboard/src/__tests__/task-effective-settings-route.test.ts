@@ -12,7 +12,17 @@ class MockStore extends EventEmitter {
 
   getRootDir(): string { return "/repo"; }
   getFusionDir(): string { return "/repo/.fusion"; }
-  getDatabase() { return { exec: vi.fn(), prepare: vi.fn().mockReturnValue({ run: vi.fn().mockReturnValue({ changes: 0 }), all: vi.fn().mockReturnValue([]), get: vi.fn() }) }; }
+  // FNXC:PostgresCutover 2026-07-16-06:55: server setup probes the async
+  // layer, so this route double exposes the production-shaped backend seam.
+  getAsyncLayer = vi.fn(() => ({
+    db: {
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({ returning: vi.fn(async () => []) })),
+        })),
+      })),
+    },
+  }));
   getSettings = vi.fn(async () => this.getSettingsFast());
   getSettingsFast = vi.fn(async (): Promise<Settings> => ({
     defaultProvider: "base-default-provider",

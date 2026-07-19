@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { TaskStore } from "@fusion/core";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+} from "./pg-extension-harness.js";
 
 const gitlabIssues = vi.hoisted(() => ({
   project: [{ resourceKind: "project_issue", id: 1, iid: 2, projectId: 3, projectPath: "g/p", title: "Project issue", description: "Body", webUrl: "https://gitlab.example.com/g/p/-/issues/2", state: "opened", labels: [] }],
@@ -35,7 +36,9 @@ vi.mock("@fusion/dashboard", () => {
 });
 
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   createFnAgent: vi.fn(),
+  createAgentTask: vi.fn(),
   fetchWebContent: vi.fn(),
   assertNoSecretPlaintext: vi.fn(),
   emitGoalRetrievalAudit: vi.fn(),
@@ -59,6 +62,8 @@ vi.mock("@fusion/engine", () => ({
   workflowValidateParams: {},
   workflowSettingsParams: {},
   traitListParams: {},
+  normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
+  renderAgentLogEntries: vi.fn(() => ""),
   workflowListParams: {},
   workflowGetParams: {},
   workflowValidateParams: {}, // FNXC:Round10 FN-7911 added this export to @fusion/engine barrel
@@ -75,86 +80,82 @@ async function loadExtension() {
   return mod.default;
 }
 
-async function setupTools() {
-  const repoRoot = await mkdtemp(join(tmpdir(), "fn-7428-extension-gitlab-"));
-  const cwd = join(repoRoot, ".worktrees", "feature");
-  await mkdir(join(repoRoot, ".fusion"), { recursive: true });
-  const taskStore = new TaskStore(repoRoot, undefined, { inMemoryDb: false });
-  await taskStore.init();
-  await taskStore.updateSettings({ gitlabAuthToken: "glpat_test", gitlabInstanceUrl: "https://gitlab.example.com" });
-  taskStore.close();
+const h = createPgExtensionHarness("fn-8094-gitlab");
 
+async function setupTools() {
+  await h.store().updateSettings({ gitlabAuthToken: "glpat_test", gitlabInstanceUrl: "https://gitlab.example.com" });
   const extension = await loadExtension();
-  const tools = new Map<string, any>();
-  extension({ registerTool: (def: any) => tools.set(def.name, def), registerCommand: vi.fn(), registerShortcut: vi.fn(), registerFlag: vi.fn(), on: vi.fn() } as any);
-  return { repoRoot, cwd, tools };
+  const api = createMockApi();
+  extension({
+    ...api,
+    registerShortcut: vi.fn(),
+    registerFlag: vi.fn(),
+  } as any);
+  return { cwd: h.rootDir(), tools: api.tools };
 }
 
 /*
+FNXC:PostgresCutover 2026-07-16-05:40:
+This GitLab extension suite runs on the shared PostgreSQL harness instead of the
+removed inMemoryDb runtime. Its preserved tracking assertions require FN-8094
+rowToTask hydration so imported GitLab provenance survives ordinary store reads.
+
 FNXC:GitLabExtension 2026-07-02-00:00:
 GitLab extension tools are HTTP API tools backed by configured GitLab token settings. They must expose project/group/MR schemas, create local GitLab source/tracking metadata, and never depend on a `glab` binary or real network.
 */
-describe("extension GitLab import tools", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  afterEach(() => vi.restoreAllMocks());
+pgDescribe("extension GitLab import tools", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    vi.clearAllMocks();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await h.afterEach();
+  });
+  afterAll(h.afterAll);
 
   it("registers browse/import tools for project issues, group issues, and merge requests", async () => {
-    const { repoRoot, tools } = await setupTools();
-    try {
-      for (const name of [
-        "fn_task_browse_gitlab_project_issues",
-        "fn_task_import_gitlab_project_issues",
-        "fn_task_browse_gitlab_group_issues",
-        "fn_task_import_gitlab_group_issues",
-        "fn_task_browse_gitlab_merge_requests",
-        "fn_task_import_gitlab_merge_requests",
-      ]) {
-        expect(tools.get(name), name).toBeTruthy();
-        expect(JSON.stringify(tools.get(name).parameters)).toContain(name.includes("group") ? "group" : "project");
-        expect(tools.get(name).description).toMatch(/GitLab/);
-      }
-    } finally {
-      await rm(repoRoot, { recursive: true, force: true });
+    const { tools } = await setupTools();
+    for (const name of [
+      "fn_task_browse_gitlab_project_issues",
+      "fn_task_import_gitlab_project_issues",
+      "fn_task_browse_gitlab_group_issues",
+      "fn_task_import_gitlab_group_issues",
+      "fn_task_browse_gitlab_merge_requests",
+      "fn_task_import_gitlab_merge_requests",
+    ]) {
+      expect(tools.get(name), name).toBeTruthy();
+      expect(JSON.stringify(tools.get(name).parameters)).toContain(name.includes("group") ? "group" : "project");
+      expect(tools.get(name).description).toMatch(/GitLab/);
     }
   });
 
   it("imports GitLab project, group, and MR resources with source and tracking metadata", async () => {
-    const { repoRoot, cwd, tools } = await setupTools();
-    try {
-      const project = await tools.get("fn_task_import_gitlab_project_issues").execute("p", { project: "g/p", limit: 1 }, undefined, undefined, { cwd });
-      const group = await tools.get("fn_task_import_gitlab_group_issues").execute("g", { group: "g", limit: 1 }, undefined, undefined, { cwd });
-      const mr = await tools.get("fn_task_import_gitlab_merge_requests").execute("m", { project: "g/p", limit: 1 }, undefined, undefined, { cwd });
+    const { cwd, tools } = await setupTools();
+    const project = await tools.get("fn_task_import_gitlab_project_issues").execute("p", { project: "g/p", limit: 1 }, undefined, undefined, { cwd });
+    const group = await tools.get("fn_task_import_gitlab_group_issues").execute("g", { group: "g", limit: 1 }, undefined, undefined, { cwd });
+    const mr = await tools.get("fn_task_import_gitlab_merge_requests").execute("m", { project: "g/p", limit: 1 }, undefined, undefined, { cwd });
 
-      expect(project.content[0].text).toContain("Imported 1 GitLab project issue tasks");
-      expect(group.content[0].text).toContain("Imported 1 GitLab group issue tasks");
-      expect(mr.content[0].text).toContain("Imported 1 GitLab merge request tasks");
+    expect(project.content[0].text).toContain("Imported 1 GitLab project issue tasks");
+    expect(group.content[0].text).toContain("Imported 1 GitLab group issue tasks");
+    expect(mr.content[0].text).toContain("Imported 1 GitLab merge request tasks");
 
-      const taskStore = new TaskStore(repoRoot, undefined, { inMemoryDb: false });
-      await taskStore.init();
-      const tasks = await taskStore.listTasks({ slim: false });
-      expect(tasks.map((task) => task.sourceIssue?.provider)).toEqual(["gitlab", "gitlab", "gitlab"]);
-      expect(tasks.map((task) => task.gitlabTracking?.item?.kind)).toEqual(["project_issue", "group_issue", "merge_request"]);
-      expect(tasks.find((task) => task.gitlabTracking?.item?.kind === "group_issue")?.gitlabTracking?.item?.groupPath).toBe("g");
-      expect(tasks.find((task) => task.gitlabTracking?.item?.kind === "merge_request")?.title).toMatch(/^Review MR !9:/);
-      taskStore.close();
-    } finally {
-      await rm(repoRoot, { recursive: true, force: true });
-    }
+    const tasks = await h.store().listTasks({ slim: false });
+    expect(tasks.map((task) => task.sourceIssue?.provider)).toEqual(["gitlab", "gitlab", "gitlab"]);
+    expect(tasks.map((task) => task.gitlabTracking?.item?.kind)).toEqual(["project_issue", "group_issue", "merge_request"]);
+    expect(tasks.find((task) => task.gitlabTracking?.item?.kind === "group_issue")?.gitlabTracking?.item?.groupPath).toBe("g");
+    expect(tasks.find((task) => task.gitlabTracking?.item?.kind === "merge_request")?.title).toMatch(/^Review MR !9:/);
   });
 
   it("returns human-readable auth errors without leaking token-like input", async () => {
-    const { repoRoot, cwd, tools } = await setupTools();
-    try {
-      const taskStore = new TaskStore(repoRoot, undefined, { inMemoryDb: false });
-      await taskStore.init();
-      await taskStore.updateSettings({ gitlabAuthToken: null as any });
-      taskStore.close();
+    const { cwd, tools } = await setupTools();
+    await h.store().updateSettings({ gitlabAuthToken: null as any });
 
-      await expect(tools.get("fn_task_browse_gitlab_project_issues").execute("p", { project: "g/p" }, undefined, undefined, { cwd }))
-        .rejects.toThrow("GitLab auth requires a configured access token");
-    } finally {
-      await rm(repoRoot, { recursive: true, force: true });
-    }
+    await expect(tools.get("fn_task_browse_gitlab_project_issues").execute("p", { project: "g/p" }, undefined, undefined, { cwd }))
+      .resolves.toMatchObject({
+        isError: true,
+        details: { error: "GitLab auth requires a configured access token" },
+      });
   });
 });

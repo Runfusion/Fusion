@@ -1,29 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore, CheckoutConflictError, TaskStore } from "@fusion/core";
+import { pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { hasPg, makePgAgentStore, makePgTaskStore } from "./reliability-interactions/_helpers.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-distributed-claim-test-"));
-}
+const pgIt = hasPg ? pgDescribe : describe.skip;
 
-describe("distributed claim mutex integration", () => {
-  let rootDir: string;
+pgIt("distributed claim mutex integration", () => {
   let taskStore: TaskStore;
   let agentStore: AgentStore;
+  let cleanup: (() => Promise<void>) | undefined;
   let winnerAgentId = "";
-  let globalDir = "";
   let loserAgentId = "";
   let taskId = "";
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    taskStore = new TaskStore(rootDir, globalDir);
-    await taskStore.init();
-    agentStore = new AgentStore({ rootDir, taskStore });
+    const fixture = await makePgTaskStore();
+    taskStore = fixture.store;
+    cleanup = fixture.cleanup;
+    agentStore = makePgAgentStore({ taskStore, layer: fixture.layer });
     await agentStore.init();
 
     winnerAgentId = (await agentStore.createAgent({ name: "winner", role: "executor" })).id;
@@ -33,8 +27,7 @@ describe("distributed claim mutex integration", () => {
 
   afterEach(async () => {
     agentStore?.close();
-    taskStore?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await cleanup?.();
   });
 
   it("allows exactly one concurrent claimant and supports retry after release", async () => {

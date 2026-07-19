@@ -59,8 +59,63 @@ describe("desktop release workflow wiring", () => {
     }
     expect(manualWindows).toContain("Smoke embedded Postgres on Windows");
     expect(manualWindows).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+    // FNXC:WindowsDesktopPackaging 2026-07-15-10:45:
+    // windows-latest jobs are elevated; postgres refuses an admin token. CI must
+    // run the smoke as a non-admin helper (fusion-pg) so the process token is
+    // medium integrity and the normal embedded-postgres path works.
+    expect(manualWindows).toContain("fusion-pg");
+    expect(manualWindows).toContain("Start-Process");
+    expect(manualWindows).toContain("Prewarm embedded-PG helper user profile");
+    // FNXC:WindowsDesktopPackaging 2026-07-15-11:45:
+    // GitHub-hosted runners provide GITHUB_WORKSPACE; never couple the helper
+    // user's ACLs or batch working directory to Fusion's current path on D:.
+    expect(manualWindows).toContain("icacls $env:GITHUB_WORKSPACE");
+    expect(manualWindows).toContain('"cd /d $env:GITHUB_WORKSPACE"');
+    expect(manualWindows).not.toContain("D:\\a\\Fusion\\Fusion");
     expect(advisoryPackaging).toContain("Smoke embedded Postgres lifecycle");
     expect(advisoryPackaging).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+  });
+
+  it("inspects Linux AppImage unpacked trees for embedded Postgres packaging", async () => {
+    /*
+     * FNXC:DesktopEmbeddedPostgres 2026-07-15-00:20:
+     * v0.60.0 AppImages existed but omitted embedded-postgres, main-bootstrap, and
+     * omp-runtime. Release + test-release must run the packaging content verifier
+     * after electron-builder produces linux-*-unpacked dirs.
+     */
+    const release = await readRepoFile(".github/workflows/release.yml");
+    const testRelease = await readRepoFile(".github/workflows/test-release.yml");
+    const verifier = await readRepoFile("scripts/verify-desktop-linux-pg-packaging.mjs");
+
+    expect(verifier).toContain("main-bootstrap.cjs");
+    expect(verifier).toContain("embedded-postgres");
+    expect(verifier).toContain("omp-runtime");
+    expect(verifier).toContain("@embedded-postgres");
+    // FNXC:DesktopEmbeddedPostgres 2026-07-15-00:30: Greptile P1 locks —
+    // soname links (pg-symlinks) and runnable omp dist entrypoints, not just
+    // binary names / package-name substrings.
+    expect(verifier).toContain("pg-symlinks.json");
+    expect(verifier).toContain("assertPlatformSonameLinks");
+    expect(verifier).toContain("omp-runtime/dist/index.js");
+    expect(verifier).toContain("omp-runtime/dist/probe.js");
+    // FNXC:DesktopEmbeddedPostgres 2026-07-15-13:20: The x64 unpacked tree can
+    // carry optional arm64 packages too; retain validation of x64 binaries and
+    // SONAME links without treating that multi-arch closure as a packaging error.
+    expect(verifier).toContain("platforms.includes(expectedPlatform)");
+    expect(verifier).toContain("expectedPlatform, \"native\", \"bin\"");
+    expect(verifier).not.toContain("found ${platform}; expected ${expectedPlatform}");
+
+    const advisoryPackaging = await readRepoFile(".github/workflows/desktop-packaging.yml");
+    for (const workflow of [release, testRelease, advisoryPackaging]) {
+      expect(workflow).toContain("Verify Linux AppImage embedded Postgres packaging");
+      expect(workflow).toContain("node scripts/verify-desktop-linux-pg-packaging.mjs");
+      // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:55:
+      // This verifier reads electron-builder's unpacked tree, so invoking it
+      // before the Linux packaging command would only validate stale output.
+      expect(workflow.indexOf("node scripts/verify-desktop-linux-pg-packaging.mjs")).toBeGreaterThan(
+        workflow.indexOf("Package Linux desktop artifacts"),
+      );
+    }
   });
 
   it("wires release aggregation to include desktop assets across platforms", async () => {
@@ -69,7 +124,13 @@ describe("desktop release workflow wiring", () => {
     expect(release).toContain(
       "needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux, build-android]",
     );
-    expect(release).toContain('find artifacts -type f \\(');
+    /*
+    FNXC:DesktopTests 2026-07-18-04:35:
+    Collect now prunes nested runtime/migrations trees before matching desktop
+    artifact globs, and copies into release-files/ for softprops/action-gh-release.
+    */
+    expect(release).toContain('find artifacts \\( -path "*/runtime/*" -o -path "*/migrations/*" \\) -prune -o -type f \\(');
+    expect(release).toContain('mkdir release-files');
     expect(release).toContain('-name "*.exe"');
     expect(release).toContain('-name "*.exe.sha256"');
     expect(release).toContain('-name "*.blockmap"');
@@ -79,6 +140,7 @@ describe("desktop release workflow wiring", () => {
     expect(release).toContain('-name "*.deb"');
     expect(release).toContain('-name "*.tar.gz"');
     expect(release).toContain('-name "latest*.yml"');
+    expect(release).toContain("files: release-files/*");
   });
 
   it("wires test-release collect job to wait for all desktop build jobs", async () => {

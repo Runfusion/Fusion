@@ -41,7 +41,9 @@ const createHarness = (taskState: any, events: RunAuditEvent[]) => {
       }
       return taskState;
     }),
-    getRunAuditEvents: vi.fn((options: Record<string, unknown> = {}) => {
+    // FNXC:PostgresCutover 2026-07-16-06:30: runtime fallback status reads
+    // audit events asynchronously from the PostgreSQL-backed task store.
+    getRunAuditEventsAsync: vi.fn(async (options: Record<string, unknown> = {}) => {
       let filtered = events;
       if (options.taskId) {
         filtered = filtered.filter((e) => e.taskId === options.taskId);

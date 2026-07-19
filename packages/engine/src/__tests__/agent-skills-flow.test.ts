@@ -6,12 +6,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPiLog } = vi.hoisted(() => ({
+/*
+FNXC:EngineTests 2026-07-18-06:40:
+Hoist mock filesystem state for vi.mock factories. Module import of schema-applier
+can call existsSync before const mockFiles initializes (TDZ), same class as skill-resolver.
+*/
+const { mockPiLog, mockFiles, mockDirCounter } = vi.hoisted(() => ({
   mockPiLog: {
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
+  mockFiles: new Map<string, string>(),
+  mockDirCounter: { value: 0 },
 }));
 
 vi.mock("../logger.js", () => ({
@@ -24,17 +31,13 @@ import type { Agent, AgentStore } from "@fusion/core";
 
 // ── Mock Setup ───────────────────────────────────────────────────────────────
 
-// In-memory file system for tests - using a module-scoped Map
-const mockFiles = new Map<string, string>();
-let mockDirCounter = 0;
-
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
   return {
     ...actual,
     existsSync: (path: unknown) => mockFiles.has(String(path)),
     readFileSync: (path: unknown) => mockFiles.get(String(path)) ?? "{}",
-    mkdtempSync: () => `/tmp/agent-skills-flow-mock-${++mockDirCounter}`,
+    mkdtempSync: () => `/tmp/agent-skills-flow-mock-${++mockDirCounter.value}`,
     writeFileSync: (path: unknown, content: unknown) => mockFiles.set(String(path), String(content)),
     rmSync: (path: unknown) => {
       const pathStr = String(path);
@@ -48,7 +51,7 @@ vi.mock("node:fs", async () => {
 // ── Test Helpers ─────────────────────────────────────────────────────────────
 
 function createMockProjectDir(settings: Record<string, unknown> | null): string {
-  const dir = `/tmp/agent-skills-flow-mock-${++mockDirCounter}`;
+  const dir = `/tmp/agent-skills-flow-mock-${++mockDirCounter.value}`;
   if (settings !== null) {
     mockFiles.set(`${dir}/.fusion/settings.json`, JSON.stringify(settings));
   }
@@ -60,7 +63,7 @@ function createMockProjectDir(settings: Record<string, unknown> | null): string 
 describe("agent skills flow - full integration", () => {
   beforeEach(() => {
     mockFiles.clear();
-    mockDirCounter = 0;
+    mockDirCounter.value = 0;
     mockPiLog.log.mockClear();
     mockPiLog.warn.mockClear();
     mockPiLog.error.mockClear();

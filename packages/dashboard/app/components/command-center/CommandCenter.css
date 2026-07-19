@@ -152,6 +152,39 @@ The System tab combines a controls fragment with a stats .cc-area. Keep the tabp
   gap: var(--space-lg);
 }
 
+/*
+FNXC:TaskVerificationStatus 2026-07-30-00:00:
+FN-8296 keeps Command Center's compact verification feed in the existing card
+rhythm. Task IDs remain visible beside the shared status component on desktop and
+stack with it at the standard mobile breakpoint.
+*/
+.cc-verification-requests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.cc-verification-requests__item {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-2xl) * 2), auto) minmax(0, 1fr);
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+.cc-verification-requests__task {
+  padding: var(--space-sm) 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  .cc-verification-requests__item {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cc-stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-2xl) * 5)), 1fr));
@@ -571,6 +604,11 @@ The Command Center subtree previously had no tablet tier, so at 769px–1024px t
 }
 
 @media (max-width: 768px) {
+  .cc-stat-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .cc-live-strip {
     grid-template-columns: 1fr;
   }

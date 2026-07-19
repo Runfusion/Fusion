@@ -464,3 +464,73 @@ describe("PlannerOverseerMonitor.observeTask — FN-7743 executor stall detectio
     expect(store.logEntry).toHaveBeenCalledTimes(2);
   });
 });
+
+// FNXC:PlannerOversight 2026-07-15-17:05:
+// FN-7965: a task parked `status: "failed"` at the executor stage reported
+// `progressing` ("Task is actively executing in-progress work") because the
+// derivation never read `status` — so the overseer treated a dead task as healthy
+// and only reacted once the FN-7743 stall proxy fired hours later. `failed` had
+// been derived for the merger/pull-request stages only. These tests lock the
+// invariant across the enumerated surfaces: failed (failed), failed-but-paused
+// (blocked — a human owns it), healthy (progressing, unchanged), and the
+// terminal columns that must stay unmonitored.
+describe("PlannerOverseerMonitor.observeTask — FN-7965 executor failure detection", () => {
+  it("reports failed for a non-paused in-progress task parked status=failed", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      columnMovedAt: new Date().toISOString(),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    // Must NOT wait for the 2h stall proxy: the failure is visible immediately.
+    expect(observation?.stage).toBe("executor");
+    expect(observation?.signal).toBe("failed");
+  });
+
+  it("keeps paused precedence: a paused failed task is blocked, not failed", async () => {
+    // A human owns an operator/user-paused row — it must never be routed into
+    // autonomous bounded recovery just because status is failed.
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: "failed",
+      paused: true,
+      pausedReason: "error-unrecoverable",
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    expect(observation?.signal).toBe("blocked");
+  });
+
+  it.each([undefined, null, "queued"])("still reports progressing for a healthy in-progress task (status=%s)", async (status) => {
+    // Negative control: FN-7577 — a healthy card must never flip to a problem
+    // signal, or every in-progress task shows the "recovering" badge.
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: status as never,
+      updatedAt: new Date().toISOString(),
+      columnMovedAt: new Date().toISOString(),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("keeps the failed reason constant so the FN-7577 feed dedup holds", async () => {
+    // The reason must not interpolate task.error/status, or an observation would
+    // be re-emitted every poll for the same unchanged failure.
+    const monitor = new PlannerOverseerMonitor();
+    const a = await monitor.observeTask(taskFixture({ id: "FN-1000", status: "failed" }), "autonomous");
+    const b = await monitor.observeTask(taskFixture({ id: "FN-1000", status: "failed" }), "autonomous");
+
+    expect(a?.reason).toBe(b?.reason);
+    expect(a?.reason).not.toMatch(/failed:|error/i);
+  });
+});

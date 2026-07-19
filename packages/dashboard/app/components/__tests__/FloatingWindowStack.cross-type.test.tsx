@@ -8,8 +8,9 @@ import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDe
 FNXC:FloatingWindow 2026-06-22-21:30:
 Cross-type shared-stack contract. Utility floating modal types (utility FloatingWindow, the right-dock pop-out, the floating terminal, the floating New Task dialog) draw their z-index from the SINGLE module-level utility counter so tapping ANY utility raises it above ALL other utilities REGARDLESS of type. RightDockExpandModal stands in for the three non-FloatingWindow floating modals (terminal + New Task wire the identical claim-on-mount + bring-to-front-on-pointerdown pattern; they are heavier to mount in JSDOM and assert the same inline-zIndex contract).
 
-FNXC:TaskPopupLayer 2026-07-04-18:36:
-Task-detail FloatingWindow callers are excluded from the global utility stack. They use a lower board/task-detail counter so ordinary board/right-dock task popups can raise among themselves without becoming topmost utility overlays.
+FNXC:TaskPopupLayer 2026-07-17-15:55:
+Quick Chat opts into the task-detail counter so task popups and Chat interleave by interaction.
+Unrelated utility windows remain excluded and keep their independent, higher utility stack.
 */
 
 const renderProps = { addToast: () => {}, projectId: "project-1" } as const;
@@ -59,26 +60,40 @@ describe("floatingWindowStack (cross-type)", () => {
     expect(Number(dockPanel.style.zIndex)).toBeGreaterThan(Number(fwPanel.style.zIndex));
   });
 
-  it("keeps task-detail FloatingWindow popups out of the global utility band", () => {
+  it("interleaves Quick Chat with one or multiple task popups while utility windows stay higher", () => {
     render(
       <>
-        <FloatingWindow windowKey="task" title="Task" onClose={() => {}} layer="task-detail" className="floating-window--task-detail">
-          <div>task body</div>
+        <FloatingWindow windowKey="chat-modal" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
+          <div>chat body</div>
+        </FloatingWindow>
+        <FloatingWindow windowKey="task-a" title="Task A" onClose={() => {}} layer="task-detail" className="floating-window--task-detail">
+          <div>task a body</div>
+        </FloatingWindow>
+        <FloatingWindow windowKey="task-b" title="Task B" onClose={() => {}} layer="task-detail" className="floating-window--task-detail">
+          <div>task b body</div>
         </FloatingWindow>
         <RightDockExpandModal viewKey="files" renderProps={renderProps} onClose={() => {}} />
       </>,
     );
 
-    const taskPanel = screen.getByTestId("floating-window-task");
-    const taskOverlay = screen.getByTestId("floating-window-overlay-task");
+    const chatPanel = screen.getByTestId("floating-window-chat-modal");
+    const taskA = screen.getByTestId("floating-window-task-a");
+    const taskB = screen.getByTestId("floating-window-task-b");
     const dockPanel = screen
       .getByTestId("right-dock-expand-modal")
       .querySelector(".right-dock-expand-modal--floating") as HTMLElement;
 
-    expect(Number(taskPanel.style.zIndex)).toBeLessThan(Number(dockPanel.style.zIndex));
-    expect(Number(taskOverlay.style.zIndex)).toBeLessThan(Number(dockPanel.style.zIndex));
+    // Later task mounts above Chat; utility surfaces still retain their higher independent band.
+    expect(Number(taskB.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
+    expect(Number(dockPanel.style.zIndex)).toBeGreaterThan(Number(taskB.style.zIndex));
 
-    fireEvent.pointerDown(taskPanel);
-    expect(Number(taskPanel.style.zIndex)).toBeLessThan(Number(dockPanel.style.zIndex));
+    // Task and Chat both claim the same peer counter in either interaction direction.
+    fireEvent.pointerDown(chatPanel);
+    expect(Number(chatPanel.style.zIndex)).toBeGreaterThan(Number(taskB.style.zIndex));
+    fireEvent.focus(taskA);
+    expect(Number(taskA.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
+    fireEvent.focus(chatPanel);
+    expect(Number(chatPanel.style.zIndex)).toBeGreaterThan(Number(taskA.style.zIndex));
+    expect(Number(chatPanel.style.zIndex)).toBeLessThan(Number(dockPanel.style.zIndex));
   });
 });

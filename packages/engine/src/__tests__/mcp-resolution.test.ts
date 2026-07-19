@@ -118,8 +118,27 @@ describe("resolveMcpServersForRuntime", () => {
       secrets: secrets({}),
     });
 
-    expect(result.servers).toEqual([{ name: "broken", transport: "streamable-http", url: "https://mcp.example" }]);
+    expect(result.servers).toEqual([]);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.serverName).toBe("broken");
+  });
+
+  it("keeps healthy servers while excluding only definitions with unresolved secrets", async () => {
+    const result = await resolveMcpServersForRuntime({
+      globalSettings: {
+        mcpServers: {
+          enabled: true,
+          servers: [
+            { name: "healthy", transport: "stdio", command: "node" },
+            { name: "broken", transport: "streamable-http", url: "https://mcp.example", headers: { Authorization: { secretRef: "missing", scope: "project" } } },
+          ],
+        },
+      },
+      projectSettings: null,
+      secrets: secrets({}),
+    });
+
+    expect(result.servers).toEqual([{ name: "healthy", transport: "stdio", command: "node" }]);
+    expect(result.errors.map((error) => error.serverName)).toEqual(["broken"]);
   });
 });

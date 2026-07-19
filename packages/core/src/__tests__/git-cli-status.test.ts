@@ -28,6 +28,12 @@ function callbackFromExecFileCall() {
   return callback as (error: ExecFileException | null, stdout: string, stderr: string) => void;
 }
 
+async function waitForExecFileCall(count: number): Promise<void> {
+  for (let i = 0; i < 50 && mockExecFile.mock.calls.length < count; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe("probeGitCliStatus", () => {
   beforeEach(() => {
     mockExecFile.mockReset();
@@ -52,13 +58,35 @@ describe("probeGitCliStatus", () => {
   });
 
   it("reports missing git as unavailable with the install URL", async () => {
-    const resultPromise = probeGitCliStatus();
+    // Empty fallback list keeps the test hermetic (the default probes the real filesystem).
+    const resultPromise = probeGitCliStatus({ fallbackGitPaths: [] });
     callbackFromExecFileCall()(Object.assign(new Error("ENOENT"), { code: "ENOENT" }) as ExecFileException, "", "");
 
     await expect(resultPromise).resolves.toEqual({
       available: false,
       installUrl: GIT_INSTALL_URL,
     });
+  });
+
+  /*
+  FNXC:Onboarding 2026-07-18-03:20:
+  A git installed mid-session is not on the server's stale PATH snapshot; the
+  probe must find it at a well-known absolute location instead of reporting
+  "missing" until Fusion restarts.
+  */
+  it("falls back to well-known install locations when PATH lookup ENOENTs", async () => {
+    const resultPromise = probeGitCliStatus({ fallbackGitPaths: ["C:\\Program Files\\Git\\cmd\\git.exe"] });
+    callbackFromExecFileCall()(Object.assign(new Error("ENOENT"), { code: "ENOENT" }) as ExecFileException, "", "");
+    await waitForExecFileCall(2);
+    const secondCallback = mockExecFile.mock.calls[1]?.[3] as (error: ExecFileException | null, stdout: string, stderr: string) => void;
+    secondCallback(null, "git version 2.50.0\n", "");
+
+    await expect(resultPromise).resolves.toEqual({
+      available: true,
+      version: "2.50.0",
+      installUrl: GIT_INSTALL_URL,
+    });
+    expect(mockExecFile.mock.calls[1]?.[0]).toBe("C:\\Program Files\\Git\\cmd\\git.exe");
   });
 
   it("reports probe errors as unavailable without throwing", async () => {

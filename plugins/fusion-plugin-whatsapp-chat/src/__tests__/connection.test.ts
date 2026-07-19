@@ -24,6 +24,7 @@ const mockState = vi.hoisted(() => {
 vi.mock("@whiskeysockets/baileys", () => ({
   default: mockState.makeWASocket,
   makeWASocket: mockState.makeWASocket,
+  fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
   DisconnectReason: { loggedOut: 401 },
   BufferJSON: { reviver: undefined, replacer: undefined },
   initAuthCreds: () => ({}),
@@ -34,7 +35,7 @@ vi.mock("qrcode", () => ({
 }));
 
 import { WhatsAppConnection } from "../connection.js";
-import { createSqliteWhatsAppPersistence } from "../persistence.js";
+import type { ChatTurn, WhatsAppPersistence } from "../persistence.js";
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -46,42 +47,42 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function createInMemoryDb() {
-  const sessions = new Map<string, string>();
+function createInMemoryPersistence(): WhatsAppPersistence {
+  const sessions = new Map<string, ChatTurn[]>();
   const dedupe = new Set<string>();
-  const creds = new Map<string, string>();
+  let credentials: string | null = null;
   const keys = new Map<string, string>();
   return {
-    exec() {},
-    prepare(sql: string) {
-      return {
-        get: (...args: unknown[]) => {
-          if (sql.includes("FROM whatsapp_chat_sessions")) {
-            const history = sessions.get(args[0] as string);
-            return history ? { history } : undefined;
-          }
-          if (sql.includes("FROM whatsapp_chat_dedupe")) return dedupe.has(args[0] as string) ? { found: 1 } : undefined;
-          if (sql.includes("FROM whatsapp_auth_creds")) return creds.get("creds") ? { value: creds.get("creds") } : undefined;
-          if (sql.includes("FROM whatsapp_auth_keys")) return keys.get(`${args[0]}:${args[1]}`) ? { value: keys.get(`${args[0]}:${args[1]}`) } : undefined;
-          return undefined;
-        },
-        run: (...args: unknown[]) => {
-          if (sql.includes("whatsapp_chat_sessions")) sessions.set(args[0] as string, args[1] as string);
-          if (sql.includes("DELETE FROM whatsapp_chat_dedupe")) return { changes: 0 };
-          if (sql.includes("INSERT OR IGNORE INTO whatsapp_chat_dedupe")) {
-            const messageId = args[0] as string;
-            if (dedupe.has(messageId)) return { changes: 0 };
-            dedupe.add(messageId);
-            return { changes: 1 };
-          }
-          if (sql.includes("whatsapp_chat_dedupe")) dedupe.add(args[0] as string);
-          if (sql.includes("INSERT INTO whatsapp_auth_creds")) creds.set("creds", args[0] as string);
-          if (sql.includes("DELETE FROM whatsapp_auth_creds")) creds.clear();
-          if (sql.includes("INSERT INTO whatsapp_auth_keys")) keys.set(`${args[0]}:${args[1]}`, args[2] as string);
-          if (sql.includes("DELETE FROM whatsapp_auth_keys WHERE category")) keys.delete(`${args[0]}:${args[1]}`);
-          if (sql.includes("DELETE FROM whatsapp_auth_keys")) keys.clear();
-        },
-      };
+    async loadHistory(sender) { return [...(sessions.get(sender) ?? [])]; },
+    async appendHistory(sender, turns, turnLimit) {
+      sessions.set(sender, [...(sessions.get(sender) ?? []), ...turns].slice(-turnLimit));
+    },
+    async wasProcessed(messageId) { return dedupe.has(messageId); },
+    async markProcessed(messageId) { dedupe.add(messageId); },
+    async claimMessage(messageId) {
+      if (dedupe.has(messageId)) return false;
+      dedupe.add(messageId);
+      return true;
+    },
+    async loadCredentials() { return credentials; },
+    async saveCredentials(value) { credentials = value; },
+    async loadAuthKeys(category, ids) {
+      return Object.fromEntries(ids.flatMap((id) => {
+        const value = keys.get(`${category}:${id}`);
+        return value === undefined ? [] : [[id, value]];
+      }));
+    },
+    async writeAuthKeys(batch) {
+      for (const [category, values] of Object.entries(batch)) {
+        for (const [id, value] of Object.entries(values)) {
+          if (value === null) keys.delete(`${category}:${id}`);
+          else keys.set(`${category}:${id}`, value);
+        }
+      }
+    },
+    async clearAuthState() {
+      credentials = null;
+      keys.clear();
     },
   };
 }
@@ -90,7 +91,7 @@ function makeCtx(settings: Record<string, unknown> = {}) {
   return {
     pluginId: "fusion-plugin-whatsapp-chat",
     settings: { allowedSenders: ["15550001111"], ...settings },
-    taskStore: { getRootDir: () => "/tmp", getPluginStore: () => ({}) },
+    taskStore: { getRootDir: () => "/tmp" },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     emitEvent: vi.fn(),
   } as any;
@@ -108,7 +109,7 @@ describe("WhatsAppConnection", () => {
   });
 
   it("starts and stops idempotently", async () => {
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
     await connection.stop();
     await connection.stop();
@@ -117,7 +118,7 @@ describe("WhatsAppConnection", () => {
   });
 
   it("exposes qr updates", async () => {
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
     await mockState.handlers.get("connection.update")?.({ qr: "abc" });
     expect(connection.getStatus()).toMatchObject({ state: "awaiting-qr", qr: "abc" });
@@ -125,7 +126,7 @@ describe("WhatsAppConnection", () => {
 
   it("logs rejected async EventEmitter listeners", async () => {
     const ctx = makeCtx();
-    const connection = new WhatsAppConnection(ctx, "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(ctx, "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
     mockState.toDataURL.mockRejectedValueOnce(new Error("bad qr"));
 
@@ -137,21 +138,22 @@ describe("WhatsAppConnection", () => {
 
   it("reconnects on close unless logged out", async () => {
     vi.useFakeTimers();
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
     await mockState.handlers.get("connection.update")?.({ connection: "close", lastDisconnect: { error: new Error("boom") } });
-    vi.advanceTimersByTime(1000);
+    // connect() awaits fetchLatestBaileysVersion before building the socket, so flush microtasks after the timer fires.
+    await vi.advanceTimersByTimeAsync(1000);
     expect(mockState.makeWASocket).toHaveBeenCalledTimes(2);
 
     await mockState.handlers.get("connection.update")?.({ connection: "close", lastDisconnect: { error: { output: { statusCode: 401 } } } });
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(mockState.makeWASocket).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
 
   it("drops unsupported inbound traffic", async () => {
     const reply = vi.fn().mockResolvedValue("hello");
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createInMemoryPersistence());
     await connection.start();
     const upsert = mockState.handlers.get("messages.upsert")!;
     await upsert({ type: "notify", messages: [{ key: { remoteJid: "abc@g.us", id: "1", fromMe: false }, message: { conversation: "hi" } }] });
@@ -162,7 +164,7 @@ describe("WhatsAppConnection", () => {
 
   it("dedupes and handles reply failure with fallback", async () => {
     const reply = vi.fn().mockRejectedValue(new Error("nope"));
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createInMemoryPersistence());
     await connection.start();
     const payload = { type: "notify", messages: [{ key: { remoteJid: "15550001111@s.whatsapp.net", id: "m-1", fromMe: false }, message: { conversation: "hi" } }] };
     await mockState.handlers.get("messages.upsert")?.(payload);
@@ -173,7 +175,7 @@ describe("WhatsAppConnection", () => {
 
   it("atomically claims concurrent duplicate deliveries", async () => {
     const reply = vi.fn().mockResolvedValue("one reply");
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, createInMemoryPersistence());
     await connection.start();
     const payload = { type: "notify", messages: [{ key: { remoteJid: "15550001111@s.whatsapp.net", id: "same-id", fromMe: false }, message: { conversation: "hi" } }] };
 
@@ -189,8 +191,7 @@ describe("WhatsAppConnection", () => {
   it("serializes concurrent messages from one sender and preserves both turns", async () => {
     const firstReplyStarted = deferred();
     const releaseFirstReply = deferred();
-    const db = createInMemoryDb();
-    const persistence = createSqliteWhatsAppPersistence(db as any);
+    const persistence = createInMemoryPersistence();
     const reply = vi.fn(async (_ctx: unknown, _sender: string, text: string, history: Array<{ text: string }>) => {
       if (text === "first") {
         firstReplyStarted.resolve();
@@ -223,7 +224,7 @@ describe("WhatsAppConnection", () => {
   it("sends an accepted reply before a concurrent stop closes its socket", async () => {
     const replyPersisted = deferred();
     const releasePersistedReply = deferred();
-    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const persistence = createInMemoryPersistence();
     const appendHistory = persistence.appendHistory.bind(persistence);
     vi.spyOn(persistence, "appendHistory").mockImplementation(async (...args) => {
       await appendHistory(...args);
@@ -256,7 +257,7 @@ describe("WhatsAppConnection", () => {
       logoutStarted.resolve();
       await releaseLogout.promise;
     });
-    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
 
     const logout = connection.logout();
@@ -277,7 +278,7 @@ describe("WhatsAppConnection", () => {
   ])("drains an accepted credential save before %s clears auth", async (_surface, triggerReset) => {
     const saveStarted = deferred();
     const releaseSave = deferred();
-    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const persistence = createInMemoryPersistence();
     const saveCredentials = persistence.saveCredentials.bind(persistence);
     vi.spyOn(persistence, "saveCredentials").mockImplementation(async (value) => {
       saveStarted.resolve();
@@ -302,7 +303,7 @@ describe("WhatsAppConnection", () => {
   });
 
   it("deduplicates explicit and connection-event auth resets for one socket", async () => {
-    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const persistence = createInMemoryPersistence();
     const clearAuthState = vi.spyOn(persistence, "clearAuthState");
     const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), persistence);
     await connection.start();
@@ -321,7 +322,7 @@ describe("WhatsAppConnection", () => {
   it("logs reconnect timer rejection instead of leaking it", async () => {
     vi.useFakeTimers();
     const ctx = makeCtx();
-    const connection = new WhatsAppConnection(ctx, "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    const connection = new WhatsAppConnection(ctx, "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
     mockState.makeWASocket.mockImplementationOnce(() => {
       throw new Error("reconnect exploded");

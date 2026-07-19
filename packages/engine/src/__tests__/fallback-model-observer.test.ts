@@ -40,7 +40,7 @@ describe("createFallbackModelObserver", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-123",
       expectedMessage,
-      "text",
+      "status",
       undefined,
       "Executor Agent",
     );

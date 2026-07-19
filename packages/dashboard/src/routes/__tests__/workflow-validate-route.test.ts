@@ -2,10 +2,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../../core/src/__test-utils__/pg-test-harness.js";
 import type { WorkflowIr } from "@fusion/core";
 import { registerWorkflowRoutes } from "../register-workflow-routes.js";
 import { ApiError, sendErrorResponse } from "../../api-error.js";
@@ -23,17 +21,16 @@ function linearIr(): WorkflowIr {
   } as WorkflowIr;
 }
 
-describe("POST /api/workflows/validate", () => {
+pgDescribe("POST /api/workflows/validate", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
-  let rootDir: string;
-  let globalDir: string;
   let app: express.Express;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "wf-validate-root-"));
-    globalDir = mkdtempSync(join(tmpdir(), "wf-validate-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    // FNXC:PostgresCutover 2026-07-16-06:30: validation routes exercise the
+    // production async persistence contract rather than removed SQLite fixtures.
+    harness = await createTaskStoreForTest();
+    store = harness.store;
 
     app = express();
     app.use(express.json());
@@ -54,9 +51,7 @@ describe("POST /api/workflows/validate", () => {
   });
 
   afterEach(async () => {
-    await store.close?.();
-    rmSync(rootDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    await harness.teardown();
   });
 
   async function userDefCount(): Promise<number> {

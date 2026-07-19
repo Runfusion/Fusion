@@ -20,6 +20,8 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     fetchTaskDiff: (...args: unknown[]) => fetchTaskDiffMock(...args),
+    // FNXC:DashboardTests 2026-07-14-21:50: TaskCard loads oversight workflow settings; complete the mock surface so parity tests collect.
+    fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   };
 });
 
@@ -28,26 +30,26 @@ vi.mock("lucide-react", async (importOriginal) => {
   return {
     ...actual,
     Link: () => null,
-  GitBranch: () => null,
-  Clock: () => null,
-  Pencil: () => null,
-  Layers: () => null,
-  ChevronDown: () => null,
-  Folder: () => null,
-  GitPullRequest: () => null,
-  CircleDot: () => null,
-  Target: () => null,
-  Bot: () => null,
-  Trash2: () => null,
-  RotateCw: () => null,
-  Zap: () => null,
-  FileCode: () => null,
-  ChevronRight: () => null,
-  ChevronLeft: () => null,
-  AlertCircle: () => null,
-  GitCommit: () => null,
-  WrapText: () => null,
-  Maximize2: () => null,
+    GitBranch: () => null,
+    Clock: () => null,
+    Pencil: () => null,
+    Layers: () => null,
+    ChevronDown: () => null,
+    Folder: () => null,
+    GitPullRequest: () => null,
+    CircleDot: () => null,
+    Target: () => null,
+    Bot: () => null,
+    Trash2: () => null,
+    RotateCw: () => null,
+    Zap: () => null,
+    FileCode: () => null,
+    ChevronRight: () => null,
+    ChevronLeft: () => null,
+    AlertCircle: () => null,
+    GitCommit: () => null,
+    WrapText: () => null,
+    Maximize2: () => null,
   };
 });
 
@@ -66,6 +68,7 @@ embeds RuntimeFallbackBadge and this file renders <TaskCard> outside a ToastProv
 to avoid "useToast must be used within ToastProvider", matching the TaskCard.test.tsx pattern.
 */
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

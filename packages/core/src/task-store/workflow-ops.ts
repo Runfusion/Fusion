@@ -346,7 +346,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
       const existingForCheck = await store.getWorkflowDefinition(id);
       if (!existingForCheck) throw new Error(`Workflow '${id}' not found`);
       const nextIrForCheck = parseWorkflowIr(updates.ir);
-      const occupantsByColumn = store.occupantsByColumnForWorkflow(id, false);
+      const occupantsByColumn = await store.occupantsByColumnForWorkflow(id, false);
       const removed = computeRemovedOccupiedColumns(
         existingForCheck.ir,
         nextIrForCheck,
@@ -360,7 +360,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         // Collect the occupant task ids of the removed columns to re-home AFTER
         // the IR save commits, so the cards land in a column the new IR defines.
         const removedSet = new Set(removed.map((r) => r.columnId));
-        const allOccupantTaskIds = store.listWorkflowOccupantTaskIds(id, false);
+        const allOccupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
         let occupantTaskIds: string[];
         if (layer) {
           // FNXC:PostgresCutover 2026-06-28: async read for column check
@@ -401,7 +401,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
       const fieldsChanged =
         JSON.stringify(oldFields) !== JSON.stringify(newFields);
       if (fieldsChanged) {
-        const occupantTaskIds = store.listWorkflowOccupantTaskIds(id, false);
+        const occupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
         const occupantsByField = new Map<string, number>();
         for (const taskId of occupantTaskIds) {
           let values: Record<string, unknown> = {};
@@ -529,7 +529,7 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     // their selection rows, so we can re-home them to the DEFAULT workflow's
     // entry column once their selection resolves back to the default (KTD-1).
     const flagOn = await store.workflowColumnsFlagOn();
-    const occupantTaskIds = flagOn ? store.listWorkflowOccupantTaskIds(id, false) : [];
+    const occupantTaskIds = flagOn ? await store.listWorkflowOccupantTaskIds(id, false) : [];
 
     if (layer) {
       // FNXC:PostgresCutover 2026-06-28: async deletes for backend mode

@@ -24,11 +24,27 @@ Borrow the PostgreSQL AsyncDataLayer from the resolved project store so the
 chat AgentStore runs in backend mode (the SQLite runtime was removed under
 VAL-REMOVAL-005), mirroring agent.ts/extension.ts createAgentStore.
 */
-async function createAgentStore(projectName?: string): Promise<AgentStore> {
-  const { rootDir, asyncLayer } = await resolveAgentStoreBase(projectName);
-  const store = new AgentStore({ rootDir: `${rootDir}/.fusion`, asyncLayer: asyncLayer ?? undefined });
-  await store.init();
-  return store;
+async function createAgentStore(projectName?: string): Promise<{ store: AgentStore; cleanup: () => Promise<void> }> {
+  const base = await resolveAgentStoreBase(projectName);
+  const store = new AgentStore({ rootDir: `${base.rootDir}/.fusion`, asyncLayer: base.asyncLayer });
+  try {
+    await store.init();
+    return { store, cleanup: base.cleanup };
+  } catch (error) {
+    const failures: unknown[] = [error];
+    try {
+      store.close();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    try {
+      await base.cleanup();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    if (failures.length === 1) throw error;
+    throw new AggregateError(failures, "AgentStore initialization and cleanup failed");
+  }
 }
 
 function parsePollMs(options: ChatInteractiveOptions): number {
@@ -101,29 +117,33 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
   const input = options.input ?? process.stdin;
   const pollIntervalMs = parsePollMs(options);
 
-  const agentStore = await createAgentStore(options.project);
-  const agent = await agentStore.getAgent(agentId);
-  if (!agent) {
-    console.error(`Agent ${agentId} not found`);
-    return 1;
-  }
+  const ownedAgentStore = await createAgentStore(options.project);
+  const agentStore = ownedAgentStore.store;
+  let messageOwner: Awaited<ReturnType<typeof createMessageStore>> | undefined;
+  let commandFailure: unknown;
+  try {
+    const agent = await agentStore.getAgent(agentId);
+    if (!agent) {
+      console.error(`Agent ${agentId} not found`);
+      return 1;
+    }
 
-  const { store: messageStore, db } = await createMessageStore(options.project);
-  const printedIds = new Set<string>();
+    messageOwner = await createMessageStore(options.project);
+    const messageStore = messageOwner.store;
+    const printedIds = new Set<string>();
 
-  const conversation = await messageStore.getConversation(
+    const conversation = await messageStore.getConversation(
     { id: CLI_USER_ID, type: "user" },
     { id: agentId, type: "agent" },
   );
-  const tail = conversation.slice(-HISTORY_LIMIT);
-  for (const message of tail) printedIds.add(message.id);
+    const tail = conversation.slice(-HISTORY_LIMIT);
+    for (const message of tail) printedIds.add(message.id);
 
-  output.write(`Chat with Agent ${agentId} — type /exit or Ctrl-C to quit, /help for commands\n`);
-  output.write("Replies appear when this project's engine is running (fn dashboard or fn serve).\n");
-  printConversationTail(output, tail);
+    output.write(`Chat with Agent ${agentId} — type /exit or Ctrl-C to quit, /help for commands\n`);
+    output.write("Replies appear when this project's engine is running (fn dashboard or fn serve).\n");
+    printConversationTail(output, tail);
 
-  const runOnce = options.once === true;
-  try {
+    const runOnce = options.once === true;
     if (runOnce) {
       const content = await readSingleMessage(input, output, options.nonInteractive);
       if (!content.trim()) return 0;
@@ -217,8 +237,34 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
     rl.close();
     await poller;
     return 0;
+  } catch (error) {
+    commandFailure = error;
+    throw error;
   } finally {
-    db.close();
+    /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Chat owns three independently-failing resources. Always attempt AgentStore, message database, and borrowed project teardown; report all cleanup failures without discarding an earlier command failure. */
+    const cleanupFailures: unknown[] = [];
+    try {
+      agentStore.close();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      await messageOwner?.db.close();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      await ownedAgentStore.cleanup();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    if (cleanupFailures.length > 0) {
+      // eslint-disable-next-line no-unsafe-finally -- cleanup must aggregate with, rather than silently lose, the active command failure.
+      throw new AggregateError(
+        commandFailure === undefined ? cleanupFailures : [commandFailure, ...cleanupFailures],
+        "Chat command cleanup failed",
+      );
+    }
   }
 }
 

@@ -2014,9 +2014,13 @@ queries already apply (the container-query rule above also fires and produces th
     margin-left: 0;
   }
 
-  /* Content area tighter padding */
+  /*
+  FNXC:ActivityFeedMobile 2026-07-16-00:00:
+  FN-8122 requires the mobile Activity Log to keep a larger, balanced horizontal inset so
+  populated entries, timestamps, and wrapped text do not collide with the viewport edge.
+  */
   .activity-log-content {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-md) var(--space-xl);
     min-height: 200px;
   }
 

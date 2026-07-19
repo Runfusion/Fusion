@@ -16,7 +16,12 @@ vi.mock("../../pi.js", () => ({
 }));
 
 import { aiMergeTask } from "../../merger.js";
-// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:10:
+VAL-REMOVAL-005 reliability fixtures use PostgreSQL AsyncDataLayer storage. Read
+run audits through getRunAuditEventsAsync so each assertion observes committed
+backend events rather than the removed synchronous SQLite read surface.
+*/
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
@@ -68,7 +73,7 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
       expect(result.merged).toBe(true);
       expect((await store.getTask(task.id))?.column).toBe("done");
 
-      const audits = store.getRunAuditEvents({ taskId: task.id });
+      const audits = await store.getRunAuditEventsAsync({ taskId: task.id });
       const state = audits.find((event) => event.mutationType === "merge:integration-worktree-state");
       expect(state?.metadata).toMatchObject({
         integrationMode: "reuse-task-worktree",
@@ -93,7 +98,7 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
       git(worktreePath, "sh -c 'printf dirty > DIRTY.txt'");
       await aiMergeTask(store, rootDir, task.id).catch(() => undefined);
 
-      const audits = store.getRunAuditEvents({ taskId: task.id });
+      const audits = await store.getRunAuditEventsAsync({ taskId: task.id });
       const autostash = audits.find((event) => event.mutationType === "merge:reuse-handoff-autostash");
       expect(autostash?.metadata).toMatchObject({ worktreePath });
       expect(typeof autostash?.metadata?.stashSha).toBe("string");
@@ -118,7 +123,7 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
       const result = await aiMergeTask(store, rootDir, task.id);
       expect(result.merged).toBe(true);
 
-      const audits = store.getRunAuditEvents({ taskId: task.id }).filter((event) =>
+      const audits = (await store.getRunAuditEventsAsync({ taskId: task.id })).filter((event) =>
         ["merge:integration-worktree-state", "merge:cwd-integration-fallback-refused", "merge:integration-ref-advance"].includes(event.mutationType),
       );
       const state = audits.find((event) => event.mutationType === "merge:integration-worktree-state");

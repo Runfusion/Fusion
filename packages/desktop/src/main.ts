@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, screen, shell, Tray } from "electron";
+import { dialog, app, BrowserWindow, nativeImage, screen, shell, Tray } from "electron";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -130,6 +130,20 @@ function isInternalDesktopNavigation(url: URL, rendererOrigin: string | null): b
   return false;
 }
 
+/*
+FNXC:DesktopClosePolicy 2026-07-18-05:00:
+Answer from the Windows close prompt, consumed once by before-quit teardown.
+false (default) = full stop including the embedded PostgreSQL cluster.
+*/
+let keepEmbeddedPostgresOnQuit = false;
+
+/*
+FNXC:DesktopClosePolicy 2026-07-18-06:00:
+Set by Electron's win32 "session-end" event: the OS is logging off or shutting
+down, so the close prompt must be skipped (see close handler).
+*/
+let osSessionEnding = false;
+
 async function resetLaunchModeAndReload(window: BrowserWindow): Promise<void> {
   try {
     const settings = await readShellSettings();
@@ -237,6 +251,72 @@ export function createMainWindow(state?: WindowState, launchTargetUrl?: string):
     Windows Desktop close is a shutdown request, not a tray-minimize request. Let the BrowserWindow close so Electron emits window-all-closed and before-quit, which stops the embedded local Fusion runtime; keep macOS/non-Windows close-to-tray semantics for dock/tray restoration.
     */
     if (process.platform === "win32") {
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-05:00:
+      Operator request: shutting down Fusion on Windows must ASK whether to also
+      shut down the embedded PostgreSQL server (it can serve other Fusion
+      processes such as the CLI). Asked only on a USER-initiated window close —
+      programmatic quits (dashboard-requested restart via app.relaunch/app.quit)
+      never pass through this handler, so automation stays prompt-free and
+      defaults to a full stop. The synchronous dialog is required: the close
+      event cannot await, and the answer must exist before before-quit tears the
+      runtime down.
+      */
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-06:00:
+      Review findings: (a) only the EMBEDDED local runtime is ours to stop —
+      an attached external `fn serve` runtime ignores both answers, so never
+      prompt for it; (b) never prompt during OS session end (logoff/shutdown):
+      the sync dialog would block Windows shutdown until the process is
+      force-killed, skipping all teardown. Electron's app "session-end" event
+      flags that case; the default (full stop) then applies.
+      */
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-06:40:
+      Operator request: Windows needs a close-to-tray background option like
+      macOS/Linux. The close dialog now offers it alongside the exit choices;
+      "Minimize to tray" keeps Fusion (and the embedded PostgreSQL) running in
+      the background, restorable from the tray icon. OS session end still skips
+      every dialog and performs the full stop.
+      */
+      if (osSessionEnding) {
+        return;
+      }
+      const runtimeStatus = localRuntimeManager?.getStatus();
+      if (runtimeStatus?.state === "running" && runtimeStatus.source === "embedded-local") {
+        const choice = dialog.showMessageBoxSync(window, {
+          type: "question",
+          title: "Fusion",
+          message: "Close Fusion?",
+          detail: "Minimize to tray keeps Fusion and the embedded PostgreSQL server running in the background. If you exit, other Fusion processes (like the fn CLI) can keep using PostgreSQL only if you leave it running.",
+          buttons: ["Minimize to tray", "Exit and stop PostgreSQL", "Exit, leave PostgreSQL running"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (choice === 0) {
+          event.preventDefault();
+          window.hide();
+          return;
+        }
+        keepEmbeddedPostgresOnQuit = choice === 2;
+        return;
+      }
+      const plainChoice = dialog.showMessageBoxSync(window, {
+        type: "question",
+        title: "Fusion",
+        message: "Close Fusion?",
+        detail: "Minimize to tray keeps Fusion running in the background; restore it from the tray icon.",
+        buttons: ["Minimize to tray", "Exit"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (plainChoice === 0) {
+        event.preventDefault();
+        window.hide();
+        return;
+      }
       return;
     }
 
@@ -468,6 +548,10 @@ export function run(): void {
     }
   });
 
+  (app as unknown as { on(event: "session-end", listener: () => void): void }).on("session-end", () => {
+    osSessionEnding = true;
+  });
+
   app.on("before-quit", () => {
     appWithQuitFlag.isQuitting = true;
 
@@ -482,7 +566,7 @@ export function run(): void {
     }
 
     if (localRuntimeManager) {
-      void localRuntimeManager.stopLocal();
+      void localRuntimeManager.stopLocal({ keepEmbeddedPostgres: keepEmbeddedPostgresOnQuit });
     }
   });
 

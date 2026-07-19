@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocument } from "@fusion/core";
 import { TaskDocumentsTab } from "../TaskDocumentsTab";
-import { artifactMediaUrl, fetchTaskDocuments, fetchTaskDocumentRevisions } from "../../api";
+import { artifactMediaUrlWithToken, fetchTaskDocuments, fetchTaskDocumentRevisions } from "../../api";
 import { useArtifacts } from "../../hooks/useArtifacts";
 
 vi.mock("../../api", () => ({
@@ -15,7 +15,7 @@ vi.mock("../../api", () => ({
   fetchTaskDocumentRevisions: vi.fn(),
   putTaskDocument: vi.fn(),
   deleteTaskDocument: vi.fn(),
-  artifactMediaUrl: vi.fn((id: string) => `/api/artifacts/${id}/media`),
+  artifactMediaUrlWithToken: vi.fn((id: string) => `/api/artifacts/${id}/media?fn_token=daemon-token`),
 }));
 
 vi.mock("../../hooks/useArtifacts", () => ({
@@ -24,7 +24,7 @@ vi.mock("../../hooks/useArtifacts", () => ({
 
 const mockFetchTaskDocuments = vi.mocked(fetchTaskDocuments);
 const mockFetchTaskDocumentRevisions = vi.mocked(fetchTaskDocumentRevisions);
-const mockArtifactMediaUrl = vi.mocked(artifactMediaUrl);
+const mockArtifactMediaUrlWithToken = vi.mocked(artifactMediaUrlWithToken);
 const mockUseArtifacts = vi.mocked(useArtifacts);
 
 function getDocumentCard(key: string): HTMLElement {
@@ -110,7 +110,7 @@ describe("TaskDocumentsTab", () => {
     window.localStorage.clear();
     mockFetchTaskDocuments.mockResolvedValue(mockDocuments);
     mockFetchTaskDocumentRevisions.mockResolvedValue([]);
-    mockArtifactMediaUrl.mockImplementation((id: string) => `/api/artifacts/${id}/media`);
+    mockArtifactMediaUrlWithToken.mockImplementation((id: string) => `/api/artifacts/${id}/media?fn_token=daemon-token`);
     mockUseArtifacts.mockReturnValue({
       artifacts: [],
       loading: false,
@@ -201,18 +201,18 @@ describe("TaskDocumentsTab", () => {
       expect(screen.getByRole("heading", { name: "Media artifacts" })).toBeInTheDocument();
     });
 
-    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
     expect(screen.getByRole("button", { name: "Expand image artifact Image artifact" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Expand image artifact Video artifact/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
     expect(screen.getByLabelText("Audio artifact: Audio artifact").tagName).toBe("AUDIO");
     expect(screen.getByTestId("artifact-document-preview")).toHaveTextContent("Inline document preview");
-    expect(screen.getByTestId("artifact-other-link")).toHaveAttribute("href", "/api/artifacts/artifact-other/media");
+    expect(screen.getByTestId("artifact-other-link")).toHaveAttribute("href", "/api/artifacts/artifact-other/media?fn_token=daemon-token");
     expect(screen.getByText("agent-image")).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
     expect(document.querySelector(".documents-artifact-gallery--mobile")).not.toBeNull();
     expect(mockUseArtifacts).toHaveBeenCalledWith({ projectId: "project-1", taskId: "KB-001" });
-    expect(mockArtifactMediaUrl).toHaveBeenCalledWith("artifact-image", "project-1");
+    expect(mockArtifactMediaUrlWithToken).toHaveBeenCalledWith("artifact-image", "project-1");
   });
 
   it("opens image artifacts in a task-detail lightbox and restores focus on close", async () => {
@@ -232,7 +232,7 @@ describe("TaskDocumentsTab", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(dialog).toBeInTheDocument();
-    expect(screen.getAllByRole("img", { name: "Image artifact" })[1]).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(screen.getAllByRole("img", { name: "Image artifact" })[1]).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
 
     fireEvent.click(screen.getByRole("button", { name: "Close artifact preview" }));
 

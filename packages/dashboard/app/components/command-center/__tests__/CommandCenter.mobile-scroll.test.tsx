@@ -8,6 +8,7 @@ import { CommandCenter } from "../CommandCenter";
 
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
   withProjectId: (path: string, projectId?: string) =>
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
@@ -380,6 +381,8 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     await screen.findByTestId("command-center-empty");
     expect(screen.getByTestId("command-center-controls")).toBeTruthy();
     expect(screen.getByTestId("cc-controls-concurrency")).toBeTruthy();
+    expect(screen.getByTestId("cc-controls-org-portability")).toBeTruthy();
+    expect(screen.queryByTestId("cc-controls-config-versions")).toBeNull();
     expect(screen.queryByTestId("cc-controls-org-chart")).toBeNull();
     expect(screen.queryByTestId("cc-controls-heartbeat")).toBeNull();
     assertScrollOwnerContract(overviewPanel);

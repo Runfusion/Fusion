@@ -1,11 +1,9 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { aggregateSignalsAnalytics, Database, type Task, type TaskStore } from "@fusion/core";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { aggregateSignalsAnalytics, drizzleSql as sql, type AsyncDataLayer, type Task, type TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { DeliveryNonceCache, type SignalSource } from "../signal-source.js";
 import {
   ingestSignal,
@@ -25,7 +23,7 @@ function sign(body: string, secret: string): string {
 }
 
 /** Minimal fake task store implementing only what the ingestion path uses. */
-function makeStore(db?: Database) {
+function makeStore(layer?: AsyncDataLayer) {
   const tasks: Task[] = [];
   let counter = 0;
   const store = {
@@ -45,26 +43,28 @@ function makeStore(db?: Database) {
       tasks.push(task);
       return task;
     },
-    getDatabase() {
-      if (!db) throw new Error("test database not configured");
-      return db;
+    getAsyncLayer() {
+      if (!layer) throw new Error("test AsyncDataLayer not configured");
+      return layer;
     },
     _tasks: tasks,
   };
   return store as unknown as TaskStore & { _tasks: Task[] };
 }
 
-function makeDbStore() {
-  const dir = mkdtempSync(join(tmpdir(), "kb-signal-routes-"));
-  tempDirs.push(dir);
-  const db = new Database(join(dir, ".fusion"));
-  db.init();
-  openDbs.push(db);
-  return { db, store: makeStore(db) };
+async function makeDbStore() {
+  const harness = await createTaskStoreForTest();
+  // FNXC:PostgresCutover 2026-07-16-06:30: monitor writes are tenant-bound;
+  // bind the isolated layer so incident ingestion exercises that invariant.
+  (harness.layer as { projectId?: string }).projectId = "signal-routes-project";
+  harnesses.push(harness);
+  return { layer: harness.layer, store: makeStore(harness.layer) };
 }
 
-function incidents(db: Database) {
-  return db.prepare("SELECT groupingKey, source, severity, status, meta FROM incidents ORDER BY id ASC").all() as Array<{
+async function incidents(layer: AsyncDataLayer) {
+  // FNXC:PostgresCutover 2026-07-16-06:30: inspect seeded connector rows via
+  // the project schema instead of the removed synchronous SQLite Database API.
+  return await layer.db.execute(sql`SELECT grouping_key AS "groupingKey", source, severity, status, meta::text AS meta FROM project.incidents WHERE project_id = ${layer.projectId} ORDER BY id ASC`) as Array<{
     groupingKey: string;
     source: string | null;
     severity: string | null;
@@ -82,8 +82,7 @@ const SECRETS: Record<string, string> = {
 };
 
 const savedEnv: Record<string, string | undefined> = {};
-const tempDirs: string[] = [];
-const openDbs: Database[] = [];
+const harnesses: PgTestHarness[] = [];
 
 beforeEach(() => {
   for (const [k, v] of Object.entries(SECRETS)) {
@@ -92,13 +91,12 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const k of Object.keys(SECRETS)) {
     if (savedEnv[k] === undefined) delete process.env[k];
     else process.env[k] = savedEnv[k];
   }
-  while (openDbs.length > 0) openDbs.pop()?.close();
-  while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  while (harnesses.length > 0) await harnesses.pop()?.teardown();
 });
 
 function ctxFor(source: SignalSource, payload: object, headers: Record<string, string>) {
@@ -127,7 +125,7 @@ function signedSignalContext(source: SignalSource, payload: object) {
   }
 }
 
-describe("getSignalSource registry", () => {
+pgDescribe("getSignalSource registry", () => {
   it("resolves all five providers and rejects unknown", () => {
     expect(getSignalSource("webhook")).toBe(webhookSource);
     expect(getSignalSource("sentry")).toBe(sentrySource);
@@ -138,7 +136,7 @@ describe("getSignalSource registry", () => {
   });
 });
 
-describe("ingestSignal — generic webhook (must-work path)", () => {
+pgDescribe("ingestSignal — generic webhook (must-work path)", () => {
   it("creates one triage task for a valid signed payload", async () => {
     const store = makeStore();
     const ts = Date.now();
@@ -282,7 +280,7 @@ describe("ingestSignal — generic webhook (must-work path)", () => {
   });
 });
 
-describe("ingestSignal — Sentry adapter", () => {
+pgDescribe("ingestSignal — Sentry adapter", () => {
   it("creates one triage task with normalized title/severity/link + groupingKey from issue.id", async () => {
     const store = makeStore();
     const payload = {
@@ -331,7 +329,7 @@ describe("ingestSignal — Sentry adapter", () => {
   });
 });
 
-describe("ingestSignal — Datadog & PagerDuty adapters (groupingKey from native primitive)", () => {
+pgDescribe("ingestSignal — Datadog & PagerDuty adapters (groupingKey from native primitive)", () => {
   it("Datadog uses aggreg_key as groupingKey", async () => {
     const store = makeStore();
     const payload = { aggreg_key: "agg-7", event_id: "ev-7", title: "High CPU", alert_type: "error" };
@@ -436,7 +434,7 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-describe("ingestSignal — GitLab adapter", () => {
+pgDescribe("ingestSignal — GitLab adapter", () => {
   it("creates a triage task for a valid project issue webhook from a self-managed URL", async () => {
     const store = makeStore();
     const payload = gitlabIssuePayload();
@@ -488,7 +486,7 @@ describe("ingestSignal — GitLab adapter", () => {
   });
 
   it("maps issue and merge-request lifecycle actions without suppressing recovery events", async () => {
-    const { db, store } = makeDbStore();
+    const { layer, store } = await makeDbStore();
     const open = gitlabIssuePayload({ object_attributes: { action: "open", state: "opened", updated_at: "2026-03-04T00:00:00.000Z" } });
     const close = gitlabIssuePayload({ object_attributes: { action: "close", state: "closed", updated_at: "2026-03-04T00:05:00.000Z" } });
 
@@ -506,7 +504,7 @@ describe("ingestSignal — GitLab adapter", () => {
     })).status).toBe(201);
 
     expect(store._tasks).toHaveLength(2);
-    expect(incidents(db)).toMatchObject([{ groupingKey: "gitlab:gitlabhq/gitlab-test:issue:23", source: "gitlab", status: "resolved" }]);
+    expect(await incidents(layer)).toMatchObject([{ groupingKey: "gitlab:gitlabhq/gitlab-test:issue:23", source: "gitlab", status: "resolved" }]);
     const updateSignal = gitlabSource.normalize(gitlabIssuePayload({ object_attributes: { action: "update", state: "opened" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
     const reopenSignal = gitlabSource.normalize(gitlabIssuePayload({ object_attributes: { action: "reopen", state: "opened" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
     const mergedSignal = gitlabSource.normalize(gitlabMergeRequestPayload({ object_attributes: { action: "merge", state: "merged" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
@@ -578,7 +576,7 @@ describe("ingestSignal — GitLab adapter", () => {
   });
 });
 
-describe("ingestSignal — incident capture", () => {
+pgDescribe("ingestSignal — incident capture", () => {
   it("writes source and normalized severity for all configured providers", async () => {
     const cases = [
       {
@@ -634,7 +632,7 @@ describe("ingestSignal — incident capture", () => {
     ] as const;
 
     for (const c of cases) {
-      const { db, store } = makeDbStore();
+      const { layer, store } = await makeDbStore();
       const raw = JSON.stringify(c.payload);
       const res = await ingestSignal({
         source: c.source,
@@ -645,7 +643,7 @@ describe("ingestSignal — incident capture", () => {
         nonceCache: new DeliveryNonceCache(),
       });
       expect(res.status).toBe(201);
-      expect(incidents(db)).toMatchObject([{
+      expect(await incidents(layer)).toMatchObject([{
         groupingKey: c.expected.groupingKey,
         source: c.expected.source,
         severity: c.expected.severity,
@@ -655,7 +653,7 @@ describe("ingestSignal — incident capture", () => {
   });
 
   it("absorbs re-fires by grouping key without inserting duplicate incident rows", async () => {
-    const { db, store } = makeDbStore();
+    const { layer, store } = await makeDbStore();
     const mk = (id: string) => {
       const payload = { id, title: "Same outage", severity: "error", groupingKey: "same-outage" };
       const raw = JSON.stringify(payload);
@@ -675,7 +673,7 @@ describe("ingestSignal — incident capture", () => {
     expect((await ingestSignal(mk("refire-1"))).status).toBe(201);
     expect((await ingestSignal(mk("refire-2"))).status).toBe(201);
 
-    const rows = incidents(db);
+    const rows = await incidents(layer);
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0].meta ?? "{}")).toMatchObject({ occurrences: 2 });
   });
@@ -745,7 +743,7 @@ describe("ingestSignal — incident capture", () => {
     ] as const;
 
     for (const c of cases) {
-      const { db, store } = makeDbStore();
+      const { layer, store } = await makeDbStore();
       expect((await ingestSignal({
         source: c.source,
         store,
@@ -759,12 +757,12 @@ describe("ingestSignal — incident capture", () => {
         nonceCache: new DeliveryNonceCache(),
       })).status).toBe(201);
 
-      expect(incidents(db)).toMatchObject([{ groupingKey: c.groupingKey, source: c.expectedSource, status: "resolved" }]);
+      expect(await incidents(layer)).toMatchObject([{ groupingKey: c.groupingKey, source: c.expectedSource, status: "resolved" }]);
     }
   });
 
   it("also resolves PagerDuty incidents when only data.status is resolved", async () => {
-    const { db, store } = makeDbStore();
+    const { layer, store } = await makeDbStore();
     const openedAt = new Date().toISOString();
     const openPayload = {
       event: {
@@ -796,7 +794,7 @@ describe("ingestSignal — incident capture", () => {
       nonceCache: new DeliveryNonceCache(),
     })).status).toBe(201);
 
-    expect(incidents(db)).toMatchObject([{ groupingKey: "pd-status-resolve", source: "pagerduty", status: "resolved" }]);
+    expect(await incidents(layer)).toMatchObject([{ groupingKey: "pd-status-resolve", source: "pagerduty", status: "resolved" }]);
   });
 
   it("keeps connector acceptance successful when the best-effort incident write fails", async () => {
@@ -822,7 +820,7 @@ describe("ingestSignal — incident capture", () => {
   });
 
   it("feeds connector-recorded incidents into aggregateSignalsAnalytics breakdowns", async () => {
-    const { db, store } = makeDbStore();
+    const { layer, store } = await makeDbStore();
     const sentryPayload = {
       id: "sentry-analytics-open",
       data: { issue: { id: "sentry-analytics", title: "Sentry analytics", level: "fatal" } },
@@ -849,7 +847,7 @@ describe("ingestSignal — incident capture", () => {
       nonceCache: new DeliveryNonceCache(),
     })).status).toBe(201);
 
-    const analytics = await aggregateSignalsAnalytics(db, {
+    const analytics = await aggregateSignalsAnalytics(layer, {
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-31T00:00:00.000Z",
     });
@@ -866,7 +864,7 @@ describe("ingestSignal — incident capture", () => {
   });
 
   it("does not write incidents for malformed or duplicate payloads", async () => {
-    const { db, store } = makeDbStore();
+    const { layer, store } = await makeDbStore();
     const malformed = { nope: true };
     const malformedRaw = JSON.stringify(malformed);
     expect((await ingestSignal({
@@ -897,11 +895,11 @@ describe("ingestSignal — incident capture", () => {
     expect((await ingestSignal(mk())).status).toBe(201);
     expect((await ingestSignal(mk())).deduped).toBe(true);
 
-    expect(incidents(db)).toHaveLength(1);
+    expect(await incidents(layer)).toHaveLength(1);
   });
 });
 
-describe("helpers", () => {
+pgDescribe("helpers", () => {
   it("resolveSignalSecret reads the provider env var", () => {
     expect(resolveSignalSecret(webhookSource)).toBe("wh-secret");
     expect(resolveSignalSecret(webhookSource, {})).toBeUndefined();

@@ -106,6 +106,10 @@ Dashboard surfaces this as a yellow Duplicate chip plus modal actions only while
 
 This layer complements, rather than replaces, FN-4829 similarity detection, FN-4918 deterministic deduplication, and FN-4892 same-agent intake heuristics.
 
+### Workspace worktree cleanup on archive
+
+Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop.
+
 #### Explicit duplicate-marker guard (FN-5220)
 
 Fusion also recognizes the canonical one-line redirect marker:
@@ -355,6 +359,10 @@ Auto-completion/finalization remains owned by existing recovery passes:
 5. **done** — merged/finalized
 6. **archived** — preserved history, optionally cleaned from filesystem
 
+### Archive worktree cleanup
+
+Archiving a single-repository task synchronously removes its git worktree before branch and task-metadata cleanup. This applies to random and pinned (`task-id`/`task-title`) names, including `fn_task_archive` and direct CLI archive commands that run without an executor. A host-scoped filesystem reservation serializes a successor's deterministic-path acquisition with archival disposal; if removal fails, the reservation is quarantined so the next acquisition can reconcile the orphan instead of colliding with it. `archive({ cleanup: false })` intentionally retains the worktree. Workspace tasks' per-repository `workspaceWorktrees` are not removed by this lifecycle yet.
+
 Board ordering behavior:
 - `todo` mirrors scheduler dispatch order: priority first (`urgent` → `low`), then oldest `createdAt` within a priority tier, then task ID as deterministic tie-break.
 - `triage`, `in-progress`, and `in-review` remain priority-first with task-ID tie-breaks (`in-review` still pins merge-active statuses above non-merging tasks).
@@ -423,7 +431,7 @@ When a task was created to resolve a temporary failure state in another task (fo
 
 Use supported TaskStore/API paths to reconcile safely:
 
-- Remove/replace stale dependencies through task update APIs (do not hand-edit `task.json`/SQLite)
+- Remove/replace stale dependencies through task update APIs (do not hand-edit `task.json` or PostgreSQL rows)
 - Add a single comment/log entry explaining why the dependency changed
 - Keep downstream blockers coherent (only tasks that still truly depend on unfinished work should remain blocked)
 
@@ -433,7 +441,7 @@ Auto-merge recovery follow-up creation is deduplicated: Fusion creates at most o
 
 ### Landed-task state reconciliation (maintenance)
 
-If a task already shipped (`column: done`) but still carries transient failure metadata (`status: failed`, `error`, `worktree`, `blockedBy`, recovery retry fields), reconcile through supported TaskStore/API paths so SQLite and task JSON stay in sync.
+If a task already shipped (`column: done`) but still carries transient failure metadata (`status: failed`, `error`, `worktree`, `blockedBy`, recovery retry fields), reconcile through supported TaskStore/API paths so PostgreSQL and task JSON compatibility artifacts stay in sync.
 
 Recommended pattern:
 - Audit first (dry-run) for contradictory `done` + transient-failure state.
@@ -441,7 +449,7 @@ Recommended pattern:
 - Add one durable reconciliation log entry explaining why stale transient fields were cleared (avoid duplicating historical failure logs).
 - Re-audit after apply and resolve or explicitly disposition any related stale follow-up tasks.
 
-Do **not** patch `.fusion/fusion.db` directly without synchronizing `.fusion/tasks/*/task.json` through a supported store-backed path.
+Do **not** patch PostgreSQL rows or compatibility `task.json` files directly; use a supported store/API path so both representations remain synchronized.
 
 ## Branch conflict handling
 
@@ -645,7 +653,7 @@ Behavior:
 
 ### Cleanup behavior
 
-- Archived entries are persisted as compact archive snapshots in `archive.db`; legacy in-main-DB `archivedTasks` rows and older `.fusion/archive.jsonl` references may still appear in historical data/docs.
+- Archived entries are persisted as compact snapshots in PostgreSQL cold-storage tables; legacy `archive.db`, in-main-DB `archivedTasks`, and older `.fusion/archive.jsonl` data remain migration inputs only.
 - Task directory (`task.json`, `PROMPT.md`, `agent.log`, attachments) can be removed
 
 ### Compact archive entry format
@@ -679,7 +687,7 @@ Archive entries preserve key metadata needed for restoration, including:
 
 If you suspect **historical overwrites from pre-FN-4044 builds**, inspect surviving evidence in this order:
 
-1. `archive.db` / archived task snapshots for the missing ID
+1. PostgreSQL archived-task snapshots for the missing ID (then legacy `archive.db` only when auditing unmigrated data)
 2. `.fusion/tasks/<id>/task.json.bak`, `PROMPT.md`, attachments, and any surviving worktree branch named for the task
 3. agent run logs / task documents / activity log entries that still mention the original ID
 4. git commits whose subject/body references the original task ID but no longer matches the current task metadata
@@ -929,7 +937,7 @@ Use `noCommitsExpected: true` for tasks where the deliverable is a decision/repo
 - Review Level 1 coordination/routing tasks that are board-only, explicitly say not to change source, and scope only task documents/metadata can also complete without commits even if older prompts omitted the explicit flag. This fallback is intentionally narrow and exists to recover plan-only coordination work; it does not bypass wrong-worktree or wrong-branch checks.
 - Ambiguous/forked tasks (e.g. "Investigate..." or "Investigate and fix if needed") leave it unset by default.
 - Implementation, feature, bug-fix, source-docs, test, config, or broad investigation tasks still require commits unless they have an explicit and valid no-commit contract.
-- If a legacy coordination task is stuck with `fn_task_done refused: no_commits`, prefer setting/verifying `noCommitsExpected` and re-running normal no-op finalization rather than editing `.fusion/fusion.db` directly.
+- If a legacy coordination task is stuck with `fn_task_done refused: no_commits`, prefer setting/verifying `noCommitsExpected` and re-running normal no-op finalization rather than editing storage directly.
 - You can manually set/clear it in Task Detail via **No commits expected (decision-only task)**.
 - Task cards show a **decision-only** badge when enabled.
 - Finalization still uses the existing no-op review/merge path (`mergeDetails.noOpMerge: true`, `mergeConfirmed: true`); no synthetic merge strategy values are introduced.

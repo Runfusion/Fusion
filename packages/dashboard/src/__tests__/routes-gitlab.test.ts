@@ -23,6 +23,8 @@ function buildApp(fetchImpl = vi.fn()) {
       return task;
     }),
     logEntry: vi.fn(),
+    // FNXC:IssueImportAttachments 2026-07-15-13:40: GitLab import downloads issue/note screenshots into task attachments.
+    addAttachment: vi.fn().mockResolvedValue(undefined),
   };
   const app = express();
   app.use(express.json());
@@ -88,8 +90,67 @@ describe("GitLab import routes", () => {
     expect((dup.body as any).existingTaskId).toBe("FN-001");
   });
 
+  /*
+  FNXC:IssueImportAttachments 2026-07-15-13:40:
+  GitLab imports must hand the agent the same `.fusion/tasks/<id>/attachments/` contract as GitHub imports — the agent-facing behavior cannot depend on which forge the issue came from.
+  Covers both image sources (description + notes) and the project-relative `/uploads/` resolution that is the easy thing to get wrong.
+  */
+  it("downloads description and note images into task attachments", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const imageUrls: string[] = [];
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("/notes")) {
+        return Promise.resolve(jsonResponse([{ body: "also ![n](/uploads/note1/note.png)" }]));
+      }
+      if (String(url).includes("/uploads/")) {
+        imageUrls.push(String(url));
+        return Promise.resolve(
+          new Response(png, { status: 200, headers: { "Content-Type": "image/png", "Content-Length": String(png.length) } }),
+        );
+      }
+      return Promise.resolve(jsonResponse({
+        id: 1, iid: 2, project_id: 3, title: "Bug",
+        description: "repro ![d](/uploads/desc1/desc.png)",
+        web_url: "https://gitlab.example.com/g/p/-/issues/2", state: "opened", labels: [],
+      }));
+    });
+
+    const { app, store } = buildApp(fetchImpl);
+    const res = await request(app, "POST", "/api/gitlab/project/issues/import", JSON.stringify({ project: 3, iid: 2 }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    // /uploads/... is project-rooted, NOT instance-rooted.
+    expect(imageUrls).toEqual([
+      "https://gitlab.example.com/g/p/uploads/desc1/desc.png",
+      "https://gitlab.example.com/g/p/uploads/note1/note.png",
+    ]);
+    expect(store.addAttachment).toHaveBeenCalledTimes(2);
+    expect(store.addAttachment.mock.calls[0]).toEqual(["FN-001", "desc.png", expect.any(Buffer), "image/png"]);
+    expect(store.addAttachment.mock.calls[1]).toEqual(["FN-001", "note.png", expect.any(Buffer), "image/png"]);
+  });
+
+  it("imports the issue even when notes cannot be fetched", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("/notes")) return Promise.resolve(jsonResponse({ message: "403 Forbidden" }, 403));
+      return Promise.resolve(jsonResponse({
+        id: 1, iid: 2, project_id: 3, title: "Bug", description: "no images",
+        web_url: "https://gitlab.example.com/g/p/-/issues/2", state: "opened", labels: [],
+      }));
+    });
+
+    const { app, store } = buildApp(fetchImpl);
+    const res = await request(app, "POST", "/api/gitlab/project/issues/import", JSON.stringify({ project: 3, iid: 2 }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.addAttachment).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("imports group issues from selected row and merge requests with IID/branch metadata", async () => {
-    const { app, store } = buildApp(vi.fn().mockResolvedValue(jsonResponse({ id: 9, iid: 5, project_id: 4, title: "MR", description: null, web_url: "https://gitlab.example.com/g/p/-/merge_requests/5", state: "opened", labels: ["review"], source_branch: "feat", target_branch: "main" })));
+    // A Response body is single-use, so build a fresh one per call (mockResolvedValue would hand the
+    // same consumed instance to the second request). Matches the project-issue import test above.
+    const { app, store } = buildApp(vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ id: 9, iid: 5, project_id: 4, title: "MR", description: null, web_url: "https://gitlab.example.com/g/p/-/merge_requests/5", state: "opened", labels: ["review"], source_branch: "feat", target_branch: "main" }))));
     const group = await request(app, "POST", "/api/gitlab/group/issues/import", JSON.stringify({ group: "g", issue: { resourceKind: "group_issue", id: 2, iid: 7, projectId: 8, projectPath: "g/p", title: "Group", description: null, webUrl: "https://gitlab.example.com/g/p/-/issues/7", state: "opened", labels: [] } }), { "Content-Type": "application/json" });
     expect(group.status).toBe(201);
     expect(store.createTask.mock.calls[0][0].source.sourceMetadata).toMatchObject({ resourceType: "group_issue", groupPath: "g", projectId: 8, issueIid: 7 });

@@ -172,9 +172,9 @@ describe("setup routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      state: "fresh-install",
+      state: "setup-wizard",
       detectedProjects,
-      hasCentralDb: true,
+      hasCentralDb: false,
       registeredProjects: [],
     });
     expect(mockCentralListProjects).not.toHaveBeenCalled();

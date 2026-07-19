@@ -7,6 +7,7 @@ import {
   getRequiredPluginIdForBuiltinWorkflow,
   isBuiltinWorkflowId,
   isBuiltinWorkflowPluginGated,
+  isBuiltinWorkflowDeprecated,
 } from "../builtin-workflows.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
@@ -344,29 +345,25 @@ describe("built-in workflows", () => {
     );
   });
 
-  /*
-   * FNXC:WorkflowBrainstorming 2026-07-05-00:00:
-   * FN-7584 parity coverage for the registered builtin:brainstorming built-in
-   * (FN-7579's ask-user -> refine -> exit-gate-on-approval composition,
-   * discoverable from the workflow picker ahead of the normal coding spine).
-   */
-  it("registers builtin:brainstorming as a default-enabled workflow ordered after the existing built-ins", () => {
+  it("keeps deprecated builtin:brainstorming resolvable while excluding it from defaults", () => {
     const brainstorming = getBuiltinWorkflow("builtin:brainstorming");
     expect(brainstorming).toBeDefined();
     expect(brainstorming!.kind).toBe("workflow");
     expect(() => parseWorkflowIr(brainstorming!.ir)).not.toThrow();
-    expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:brainstorming");
+    expect(isBuiltinWorkflowDeprecated("builtin:brainstorming")).toBe(true);
+    expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:brainstorming");
     expect(BUILTIN_WORKFLOWS.findIndex((workflow) => workflow.id === "builtin:brainstorming")).toBeGreaterThan(
       BUILTIN_WORKFLOWS.findIndex((workflow) => workflow.id === "builtin:lead-generation"),
     );
-    // Ordering assertion the suite pins elsewhere (`.slice(0, 5)`) must stay untouched.
-    expect(defaultEnabledBuiltinWorkflowIds().slice(0, 5)).toEqual([
-      "builtin:coding",
-      "builtin:coding-ideas",
-      "builtin:legacy-coding",
-      "builtin:quick-fix",
-      "builtin:review-heavy",
-    ]);
+  });
+
+  it("keeps deprecated builtin:coding-ideas resolvable while excluding it from defaults", () => {
+    const codingIdeas = getBuiltinWorkflow("builtin:coding-ideas");
+    expect(codingIdeas).toBeDefined();
+    expect(codingIdeas!.kind).toBe("workflow");
+    expect(() => parseWorkflowIr(codingIdeas!.ir)).not.toThrow();
+    expect(isBuiltinWorkflowDeprecated("builtin:coding-ideas")).toBe(true);
+    expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:coding-ideas");
   });
 
   it("orders builtin:brainstorming's ask-user/exit-gate loop ahead of the plan/execute spine", () => {
@@ -739,29 +736,36 @@ describe("built-in workflows", () => {
     expect(BUILTIN_WORKFLOWS.find((workflow) => workflow.id === "builtin:coding")?.ir).toBe(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
     expect(defaultEnabledBuiltinWorkflowIds()).toEqual(
       BUILTIN_WORKFLOWS.filter(
-        (workflow) => workflow.kind !== "fragment" && !isBuiltinWorkflowPluginGated(workflow.id),
+        (workflow) => workflow.kind !== "fragment"
+          && !isBuiltinWorkflowPluginGated(workflow.id)
+          && !isBuiltinWorkflowDeprecated(workflow.id),
       ).map((workflow) => workflow.id),
     );
     expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:design");
     expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:marketing");
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:compound-engineering");
+    expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:brainstorming");
+    expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:coding-ideas");
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:pr-workflow");
     expect(getBuiltinWorkflow("builtin:pr-workflow")!.kind).toBe("fragment");
     expect(defaultEnabledBuiltinWorkflowIds().length).toBeGreaterThanOrEqual(5);
     expect(defaultEnabledBuiltinWorkflowIds().slice(0, 5)).toEqual([
       "builtin:coding",
-      "builtin:coding-ideas",
       "builtin:legacy-coding",
       "builtin:quick-fix",
       "builtin:review-heavy",
+      "builtin:marketing",
     ]);
     expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:stepwise-coding");
   });
 
-  it("identifies plugin-gated built-in workflows", () => {
+  it("identifies plugin-gated and deprecated built-in workflows", () => {
     expect(isBuiltinWorkflowPluginGated("builtin:compound-engineering")).toBe(true);
     expect(isBuiltinWorkflowPluginGated("builtin:coding")).toBe(false);
     expect(isBuiltinWorkflowPluginGated("builtin:quick-fix")).toBe(false);
+    expect(isBuiltinWorkflowDeprecated("builtin:brainstorming")).toBe(true);
+    expect(isBuiltinWorkflowDeprecated("builtin:coding-ideas")).toBe(true);
+    expect(isBuiltinWorkflowDeprecated("builtin:coding")).toBe(false);
   });
 
   it("resolves required plugin ids for plugin-gated built-in workflows", () => {
@@ -1062,6 +1066,20 @@ describe("built-in workflows", () => {
       const managementList = await store.listWorkflowDefinitions({ includeDisabledBuiltins: true });
       expect(managementList.some((workflow) => workflow.id === "builtin:coding")).toBe(true);
       expect(managementList.some((workflow) => workflow.id === "builtin:compound-engineering")).toBe(false);
+    });
+
+    it("hides deprecated built-ins from selection listings while preserving management and direct resolution", async () => {
+      const deprecatedIds = ["builtin:brainstorming", "builtin:coding-ideas"];
+      const selectionList = await store.listWorkflowDefinitions();
+      for (const id of deprecatedIds) {
+        expect(selectionList.some((workflow) => workflow.id === id)).toBe(false);
+      }
+
+      const managementList = await store.listWorkflowDefinitions({ includeDisabledBuiltins: true });
+      for (const id of deprecatedIds) {
+        expect(managementList.some((workflow) => workflow.id === id)).toBe(true);
+        expect(await store.getWorkflowDefinition(id)).toMatchObject({ id });
+      }
     });
 
     it("hides the compound-engineering built-in when its plugin is not installed", async () => {

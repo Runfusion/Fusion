@@ -184,7 +184,7 @@ function rowToSession(row: CeSessionRow): CeSession {
 
 /**
  * Plugin-local persistence for CE interactive sessions. Reaches the DB the same
- * way reports does (via `ctx.taskStore.getDatabase()`), and ensures its schema
+ * way reports does (via `ctx.taskStore.getAsyncLayer()`), and ensures its schema
  * defensively on construction so a store created before `onSchemaInit` ran (or
  * in a test) still works.
  */
@@ -540,11 +540,9 @@ export function getCeSessionStore(ctx: PluginContext): CeSessionStore {
   const key = ctx.taskStore as object;
   const cached = storeCache.get(key);
   if (cached) return cached;
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:40:
-  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
   const layer = ctx.taskStore.getAsyncLayer();
-  const db = layer ? null : ctx.taskStore.getDatabase();
-  const store = new CeSessionStore(db, layer);
+  if (!layer) throw new Error("Compound Engineering session store requires the project PostgreSQL AsyncDataLayer");
+  const store = new CeSessionStore(null, layer);
   storeCache.set(key, store);
   return store;
 }

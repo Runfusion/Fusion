@@ -291,7 +291,7 @@ export const FTS_TS_CONFIG = "simple";
  * @returns A `SQL` fragment binding the to_tsquery, or `undefined` if the
  *   query produces no valid tokens.
  */
-function buildTsqueryFragment(query: string): SQL | undefined {
+export function buildTsqueryFragment(query: string): SQL | undefined {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return undefined;
 

@@ -1,7 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   createWorkflowAuthoringTools,
   createWorkflowListTool,
@@ -13,7 +10,8 @@ import {
   createWorkflowDeleteTool,
 } from "../index.js";
 import { createWorkflowSettingsTool } from "../agent-tools.js";
-import { parseWorkflowIr, TaskStore } from "@fusion/core";
+import { parseWorkflowIr, type TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 /**
  * U11 / R12 drift guard (engine half): the workflow-authoring tool surface that
@@ -69,7 +67,7 @@ describe("workflow tool exposure (engine factories)", () => {
  * prompt-injectable agent lane. The executor lane omits the option (project-
  * owner escape hatch) and the flags pass through unchanged.
  */
-describe("fn_workflow_validate dry-run", () => {
+pgDescribe("fn_workflow_validate dry-run", () => {
   const run = (tool: { execute: (...a: any[]) => Promise<any> }, params: unknown) =>
     tool.execute("call-1", params, undefined, undefined, undefined) as Promise<{
       isError?: boolean; details: any; content: { type: string; text?: string }[];
@@ -85,15 +83,13 @@ describe("fn_workflow_validate dry-run", () => {
     edges: [{ from: "start", to: "end", condition: "success" as const }],
   });
 
+  /* FNXC:PgMigrationQuarantine 2026-07-17-18:15: validation must use the production PostgreSQL store boundary rather than removed SQLite constructor paths. */
   async function withStore<T>(fn: (store: TaskStore) => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(join(tmpdir(), "workflow-validate-tool-"));
-    const store = new TaskStore(dir);
-    await store.init();
+    const harness = await createTaskStoreForTest({ prefix: "fusion_workflow_validate" });
     try {
-      return await fn(store);
+      return await fn(harness.store);
     } finally {
-      await store.close?.().catch(() => {});
-      await rm(dir, { recursive: true, force: true });
+      await harness.teardown();
     }
   }
 

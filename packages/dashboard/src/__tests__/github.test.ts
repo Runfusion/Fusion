@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { GitHubClient, CreatePrParams, PrComment, isPrMergeReady } from "../github.js";
+import { GitHubClient, CreatePrParams, PrComment, isGitHubIssueAlreadyImported, isPrMergeReady } from "../github.js";
 
 // Mock the gh-cli module from @fusion/core
 vi.mock("@fusion/core", async () => {
@@ -66,6 +66,54 @@ describe("GitHubClient", () => {
 
     it("can be created with token for REST API fallback", () => {
       expect(() => new GitHubClient("ghp_token123")).not.toThrow();
+    });
+  });
+
+  describe("addIssueComment", () => {
+    it("posts through gh CLI when authenticated", async () => {
+      mockRunGhAsync.mockResolvedValue("");
+
+      await client.addIssueComment("owner", "repo", 42, "A new comment");
+
+      expect(mockRunGhAsync).toHaveBeenCalledWith([
+        "issue", "comment", "42", "--repo", "owner/repo", "--body", "A new comment",
+      ]);
+    });
+
+    it("falls back to REST when gh is unavailable and a token exists", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      mockIsGhAuthenticated.mockReturnValue(false);
+      const tokenClient = new GitHubClient("ghp_token");
+      const fetchSpy = vi.spyOn(global, "fetch" as any).mockResolvedValue({ ok: true } as any);
+
+      await tokenClient.addIssueComment("owner", "repo", 42, "A new comment");
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://api.github.com/repos/owner/repo/issues/42/comments",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "A new comment" }) }),
+      );
+    });
+
+    it("rejects when neither gh nor a token can authenticate", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      mockIsGhAuthenticated.mockReturnValue(false);
+
+      await expect(new GitHubClient().addIssueComment("owner", "repo", 42, "A new comment")).rejects.toThrow(
+        "no GITHUB_TOKEN provided",
+      );
+    });
+
+    it("maps REST 404 responses to a not-found error", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      mockIsGhAuthenticated.mockReturnValue(false);
+      const tokenClient = new GitHubClient("ghp_token");
+      vi.spyOn(global, "fetch" as any).mockResolvedValue({
+        ok: false, status: 404, statusText: "Not Found", json: async () => ({ message: "Not Found" }),
+      } as any);
+
+      await expect(tokenClient.addIssueComment("owner", "repo", 42, "A new comment")).rejects.toThrow(
+        "Issue #42 not found in owner/repo",
+      );
     });
   });
 
@@ -1174,6 +1222,72 @@ describe("GitHubClient", () => {
       expect(result).toHaveLength(1);
       expect(result[0].state).toBe("open");
       expect(result[0].updatedAt).toBe("2026-05-16T10:00:00Z");
+
+      vi.restoreAllMocks();
+    });
+
+    /*
+    FNXC:GitHubImport 2026-07-16-16:20:
+    Regression: the REST path used to fetch a single page (per_page capped at 100), so repos with >100 open
+    issues silently lost everything past the first page. It now pages `page` until the limit or a short page.
+    */
+    it("pages the REST API across multiple pages up to the requested limit", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      const makeIssue = (n: number) => ({
+        number: n, title: `Issue ${n}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${n}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z",
+      });
+      const page1 = Array.from({ length: 100 }, (_, i) => makeIssue(i + 1));
+      const page2 = Array.from({ length: 50 }, (_, i) => makeIssue(101 + i));
+
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        const page = new URL(url).searchParams.get("page");
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(page === "1" ? page1 : page2) });
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.listIssues("owner", "repo", { limit: 150 });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(new URL(mockFetch.mock.calls[0][0]).searchParams.get("page")).toBe("1");
+      expect(new URL(mockFetch.mock.calls[1][0]).searchParams.get("page")).toBe("2");
+      expect(result).toHaveLength(150);
+      expect(result[0].number).toBe(1);
+      expect(result[149].number).toBe(150);
+
+      vi.restoreAllMocks();
+    });
+
+    it("keeps paging when a full page is entirely pull requests (does not stop early)", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      // Page 1 is 100 PRs (all filtered out) — a naive "stop when this page yields no issues" would return [].
+      const prPage = Array.from({ length: 100 }, (_, i) => ({
+        number: i + 1, title: `PR ${i + 1}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${i + 1}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z", pull_request: {},
+      }));
+      const issuePage = Array.from({ length: 30 }, (_, i) => ({
+        number: 200 + i, title: `Issue ${200 + i}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${200 + i}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z",
+      }));
+
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        const page = new URL(url).searchParams.get("page");
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(page === "1" ? prPage : issuePage) });
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.listIssues("owner", "repo", { limit: 150 });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result).toHaveLength(30);
+      expect(result.every((r) => r.number >= 200)).toBe(true);
 
       vi.restoreAllMocks();
     });
@@ -2315,5 +2429,25 @@ describe("GitHubClient", () => {
 
       expect(fetchSpy).toHaveBeenCalledTimes(2); // initial + 1 retry
     });
+  });
+});
+
+describe("isGitHubIssueAlreadyImported", () => {
+  const input = { owner: "owner", repo: "repo", issueNumber: 1, sourceUrl: "https://github.com/owner/repo/issues/1" };
+
+  it("matches edited sourceIssue metadata, legacy source metadata, and description URLs", () => {
+    expect(isGitHubIssueAlreadyImported({ description: "Source: https://github.com/OWNER/REPO/issues/1" }, input)).toBe(true);
+    expect(isGitHubIssueAlreadyImported({
+      description: "Edited description",
+      sourceIssue: { provider: "github", repository: "Owner/Repo", issueNumber: 1, externalIssueId: "1", url: "https://github.com/other/repo/issues/2" },
+    }, input)).toBe(true);
+    expect(isGitHubIssueAlreadyImported({
+      description: "Edited description",
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/Owner/Repo/issues/2", issueNumber: 1 } },
+    }, input)).toBe(true);
+  });
+
+  it("does not match a fresh issue", () => {
+    expect(isGitHubIssueAlreadyImported({ description: "Unrelated" }, input)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -42,6 +42,8 @@ import {
   mockFetchDashboardHealth,
   mockCheckForUpdates,
   mockInstallUpdate,
+  mockFetchSystemInfo,
+  mockRequestSystemRestart,
   mockFetchRemoteSettings,
   mockUpdateRemoteSettings,
   mockFetchRemoteStatus,
@@ -117,6 +119,8 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
     checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
     installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
+    fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
+    requestSystemRestart: (...args: unknown[]) => mockRequestSystemRestart(...args),
     fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
     updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
     fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
@@ -151,11 +155,15 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: (...args: unknown[]) => mockConfirm(...args) }),
 }));
 
+let viewportMode: "mobile" | "desktop" = "mobile";
+
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  getViewportMode: () => "mobile",
-  isMobileViewport: () => true,
-  useViewportMode: () => "mobile",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
+  getViewportMode: () => viewportMode,
+  isMobileViewport: () => viewportMode === "mobile",
+  useViewportMode: () => viewportMode,
 }));
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -196,7 +204,201 @@ vi.mock("../FileBrowser", () => ({
 }));
 
 describe("SettingsModal", () => {
-  installSettingsModalEnv();
+  // Keep Advanced off by default so disclosure default/persist tests stay truthful.
+  installSettingsModalEnv({ advancedSettings: false });
+
+  afterEach(() => {
+    viewportMode = "mobile";
+  });
+
+  const availableUpdate = {
+    currentVersion: "1.2.3",
+    latestVersion: "2.0.0",
+    updateAvailable: true,
+  };
+
+  async function renderUpdatedSettings() {
+    mockCheckForUpdates.mockResolvedValue(availableUpdate);
+    renderModal();
+    await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+    await screen.findByRole("button", { name: "Update now" });
+    await settingsModalUser.click(screen.getByRole("button", { name: "Update now" }));
+    return screen.findByRole("button", { name: "Restart Fusion" });
+  }
+
+  describe("update restart affordance", () => {
+    it("renders an enabled restart button after a successful update on desktop", async () => {
+      viewportMode = "desktop";
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeEnabled();
+      expect(restartButton).toHaveAccessibleName("Restart Fusion");
+    });
+
+    it("renders a wrapping, enabled restart control after a successful update on mobile", async () => {
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeEnabled();
+      expect(restartButton).toHaveAccessibleName("Restart Fusion");
+      expect(restartButton.closest(".settings-update-install-succeeded")).toBeInTheDocument();
+      expect(settingsModalCss).toMatch(/\.settings-modal \.settings-update-check\s*\{[^}]*flex-wrap: wrap;/s);
+    });
+
+    it("requests the supervised restart with the Settings update reason", async () => {
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(mockRequestSystemRestart).toHaveBeenCalledTimes(1);
+      expect(mockRequestSystemRestart).toHaveBeenCalledWith("settings-update");
+      expect(await screen.findByText(/Restarting… Your connection will close shortly/)).toBeInTheDocument();
+    });
+
+    it("keeps the restart button disabled with manual guidance when unsupported", async () => {
+      mockFetchSystemInfo.mockResolvedValue({ supervised: false, restartSupported: false });
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeDisabled();
+      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+    });
+
+    it("keeps the restart button disabled while system information is loading", async () => {
+      mockFetchSystemInfo.mockReturnValue(new Promise(() => {}));
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeDisabled();
+    });
+
+    it("fails closed with manual guidance when system information cannot load", async () => {
+      mockFetchSystemInfo.mockRejectedValue(new Error("unavailable"));
+
+      const restartButton = await renderUpdatedSettings();
+
+      await waitFor(() => expect(restartButton).toBeDisabled());
+      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+    });
+
+    it("disables the restart button and shows a spinner while scheduling", async () => {
+      mockRequestSystemRestart.mockReturnValue(new Promise(() => {}));
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(restartButton).toBeDisabled();
+      expect(within(restartButton).getByTestId("icon-refresh")).toHaveClass("spinning");
+    });
+
+    it("shows an inline error and allows retry when restart scheduling rejects", async () => {
+      mockRequestSystemRestart.mockRejectedValue(new Error("Restart unavailable"));
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(await screen.findByText("Restart unavailable")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    });
+
+    it("shows an inline error and allows retry when restart scheduling returns false", async () => {
+      mockRequestSystemRestart.mockResolvedValue({ scheduled: false });
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(await screen.findByText(/Restart could not be scheduled/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    });
+
+    it("keeps the retry path and hides restart when update installation fails", async () => {
+      mockInstallUpdate.mockResolvedValue({
+        currentVersion: "1.2.3",
+        latestVersion: "2.0.0",
+        updated: false,
+        error: "Install failed",
+      });
+      mockCheckForUpdates.mockResolvedValue(availableUpdate);
+      renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+      await screen.findByRole("button", { name: "Update now" });
+      await settingsModalUser.click(screen.getByRole("button", { name: "Update now" }));
+
+      expect(await screen.findByText(/Update failed: Install failed/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Restart Fusion" })).not.toBeInTheDocument();
+    });
+  });
+
+  const deepwikiServer = {
+    name: "deepwiki",
+    transport: "stdio" as const,
+    command: "npx",
+    args: ["-y", "mcp-remote", "https://mcp.deepwiki.com/sse"],
+  };
+
+  it("binds Global MCP controls to raw global settings instead of the merged project value", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "global-mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i })).not.toBeChecked();
+    expect(screen.queryByTestId("mcp-server-row-deepwiki")).not.toBeInTheDocument();
+  });
+
+  it("binds Project MCP controls to raw project settings", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i })).toBeChecked();
+    expect(await screen.findByTestId("mcp-server-row-deepwiki")).toHaveTextContent("project local");
+  });
+
+  it("persists a scoped MCP edit after navigating to another section before saving", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i }));
+    await settingsModalUser.click(screen.getByRole("button", { name: /^General · Global$/ }));
+    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mcpServers: { enabled: false, servers: [deepwikiServer] },
+        }),
+        "proj-1",
+      );
+    });
+  });
 
   it("applies keyboard CSS variables when mobile keyboard is open", async () => {
     mockUseMobileKeyboard.mockReturnValue({
@@ -215,7 +417,14 @@ describe("SettingsModal", () => {
     expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
   });
 
-  it("defaults to the global General section when no initialSection is provided", async () => {
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:10:
+  Authentication was the previous default; FN-8130 requires Settings to open on Appearance, the global Preferences section, when no explicit initialSection is supplied.
+
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  Appearance is not behind the Advanced switch, so the landing section can never be one the operator has hidden; that is asserted here rather than left implicit.
+  */
+  it("defaults to the Appearance section when no initialSection is provided", async () => {
     render(
       <SettingsModal
         onClose={noop}
@@ -224,8 +433,13 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+    /*
+    FNXC:SettingsNavigation 2026-07-16-01:30:
+    The test asserts a reachable concrete landing surface rather than nav position. Appearance is in the Preferences group, and its placement may change, but the section Settings opens on must never be one the Advanced switch hides.
+    */
+    expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /^Appearance$/ })).toBeInTheDocument();
   });
 
   /*
@@ -272,32 +486,32 @@ describe("SettingsModal", () => {
     // behind the toggle — expand it before interacting with the search input.
     await settingsModalUser.click(screen.getByLabelText("Show search"));
     const search = screen.getByTestId("settings-search-input");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.type(search, "   ");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "completion documentation");
 
-    expect(screen.queryByRole("button", { name: /^General$/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Global$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByText("1 matching sections")).toBeInTheDocument();
+    expect(screen.getByText("1 matching section")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "Autonomy mode");
 
-    expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^CLI Agents$/ })).toBeInTheDocument();
     expect(screen.getByTestId("cli-agents-settings")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "research providers");
 
-    expect(screen.queryByRole("button", { name: /^Research Defaults$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Research · Global$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Research$/ })).not.toBeInTheDocument();
     expect(screen.getAllByText(/No settings sections match/).length).toBeGreaterThan(0);
   });
@@ -312,17 +526,24 @@ describe("SettingsModal", () => {
     const search = screen.getByTestId("settings-search-input");
     await settingsModalUser.type(search, "mcp");
 
-    const matches = screen.getAllByRole("button", { name: /^MCP Servers$/ });
-    expect(matches).toHaveLength(2);
+    /*
+    FNXC:SettingsNavigation 2026-07-15-17:35:
+    Both MCP sections must be individually identifiable. This previously asserted TWO buttons named exactly "MCP Servers" — it pinned the duplicate-label bug as expected behavior, and the only thing telling the entries apart was the scope icon.
+    The nav is grouped by topic now, so the pair sits adjacent under Integrations and each label states its own scope.
+    */
+    const mcpMatches = screen.getAllByRole("button", { name: /^MCP Servers · (Global|Project)$/ });
+    expect(mcpMatches).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "MCP Servers · Global" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "MCP Servers · Project" })).toBeInTheDocument();
     expect(screen.getByText("2 matching sections")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "definitely not a setting");
 
-    expect(screen.queryByRole("button", { name: /^MCP Servers$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^MCP Servers · / })).not.toBeInTheDocument();
     await settingsModalUser.click(screen.getAllByRole("button", { name: "Clear settings search" })[0]);
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
   });
 
   it("keeps settings file pickers workspace-confined even when absolute browsing exists", async () => {
@@ -383,13 +604,13 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByLabelText("Show search"));
       const search = screen.getByTestId("settings-search-input");
       await settingsModalUser.type(search, "model pricing");
-      expect(screen.getByRole("button", { name: /^Models$/ })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Models · Global$/ })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
 
       fireEvent.keyDown(search, { key: "Escape" });
       expect(onClose).not.toHaveBeenCalled();
       expect(search).toHaveValue("");
-      expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     });
 
     it("keeps the overlay and Escape-to-close in modal mode", async () => {
@@ -572,27 +793,36 @@ describe("SettingsModal", () => {
   });
 
   describe("deferred settings fetches", () => {
-    it("does not fetch global concurrency until Scheduling is selected", async () => {
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    `/Scheduling/` now matches two nav buttons — the section split into a Global/Project pair — so the selector names the exact one. The deferral requirement is unchanged: the global-concurrency endpoint is not hit until a scheduling section is opened.
+    */
+    it("does not fetch global concurrency until a Scheduling section is selected", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
       expect(mockFetchGlobalConcurrency).not.toHaveBeenCalled();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
 
       await waitFor(() => {
         expect(mockFetchGlobalConcurrency).toHaveBeenCalledTimes(1);
       });
     });
 
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    The invariant is unchanged — a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback. Only its surface moved: the global cap now lives in its own section, so the assertion follows it across both halves of the pair rather than reading them all off one screen.
+    */
     it("disables concurrency inputs until their actual values load", async () => {
       mockFetchGlobalConcurrency.mockReturnValue(new Promise(() => {}));
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
-
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
       expect(screen.getByLabelText("Global Max Concurrent")).toBeDisabled();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
       expect(screen.getByLabelText("Max Triage Concurrent")).toBeDisabled();
     });
@@ -608,7 +838,12 @@ describe("SettingsModal", () => {
       );
       expect(initialCallHasDisabled).toBe(true);
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Memory/ }));
+      /*
+      FNXC:DashboardTests 2026-07-18-13:35:
+      Settings nav also exposes "Memory Backups"; /Memory/ matches both. Use the exact
+      Memory section label so the deferred memory-backend status hook test stays scoped.
+      */
+      await settingsModalUser.click(screen.getByRole("button", { name: "Memory" }));
 
       await waitFor(() => {
         const enabledCallSeen = mockUseMemoryBackendStatus.mock.calls.some(
@@ -626,28 +861,56 @@ describe("SettingsModal", () => {
 
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
-    it("renders default global logging fields, helper text, and tracking repo control", async () => {
+    it("renders default global logging fields and helper text", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
       // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
-      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest("small")).toBeTruthy();
+      /*
+      FNXC:SettingsHelp 2026-07-15-22:10:
+      Migrated rows render help through the shared primitive rather than a bespoke `<small>`. The copy now lives in the help tip's bubble (`.settings-help-bubble`) instead of an inline `.settings-field-row-help` paragraph — deferred visually, but still in the DOM and the accessibility tree, which is why `getByText` still resolves it.
+      The assertion's intent is unchanged: this row's help must come from the primitive, not hand-rolled markup.
+      */
+      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-help-bubble")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
       // thinking-log checkboxes default to unchecked.
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
 
-      // Helper descriptions render as small text (not .settings-field-help).
+      /*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      All help copy — including the bespoke thinking-log group's shared string, which previously stayed in an inline <small> — now renders behind the shared "?" affordance (operator requirement: no inline description paragraphs in Settings). Both helpers must resolve inside a help bubble.
+      */
       expect(document.querySelector(".settings-field-help")).toBeNull();
       const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
-      expect(toolOutputHelper.closest("small")).toBeTruthy();
+      expect(toolOutputHelper.closest(".settings-help-bubble")).toBeTruthy();
       const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
-      expect(thinkingHelper.closest("small")).toBeTruthy();
+      expect(thinkingHelper.closest(".settings-help-bubble")).toBeTruthy();
+    });
 
-      // Global default tracking repo control + inheritance hint render.
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The tracking-repo control and the GitLab disclosure moved to "Source Control · Global". Asserting they are GONE from here (not just present there) is the half that catches a partial move: a section left rendering a second copy of a dual-scope control is exactly the duplicate-`gitlabEnabled` bug this split removed, and it would leave every positive assertion green.
+    */
+    it("no longer renders the moved source-control controls", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByRole("combobox", { name: "Global default tracking repo" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("global-gitlab-configuration-disclosure")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab instance URL")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab access token")).not.toBeInTheDocument();
+    });
+
+    it("renders the moved global tracking repo control and its inheritance hint in Source Control · Global", async () => {
+      renderModal({ initialSection: "source-control-global" });
+      await waitForSettingsModalReady();
+
       expect(screen.getByRole("combobox", { name: "Global default tracking repo" })).toBeInTheDocument();
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
     });
@@ -720,6 +983,25 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("saves skipConfirmationDialogs only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Skip confirmation dialogs for critical actions" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.skipConfirmationDialogs).toBe(true);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.skipConfirmationDialogs).toBeUndefined();
+      }
+    });
+
     it("saves persistAgentToolOutput only via global settings payload", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
@@ -736,6 +1018,25 @@ describe("SettingsModal", () => {
       if (mockUpdateSettings.mock.calls.length > 0) {
         const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(projectPayload.persistAgentToolOutput).toBeUndefined();
+      }
+    });
+
+    it("saves proactive task-chat updates only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.proactiveTaskChatEnabled).toBe(true);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.proactiveTaskChatEnabled).toBeUndefined();
       }
     });
 
@@ -767,7 +1068,7 @@ describe("SettingsModal", () => {
       mockFetchProjects.mockResolvedValueOnce([{ id: "p-1", name: "Alpha" }]);
       mockFetchGitRemotes.mockResolvedValueOnce([{ name: "origin", owner: "octo", repo: "global-default", url: "https://github.com/octo/global-default.git" }]);
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await waitFor(() => {
@@ -791,7 +1092,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves GitLab URL configuration via global settings payload only", async () => {
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(screen.getByLabelText("Global GitLab instance URL")).toHaveAttribute("placeholder", "https://gitlab.com");
@@ -822,7 +1123,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -841,7 +1142,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -876,7 +1177,7 @@ describe("SettingsModal", () => {
         project: {},
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -894,7 +1195,7 @@ describe("SettingsModal", () => {
     it("shows global tracking repo error hint and keeps custom entry when lookups fail", async () => {
       mockFetchProjects.mockRejectedValueOnce(new Error("no projects"));
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load project list/i)).toBeInTheDocument();
@@ -925,7 +1226,7 @@ describe("SettingsModal", () => {
     expect(payload.agentProvisioning?.approvalMode).toBe("always");
   });
 
-  describe("Project General", () => {
+  describe("General · Project", () => {
     it("renders completion documentation automation control", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -947,6 +1248,26 @@ describe("SettingsModal", () => {
       expect(onQuickChatButtonModeChange).toHaveBeenCalledWith("footer");
     });
 
+    it("reorders, adds, and removes mobile quick actions before save", async () => {
+      const onMobileNavPrimaryItemsChange = vi.fn();
+      renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
+      await waitForSettingsModalReady();
+
+      fireEvent.click(screen.getAllByRole("button", { name: /later$/i })[0]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "chat", "mailbox"]);
+      const rows = Array.from(screen.getByRole("group", { name: "Mobile footer quick actions" }).querySelectorAll(".settings-field-label-row"));
+      expect(rows[0].textContent).toContain("tasks");
+
+      fireEvent.click(screen.getByLabelText("Remove chat"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox"]);
+
+      await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "git");
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox", "git"]);
+
+      fireEvent.click(screen.getByLabelText("Remove tasks"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "agents", "missions", "mailbox", "git"]);
+    });
+
     it("defaults task chats common-feed opt-in to unchecked", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -958,7 +1279,7 @@ describe("SettingsModal", () => {
 
     it.each<PersistSettingInput>([
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Completion Documentation Automation",
         kind: "select",
         value: "changeset",
@@ -966,7 +1287,15 @@ describe("SettingsModal", () => {
         expectedKey: "completionDocumentationMode",
       },
       {
-        section: "Project General",
+        section: "General · Project",
+        label: "Review Artifacts",
+        kind: "select",
+        value: "user-facing",
+        scope: "project",
+        expectedKey: "reviewArtifacts",
+      },
+      {
+        section: "General · Project",
         label: "Auto-cleanup old chats",
         kind: "select",
         value: 14,
@@ -974,7 +1303,7 @@ describe("SettingsModal", () => {
         expectedKey: "chatAutoCleanupDays",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Close Quick Chat on outside click",
         kind: "checkbox",
         value: false,
@@ -982,7 +1311,7 @@ describe("SettingsModal", () => {
         expectedKey: "quickChatCloseOnOutsideClick",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Show task chats in common Chat feed",
         kind: "checkbox",
         value: true,
@@ -990,7 +1319,7 @@ describe("SettingsModal", () => {
         expectedKey: "showTaskChatsInCommonFeed",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Operational log retention",
         kind: "select",
         value: 7,
@@ -999,6 +1328,60 @@ describe("SettingsModal", () => {
       },
     ])("persists $expectedKey through the expected settings scope", async (input) => {
       await expectSettingPersists(input);
+    });
+
+    it("persists report default and per-action filing mode overrides", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      fireEvent.change(screen.getByLabelText("In-app report mode"), { target: { value: "auto-file" } });
+      fireEvent.change(screen.getByLabelText("Bug report override"), { target: { value: "draft-review" } });
+      fireEvent.click(screen.getByLabelText("Check roadmap before filing reports"));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+        reportMode: "auto-file",
+        reportModeByAction: { bug: "draft-review" },
+        reportRoadmapDedup: true,
+      }));
+    });
+
+    it("renders report-mode default help across unset, populated, and reset action overrides", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const reportMode = screen.getByLabelText("In-app report mode") as HTMLSelectElement;
+      expect(reportMode).toHaveValue("draft-review");
+      expect(screen.getByTestId("settings-help-reportMode")).toBeInTheDocument();
+      expect(screen.getByText(/Default: draft-review \(operator reviews a draft before filing\)/i).closest(".settings-help-bubble")).toBeTruthy();
+
+      const actionLabels = ["Bug", "Feedback", "Idea", "Help"];
+      const actionSelects = actionLabels.map((action) => screen.getByLabelText(`${action} report override`) as HTMLSelectElement);
+      for (const select of actionSelects) expect(select).toHaveValue("");
+      for (const action of ["bug", "feedback", "idea", "help"]) {
+        expect(screen.getByTestId(`settings-help-reportModeByAction-${action}`)).toBeInTheDocument();
+      }
+      const overrideHelp = screen.getAllByText(/No default — unset actions inherit reportMode/i);
+      expect(overrideHelp).toHaveLength(4);
+      for (const help of overrideHelp) expect(help.closest(".settings-help-bubble")).toBeTruthy();
+
+      fireEvent.change(actionSelects[0], { target: { value: "auto-file" } });
+      expect(actionSelects[0]).toHaveValue("auto-file");
+      expect(screen.getAllByText(/No default — unset actions inherit reportMode/i)).toHaveLength(4);
+
+      fireEvent.change(actionSelects[0], { target: { value: "" } });
+      for (const select of actionSelects) expect(select).toHaveValue("");
+      expect(screen.getAllByText(/No default — unset actions inherit reportMode/i)).toHaveLength(4);
+    });
+
+    it("renders embedded PostgreSQL connection-cap help from the English locale", async () => {
+      renderModal({ initialSection: "backups-global" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveValue(500);
+      expect(screen.getByTestId("settings-help-embeddedPostgresMaxConnections")).toBeInTheDocument();
+      expect(screen.getByText("Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.").closest(".settings-help-bubble")).toBeTruthy();
     });
 
     it("saves ephemeral agent toggle in project settings payload", async () => {
@@ -1023,7 +1406,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project General" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "General · Project" }));
 
       const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
       expect(ephemeralToggle).toBeInTheDocument();
@@ -1052,7 +1435,7 @@ describe("SettingsModal", () => {
       expect(sectionPicker).toBeInTheDocument();
       const projectGeneralOption = sectionPicker.querySelector('option[value="general"]');
       expect(projectGeneralOption).toBeInTheDocument();
-      expect(projectGeneralOption).toHaveTextContent("Project General");
+      expect(projectGeneralOption).toHaveTextContent("General · Project");
 
       await settingsModalUser.selectOptions(sectionPicker, "general");
 
@@ -1155,8 +1538,8 @@ describe("SettingsModal", () => {
       expect(payload.chatRoomSummaryMaxChars).toBe(900);
     });
 
-    it("renders and saves GitHub tracking controls in the General section", async () => {
-      renderModal({ initialSection: "general" });
+    it("renders and saves GitHub tracking controls in the Source Control section", async () => {
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(screen.getByRole("heading", { name: "GitHub Tracking" })).toBeInTheDocument();
@@ -1185,7 +1568,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves GitLab URL configuration as project settings", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
@@ -1233,7 +1616,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -1262,7 +1645,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab instance URL"));
@@ -1280,7 +1663,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves imported GitHub issue tracking linking as a project setting", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1315,7 +1698,7 @@ describe("SettingsModal", () => {
         project: { githubLinkImportedIssuesToTracking: true },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1345,7 +1728,7 @@ describe("SettingsModal", () => {
         githubTrackingDefaultRepo: "octo/existing",
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const modeSelect = screen.getByLabelText("Default tracking mode for new tasks") as HTMLSelectElement;
@@ -1368,7 +1751,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders github dedup toggle as checked when project value is unset", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1383,7 +1766,7 @@ describe("SettingsModal", () => {
         githubTrackingDedupEnabled: false,
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1393,7 +1776,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves github dedup toggle changes", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1427,7 +1810,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
@@ -1441,7 +1824,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
       expect(screen.getByText(/per-phase model lanes \(execution, planning, reviewer, and their fallbacks\) now live on the workflow/i)).toBeInTheDocument();
@@ -1452,7 +1835,7 @@ describe("SettingsModal", () => {
         { name: "origin", owner: "octo", repo: "repo", url: "https://github.com/octo/repo.git" },
       ]);
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const repoSelect = screen.getByRole("combobox", { name: "Project default tracking repo" }) as HTMLSelectElement;
@@ -1472,7 +1855,7 @@ describe("SettingsModal", () => {
     it("shows project tracking repo error hint and keeps custom entry when remotes fail", async () => {
       mockFetchGitRemotes.mockRejectedValueOnce(new Error("remotes failed"));
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load detected remotes/i)).toBeInTheDocument();
@@ -1482,7 +1865,7 @@ describe("SettingsModal", () => {
     });
 
     it("always shows GitHub tracking summarization helper copy", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(
@@ -1615,8 +1998,13 @@ describe("SettingsModal", () => {
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.autoMerge).toBeNull();
       expect(payload.mergeStrategy).toBeNull();
-      expect(payload.gitlabAuthToken).toBeNull();
-      // Not part of "merge" — owned by "general" instead; must not leak in.
+      /*
+      FNXC:SourceControl 2026-07-15-20:30:
+      Merge's reset no longer touches ANY forge key — they all moved to "source-control". This used to assert only that `gitlabEnabled` stayed out while `gitlabAuthToken` was reset from here, which was the registry arbitrating a key two sections rendered.
+      */
+      expect(payload).not.toHaveProperty("gitlabAuthToken");
+      expect(payload).not.toHaveProperty("gitlabAuthTokenType");
+      expect(payload).not.toHaveProperty("githubAuthMode");
       expect(payload).not.toHaveProperty("gitlabEnabled");
       expect(payload).not.toHaveProperty("taskPrefix");
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();

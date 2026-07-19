@@ -10,9 +10,11 @@ import {
   PLUGIN_BUILD_GLOBAL_INPUT_PATHS,
   computePluginSourceHash,
   discoverWorkspacePackages,
+  ensureFullPackageCliPlanned,
   planWorkspaceBuild,
   readPluginBuildCache,
   requiredPluginOutputs,
+  wantsFullCliPackage,
 } from "../build-workspace.mjs";
 
 function createWorkspace() {
@@ -93,20 +95,58 @@ test("discovers workspace packages and classifies plugin directories", () => {
   });
 });
 
-test("non-plugin build packages stay planned while unchanged plugins with outputs and cache are skipped", () => {
+test("unchanged packages with outputs and cache are skipped (plugins and non-plugins)", () => {
   withWorkspace((root) => {
     writePluginDist(root);
+    // Core required outputs from src/index.ts → packages/core/dist/index.js
+    mkdirSync(path.join(root, "packages/core", "dist"), { recursive: true });
+    writeFileSync(path.join(root, "packages/core", "dist", "index.js"), "export const core = 1;\n");
     initGit(root);
     const packages = discoverWorkspacePackages(root);
     const plugin = packageByName(packages, "@fusion-plugin-examples/alpha");
-    const hash = computePluginSourceHash(plugin, root);
-    const cache = { version: BUILD_CACHE_VERSION, entries: { [plugin.name]: { sourceHash: hash } } };
+    const core = packageByName(packages, "@fusion/core");
+    const pluginHash = computePluginSourceHash(plugin, root);
+    const coreHash = computePluginSourceHash(core, root);
+    const cache = {
+      version: BUILD_CACHE_VERSION,
+      entries: {
+        [plugin.name]: { sourceHash: pluginHash },
+        [core.name]: { sourceHash: coreHash },
+      },
+    };
 
     const plan = planWorkspaceBuild({ rootDir: root, packages, cache });
 
-    assert.deepEqual(plan.plannedPackages.map((pkg) => pkg.name), ["@fusion/core"]);
-    assert.deepEqual(plan.skippedPlugins.map((pkg) => pkg.name), ["@fusion-plugin-examples/alpha"]);
+    assert.deepEqual(plan.plannedPackages.map((pkg) => pkg.name), []);
+    assert.deepEqual(
+      (plan.skippedPackages ?? plan.skippedPlugins).map((pkg) => pkg.name).sort(),
+      ["@fusion-plugin-examples/alpha", "@fusion/core"].sort(),
+    );
     assert.deepEqual(plan.excludedPackages.map((pkg) => pkg.name), ["@fusion/desktop"]);
+  });
+});
+
+test("force rebuilds packages even when cache matches", () => {
+  withWorkspace((root) => {
+    writePluginDist(root);
+    mkdirSync(path.join(root, "packages/core", "dist"), { recursive: true });
+    writeFileSync(path.join(root, "packages/core", "dist", "index.js"), "export const core = 1;\n");
+    initGit(root);
+    const packages = discoverWorkspacePackages(root);
+    const plugin = packageByName(packages, "@fusion-plugin-examples/alpha");
+    const core = packageByName(packages, "@fusion/core");
+    const cache = {
+      version: BUILD_CACHE_VERSION,
+      entries: {
+        [plugin.name]: { sourceHash: computePluginSourceHash(plugin, root) },
+        [core.name]: { sourceHash: computePluginSourceHash(core, root) },
+      },
+    };
+
+    const plan = planWorkspaceBuild({ rootDir: root, packages, cache, force: true });
+    assert.ok(plan.plannedPackages.some((pkg) => pkg.name === "@fusion/core"));
+    assert.ok(plan.plannedPackages.some((pkg) => pkg.name === "@fusion-plugin-examples/alpha"));
+    assert.equal(packageByName(plan.plannedPackages, "@fusion/core").buildReason, "force");
   });
 });
 
@@ -250,4 +290,33 @@ test("root package build script points at the workspace build wrapper", () => {
   const rootPackage = JSON.parse(readFileSync(path.resolve("package.json"), "utf8"));
 
   assert.equal(rootPackage.scripts.build, "node scripts/build-workspace.mjs");
+});
+
+test("full package mode force-includes CLI even when content-hash would skip it", () => {
+  const skipped = [
+    { name: "@runfusion/fusion", isPlugin: false, buildReason: "unchanged", sourceHash: "abc" },
+    { name: "@fusion/core", isPlugin: false, buildReason: "unchanged", sourceHash: "def" },
+  ];
+  const { plannedPackages, skippedPackages } = ensureFullPackageCliPlanned([], skipped, { fullPackage: true });
+  assert.equal(plannedPackages.length, 1);
+  assert.equal(plannedPackages[0].name, "@runfusion/fusion");
+  assert.equal(plannedPackages[0].buildReason, "full-package");
+  assert.deepEqual(skippedPackages.map((p) => p.name), ["@fusion/core"]);
+});
+
+test("full package mode is a no-op when CLI already planned", () => {
+  const planned = [{ name: "@runfusion/fusion", buildReason: "changed-inputs" }];
+  const skipped = [{ name: "@fusion/core", buildReason: "unchanged" }];
+  const result = ensureFullPackageCliPlanned(planned, skipped, { fullPackage: true });
+  assert.equal(result.plannedPackages.length, 1);
+  assert.equal(result.plannedPackages[0].buildReason, "changed-inputs");
+});
+
+test("wantsFullCliPackage matches CLI packaging env rules", () => {
+  assert.equal(wantsFullCliPackage({}, { fullFlag: false }), false);
+  assert.equal(wantsFullCliPackage({}, { fullFlag: true }), true);
+  assert.equal(wantsFullCliPackage({ CI: "true" }, { fullFlag: false }), true);
+  assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "1" }, { fullFlag: false }), true);
+  assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "0", CI: "true" }, { fullFlag: true }), false);
+  assert.equal(wantsFullCliPackage({ npm_lifecycle_event: "prepack" }, { fullFlag: false }), true);
 });

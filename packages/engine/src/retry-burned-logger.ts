@@ -58,8 +58,11 @@ export async function recordRetry(options: {
   agentId?: string;
   attempt?: number;
   skipIncrement?: boolean;
+  /** The failure that burned this retry, when the caller has one. Folded into any
+   *  RetryStormError so the cap does not mask what actually kept failing. */
+  cause?: unknown;
 }): Promise<TaskDetail> {
-  const { store, settings, task, category, role, agentId, attempt, skipIncrement } = options;
+  const { store, settings, task, category, role, agentId, attempt, skipIncrement, cause } = options;
   const column = CATEGORY_COLUMN[category];
 
   if (!skipIncrement) {
@@ -89,6 +92,7 @@ export async function recordRetry(options: {
       total: breakdown.total,
       cap: categoryCap,
       breakdown,
+      cause,
     });
   }
 
@@ -98,6 +102,7 @@ export async function recordRetry(options: {
       total: breakdown.total,
       cap: totalCap,
       breakdown,
+      cause,
     });
   }
 

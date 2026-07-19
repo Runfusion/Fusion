@@ -53,6 +53,16 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
       getRoutineRunner: vi.fn(),
       getHeartbeatMonitor: vi.fn(),
       getTriggerScheduler: vi.fn(),
+      configurePrMonitoring: vi.fn(),
+      setActiveMergeTaskIdProvider: vi.fn(),
+      setActiveMergeStartedAtMsProvider: vi.fn(),
+      setActiveMergeAborter: vi.fn(),
+      setMergeEnqueuer: vi.fn(),
+      setMergeActiveClearer: vi.fn(),
+      setMergePendingProvider: vi.fn(),
+      setMergeRequester: vi.fn(),
+      resumeAfterUnpause: vi.fn(async () => undefined),
+      getPluginRunner: vi.fn(() => undefined),
     };
   }),
 }));
@@ -349,8 +359,16 @@ describe("ProjectEngine merge error recovery", () => {
     const privateEngine = engine as unknown as {
       internalEnqueueMerge: (taskId: string) => void;
       mergeRunning: boolean;
+      started: boolean;
     };
 
+    /*
+    FNXC:EngineTests 2026-07-18-04:40:
+    internalEnqueueMerge no-ops when started=false (post-start gate). Mark the
+    engine started so the null-store drain path runs and the unexpected-failure
+    catch can log.
+    */
+    privateEngine.started = true;
     privateEngine.internalEnqueueMerge(TASK_ID);
     await Promise.resolve();
     await Promise.resolve();
@@ -641,8 +659,13 @@ describe("ProjectEngine merge error recovery", () => {
   });
 
   it("parks direct merge when transient retry cap is exhausted", async () => {
+    // FNXC:MergeReliability 2026-07-15-19:25 (FN-8004): seed AT the cap, read from the constant.
+    // This previously hardcoded 3; raising the budget to 5 silently turned this into a
+    // "retries once more" case. Deriving the seed keeps the invariant (park once the budget is
+    // spent) under test regardless of how the budget is tuned.
+    const atCap = ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES;
     const store = makeStore({
-      tasks: [makeTask({ mergeTransientRetryCount: 3 }), makeTask({ mergeTransientRetryCount: 3 })],
+      tasks: [makeTask({ mergeTransientRetryCount: atCap }), makeTask({ mergeTransientRetryCount: atCap })],
     });
     vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("socket hang up"));
 
@@ -1111,5 +1134,164 @@ describe("ProjectEngine merge error recovery", () => {
     expect(hasErrorLog(errorSpy, `failed to return ${TASK_ID} to in-progress after verification failure`)).toBe(
       true,
     );
+  });
+
+  /*
+  FNXC:MergeQueue 2026-07-15-09:41 / 10:05:
+  Repro for board-wide hung merge pump: active AI merge ignores AbortSignal (wedged tool), operator pauses the card, and without an outer race drainMergeQueue never settles so no later task gets status=merging.
+  Generation latch: FN-next must not start until the orphan wedged body settles.
+  */
+  it("unblocks the merge pump when a paused active merge ignores abort, and waits for orphan body settle", async () => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    let wedgedPaused = false;
+    // Empty listedTasks so startup merge sweep does not race the test.
+    const store = makeStore({ listedTasks: [], tasks: [] });
+    store.on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      const set = listeners.get(event) ?? new Set();
+      set.add(listener);
+      listeners.set(event, set);
+    });
+    store.getTask = vi.fn(async (id: string) =>
+      makeTask({
+        id,
+        paused: id === "FN-wedged" ? wedgedPaused : false,
+        status: null,
+        mergeRetries: 0,
+      }),
+    );
+    store.listTasks = vi.fn(async () => []);
+
+    let wedgedStarted = false;
+    let releaseWedged: (() => void) | undefined;
+    const disposeSession = vi.fn();
+    const startedOrder: string[] = [];
+    vi.mocked(runAiMerge).mockReset();
+    vi.mocked(runAiMerge).mockImplementation(async (...args: unknown[]) => {
+      const taskId = args[2] as string;
+      const options = args[3] as { signal?: AbortSignal; onSession?: (session: { dispose: () => void }) => void };
+      options.onSession?.({ dispose: disposeSession });
+      startedOrder.push(taskId);
+      if (taskId === "FN-wedged") {
+        wedgedStarted = true;
+        // Hang until test releases — ignores abort signal (wedged agent tool).
+        await new Promise<void>((resolve) => {
+          releaseWedged = resolve;
+        });
+      }
+      return {
+        merged: true,
+        task: makeTask({ id: taskId }),
+        branch: `fusion/${taskId.toLowerCase()}`,
+      } as never;
+    });
+
+    const engine = createEngine(store);
+    const privateEngine = engine as unknown as {
+      mergeRunning: boolean;
+      activeMergeTaskId: string | null;
+      mergeActive: Set<string>;
+      mergeBodyInFlight: Promise<unknown> | null;
+      mergeBodySettleTimeoutMs: number;
+      enqueueMerge: (taskId: string) => void;
+    };
+
+    await engine.start();
+    privateEngine.enqueueMerge("FN-wedged");
+
+    await vi.waitFor(() => {
+      expect(wedgedStarted).toBe(true);
+      expect(privateEngine.activeMergeTaskId).toBe("FN-wedged");
+    });
+
+    const updatedHandlers = [...(listeners.get("task:updated") ?? [])];
+    expect(updatedHandlers.length).toBeGreaterThan(0);
+    wedgedPaused = true;
+    for (const handler of updatedHandlers) {
+      await handler({ id: "FN-wedged", column: "in-review", paused: true });
+    }
+
+    await vi.waitFor(() => {
+      expect(disposeSession).toHaveBeenCalled();
+      expect(privateEngine.activeMergeTaskId).toBeNull();
+      expect(privateEngine.mergeActive.has("FN-wedged")).toBe(false);
+      expect(privateEngine.mergeRunning).toBe(false);
+    });
+
+    // Orphan body still in flight — next generation must wait.
+    expect(privateEngine.mergeBodyInFlight).not.toBeNull();
+    privateEngine.enqueueMerge("FN-next");
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(startedOrder).toEqual(["FN-wedged"]);
+
+    // Settle orphan body → next merge may start.
+    releaseWedged?.();
+    await vi.waitFor(() => {
+      expect(runAiMerge).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        "FN-next",
+        expect.anything(),
+      );
+    });
+    expect(startedOrder).toEqual(["FN-wedged", "FN-next"]);
+
+    await engine.stop();
+  });
+
+  it("PR merge path races abort so pause unblocks the pump", async () => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    let prStarted = false;
+    let releasePr: (() => void) | undefined;
+    const store = makeStore({ listedTasks: [], tasks: [] });
+    store.on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      const set = listeners.get(event) ?? new Set();
+      set.add(listener);
+      listeners.set(event, set);
+    });
+    store.getTask = vi.fn(async (id: string) =>
+      makeTask({ id, paused: false, status: null, mergeRetries: 0 }),
+    );
+    store.listTasks = vi.fn(async () => []);
+
+    const processPullRequestMerge = vi.fn(async () => {
+      prStarted = true;
+      await new Promise<void>((resolve) => {
+        releasePr = resolve;
+      });
+      return "merged" as const;
+    });
+
+    const engine = createEngine(store, {
+      getMergeStrategy: () => "pull-request",
+      processPullRequestMerge,
+    });
+    const privateEngine = engine as unknown as {
+      activeMergeTaskId: string | null;
+      mergeRunning: boolean;
+      enqueueMerge: (taskId: string) => void;
+    };
+
+    await engine.start();
+    privateEngine.enqueueMerge("FN-pr");
+
+    await vi.waitFor(() => {
+      expect(prStarted).toBe(true);
+      expect(privateEngine.activeMergeTaskId).toBe("FN-pr");
+    });
+
+    const updatedHandlers = [...(listeners.get("task:updated") ?? [])];
+    for (const handler of updatedHandlers) {
+      await handler({ id: "FN-pr", column: "in-review", paused: true });
+    }
+
+    await vi.waitFor(() => {
+      expect(privateEngine.activeMergeTaskId).toBeNull();
+      expect(privateEngine.mergeRunning).toBe(false);
+    });
+
+    releasePr?.();
+    await engine.stop();
   });
 });

@@ -3,14 +3,15 @@ import type {
   Column,
   MergeResult,
   Message,
+  MessageCreateInput,
   NotificationEvent,
   NotificationPayload,
   NotificationProvider,
   Settings,
   Task,
 } from "@fusion/core";
-import { NotificationDispatcher } from "@fusion/core";
-import { DEFAULT_NTFY_EVENTS } from "../notifier.js";
+import { DASHBOARD_USER_ID, NotificationDispatcher } from "@fusion/core";
+import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
@@ -57,6 +58,16 @@ interface NotificationServiceStore {
 interface NotificationMessageStore {
   on(event: "message:sent", listener: (message: Message) => void): void;
   off?(event: "message:sent", listener: (message: Message) => void): void;
+  /*
+  FNXC:PlanApprovalMailbox 2026-07-16-19:20:
+  The awaiting-approval mailbox message is written via sendMessageOnce so replans that
+  re-enter awaiting-approval reuse the deterministic id and do not spam the operator inbox.
+  Optional so test/light message-store fakes without a write side still satisfy the type.
+  */
+  sendMessageOnce?(
+    input: MessageCreateInput,
+    idempotencyKey: string,
+  ): Promise<{ message: Message; inserted: boolean }>;
 }
 
 export interface NotificationChatStore {
@@ -71,6 +82,14 @@ export class NotificationService {
   private started = false;
   private chatStore: NotificationChatStore | undefined;
   private notificationsEnabled = false;
+  /*
+  FNXC:PlanApprovalMailbox 2026-07-16-19:20:
+  Cache the dashboard host from settings.ntfyDashboardHost so the synchronous task:updated
+  handler can build a task deep-link for the awaiting-approval mailbox message without an
+  async settings read. Undefined when the operator has not configured a dashboard host; the
+  mailbox message then falls back to the task identifier without an absolute URL.
+  */
+  private dashboardHost?: string;
   private ntfyProvider?: NtfyNotificationProvider;
   private webhookProvider?: WebhookNotificationProvider;
   private refreshInFlight: Promise<void> | null = null;
@@ -111,6 +130,7 @@ export class NotificationService {
 
     const settings = await this.store.getSettings();
     this.setNotificationsEnabledFromSettings(settings);
+    this.dashboardHost = settings.ntfyDashboardHost;
     this.refreshFailureNotificationSettings(settings);
     await this.syncNtfyProvider(settings);
     await this.syncWebhookProvider(settings);
@@ -229,6 +249,23 @@ export class NotificationService {
   private handleTaskUpdated = (task: Task): void => {
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
+    /*
+    FNXC:PlanApprovalMailbox 2026-07-16-19:40:
+    Write the durable awaiting-approval mailbox message BEFORE the push-enabled gate. The ntfy/webhook
+    push respects `notificationsEnabled` (which requires ntfy or a webhook to be configured), but the
+    mailbox message is an in-app channel that needs no push provider. Firing it here means a
+    dashboard-only operator (no ntfy/webhook) still gets the durable, in-dashboard approval record —
+    the whole point of the mailbox channel. Written as a `system` message (not `agent-to-user`) so it
+    does NOT re-trigger the `message:agent-to-user` ntfy pipeline.
+    */
+    if (task.status === "awaiting-approval") {
+      void this.writeAwaitingApprovalMailboxMessage(task);
+    }
+
+    if (this.isTriageDuplicateDecision(task)) {
+      void this.writeTriageDuplicateDecisionMailboxMessage(task);
+    }
+
     if (!this.notificationsEnabled) {
       return;
     }
@@ -260,11 +297,22 @@ export class NotificationService {
     }
 
     if (task.status === "awaiting-approval") {
+      /*
+      FNXC:PlanReviewReplan 2026-07-15-11:09:
+      Include awaitingApprovalReason so ntfy/webhook copy can tell operators why approval is
+      required — especially plan-review-replan-cap (Plan Review exhausted automatic REVISE
+      replans) vs a routine require-all / workflow manual plan gate.
+      */
       this.maybeNotify(
         task.id,
         "awaiting-approval",
-        this.createTaskPayload(task, "awaiting-approval"),
+        this.createTaskPayload(task, "awaiting-approval", {
+          awaitingApprovalReason: task.awaitingApprovalReason ?? "manual",
+        }),
       );
+      // FNXC:PlanApprovalMailbox 2026-07-16-19:40: the durable mailbox message is written
+      // unconditionally at the top of handleTaskUpdated (decoupled from `notificationsEnabled`);
+      // only the ntfy push above stays gated on push configuration.
     }
 
     if (task.status === "awaiting-user-review") {
@@ -284,6 +332,108 @@ export class NotificationService {
       );
     }
   };
+
+  /*
+  FNXC:PlanApprovalMailbox 2026-07-16-19:20:
+  Durable in-dashboard record that a task's plan needs manual approval, linking to the task.
+  - Fires from the same awaiting-approval transition as the ntfy push, covering both entry
+    points (workflow manual plan gate and the Plan Review replan-cap escalation).
+  - `sendMessageOnce` keyed by task id makes it idempotent: replanning that re-enters
+    awaiting-approval, or NotificationService restarts, do not produce duplicate inbox rows.
+  - Best-effort/fire-and-forget: a message-store write failure must never break the ntfy path
+    or the task:updated handler, so errors are swallowed with a log line only.
+  */
+  private async writeAwaitingApprovalMailboxMessage(task: Task): Promise<void> {
+    /*
+    FNXC:PlanApprovalMailbox 2026-07-16-20:10:
+    Called fire-and-forget (`void this.writeAwaitingApprovalMailboxMessage(task)`), so the ENTIRE
+    body — not just the store write — must be inside try/catch. A throw in payload construction
+    (e.g. formatTaskIdentifier on a malformed runtime task) would otherwise become an unhandled
+    promise rejection that can crash the process. Best-effort: log and swallow.
+    */
+    try {
+      const messageStore = this.options.messageStore;
+      if (!messageStore?.sendMessageOnce) {
+        return;
+      }
+      const identifier = formatTaskIdentifier(task);
+      const reason = task.awaitingApprovalReason ?? "manual";
+      const reasonLine =
+        reason === "plan-review-replan-cap"
+          ? "Plan Review exhausted its automatic revision attempts and escalated this plan for a human decision."
+          : "The generated plan is ready and needs your approval before execution begins.";
+      const link = buildNtfyClickUrl({
+        dashboardHost: this.dashboardHost,
+        projectId: this.options.projectId,
+        taskId: task.id,
+      });
+      const content = [
+        `**${identifier} needs plan approval**`,
+        "",
+        reasonLine,
+        ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+      ].join("\n");
+      const input: MessageCreateInput = {
+        fromId: "system",
+        fromType: "system",
+        toId: DASHBOARD_USER_ID,
+        toType: "user",
+        type: "system",
+        content,
+        metadata: { taskId: task.id, awaitingApprovalReason: reason },
+      };
+      await messageStore.sendMessageOnce(input, `plan-approval:${task.id}`);
+    } catch (error) {
+      schedulerLog.log(
+        `[notify] ${task.id} awaiting-approval mailbox message failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private isTriageDuplicateDecision(task: Task): boolean {
+    return task.paused === true
+      && task.pausedReason === "duplicate-decision-required"
+      && task.sourceMetadata?.duplicateSource === "triage-marker"
+      && typeof task.sourceMetadata.nearDuplicateOf === "string";
+  }
+
+  /** Write one durable operator prompt for a duplicate candidate, independent of push configuration. */
+  private async writeTriageDuplicateDecisionMailboxMessage(task: Task): Promise<void> {
+    try {
+      const messageStore = this.options.messageStore;
+      if (!messageStore?.sendMessageOnce) {
+        return;
+      }
+      const canonicalTaskId = task.sourceMetadata?.nearDuplicateOf;
+      if (typeof canonicalTaskId !== "string") {
+        return;
+      }
+      const link = buildNtfyClickUrl({
+        dashboardHost: this.dashboardHost,
+        projectId: this.options.projectId,
+        taskId: task.id,
+      });
+      const content = [
+        `**${formatTaskIdentifier(task)} needs your decision**`,
+        "",
+        `It was flagged as a duplicate of ${canonicalTaskId}. Keep it to continue planning, or delete it if the work is already covered.`,
+        ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+      ].join("\n");
+      await messageStore.sendMessageOnce({
+        fromId: "system",
+        fromType: "system",
+        toId: DASHBOARD_USER_ID,
+        toType: "user",
+        type: "system",
+        content,
+        metadata: { taskId: task.id, canonicalTaskId, kind: "triage-duplicate-decision" },
+      }, `triage-duplicate-decision:${task.id}`);
+    } catch (error) {
+      schedulerLog.log(
+        `[notify] ${task.id} triage duplicate-decision mailbox message failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   private handleTaskMerged = (result: MergeResult): void => {
     void this.handleTaskMergedAsync(result);
@@ -311,6 +461,7 @@ export class NotificationService {
   private handleSettingsUpdated = async (data: { settings: Settings; previous: Settings }): Promise<void> => {
     const { settings, previous } = data;
     this.setNotificationsEnabledFromSettings(settings);
+    this.dashboardHost = settings.ntfyDashboardHost;
     this.refreshFailureNotificationSettings(settings);
 
     if (

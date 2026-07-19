@@ -1695,14 +1695,18 @@ FNXC:AgentDetailView 2026-06-26-01:00:
     resize: none;
   }
 
+  /*
+  FNXC:AgentDetailMobileHeader 2026-07-14-00:00:
+  Mobile agent detail identity, status badges, and lifecycle controls must keep the FN-6865 non-overlap grid while adding deliberate breathing room so paused/error health text does not read as cramped.
+  */
   .agent-detail-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    column-gap: var(--space-xs);
-    row-gap: 0;
-    padding: var(--space-sm) var(--space-md);
-    padding-top: max(var(--space-sm), env(safe-area-inset-top, 0));
+    column-gap: var(--space-sm);
+    row-gap: var(--space-sm);
+    padding: var(--space-md);
+    padding-top: max(var(--space-md), env(safe-area-inset-top, 0));
   }
 
   .agent-detail-identity {
@@ -1710,7 +1714,7 @@ FNXC:AgentDetailView 2026-06-26-01:00:
     grid-row: 1;
     flex: 1 1 auto;
     min-width: 0;
-    gap: var(--space-sm);
+    gap: var(--space-md);
   }
 
   .agent-detail-icon {
@@ -1733,6 +1737,9 @@ FNXC:AgentDetailView 2026-06-26-01:00:
 
   .agent-detail-badges {
     flex-wrap: wrap;
+    row-gap: var(--space-xs);
+    column-gap: var(--space-sm);
+    margin-top: var(--space-xs);
   }
 
   .agent-detail-header-actions {
@@ -1869,9 +1876,30 @@ FNXC:AgentDetailView 2026-06-26-01:00:
     gap: var(--space-lg);
   }
 
+  /*
+  FNXC:AgentDetailOverviewHero 2026-07-14-00:00:
+  The mobile Overview hero is part of the perceived agent header; let the name, state badge, health line, role/model text, and skills chips wrap with deliberate row gaps so long pause reasons and many skills do not crowd adjacent rows.
+  */
+  .dashboard-summary-hero__heading {
+    flex-wrap: wrap;
+    row-gap: var(--space-sm);
+    column-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__meta {
+    align-items: flex-start;
+    row-gap: var(--space-lg);
+    column-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__health {
+    overflow-wrap: anywhere;
+  }
+
   .dashboard-summary-skills {
     flex-direction: column;
     align-items: flex-start;
+    row-gap: var(--space-sm);
   }
 
   .dashboard-summary-skill-detail-header {
@@ -1990,6 +2018,19 @@ FNXC:AgentDetailView 2026-06-26-01:00:
 }
 
 @media (max-width: 480px) {
+  .dashboard-summary-card {
+    padding: var(--space-md);
+  }
+
+  .dashboard-summary-hero__heading {
+    row-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__meta {
+    row-gap: var(--space-lg);
+    column-gap: var(--space-sm);
+  }
+
   .info-grid {
     grid-template-columns: 1fr;
   }

@@ -141,15 +141,20 @@ export interface CliPressStore {
   updateService(id: string, updates: ServiceUpdateInput): Promise<Service>;
   deleteService(id: string): Promise<void>;
   listSpecs(serviceId: string): Promise<CliSpec[]>;
+  listAllSpecs(): Promise<CliSpec[]>;
+  listGeneratedSpecs(): Promise<CliSpec[]>;
   getSpec(id: string): Promise<CliSpec | undefined>;
   createSpec(input: CliSpecCreateInput): Promise<CliSpec>;
   updateSpec(id: string, updates: CliSpecUpdateInput): Promise<CliSpec>;
   deleteSpec(id: string): Promise<void>;
   listArtifacts(specId: string): Promise<CliArtifact[]>;
+  listAllArtifacts(): Promise<CliArtifact[]>;
+  listExecutableArtifacts(): Promise<CliArtifact[]>;
   createArtifact(input: CliArtifactCreateInput): Promise<CliArtifact>;
   updateArtifact(id: string, updates: CliArtifactUpdateInput): Promise<CliArtifact>;
   deleteArtifact(id: string): Promise<void>;
   listCredentials(serviceId: string): Promise<Credential[]>;
+  listAllCredentials(): Promise<Credential[]>;
   createCredential(input: CredentialCreateInput): Promise<Credential>;
   updateCredential(id: string, updates: CredentialUpdateInput): Promise<Credential>;
   deleteCredential(id: string): Promise<void>;
@@ -322,6 +327,12 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
     if (!db) throw new Error("CliPressStore: sync Database is null (backend mode)");
     return db;
   };
+  /** FNXC:CliPressProjectIsolation 2026-07-14-21:28: Every PostgreSQL definition, artifact, setting, and credential belongs to the AsyncDataLayer project; explicit predicates enforce the boundary on every store operation. */
+  const projectId = (): string => {
+    const id = asyncLayer?.projectId?.trim();
+    if (!id) throw new Error("CliPressStore: PostgreSQL backend requires asyncLayer.projectId");
+    return id;
+  };
 
   return {
     async listServices(): Promise<Service[]> {
@@ -329,6 +340,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressServices)
+          .where(eq(cliPressServices.projectId, projectId()))
           .orderBy(desc(cliPressServices.createdAt));
         return (rows as ServiceRow[]).map(mapService);
       }
@@ -341,7 +353,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressServices)
-          .where(eq(cliPressServices.id, id))
+          .where(and(eq(cliPressServices.projectId, projectId()), eq(cliPressServices.id, id)))
           .limit(1);
         return rows[0] ? mapService(rows[0] as ServiceRow) : undefined;
       }
@@ -353,6 +365,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       const service: Service = { id: createId("svc"), ...input, createdAt: nowIso(), updatedAt: nowIso() };
       if (asyncLayer) {
         await asyncLayer.db.insert(cliPressServices).values({
+          projectId: projectId(),
           id: service.id,
           slug: service.slug,
           displayName: service.displayName,
@@ -384,7 +397,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           sourceKind: updated.sourceKind,
           sourceRef: updated.sourceRef ?? null,
           updatedAt: updated.updatedAt,
-        }).where(eq(cliPressServices.id, id));
+        }).where(and(eq(cliPressServices.projectId, projectId()), eq(cliPressServices.id, id)));
         return updated;
       }
       syncDb().prepare(`UPDATE cli_press_services SET displayName = ?, description = ?, baseUrl = ?, sourceKind = ?, sourceRef = ?, updatedAt = ? WHERE id = ?`)
@@ -396,7 +409,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
     async deleteService(id: string): Promise<void> {
       if (asyncLayer) {
         // FK ON DELETE CASCADE removes child specs/artifacts/credentials/settings.
-        await asyncLayer.db.delete(cliPressServices).where(eq(cliPressServices.id, id));
+        await asyncLayer.db.delete(cliPressServices).where(and(eq(cliPressServices.projectId, projectId()), eq(cliPressServices.id, id)));
         return;
       }
       syncDb().transaction(() => {
@@ -410,11 +423,37 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressSpecs)
-          .where(eq(cliPressSpecs.serviceId, serviceId))
+          .where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.serviceId, serviceId)))
           .orderBy(desc(cliPressSpecs.createdAt));
         return (rows as CliSpecRow[]).map(mapSpec);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as CliSpecRow[];
+      return rows.map(mapSpec);
+    },
+
+    /*
+    FNXC:CliPrintingPressRuntime 2026-07-14-18:45:
+    Executor environment construction runs for every dispatched task. Fetch each plugin table once so PostgreSQL round trips remain constant as services and historical specs grow.
+    */
+    async listAllSpecs(): Promise<CliSpec[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressSpecs).where(eq(cliPressSpecs.projectId, projectId())).orderBy(desc(cliPressSpecs.createdAt));
+        return (rows as CliSpecRow[]).map(mapSpec);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs ORDER BY createdAt DESC").all() as unknown as CliSpecRow[];
+      return rows.map(mapSpec);
+    },
+
+    /** FNXC:CliPrintingPressRuntime 2026-07-14-23:53: Executor dispatch only consumes generated definitions; filter them in the owning database instead of transferring draft and failed history into every task launch. */
+    async listGeneratedSpecs(): Promise<CliSpec[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressSpecs)
+          .where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.status, "generated")))
+          .orderBy(desc(cliPressSpecs.createdAt));
+        return (rows as CliSpecRow[]).map(mapSpec);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs WHERE status = ? ORDER BY createdAt DESC")
+        .all("generated") as unknown as CliSpecRow[];
       return rows.map(mapSpec);
     },
 
@@ -423,7 +462,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressSpecs)
-          .where(eq(cliPressSpecs.id, id))
+          .where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.id, id)))
           .limit(1);
         return rows[0] ? mapSpec(rows[0] as CliSpecRow) : undefined;
       }
@@ -435,6 +474,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       const spec: CliSpec = { id: createId("cli"), ...input, createdAt: nowIso(), updatedAt: nowIso() };
       if (asyncLayer) {
         await asyncLayer.db.insert(cliPressSpecs).values({
+          projectId: projectId(),
           id: spec.id,
           serviceId: spec.serviceId,
           name: spec.name,
@@ -470,7 +510,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           status: updated.status,
           lastGenerationError: updated.lastGenerationError ?? null,
           updatedAt: updated.updatedAt,
-        }).where(eq(cliPressSpecs.id, id));
+        }).where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.id, id)));
         return updated;
       }
       syncDb().prepare(`UPDATE cli_press_cli_specs SET name=?, version=?, generatorVersion=?, specJson=?, generatedAt=?, status=?, lastGenerationError=?, updatedAt=? WHERE id=?`)
@@ -481,7 +521,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
 
     async deleteSpec(id: string): Promise<void> {
       if (asyncLayer) {
-        await asyncLayer.db.delete(cliPressSpecs).where(eq(cliPressSpecs.id, id));
+        await asyncLayer.db.delete(cliPressSpecs).where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.id, id)));
         return;
       }
       syncDb().prepare("DELETE FROM cli_press_cli_specs WHERE id = ?").run(id);
@@ -493,7 +533,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressArtifacts)
-          .where(eq(cliPressArtifacts.cliSpecId, specId))
+          .where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.cliSpecId, specId)))
           .orderBy(desc(cliPressArtifacts.createdAt));
         return (rows as CliArtifactRow[]).map(mapArtifact);
       }
@@ -501,10 +541,33 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       return rows.map(mapArtifact);
     },
 
+    async listAllArtifacts(): Promise<CliArtifact[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressArtifacts).where(eq(cliPressArtifacts.projectId, projectId())).orderBy(desc(cliPressArtifacts.createdAt));
+        return (rows as CliArtifactRow[]).map(mapArtifact);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts ORDER BY createdAt DESC").all() as unknown as CliArtifactRow[];
+      return rows.map(mapArtifact);
+    },
+
+    /** FNXC:CliPrintingPressRuntime 2026-07-14-23:53: Runtime PATH construction needs executable artifacts only; keep non-executable generation history out of the dispatch catalog at the SQL boundary. */
+    async listExecutableArtifacts(): Promise<CliArtifact[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressArtifacts)
+          .where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.executable, true)))
+          .orderBy(desc(cliPressArtifacts.createdAt));
+        return (rows as CliArtifactRow[]).map(mapArtifact);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts WHERE executable = ? ORDER BY createdAt DESC")
+        .all(1) as unknown as CliArtifactRow[];
+      return rows.map(mapArtifact);
+    },
+
     async createArtifact(input: CliArtifactCreateInput): Promise<CliArtifact> {
       const artifact: CliArtifact = { id: createId("art"), ...input, createdAt: nowIso(), updatedAt: nowIso() };
       if (asyncLayer) {
         await asyncLayer.db.insert(cliPressArtifacts).values({
+          projectId: projectId(),
           id: artifact.id,
           cliSpecId: artifact.cliSpecId,
           kind: artifact.kind,
@@ -529,7 +592,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressArtifacts)
-          .where(eq(cliPressArtifacts.id, id))
+          .where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.id, id)))
           .limit(1);
         const existing = rows[0] as CliArtifactRow | undefined;
         if (!existing) throw new Error(`Artifact ${id} not found`);
@@ -547,7 +610,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           checksum: updated.checksum ?? null,
           sizeBytes: updated.sizeBytes ?? null,
           updatedAt: updated.updatedAt,
-        }).where(eq(cliPressArtifacts.id, id));
+        }).where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.id, id)));
         return updated;
       }
       const existing = syncDb().prepare("SELECT * FROM cli_press_artifacts WHERE id = ?").get(id) as unknown as CliArtifactRow | undefined;
@@ -561,7 +624,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
 
     async deleteArtifact(id: string): Promise<void> {
       if (asyncLayer) {
-        await asyncLayer.db.delete(cliPressArtifacts).where(eq(cliPressArtifacts.id, id));
+        await asyncLayer.db.delete(cliPressArtifacts).where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.id, id)));
         return;
       }
       syncDb().prepare("DELETE FROM cli_press_artifacts WHERE id = ?").run(id);
@@ -573,11 +636,20 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressCredentials)
-          .where(eq(cliPressCredentials.serviceId, serviceId))
+          .where(and(eq(cliPressCredentials.projectId, projectId()), eq(cliPressCredentials.serviceId, serviceId)))
           .orderBy(desc(cliPressCredentials.createdAt));
         return (rows as CredentialRow[]).map(mapCredential);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_credentials WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as CredentialRow[];
+      return rows.map(mapCredential);
+    },
+
+    async listAllCredentials(): Promise<Credential[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressCredentials).where(eq(cliPressCredentials.projectId, projectId())).orderBy(desc(cliPressCredentials.createdAt));
+        return (rows as CredentialRow[]).map(mapCredential);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_credentials ORDER BY createdAt DESC").all() as unknown as CredentialRow[];
       return rows.map(mapCredential);
     },
 
@@ -587,6 +659,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       const cred: Credential = { id: createId("cred"), ...input, createdAt: nowIso(), updatedAt: nowIso() };
       if (asyncLayer) {
         await asyncLayer.db.insert(cliPressCredentials).values({
+          projectId: projectId(),
           id: cred.id,
           serviceId: cred.serviceId,
           name: cred.name,
@@ -610,7 +683,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressCredentials)
-          .where(eq(cliPressCredentials.id, id))
+          .where(and(eq(cliPressCredentials.projectId, projectId()), eq(cliPressCredentials.id, id)))
           .limit(1);
         const existing = rows[0] as CredentialRow | undefined;
         if (!existing) throw new Error(`Credential ${id} not found`);
@@ -631,7 +704,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           value: JSON.stringify(updated.value),
           placement: JSON.stringify(updated.placement),
           updatedAt: updated.updatedAt,
-        }).where(eq(cliPressCredentials.id, id));
+        }).where(and(eq(cliPressCredentials.projectId, projectId()), eq(cliPressCredentials.id, id)));
         return updated;
       }
       const existing = syncDb().prepare("SELECT * FROM cli_press_credentials WHERE id = ?").get(id) as unknown as CredentialRow | undefined;
@@ -656,7 +729,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
 
     async deleteCredential(id: string): Promise<void> {
       if (asyncLayer) {
-        await asyncLayer.db.delete(cliPressCredentials).where(eq(cliPressCredentials.id, id));
+        await asyncLayer.db.delete(cliPressCredentials).where(and(eq(cliPressCredentials.projectId, projectId()), eq(cliPressCredentials.id, id)));
         return;
       }
       syncDb().prepare("DELETE FROM cli_press_credentials WHERE id = ?").run(id);
@@ -668,7 +741,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         const rows = await asyncLayer.db
           .select()
           .from(cliPressSettings)
-          .where(eq(cliPressSettings.serviceId, serviceId))
+          .where(and(eq(cliPressSettings.projectId, projectId()), eq(cliPressSettings.serviceId, serviceId)))
           .orderBy(desc(cliPressSettings.createdAt));
         return (rows as ServiceSettingRow[]).map(mapSetting);
       }
@@ -679,18 +752,13 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
     async setSetting(input: ServiceSettingCreateInput): Promise<ServiceSetting> {
       const now = nowIso();
       if (asyncLayer) {
-        const rows = await asyncLayer.db
-          .select()
-          .from(cliPressSettings)
-          .where(and(eq(cliPressSettings.serviceId, input.serviceId), eq(cliPressSettings.key, input.key), eq(cliPressSettings.scope, input.scope)))
-          .limit(1);
-        const existing = rows[0] as ServiceSettingRow | undefined;
-        if (existing) {
-          await asyncLayer.db.update(cliPressSettings).set({ value: input.value, updatedAt: now }).where(eq(cliPressSettings.id, existing.id));
-          return mapSetting({ ...existing, value: input.value, updatedAt: now });
-        }
+        /*
+        FNXC:CliPrintingPressConcurrency 2026-07-14-23:53:
+        Settings are unique by project, service, key, and scope. Resolve concurrent first writes with one PostgreSQL conflict upsert so callers cannot race between SELECT and INSERT or create a transient uniqueness failure.
+        */
         const setting: ServiceSetting = { id: createId("set"), ...input, createdAt: now, updatedAt: now };
-        await asyncLayer.db.insert(cliPressSettings).values({
+        const rows = await asyncLayer.db.insert(cliPressSettings).values({
+          projectId: projectId(),
           id: setting.id,
           serviceId: setting.serviceId,
           key: setting.key,
@@ -698,8 +766,11 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           scope: setting.scope,
           createdAt: setting.createdAt,
           updatedAt: setting.updatedAt,
-        });
-        return setting;
+        }).onConflictDoUpdate({
+          target: [cliPressSettings.projectId, cliPressSettings.serviceId, cliPressSettings.key, cliPressSettings.scope],
+          set: { value: input.value, updatedAt: now },
+        }).returning();
+        return mapSetting(rows[0] as ServiceSettingRow);
       }
       const existing = syncDb().prepare("SELECT * FROM cli_press_service_settings WHERE serviceId = ? AND key = ? AND scope = ?")
         .get(input.serviceId, input.key, input.scope) as unknown as ServiceSettingRow | undefined;
@@ -718,7 +789,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
 
     async deleteSetting(id: string): Promise<void> {
       if (asyncLayer) {
-        await asyncLayer.db.delete(cliPressSettings).where(eq(cliPressSettings.id, id));
+        await asyncLayer.db.delete(cliPressSettings).where(and(eq(cliPressSettings.projectId, projectId()), eq(cliPressSettings.id, id)));
         return;
       }
       syncDb().prepare("DELETE FROM cli_press_service_settings WHERE id = ?").run(id);

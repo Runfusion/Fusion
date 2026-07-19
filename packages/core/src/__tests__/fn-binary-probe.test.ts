@@ -72,30 +72,49 @@ async function importWithMocks(options: {
       platform: () => options.platform ?? "darwin",
     };
   });
+  const readFileSyncMock = vi.fn((path: string) => {
+    const manifest = options.packageJsons?.[String(path)];
+    if (manifest) {
+      return JSON.stringify(manifest);
+    }
+
+    const script = options.scriptContents?.[String(path)];
+    if (script !== undefined) {
+      return script;
+    }
+
+    throw new Error(`Unexpected readFileSync(${path})`);
+  });
+
   vi.doMock("node:fs", async () => {
     const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
     return {
       ...actual,
       realpathSync: vi.fn(() => options.realPath),
       existsSync: vi.fn((path: string) => !!options.packageJsons?.[String(path)]),
-      readFileSync: vi.fn((path: string) => {
-        const manifest = options.packageJsons?.[String(path)];
-        if (manifest) {
-          return JSON.stringify(manifest);
-        }
-
-        const script = options.scriptContents?.[String(path)];
+      /*
+      FNXC:FnBinaryProbe 2026-07-15-10:05:
+      resolveShimTargets now stats the resolved path and refuses multi‑MB native binaries.
+      Tests must report small sizes for text shims so package-target extraction still runs.
+      */
+      statSync: vi.fn((path: string) => {
+        const key = String(path);
+        const script = options.scriptContents?.[key];
         if (script !== undefined) {
-          return script;
+          return { isFile: () => true, size: Buffer.byteLength(script, "utf-8") };
         }
-
-        throw new Error(`Unexpected readFileSync(${path})`);
+        if (options.packageJsons?.[key]) {
+          return { isFile: () => true, size: 128 };
+        }
+        // Default: small path so non-shim probes still walk package parents without binary thrash.
+        return { isFile: () => true, size: 256 };
       }),
+      readFileSync: readFileSyncMock,
     };
   });
 
   const mod = await import("../fn-binary.js");
-  return { mod, spawnMock };
+  return { mod, spawnMock, readFileSyncMock };
 }
 
 describe("detectFnBinary", () => {
@@ -125,6 +144,25 @@ describe("detectFnBinary", () => {
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(spawnMock).toHaveBeenCalledWith("which", ["fn"], expect.any(Object));
+  });
+
+  it("does not parse a JavaScript entrypoint when its realpath has the package manifest", async () => {
+    const lookupPath = "/opt/homebrew/bin/fn";
+    const realPath = "/opt/homebrew/lib/node_modules/runfusion.ai/index.js";
+    const packageJsonPath = "/opt/homebrew/lib/node_modules/runfusion.ai/package.json";
+    const { mod, readFileSyncMock } = await importWithMocks({
+      lookupPath,
+      realPath,
+      packageJsons: {
+        [packageJsonPath]: { name: "runfusion.ai", version: "0.60.0" },
+      },
+      scriptContents: {
+        [lookupPath]: "entrypoint text that must not be parsed as an npm shim",
+      },
+    });
+
+    await expect(mod.detectFnBinary()).resolves.toMatchObject({ version: "0.60.0" });
+    expect(readFileSyncMock).not.toHaveBeenCalledWith(lookupPath, "utf-8");
   });
 
   it("resolves the installed version from an npm-generated Windows cmd shim without executing fn --version", async () => {
@@ -191,5 +229,63 @@ describe("detectFnBinary", () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     expect(spawnMock).toHaveBeenNthCalledWith(1, "which", ["fn"], expect.any(Object));
     expect(spawnMock).toHaveBeenNthCalledWith(2, "fn", ["--version"], expect.any(Object));
+  });
+
+  it("does not read multi-MB native binaries when resolving shim package targets", async () => {
+    /*
+    FNXC:FnBinaryProbe 2026-07-15-10:05:
+    Host installs can place an 80MB+ Mach-O at the resolved path. Reading and
+    regex-scanning that file hung detectFnBinary (~77s) and failed the default
+    core suite under vitest's 15s testTimeout. Assert we never readFileSync a
+    large non-shim binary during version resolution.
+    */
+    const lookupPath = "/Users/test/.local/bin/fn";
+    const realPath = "/Users/test/.local/share/fusion/fn";
+    const readFileSync = vi.fn((path: string) => {
+      throw new Error(`Unexpected readFileSync(${path}) on native binary`);
+    });
+    const statSync = vi.fn((path: string) => {
+      if (String(path) === realPath || String(path) === lookupPath) {
+        return { isFile: () => true, size: 81 * 1024 * 1024 };
+      }
+      return { isFile: () => false, size: 0 };
+    });
+    const existsSync = vi.fn(() => false);
+    const realpathSync = vi.fn(() => realPath);
+    const lookupCommand = "which" as const;
+    const spawnMock = createSpawnMock({
+      lookupPath,
+      lookupCommand,
+      versionStdout: "fn v0.60.0\n",
+    });
+
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:os", async () => {
+      const actual = await vi.importActual<typeof import("node:os")>("node:os");
+      return { ...actual, platform: () => "darwin" as const };
+    });
+    vi.doMock("node:fs", async () => {
+      const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      return {
+        ...actual,
+        realpathSync,
+        existsSync,
+        readFileSync,
+        statSync,
+      };
+    });
+
+    const mod = await import("../fn-binary.js");
+    const result = await mod.detectFnBinary();
+
+    expect(result).toMatchObject({
+      installed: true,
+      binary: "fn",
+      path: lookupPath,
+      version: "0.60.0",
+      invocation: "fn",
+    });
+    expect(readFileSync).not.toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalledWith("fn", ["--version"], expect.any(Object));
   });
 });

@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 
 const taskPlannerChatCss = readFileSync(resolve(__dirname, "../TaskPlannerChatTab.css"), "utf8");
+const originalScrollTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 
 const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockAttachChatStream, mockEditChatMessage, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
@@ -110,6 +113,48 @@ function renderPlannerChat(overrides: Partial<React.ComponentProps<typeof TaskPl
   );
 }
 
+function restoreMetricDescriptor(name: "scrollTop" | "scrollHeight" | "clientHeight", descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(HTMLElement.prototype, name, descriptor);
+    return;
+  }
+  delete (HTMLElement.prototype as Record<string, unknown>)[name];
+}
+
+function mockPlannerTranscriptMetrics({ scrollHeight = 1200, clientHeight = 240, initialScrollTop = 0 } = {}) {
+  let scrollTopValue = initialScrollTop;
+  let scrollHeightValue = scrollHeight;
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return this instanceof HTMLElement && this.classList.contains("task-planner-chat-transcript") ? scrollHeightValue : 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return this instanceof HTMLElement && this.classList.contains("task-planner-chat-transcript") ? clientHeight : 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get() {
+      return this instanceof HTMLElement && this.classList.contains("task-planner-chat-transcript") ? scrollTopValue : 0;
+    },
+    set(value) {
+      if (this instanceof HTMLElement && this.classList.contains("task-planner-chat-transcript")) {
+        scrollTopValue = Number(value);
+      }
+    },
+  });
+  return {
+    get scrollTop() { return scrollTopValue; },
+    set scrollTop(value: number) { scrollTopValue = value; },
+    get scrollHeight() { return scrollHeightValue; },
+    set scrollHeight(value: number) { scrollHeightValue = value; },
+  };
+}
+
 function plannerQuestionMessage(id: string, args: Record<string, unknown>, createdAt = "2026-06-30T00:02:00.000Z") {
   return {
     id,
@@ -136,6 +181,12 @@ describe("TaskPlannerChatTab", () => {
     mockAttachChatStream.mockReturnValue({ close: vi.fn(), isConnected: () => true });
     mockEditChatMessage.mockResolvedValue({ retained: [] });
     mockAddSteeringComment.mockResolvedValue(makeTask("FN-7310"));
+  });
+
+  afterEach(() => {
+    restoreMetricDescriptor("scrollTop", originalScrollTopDescriptor);
+    restoreMetricDescriptor("scrollHeight", originalScrollHeightDescriptor);
+    restoreMetricDescriptor("clientHeight", originalClientHeightDescriptor);
   });
 
   it("looks up an existing task-scoped planner session and renders the starter-prompt empty state", async () => {
@@ -600,6 +651,87 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.queryByRole("button", { name: /Summarize recent activity/ })).not.toBeInTheDocument();
   });
 
+  it("keeps an unsnapped planner transcript in place during streamed growth", async () => {
+    const user = userEvent.setup();
+    const metrics = mockPlannerTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240 });
+    let streamHandlers: any;
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "history", sessionId: "chat-planner", role: "assistant", content: "Earlier plan", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" }],
+    });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    renderPlannerChat();
+    await screen.findByText("Earlier plan");
+    expect(metrics.scrollTop).toBe(metrics.scrollHeight);
+
+    await user.type(screen.getByLabelText("Message planner chat"), "Keep streaming");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    metrics.scrollTop = 120;
+    fireEvent.scroll(screen.getByTestId("task-planner-chat-transcript"));
+    metrics.scrollHeight = 1400;
+    act(() => streamHandlers.onText("more streamed plan"));
+
+    expect(metrics.scrollTop).toBe(120);
+    expect(metrics.scrollTop).not.toBe(metrics.scrollHeight);
+  });
+
+  it("follows streamed planner growth while pinned and re-pins after returning to the bottom", async () => {
+    const user = userEvent.setup();
+    const metrics = mockPlannerTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240 });
+    let streamHandlers: any;
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "history", sessionId: "chat-planner", role: "assistant", content: "Earlier plan", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" }],
+    });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    renderPlannerChat();
+    await screen.findByText("Earlier plan");
+    await user.type(screen.getByLabelText("Message planner chat"), "Keep streaming");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    metrics.scrollHeight = 1400;
+    act(() => streamHandlers.onText("pinned growth"));
+    expect(metrics.scrollTop).toBe(1400);
+
+    metrics.scrollTop = 120;
+    fireEvent.scroll(screen.getByTestId("task-planner-chat-transcript"));
+    metrics.scrollTop = 1160;
+    fireEvent.scroll(screen.getByTestId("task-planner-chat-transcript"));
+    metrics.scrollHeight = 1700;
+    act(() => streamHandlers.onText("re-pinned growth"));
+
+    expect(metrics.scrollTop).toBe(1700);
+  });
+
+  it("snaps populated planner history on first active render and resets an empty transcript to the top", async () => {
+    const metrics = mockPlannerTranscriptMetrics({ scrollHeight: 1200, clientHeight: 240, initialScrollTop: 0 });
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "history", sessionId: "chat-planner", role: "assistant", content: "Existing plan", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" }],
+    });
+
+    renderPlannerChat();
+    await screen.findByText("Existing plan");
+    expect(metrics.scrollTop).toBe(metrics.scrollHeight);
+
+    metrics.scrollTop = 50;
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+    renderPlannerChat({ task: makeTask("FN-empty") });
+    await screen.findAllByTestId("task-planner-chat-empty");
+    expect(metrics.scrollTop).toBe(0);
+  });
+
+  it("keeps the mobile media block free of planner transcript scroll-semantic overrides", () => {
+    const mobileCss = taskPlannerChatCss.slice(taskPlannerChatCss.indexOf("@media (max-width: 768px)"));
+    expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript\s*\{/);
+    expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript[^}]*\b(?:overflow|scroll-behavior|height|flex)\s*:/);
+  });
+
   it("sends messages through the chat stream and appends success responses", async () => {
     const user = userEvent.setup();
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
@@ -628,6 +760,50 @@ describe("TaskPlannerChatTab", () => {
     );
     expect(screen.getByText("Help plan this")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Hello")).toBeInTheDocument());
+  });
+
+  it("clears a completed turn's streaming carriers before a delayed consecutive reply", async () => {
+    const user = userEvent.setup();
+    const streamHandlers: any[] = [];
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers.push(handlers);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+
+    const input = screen.getByLabelText("Message planner chat");
+    await user.type(input, "First reply");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    act(() => {
+      streamHandlers[0].onText("Previous transient reply");
+      streamHandlers[0].onThinking("Previous transient thinking");
+      streamHandlers[0].onDone({
+        messageId: "assistant-first",
+        message: {
+          id: "assistant-first",
+          sessionId: "chat-planner",
+          role: "assistant",
+          content: "Previous completed reply",
+          thinkingOutput: "Previous completed thinking",
+          metadata: null,
+          createdAt: "2026-06-30T00:03:00.000Z",
+        },
+      });
+    });
+    expect(await screen.findByText("Previous completed reply")).toBeInTheDocument();
+
+    await user.type(input, "Second delayed reply");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // The prior persisted turn remains in the transcript, but the new live bubble must be empty
+    // until this generation supplies its own first event.
+    const streamingBubble = screen.getByTestId("chat-message-__streaming__");
+    expect(streamingBubble).toHaveTextContent("Working…");
+    expect(streamingBubble).not.toHaveTextContent("Previous transient reply");
+    expect(streamingBubble).not.toHaveTextContent("Previous transient thinking");
+    expect(streamingBubble).not.toHaveTextContent("Previous completed reply");
+    expect(streamingBubble).not.toHaveTextContent("Previous completed thinking");
   });
 
   it("sends planner Chat exactly once on the first mobile tap while the textarea is focused", async () => {

@@ -1,5 +1,6 @@
 import {
   DEFAULT_TASK_PRIORITY,
+  MessageStore,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -8,19 +9,20 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
+import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
 
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
   aiSessionStore?: AiSessionStore;
-  checkSessionLock: (sessionId: string, tabId: string | undefined, store: AiSessionStore | undefined) => Promise<{ allowed: true } | { allowed: false; currentHolder: string | null | undefined }>;
   parseLastEventId: (req: import("express").Request) => number | undefined;
   replayBufferedSSE: (res: import("express").Response, bufferedEvents: SessionBufferedEvent[]) => boolean;
 }
@@ -48,7 +50,29 @@ function rethrowPlanningWorkflowCreateError(
 
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
   const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
-  const { aiSessionStore, checkSessionLock, parseLastEventId, replayBufferedSSE } = deps;
+  const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
+  const messageStoreCache = new Map<string, MessageStore>();
+  const getPlanningMessageStore = async (req: import("express").Request): Promise<MessageStore | undefined> => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      const runtimeStore = engine?.getMessageStore();
+      if (runtimeStore) return runtimeStore;
+      const rootDir = scopedStore.getRootDir();
+      const cached = messageStoreCache.get(rootDir);
+      if (cached) return cached;
+      const created = new MessageStore(null, { asyncLayer: requireAsyncLayer(scopedStore, "Planning MessageStore") });
+      messageStoreCache.set(rootDir, created);
+      return created;
+    } catch (error) {
+      planningLogger.warn("Planning mailbox unavailable; continuing without inbox delivery", { error: String(error) });
+      return undefined;
+    }
+  };
+  const planningRuntime = async (req: import("express").Request, settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
+    clarificationEnabled: settings.agentClarificationEnabled === true,
+    ntfyConfig: { enabled: settings.ntfyEnabled ?? false, topic: settings.ntfyTopic, ntfyBaseUrl: settings.ntfyBaseUrl, dashboardHost: settings.ntfyDashboardHost, events: settings.ntfyEvents },
+    messageStore: await getPlanningMessageStore(req),
+  });
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
   // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
@@ -273,7 +297,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         inheritedBaseBranch: resolvedBaseBranch,
       };
 
+      const normalizedParentId = typeof parentTaskId === "string" ? parentTaskId.trim().toUpperCase() : "";
       const createdTasks = [] as Awaited<ReturnType<TaskStore["createTask"]>>[];
+      const wasDuplicateByIndex: boolean[] = [];
       const tempIdToTaskId = new Map<string, string>();
 
       for (const item of subtasks) {
@@ -294,7 +320,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         column resolution. Omitting `column` lets the store resolve intake for the
         selected-or-default workflow (byte-identical "triage" for builtin:coding).
         */
-        const task = await scopedStore.createTask({
+        const { task, wasDuplicate } = await createAgentTask(scopedStore, {
           title: item.title.trim(),
           description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
           dependencies: undefined,
@@ -303,7 +329,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           modelId: parentTask?.modelId,
           validatorModelProvider: parentTask?.validatorModelProvider,
           validatorModelId: parentTask?.validatorModelId,
-          source: { sourceType: "api", sourceParentTaskId: typeof parentTaskId === "string" ? parentTaskId : undefined },
+          source: { sourceType: "api", sourceParentTaskId: normalizedParentId || undefined },
           branch: taskBranch,
           baseBranch: resolvedBaseBranch,
           branchContext: planningBranchContext,
@@ -312,12 +338,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           Tasks created from a workflow lane via subtask breakdown must stay on that active workflow instead of falling back to the project default board.
           */
           ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        }, {
+          rootDir: scopedStore.getRootDir(),
+          sourceTaskId: normalizedParentId || undefined,
         });
 
         tempIdToTaskId.set(item.tempId, task.id);
         createdTasks.push(task);
+        wasDuplicateByIndex.push(wasDuplicate);
 
-        if (item.size === "S" || item.size === "M" || item.size === "L") {
+        if (!wasDuplicate && (item.size === "S" || item.size === "M" || item.size === "L")) {
           await scopedStore.updateTask(task.id, { size: item.size });
         }
       }
@@ -327,18 +357,17 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       //   - drop any reference to the parent being split (would be a dangling id after delete)
       //   - record dropped ids so the caller can surface them instead of silently losing them
       const droppedDependencies: Array<{ taskId: string; dropped: string[] }> = [];
-      const normalizedParentId = typeof parentTaskId === "string" ? parentTaskId.trim() : "";
-
       for (let index = 0; index < subtasks.length; index++) {
         const item = subtasks[index]!;
         const created = createdTasks[index]!;
+        if (wasDuplicateByIndex[index]) continue;
         const rawDeps = Array.isArray(item.dependsOn) ? item.dependsOn : [];
         const resolvedDependencies: string[] = [];
         const dropped: string[] = [];
 
         for (const dep of rawDeps) {
           if (typeof dep !== "string" || !dep) continue;
-          if (normalizedParentId && dep === normalizedParentId) {
+          if (normalizedParentId && dep.trim().toUpperCase() === normalizedParentId) {
             // Parent is about to be deleted — depending on it would permanently
             // block the dependent.
             dropped.push(dep);
@@ -346,7 +375,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
           const siblingId = tempIdToTaskId.get(dep);
           if (siblingId) {
-            resolvedDependencies.push(siblingId);
+            if (siblingId !== created.id) resolvedDependencies.push(siblingId);
             continue;
           }
           // Not a sibling tempId and not the parent — it could be an existing
@@ -409,19 +438,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
   router.post("/subtasks/cancel", async (req, res) => {
     try {
-      const { sessionId, tabId } = req.body;
+      const { sessionId } = req.body;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { cancelSubtaskSession } = await import("../subtask-breakdown.js");
@@ -444,25 +463,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Retry a failed subtask breakdown session.
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved.
+   * Lock-free (see FNXC:PlanningMultiTab on /planning/respond).
    */
   router.post("/subtasks/:sessionId/retry", async (req, res) => {
     try {
       const { sessionId } = req.params;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -494,32 +501,24 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start", async (req, res) => {
     try {
-      const { initialPlan, planningDepth, customQuestionCount } = req.body;
+      const { initialPlan } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
       }
 
-      if (
-        planningDepth !== undefined
-        && planningDepth !== "small"
-        && planningDepth !== "medium"
-        && planningDepth !== "large"
-      ) {
-        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
-      }
-
-      if (
-        customQuestionCount !== undefined
-        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
-      ) {
-        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
-      }
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
+      /*
+      FNXC:AgentClarification 2026-07-16-16:10:
+      The legacy synchronous planning-start endpoint can emit the initial proactive question too.
+      Attach live notification and mailbox dependencies here so it follows the same setting-gated
+      hold and delivery contract as streaming Planning Mode.
+      */
+      const runtime = await planningRuntime(req, settings);
 
       const { createSession, RateLimitError: _RateLimitError } = await import("../planning.js");
       const result = await createSession(
@@ -528,9 +527,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         scopedStore,
         rootDir,
         settings.promptOverrides,
-        planningDepth,
-        customQuestionCount,
         ctx.options?.pluginRunner as SkillPluginRunner,
+        runtime,
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -634,10 +632,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         initialPlan,
         planningModelProvider,
         planningModelId,
-        planningDepth,
-        customQuestionCount,
         existingSessionId,
         thinkingLevel,
+        clarificationEnabled,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -652,20 +649,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("planningModelId must be a string when provided");
       }
 
-      if (
-        planningDepth !== undefined
-        && planningDepth !== "small"
-        && planningDepth !== "medium"
-        && planningDepth !== "large"
-      ) {
-        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
-      }
 
-      if (
-        customQuestionCount !== undefined
-        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
-      ) {
-        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
+      if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
+        throw badRequest("clarificationEnabled must be a boolean when provided");
       }
 
       if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
@@ -681,6 +667,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
+      const resolvedClarificationEnabled = clarificationEnabled ?? settings.agentClarificationEnabled ?? false;
+      const runtime = await planningRuntime(req, settings);
+      runtime.clarificationEnabled = resolvedClarificationEnabled;
 
       // Resolve planning model using canonical lane hierarchy:
       // 1. Request body planning override
@@ -731,6 +720,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             validatedThinkingLevel,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
+            runtime,
           );
         } else {
           await startExistingSession(
@@ -741,6 +731,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             resolvedPlanningModelId,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
+            undefined,
+            runtime,
           );
         }
         res.status(201).json({ sessionId: existingSessionId });
@@ -750,14 +742,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
       const planningOptions = {
         projectId,
-        ntfyConfig: {
-          enabled: settings.ntfyEnabled ?? false,
-          topic: settings.ntfyTopic,
-          dashboardHost: settings.ntfyDashboardHost,
-          events: settings.ntfyEvents,
-        },
-        planningDepth,
-        customQuestionCount,
+        ...runtime,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
       };
       const sessionId = validatedThinkingLevel
@@ -839,11 +824,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Returns: { type: "question" | "complete", data: PlanningQuestion | PlanningSummary }
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved (multi-tab coordination, not saturation).
+   *
+   * FNXC:PlanningMultiTab 2026-07-14-00:00:
+   * Planning routes are deliberately lock-free. Multiple tabs may read and interact with the
+   * same planning session; the persisted session row plus the activeGenerations guard in
+   * planning.ts (409 GenerationInProgressError) are the only coordination. The former
+   * per-tab session lock (checkSessionLock / lock-conflict 409s) was removed entirely.
    */
   router.post("/planning/respond", async (req, res) => {
     try {
-      const { sessionId, responses, tabId } = req.body;
+      const { sessionId, responses } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
@@ -853,19 +843,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("responses is required and must be an object");
       }
 
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { submitResponse, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
+      const { submitResponse, attachPlanningRuntime, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       const result = await submitResponse(
         sessionId,
         responses,
@@ -897,23 +878,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
+      const questionId = req.body?.questionId;
+      if (questionId !== undefined && typeof questionId !== "string") throw badRequest("questionId must be a string when provided");
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { rewindSession } = await import("../planning.js");
+      const { rewindSession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       const rewound = await rewindSession(
         sessionId,
+        questionId,
         scopedStore.getRootDir(),
         settings.promptOverrides,
         scopedStore,
@@ -938,7 +911,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Retry a failed planning session.
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved.
+   * Lock-free like all /planning/* routes (see FNXC:PlanningMultiTab on /planning/respond).
    */
   router.post("/planning/:sessionId/retry", async (req, res) => {
     try {
@@ -947,21 +920,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { retrySession } = await import("../planning.js");
+      const { retrySession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
       res.json({ success: true, sessionId });
     } catch (err: unknown) {
@@ -985,18 +947,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
       const { stopGeneration } = await import("../planning.js");
       const stopped = stopGeneration(sessionId);
       if (!stopped) {
@@ -1017,22 +967,27 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Cancel and cleanup a planning session.
    * Body: { sessionId: string }
    */
+  /** The sole HTTP transition that validates a continuously maintained plan. */
+  router.post("/planning/:sessionId/validate", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      const { validateSession } = await import("../planning.js");
+      const summary = await validateSession(sessionId);
+      res.json({ summary, validated: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (err instanceof Error && err.name === "SessionNotFoundError") throw notFound(err.message);
+      rethrowAsApiError(err, "Failed to validate planning session");
+    }
+  });
+
   router.post("/planning/cancel", async (req, res) => {
     try {
-      const { sessionId, tabId } = req.body;
+      const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { cancelSession, SessionNotFoundError: _SessionNotFoundError2 } = await import("../planning.js");
@@ -1128,6 +1083,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { getSession, getSummary, releaseSession } = await import("../planning.js");
 
       const session = await getSession(sessionId);
+      if (session && !session.validated) throw badRequest("Planning session must be validated before creating tasks");
       let summary = summaryOverride ?? getSummary(sessionId);
       let initialPlan = session?.initialPlan;
 
@@ -1141,8 +1097,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
-        if (persistedSession.status !== "complete") {
-          throw badRequest("Planning session is not complete");
+        const persistedInput = JSON.parse(persistedSession.inputPayload) as { validated?: unknown };
+        if (persistedSession.status !== "complete" || persistedInput.validated !== true) {
+          throw badRequest("Planning session must be validated before creating tasks");
         }
 
         if (!persistedSession.result) {
@@ -1270,6 +1227,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (!session) {
         throw notFound(`Planning session ${sessionId} not found or expired`);
       }
+      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
 
       if (summaryOverride) {
         session.summary = summaryOverride;
@@ -1339,6 +1297,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (!session) {
         throw notFound(`Planning session ${planningSessionId} not found or expired`);
       }
+      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
 
       if (!session.summary) {
         throw badRequest("Planning session is not complete");

@@ -295,35 +295,12 @@ export default defineConfig({
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
             "node_modules/**",
             "dist/**",
-            // FNXC:PgMigrationQuarantine 2026-07-14-08:00:
-            // VAL-REMOVAL-005 deleted the SQLite Database class. These engine-default files fail
-            // because they construct SQLite-backed stores or use sync APIs (getRunAuditEvents,
-            // getDatabase, walCheckpoint) that throw/return-empty in backend mode, or have mock
-            // drift from the async-satellite cutover. Quarantined on sight per AGENTS.md.
-            "src/__tests__/backlog-pressure-reporter.test.ts",
-            "src/__tests__/cross-node-claim-mutex.integration.test.ts",
-            "src/__tests__/distributed-claim-mutex.integration.test.ts",
-            "src/__tests__/mission-autopilot.test.ts",
-            "src/__tests__/mission-factory-parity.integration.test.ts",
-            "src/__tests__/owning-node-handoff.integration.test.ts",
-            "src/__tests__/planner-overseer-intervention-wiring.test.ts",
-            "src/__tests__/project-engine.test.ts",
-            "src/__tests__/self-healing.test.ts",
-            "src/__tests__/unlinked-missions-advisory-reporter.test.ts",
-            "src/__tests__/workflow-graph-task-runner.test.ts",
-            "src/__tests__/agent-tools-intake-column.test.ts",
-            "src/__tests__/agent-workflow-tools-exposure.test.ts",
-            "src/__tests__/dependency-blocked-todo-reporter.test.ts",
-            "src/__tests__/executor-task-done-invariant.test.ts",
-            "src/__tests__/goal-injection-diagnostics-wiring.test.ts",
-            "src/__tests__/group-merge-coordinator.test.ts",
-            "src/__tests__/hybrid-executor-multi-node-routing.test.ts",
-            "src/__tests__/merger-cwd-fallback-removed.test.ts",
-            "src/__tests__/mission-autopilot-end-to-end.test.ts",
-            "src/__tests__/routine-runner.test.ts",
-            "src/__tests__/self-healing-meta-archive-guards.test.ts",
-            "src/__tests__/triage-token-usage.test.ts",
-            "src/__tests__/workflow-foreach-wiring.test.ts",
+            // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.
+            // FNXC:WorkflowStepInstancePersistence 2026-07-16-20:35: FN-8157 restores this PG-backed foreach suite through async store persistence, so it must execute in engine-default.
+            /*
+            FNXC:EngineTests 2026-07-18-07:30:
+            FN-8271 restored heartbeat-error-recovery to engine-default after synchronizing on its first mocked prompt and draining the known retry timers once. This removes the load-amplified thirty-yield fake-timer poll without changing the 30s test timeout or recovery assertions; its matching quarantine-ledger row is removed in lockstep.
+            */
             /*
             FNXC:EngineTests 2026-06-14-02:11:
             FN-6433 rescued the AI-merge suites by replacing broad activeSessionRegistry cleanup with path-scoped cleanup, so the default engine lane should execute them again. The soft-delete blocker residue suite was deleted under the ratchet because deterministic soft-delete deadlock coverage already owns that invariant.
@@ -374,22 +351,20 @@ export default defineConfig({
             Database class being deleted. Quarantined on sight per AGENTS.md; mirrored in
             scripts/lib/test-quarantine.json.
             */
-            // FNXC:PgMigrationQuarantine 2026-07-14-08:00:
-            // VAL-REMOVAL-005 deleted the SQLite Database class. These files use makeReliabilityFixture
-            // (now PG-backed) but fail on sync SQLite APIs (getRunAuditEvents, getDatabase) that
-            // return [] / throw in backend mode, or on mock drift from the async-satellite cutover.
-            // Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
-            "src/__tests__/reliability-interactions/in-review-handoff-atomic.test.ts",
-            "src/__tests__/reliability-interactions/multi-node-claim-mutex-interactions.test.ts",
-            "src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts",
-            "src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
-            "src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
-            "src/__tests__/reliability-interactions/self-defeating-dep-reconcile.test.ts",
-            "src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts",
-            "src/__tests__/reliability-interactions/merge-runner-spawn-enoent-prevention.test.ts",
-            "src/__tests__/reliability-interactions/meta-archive-guard-composition.test.ts",
-            "src/__tests__/reliability-interactions/meta-chain-auto-close.test.ts",
-            "src/__tests__/reliability-interactions/post-done-continuation-no-wedge.test.ts",
+            // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 restored the final VAL-REMOVAL-005 reliability suites with awaited PostgreSQL audit reads. Keep the project partition below while allowing these tests to execute under engine-reliability.
+            // FNXC:PgMigrationQuarantine 2026-07-16-04:59:
+            // FN-8044 migrated dependency-reconcile suites to the PG corrupt-row seeding seam, so
+            // they are deliberately absent from this quarantine list and ledger.
+            // FNXC:PgMigrationQuarantine 2026-07-16-10:45:
+            // FN-8047 restored multi-node claim and owning-node handoff coverage with shared PG-backed
+            // AgentStores and AsyncCentralClaimStore; their paired ledger entries are intentionally live.
+            // FNXC:PgMigrationQuarantine 2026-07-16-11:25:
+            // FN-8117 restored explicit-marker coverage by configuring its PG fixture with taskPrefix: FN.
+            // The strict marker parser now receives valid FN ids, so this file is intentionally unquarantined.
+            // FNXC:PgMigrationQuarantine 2026-07-16-11:58:
+            // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
+            // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
+            // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
           ],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
@@ -429,6 +404,13 @@ export default defineConfig({
             "src/__tests__/reliability-interactions/branch-group-single-pr-e2e.slow.test.ts",
             "src/__tests__/reliability-interactions/shared-branch-group-lifecycle.slow.test.ts",
             // SQLite-path (delete-sqlite-runtime-final PHASE A): uses inMemoryDb via _helpers.ts.
+            /*
+            FNXC:EngineTests 2026-07-18-15:55:
+            Full-suite engine-slow (run 29663725381): FN-5363 queue-head pollution handoff left a
+            leased merge-queue row after successful merge under load without product-bug evidence.
+            Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
+            */
+            "src/__tests__/reliability-interactions/merge-reuse-task-worktree.slow.test.ts",
           ],
           minWorkers: 1,
           maxWorkers: 1,

@@ -24,6 +24,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { executorLog } from "./logger.js";
+import { withVerificationSlot } from "./verification-concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -465,6 +466,10 @@ export interface RunVerificationOptions {
   expectFailure?: boolean;
   onHeartbeat: () => void;
   onLine?: (line: string) => void;
+  /** When true, skip the process-wide verification slot (tests only). */
+  bypassVerificationSlot?: boolean;
+  /** Optional abort signal — cancels while queued for a verification slot and during the command. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -472,8 +477,25 @@ export interface RunVerificationOptions {
  * heartbeats, and hard timeout enforcement.
  *
  * Exported so tests can exercise the core logic without a full agent session.
+ *
+ * FNXC:VerificationConcurrency 2026-07-15-03:35:
+ * Acquires a process-wide verification slot so concurrent tasks cannot stack
+ * multiple monorepo typecheck/build commands and peg the host CPU.
+ *
+ * FNXC:VerificationConcurrency 2026-07-15-08:20:
+ * Limit is process-wide and set from engine settings load/update only (not per call)
+ * so multi-project verifications cannot race last-writer-wins on the slot cap.
  */
 export async function runVerificationCommand(
+  opts: RunVerificationOptions,
+): Promise<VerificationResult> {
+  if (opts.bypassVerificationSlot) {
+    return runVerificationCommandUnlocked(opts);
+  }
+  return withVerificationSlot(() => runVerificationCommandUnlocked(opts), opts.signal);
+}
+
+async function runVerificationCommandUnlocked(
   opts: RunVerificationOptions,
 ): Promise<VerificationResult> {
   const { command, cwd, timeoutMs, expectFailure = false, onHeartbeat, onLine } = opts;
@@ -671,7 +693,16 @@ export interface CreateRunVerificationToolOpts {
 export function createRunVerificationTool(
   opts: CreateRunVerificationToolOpts,
 ): ToolDefinition {
-  const { worktreePath, rootDir, taskId, recordActivity, verificationCommandTimeoutMs, onVerificationStart, onVerificationEnd, log } = opts;
+  const {
+    worktreePath,
+    rootDir,
+    taskId,
+    recordActivity,
+    verificationCommandTimeoutMs,
+    onVerificationStart,
+    onVerificationEnd,
+    log,
+  } = opts;
 
   return {
     name: "fn_run_verification",

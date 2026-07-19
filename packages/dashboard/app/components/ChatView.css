@@ -250,17 +250,6 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   border-bottom: 1px solid var(--border);
 }
 
-.chat-room-thinking-level-field {
-  display: flex;
-  align-items: center;
-  flex: 0 1 calc(var(--space-2xl) * 6);
-  min-width: min-content;
-}
-
-.chat-room-thinking-level-select {
-  width: 100%;
-}
-
 .chat-room-thread-members {
   margin-left: auto;
   display: flex;
@@ -367,7 +356,7 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
 }
 
 .chat-session-preview {
@@ -376,7 +365,7 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
 }
 
 .chat-session-meta {
@@ -402,41 +391,60 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
 }
 
 /*
-FNXC:ChatSidebar 2026-07-02-00:00:
-Direct conversation rows expose edit and delete as a compact action pair. Keep the pair outside the row text flow so title/preview truncation stays stable across desktop, mobile, and compact right-dock layouts.
+FNXC:ChatSidebar 2026-07-16-00:00:
+FN-8173 replaces the inline Pin/Rename/Delete cluster with one overflow trigger. Keep it outside row text flow and reserve only its tokenized width so long titles stay readable at desktop and mobile breakpoints.
 */
-.chat-session-actions {
+.chat-session-menu-btn {
   position: absolute;
   top: var(--space-sm);
   right: var(--space-sm);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.chat-session-action-btn {
   width: calc(var(--space-md) * 2);
   min-width: calc(var(--space-md) * 2);
   height: calc(var(--space-md) * 2);
   min-height: calc(var(--space-md) * 2);
-  flex: 0 0 auto;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
 }
 
-.chat-session-action-btn:hover,
-.chat-session-action-btn:focus-visible {
+.chat-session-menu-btn:hover,
+.chat-session-menu-btn:focus-visible {
   color: var(--text);
 }
 
-.chat-session-delete-btn:hover,
-.chat-session-delete-btn:focus-visible {
-  color: var(--color-error);
+.chat-mobile-session-pin:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
 }
 
+.chat-session-pinned-indicator {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
+.chat-pinned-divider {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--space-md) * 2);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  border-bottom: 1px solid var(--border);
+}
+
+
+/*
+FNXC:ChatSidebar 2026-07-16-23:55:
+FN-8191 gives the conversation action menu a token-composed border-box width. ChatView measures that rendered width before clamping, so alternate themes keep the mobile menu's right edge aligned without raw CSS dimensions.
+*/
 /* Context menu for session items */
 .chat-session-context-menu {
   position: fixed;
+  box-sizing: border-box;
+  width: calc(var(--space-xl) * 8 + var(--space-xs) * 2);
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -707,12 +715,15 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
   line-height: normal;
 }
 
+.chat-mobile-session-pin,
 .chat-mobile-session-rename {
   flex-shrink: 0;
   align-self: stretch;
   color: var(--text-muted);
 }
 
+.chat-mobile-session-pin:hover,
+.chat-mobile-session-pin:focus-visible,
 .chat-mobile-session-rename:hover {
   color: var(--text);
   background: var(--card-hover);
@@ -764,7 +775,9 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
 
 .chat-mobile-session-option-title {
   width: 100%;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   line-height: normal;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1042,12 +1055,15 @@ The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle
 /*
 FNXC:ChatView 2026-06-23-11:40:
 Tablet Chat View has enough message-pane width for assistant prose, markdown, tool output, failure details, and attachments, so agent-side bubbles need a wider reading measure than the shared desktop/user cap. Use the ChatView container width instead of the viewport so floating Quick Chat and other narrow hosts keep their bounded bubble layout.
+
+FNXC:ChatView 2026-07-15-00:00:
+FN-8028 widens the tablet agent-side cap from 88% to 92% for a slightly wider reading measure while keeping it container-keyed, so Quick Chat and the right dock remain bounded by their narrow-host rule.
 */
 @container chat-view (min-width: 48.0625rem) and (max-width: 64rem) {
   .chat-message--assistant,
   .chat-message--streaming,
   .chat-message--failure {
-    max-width: 88%;
+    max-width: 92%;
   }
 }
 
@@ -1366,7 +1382,7 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   align-items: center;
   justify-content: space-between;
   gap: var(--space-xs);
-  margin-top: var(--space-2xs);
+  margin-top: var(--space-xs);
 }
 
 .chat-message-time-row .chat-message-time {
@@ -1509,7 +1525,7 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
 .chat-message-time {
   font-size: var(--font-size-xs);
   color: var(--text-dim);
-  margin-top: var(--space-2xs);
+  margin-top: var(--space-xs);
 }
 
 .chat-message-thinking {
@@ -2077,8 +2093,12 @@ FN-7934: The brain popup must fit the containing chat surface, not only the brow
   border-bottom: 1px solid var(--border);
 }
 
+/*
+FNXC:ChatViewTokens 2026-07-15-18:03:
+Thinking-section text uses the defined muted text token across all themes. The mobile token guard enforces this migration invariant for ChatView source files.
+*/
 .chat-thinking-section-title {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.04em;
@@ -2090,7 +2110,7 @@ FN-7934: The brain popup must fit the containing chat surface, not only the brow
   display: flex;
   gap: var(--space-xs);
   margin-bottom: var(--space-sm);
-  padding: var(--space-2xs);
+  padding: var(--space-xs);
   background: var(--surface-secondary);
   border-radius: var(--radius-md);
 }
@@ -2099,7 +2119,7 @@ FN-7934: The brain popup must fit the containing chat surface, not only the brow
   flex: 1;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -2167,7 +2187,7 @@ FN-7934: The brain popup must fit the containing chat surface, not only the brow
 .chat-thinking-agent-role,
 .chat-thinking-current-target,
 .chat-thinking-empty {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.75rem;
 }
 
@@ -2535,10 +2555,10 @@ Queued-message banners stack above the composer input with a capped scroll area,
     min-height: calc(var(--space-lg) * 2.25);
   }
 
-  /* FN-4352/FN-4385/FN-7441: direct session row action pair stays visible and text keeps clearance for both edit and delete touch targets. */
+  /* FNXC:ChatSidebar 2026-07-16-00:00: Match the shared sidebar row's one-button overflow gutter on mobile. */
   .chat-session-title,
   .chat-session-preview {
-    padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+    padding-right: calc((var(--space-md) * 2) + var(--space-sm));
   }
 
   .chat-message--assistant .chat-message-render-toggle {
@@ -2669,11 +2689,6 @@ Queued-message banners stack above the composer input with a capped scroll area,
 
   .chat-room-thread-header {
     padding: var(--space-sm) var(--space-md);
-  }
-
-  .chat-room-thinking-level-field {
-    min-width: 0;
-    flex: 1 1 auto;
   }
 
   .chat-room-thread-header .btn-icon {

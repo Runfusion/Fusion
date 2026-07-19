@@ -21,7 +21,8 @@ import {
   type CustomProvider,
   type TaskStore,
 } from "@fusion/core";
-import type { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { FusionAuthStorage } from "./auth-storage.js";
 import {
   wrapAuthStorageWithApiKeyProviders,
   type DashboardAuthStorage,
@@ -39,7 +40,7 @@ export interface SeedDashboardProvidersStore {
 export interface SeedDashboardProvidersOptions {
   /** The task store used to read `globalSettings.customProviders` and subscribe to `settings:updated`. */
   store: SeedDashboardProvidersStore;
-  authStorage: AuthStorage;
+  authStorage: FusionAuthStorage;
   modelRegistry: ModelRegistry;
   /** Optional structured logger; defaults to a no-op so callers can opt into console/trace logging. */
   log?: (scope: string, message: string) => void;
@@ -69,11 +70,11 @@ export async function seedDashboardProviders(
 
   mergeBuiltInZaiProviderModels(modelRegistry, (message) => log("extensions", message));
   mergeBuiltInGrokProviderModels(modelRegistry, (message) => log("extensions", message));
-  modelRegistry.refresh();
+  await modelRegistry.refresh();
 
   try {
     const globalSettings = await store.getGlobalSettingsStore().getSettings();
-    registerCustomProviders(
+    await registerCustomProviders(
       modelRegistry,
       globalSettings.customProviders,
       (message) => log("custom-providers", message),
@@ -90,12 +91,15 @@ export async function seedDashboardProviders(
       return;
     }
 
-    reregisterCustomProviders(
+    void reregisterCustomProviders(
       modelRegistry,
       previousProviders,
       currentProviders,
       (message) => log("custom-providers", message),
-    );
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      log("custom-providers", `Failed to refresh custom providers: ${message}`);
+    });
   };
 
   store.on("settings:updated", onSettingsUpdated);

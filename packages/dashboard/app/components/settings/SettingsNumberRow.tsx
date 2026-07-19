@@ -38,7 +38,7 @@ export function SettingsNumberRow({
     >
       <input
         id={key}
-        className="settings-number"
+        className="input settings-number"
         type="number"
         value={value === null || value === undefined ? "" : value}
         min={min}

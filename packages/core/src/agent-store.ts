@@ -1,8 +1,9 @@
 /**
- * AgentStore - SQLite-backed persistence for agent lifecycle management.
+ * AgentStore - persistence for agent lifecycle management.
  *
+ * FNXC:PostgresRuntimeStorage 2026-07-14-18:49:
  * Agent records, heartbeat events, runs, task sessions, API keys, config
- * revisions, and blocked-state snapshots are stored in `.fusion/fusion.db`.
+ * revisions, and blocked-state snapshots are stored in project-scoped PostgreSQL tables.
  * Managed instruction bundle markdown files remain on disk because they are
  * edited as normal project files.
  */
@@ -540,6 +541,15 @@ export class AgentStore extends EventEmitter {
    * Runtime reads come from SQLite; this only seeds old projects.
    */
   async importLegacyFileRuns(): Promise<number> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    One-shot legacy SQLite migration. In backend mode the INSERT below hits the
+    removed-SQLite stub, and this method's per-file try/catch would swallow the
+    throw and silently report "0 imported". There are no legacy SQLite file runs
+    to import against PostgreSQL (the PG baseline already covers this), so no-op
+    cleanly instead of laundering a stub throw into a false success.
+    */
+    if (this.backendMode) return 0;
     const entries = await readdir(this.agentsDir, { withFileTypes: true }).catch(() => []);
     const runDirs = entries.filter((entry) => entry.isDirectory() && entry.name.endsWith("-runs"));
 
@@ -1812,7 +1822,7 @@ export class AgentStore extends EventEmitter {
     }
 
     if (this.claimStore && this.claimProjectId && task.checkoutNodeId) {
-      this.claimStore.releaseTaskClaim({
+      await this.claimStore.releaseTaskClaim({
         projectId: this.claimProjectId,
         taskId,
         nodeId: task.checkoutNodeId,
@@ -3211,7 +3221,7 @@ export class AgentStore extends EventEmitter {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:40:
     // Backend mode: delegate to async Drizzle writeAgent helper.
     if (this.backendMode) {
-      await writeAgentAsync(this.asyncLayer!.db, agent);
+      await writeAgentAsync(this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
       return;
     }
     const data: AgentData = {

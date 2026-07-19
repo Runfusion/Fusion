@@ -277,6 +277,51 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   line-height: 1.5;
 }
 
+.planning-sidebar-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-sidebar-skeleton-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+}
+
+.planning-sidebar-skeleton-icon,
+.planning-sidebar-skeleton-title,
+.planning-sidebar-skeleton-meta {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--card-hover);
+}
+
+.planning-sidebar-skeleton-icon {
+  width: var(--space-md);
+  height: var(--space-md);
+  flex-shrink: 0;
+}
+
+.planning-sidebar-skeleton-copy {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-block: var(--space-xs);
+}
+
+.planning-sidebar-skeleton-title {
+  width: 75%;
+  height: var(--space-sm);
+}
+
+.planning-sidebar-skeleton-meta {
+  width: 50%;
+  height: var(--space-xs);
+}
+
 .planning-sidebar-item {
   position: relative;
   display: flex;
@@ -517,6 +562,9 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
     min-height: 0;
     overflow-y: auto;
   }
+  .planning-sidebar-skeleton-row {
+    padding-inline: var(--space-md);
+  }
   .planning-modal-body--show-list .planning-sidebar-footer {
     flex-shrink: 0;
   }
@@ -677,33 +725,6 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   width: calc(var(--space-2xl) * 2 + var(--space-xs));
   min-height: calc(var(--space-lg) + var(--space-xl));
   padding: var(--space-xs) var(--space-sm);
-}
-
-.session-lock-overlay {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 20%;
-  z-index: 10;
-  backdrop-filter: blur(2px);
-}
-
-.session-lock-banner {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-lg) var(--space-xl);
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  box-shadow: var(--shadow-md);
-}
-
-.session-lock-take-control {
-  margin-left: auto;
 }
 
 /* Initial View */
@@ -906,6 +927,25 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   flex-shrink: 0;
 }
 
+/*
+FNXC:Planning 2026-07-15-00:00:
+FN-8003 keeps Copy prompt in the question progress header so an interview can be restarted from its original idea without leaving the active question. The flexible progress bar preserves room for the recovery action at narrow desktop widths.
+*/
+.planning-progress-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.planning-progress-header .planning-progress-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.planning-copy-prompt-btn {
+  flex-shrink: 0;
+}
+
 .planning-progress-bar {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -957,15 +997,94 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   gap: var(--space-lg);
 }
 
+/*
+FNXC:PlanningMode 2026-07-16-00:00:
+FN-8065 / GitHub #2150 adds a read-only plan preview before the deepening choices.
+It remains in the outer planning view's scroll flow so desktop and mobile users can
+read the complete plan without introducing a competing nested scrollbar.
+*/
+.planning-checkpoint-plan-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: color-mix(in srgb, var(--todo) 8%, var(--surface));
+  border: solid color-mix(in srgb, var(--todo) 35%, var(--border));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.planning-checkpoint-plan-preview-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-checkpoint-plan-preview-header h4,
+.planning-checkpoint-plan-preview-title,
+.planning-checkpoint-plan-preview-deliverables h5 {
+  margin: 0;
+}
+
+.planning-checkpoint-plan-preview-title {
+  font-size: var(--font-size-lg);
+}
+
+.planning-checkpoint-plan-preview-description > :first-child,
+.planning-checkpoint-plan-preview-deliverables ul {
+  margin-top: 0;
+}
+
+.planning-checkpoint-plan-preview-description > :last-child,
+.planning-checkpoint-plan-preview-deliverables ul {
+  margin-bottom: 0;
+}
+
+.planning-checkpoint-plan-preview-deliverables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-checkpoint-plan-preview-deliverables ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-inline-start: var(--space-lg);
+}
+
+/*
+FNXC:PlanningInterview 2026-07-16-00:00:
+Interview questions now use MailboxMessageContent for sanitized GFM. Keep the
+existing title and muted-description hierarchy while normalizing markdown block
+margins so paragraphs and lists do not create unintended gaps.
+*/
 .planning-question-text {
-  font-size: 16px;
+  font-size: var(--font-size-base);
   font-weight: 600;
 }
 
 .planning-question-desc {
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.planning-question-text > *,
+.planning-question-desc > * {
+  margin: 0;
+}
+
+.planning-question-text > * + *,
+.planning-question-desc > * + * {
+  margin-top: var(--space-sm);
+}
+
+.planning-question-text ul,
+.planning-question-text ol,
+.planning-question-desc ul,
+.planning-question-desc ol {
+  padding-left: var(--space-lg);
 }
 
 /* Options */
@@ -1572,6 +1691,10 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
     gap: var(--space-md);
   }
 
+  .planning-checkpoint-plan-preview {
+    padding: var(--space-md);
+  }
+
   .planning-view-footer,
   .planning-actions {
     padding: var(--space-md) var(--space-lg) calc(var(--space-lg) + env(safe-area-inset-bottom));
@@ -1728,6 +1851,19 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
     font-size: 16px;
   }
 
+  /*
+  FNXC:Planning 2026-07-15-00:00:
+  FN-8003 gives the recovery action its own mobile row so Copy prompt remains tappable without squeezing the interview progress bar or error actions.
+  */
+  .planning-progress-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .planning-copy-prompt-btn {
+    align-self: flex-start;
+  }
+
   /* Progress bar compact on narrow screens */
   .planning-progress-bar {
     gap: var(--space-xs);
@@ -1829,6 +1965,7 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
 }
 .ai-error-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 

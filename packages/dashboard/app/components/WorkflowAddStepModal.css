@@ -137,7 +137,8 @@ the same dialog serves both breakpoints.
   width: 30px;
   height: 30px;
   border-radius: var(--radius-md);
-  color: #fff;
+  /* FNXC:DashboardTokenHygiene 2026-07-18-04:07: Colored workflow-status chips require an always-white foreground, not theme-variant --accent-text. */
+  color: var(--workflow-chip-foreground);
   background: var(--surface-emphasis);
 }
 

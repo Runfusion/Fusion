@@ -180,6 +180,26 @@ describe("ModelSelectionModal", () => {
     expect(screen.getByTestId("mock-dropdown-model-selection-validator")).toBeTruthy();
   });
 
+  it("renders merger and per-lane thinking controls through the shared dropdown", () => {
+    const onMergerChange = vi.fn();
+    const onMergerThinkingLevelChange = vi.fn();
+    renderModelSelectionModal({
+      onMergerChange,
+      mergerValue: "anthropic/claude-sonnet-4-5",
+      mergerThinkingLevel: "high",
+      onMergerThinkingLevelChange,
+      onValidatorThinkingLevelChange: vi.fn(),
+      onPlanningChange: vi.fn(),
+      onPlanningThinkingLevelChange: vi.fn(),
+    });
+
+    expect(screen.getByTestId("mock-dropdown-model-selection-merger")).toBeTruthy();
+    expect(screen.getByTestId("dropdown-value-model-selection-merger")).toHaveTextContent("anthropic/claude-sonnet-4-5");
+    fireEvent.change(screen.getByTestId("dropdown-select-model-selection-merger"), { target: { value: "openai/gpt-4o" } });
+    expect(onMergerChange).toHaveBeenCalledWith("openai/gpt-4o");
+    expect(screen.getAllByTestId("custom-model-dropdown-thinking")).toHaveLength(3);
+  });
+
   it("calls onClose when clicking close button", () => {
     const onClose = vi.fn();
     renderModelSelectionModal({ onClose });

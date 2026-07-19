@@ -65,7 +65,27 @@ type SkillSelectionPluginRunner = Parameters<typeof buildSessionSkillContextSync
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const GENERATION_TIMEOUT_MS = 120_000;
+class AgentOnboardingGenerationTimeoutError extends Error {
+  constructor() {
+    super("AI generation timed out. You can retry.");
+    this.name = "AgentOnboardingGenerationTimeoutError";
+  }
+}
+class AgentOnboardingGenerationStoppedError extends Error {
+  constructor() {
+    super("Generation stopped by user. You can retry.");
+    this.name = "AgentOnboardingGenerationStoppedError";
+  }
+}
+const REFORMAT_PROMPT =
+  "Your previous response could not be parsed as JSON. " +
+  'Respond with ONLY one valid JSON object using either {"type":"question","data":{...}} or {"type":"complete","data":{...}}. ' +
+  "No markdown, no explanation, just the JSON.";
 
+/*
+FNXC:AgentOnboarding 2026-07-15-16:15:
+Requests for Hermes, computer use, desktop automation, or UI testing must use the exact runtimeHint "hermes". Descriptive runtime names are not valid routing identifiers.
+*/
 export const AGENT_ONBOARDING_SYSTEM_PROMPT = `You are an agent onboarding assistant for the fn task board system.
 
 Your job is to guide users through creating a new agent with a short interview.
@@ -85,6 +105,7 @@ Rules:
 - Prefer structuring instructionsText with these markdown sections when drafting: ## Description, ## Expertise, ## Priorities, ## Boundaries, ## Communication, ## Collaboration & Escalation
 - Freeform instructionsText is still acceptable for compatibility; sectioned structure is preferred for new agents
 - modelHint and runtimeHint are optional draft suggestions only (not final runtime selection)
+- When the user requests Hermes, computer use, desktop automation, or UI testing, use the exact runtimeHint "hermes"; never invent a descriptive runtime name
 - heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`;
 
 type OnboardingAgent = Awaited<ReturnType<typeof engineCreateFnAgent>>;
@@ -99,6 +120,7 @@ interface Session {
   error?: string;
   history: Array<{ question: PlanningQuestion; response: Record<string, unknown> }>;
   thinkingOutput: string;
+  agentEpoch: number;
   agent?: OnboardingAgent;
   rootDir: string;
   modelProvider?: string;
@@ -110,7 +132,12 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>();
-const activeGenerations = new Map<string, { abortController: AbortController; timer: NodeJS.Timeout }>();
+type ActiveGeneration = {
+  abortController: AbortController;
+  timer: NodeJS.Timeout;
+  reject: (reason?: unknown) => void;
+};
+const activeGenerations = new Map<string, ActiveGeneration>();
 
 export class AgentOnboardingStreamManager extends EventEmitter {
   private readonly sessions = new Map<string, Set<AgentOnboardingStreamCallback>>();
@@ -171,6 +198,13 @@ function repairJson(text: string): string {
   return text.replace(/,\s*([}\]])/g, "$1");
 }
 
+function normalizeOptionalSummaryString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new Error(`Invalid summary.${field}`);
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
 export function parseAgentOnboardingResponse(text: string): { type: "question"; data: PlanningQuestion } | { type: "complete"; data: AgentOnboardingSummary } {
   const candidate = extractJsonCandidate(text);
   if (!candidate) throw new Error("AI returned no valid JSON");
@@ -207,12 +241,10 @@ export function parseAgentOnboardingResponse(text: string): { type: "question"; 
       throw new Error("Invalid summary.maxTurns");
     }
 
-    if (data.heartbeatProcedurePath !== undefined) {
-      if (typeof data.heartbeatProcedurePath !== "string" || !data.heartbeatProcedurePath.trim()) {
-        throw new Error("Invalid summary.heartbeatProcedurePath");
-      }
-      data.heartbeatProcedurePath = data.heartbeatProcedurePath.trim();
-    }
+    data.heartbeatProcedurePath = normalizeOptionalSummaryString(
+      data.heartbeatProcedurePath,
+      "heartbeatProcedurePath",
+    );
 
     if (data.heartbeatIntervalMs !== undefined) {
       if (typeof data.heartbeatIntervalMs !== "number" || !Number.isInteger(data.heartbeatIntervalMs) || data.heartbeatIntervalMs <= 0) {
@@ -224,13 +256,8 @@ export function parseAgentOnboardingResponse(text: string): { type: "question"; 
       throw new Error("Invalid summary.heartbeatEnabled");
     }
 
-    if (data.modelHint !== undefined && typeof data.modelHint !== "string") {
-      throw new Error("Invalid summary.modelHint");
-    }
-
-    if (data.runtimeHint !== undefined && typeof data.runtimeHint !== "string") {
-      throw new Error("Invalid summary.runtimeHint");
-    }
+    data.modelHint = normalizeOptionalSummaryString(data.modelHint, "modelHint");
+    data.runtimeHint = normalizeOptionalSummaryString(data.runtimeHint, "runtimeHint");
 
     return { type: "complete", data: data as AgentOnboardingSummary };
   }
@@ -307,6 +334,7 @@ export async function startAgentOnboardingSession(
     }),
     history: [],
     thinkingOutput: "",
+    agentEpoch: 0,
     rootDir,
     modelProvider,
     modelId,
@@ -324,6 +352,7 @@ export async function startAgentOnboardingSession(
 }
 
 async function createAgentOnboardingAgent(session: Session, store?: TaskStore): Promise<OnboardingAgent> {
+  const agentEpoch = ++session.agentEpoch;
   const systemPrompt = resolvePrompt("agent-onboarding-system", session.promptOverrides) || AGENT_ONBOARDING_SYSTEM_PROMPT;
   const skillContext = buildSessionSkillContextSync(null, "executor", session.rootDir, session.pluginRunner);
   const mcpServers = (await resolveMcpServersForStore(store ?? {})).servers;
@@ -346,10 +375,16 @@ async function createAgentOnboardingAgent(session: Session, store?: TaskStore): 
     */
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     onThinking: (delta: string) => {
+      /*
+      FNXC:AgentOnboarding 2026-07-15-16:48:
+      Provider cancellation is best-effort. Ignore callbacks from an invalidated agent epoch so an expired prompt cannot contaminate a fresh retry's streamed output or SSE timeline.
+      */
+      if (session.agentEpoch !== agentEpoch) return;
       session.thinkingOutput += delta;
       agentOnboardingStreamManager.broadcast(session.id, { type: "thinking", data: delta });
     },
     onText: (delta: string) => {
+      if (session.agentEpoch !== agentEpoch) return;
       session.thinkingOutput += delta;
       agentOnboardingStreamManager.broadcast(session.id, { type: "thinking", data: delta });
     },
@@ -363,18 +398,79 @@ async function runGenerationWithTimeout<T>(session: Session, operation: () => Pr
     existing.abortController.abort();
   }
   const abortController = new AbortController();
+  /*
+  FNXC:AgentOnboarding 2026-07-15-16:36:
+  A generation timeout must settle the wrapper even when the provider ignores cancellation and its prompt promise never resolves. Race the operation against an explicit rejection; abort remains best-effort cleanup, while continueConversation owns the single terminal error event.
+  */
+  let rejectGeneration!: (reason?: unknown) => void;
+  const interruption = new Promise<never>((_, reject) => {
+    rejectGeneration = reject;
+  });
   const timer = setTimeout(() => {
-    session.error = "AI generation timed out. You can retry.";
-    agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
     abortController.abort();
+    rejectGeneration(new AgentOnboardingGenerationTimeoutError());
   }, GENERATION_TIMEOUT_MS);
-  activeGenerations.set(session.id, { abortController, timer });
+  /*
+  FNXC:AgentOnboarding 2026-07-15-17:32:
+  User stop must settle the active prompt race even when the provider ignores cancellation. Keep a per-generation reject handle and identity-guard cleanup so a late stopped prompt cannot publish stale state or delete a newer retry's registration.
+  */
+  const activeGeneration: ActiveGeneration = { abortController, timer, reject: rejectGeneration };
+  activeGenerations.set(session.id, activeGeneration);
   try {
-    return await operation();
+    return await Promise.race([operation(), interruption]);
   } finally {
     clearTimeout(timer);
-    activeGenerations.delete(session.id);
+    if (activeGenerations.get(session.id) === activeGeneration) {
+      activeGenerations.delete(session.id);
+    }
   }
+}
+
+type OnboardingMessage = {
+  role: string;
+  content?: string | Array<
+    | { type: "text"; text: string }
+    | { type: "thinking"; thinking: string }
+    | { type: string }
+  >;
+};
+
+function extractLastAssistantResponse(messages: unknown, streamedOutput: string): string {
+  const assistant = (Array.isArray(messages) ? messages : [])
+    .filter((message): message is OnboardingMessage => (
+      typeof message === "object"
+      && message !== null
+      && "role" in message
+      && (message as { role?: unknown }).role === "assistant"
+    ))
+    .pop();
+  if (typeof assistant?.content === "string") return assistant.content.trim() || streamedOutput;
+  if (!Array.isArray(assistant?.content)) return streamedOutput;
+
+  const textContent = assistant.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text" && "text" in block && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+  const thinkingContent = assistant.content
+    .filter((block): block is { type: "thinking"; thinking: string } => block.type === "thinking" && "thinking" in block && typeof block.thinking === "string")
+    .map((block) => block.thinking)
+    .join("");
+  /*
+  FNXC:AgentOnboarding 2026-07-15-16:15:
+  Pi can emit valid onboarding JSON in a thinking block alongside explanatory text. Select the first parseable text, thinking, or streamed candidate; only preserve the historical text-first fallback when none parses so the bounded reformat turn still receives the model's visible response.
+  */
+  const candidates = [textContent, thinkingContent, streamedOutput]
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => candidate.length > 0);
+  for (const candidate of candidates) {
+    try {
+      parseAgentOnboardingResponse(candidate);
+      return candidate;
+    } catch {
+      // Try the next model-output surface before invoking the bounded recovery turn.
+    }
+  }
+  return candidates[0] ?? streamedOutput;
 }
 
 async function continueConversation(session: Session, message: string): Promise<void> {
@@ -382,40 +478,95 @@ async function continueConversation(session: Session, message: string): Promise<
   const agent = session.agent;
   session.thinkingOutput = "";
   try {
-    await runGenerationWithTimeout(session, async () => {
-      await agent.session.prompt(message);
-      const assistant = (agent.session.state.messages as Array<{ role: string; content?: string | Array<{ type: string; text: string }> }>).filter((m) => m.role === "assistant").pop();
-      let responseText = session.thinkingOutput;
-      if (assistant?.content) {
-        if (typeof assistant.content === "string") responseText = assistant.content;
-        else responseText = assistant.content.filter((c) => c.type === "text").map((c) => c.text).join("");
-      }
-      const parsed = parseAgentOnboardingResponse(responseText);
-      session.error = undefined;
-      session.updatedAt = new Date();
-      if (parsed.type === "question") {
-        session.currentQuestion = parsed.data;
-        agentOnboardingStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
-      } else {
-        session.summary = parsed.data;
-        session.currentQuestion = undefined;
-        agentOnboardingStreamManager.broadcast(session.id, { type: "summary", data: parsed.data });
-        agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
-      }
-    });
+    await runGenerationWithTimeout(session, () => agent.session.prompt(message));
+    let responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+    let parsed: ReturnType<typeof parseAgentOnboardingResponse>;
+    try {
+      parsed = parseAgentOnboardingResponse(responseText);
+    } catch {
+      /*
+      FNXC:AgentOnboarding 2026-07-15-14:32:
+      A malformed first interview response must not consume the recovery turn's generation budget. Run the reformat prompt as a distinct timed generation so it receives the full timeout and remains independently stoppable.
+      */
+      session.thinkingOutput = "";
+      await runGenerationWithTimeout(session, () => agent.session.prompt(REFORMAT_PROMPT));
+      responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+      parsed = parseAgentOnboardingResponse(responseText);
+    }
+    session.error = undefined;
+    session.updatedAt = new Date();
+    if (parsed.type === "question") {
+      session.currentQuestion = parsed.data;
+      agentOnboardingStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
+    } else {
+      session.summary = parsed.data;
+      session.currentQuestion = undefined;
+      agentOnboardingStreamManager.broadcast(session.id, { type: "summary", data: parsed.data });
+      agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
+    }
   } catch (err) {
+    if (err instanceof AgentOnboardingGenerationStoppedError) {
+      return;
+    }
+    if (err instanceof AgentOnboardingGenerationTimeoutError) {
+      const expiredAgent = session.agent;
+      session.agentEpoch += 1;
+      session.agent = undefined;
+      try { expiredAgent?.session.dispose?.(); } catch { /* best-effort provider cancellation */ }
+    }
     session.error = err instanceof Error ? err.message : String(err);
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
   }
 }
 
-export async function respondToAgentOnboarding(sessionId: string, responses: Record<string, unknown>): Promise<void> {
+/*
+FNXC:AgentOnboarding 2026-07-14-18:20:
+When generation fails after an answer is accepted, summary and currentQuestion are both empty.
+The respond route used to return HTTP 400 "Session did not produce a question", which bounced
+the client back to the already-answered view. Mirror Planning Mode's submitResponse contract:
+return a successful { type:"question"|"complete" } payload (including the just-answered question
+on generation failure) so SSE-driven retry remains the recovery path instead of a 400.
+*/
+export type AgentOnboardingRespondResult =
+  | { type: "question"; data: PlanningQuestion }
+  | { type: "complete"; data: AgentOnboardingSummary };
+
+export async function respondToAgentOnboarding(
+  sessionId: string,
+  responses: Record<string, unknown>,
+): Promise<AgentOnboardingRespondResult> {
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Agent onboarding session ${sessionId} not found or expired`);
   if (!session.currentQuestion) throw new InvalidSessionStateError("No active question in session");
-  session.history.push({ question: session.currentQuestion, response: responses });
-  const formatted = `Question: ${session.currentQuestion.question}\nAnswer: ${JSON.stringify(responses)}`;
+  const answeredQuestion = session.currentQuestion;
+  session.history.push({ question: answeredQuestion, response: responses });
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Same invariant as Planning Mode: once an answer is accepted the session is no longer awaiting
+  input, so clear currentQuestion before generating. This stops the onboarding SSE catch-up from
+  re-emitting the answered question to fresh connections and stops retry from prompting the agent
+  to "continue from" a question the user already answered.
+
+  FNXC:AgentOnboarding 2026-07-14-18:20:
+  answeredQuestion is retained for the generation-error 200 body below; currentQuestion stays
+  cleared so SSE catch-up never re-emits the answered question while the modal retries via SSE.
+  */
+  session.currentQuestion = undefined;
+  const formatted = `Question: ${answeredQuestion.question}\nAnswer: ${JSON.stringify(responses)}`;
   await continueConversation(session, formatted);
+
+  if (session.summary) {
+    return { type: "complete", data: session.summary };
+  }
+  if (session.currentQuestion) {
+    return { type: "question", data: session.currentQuestion };
+  }
+  // Generation failed after the answer was accepted (session.error set + broadcast via SSE).
+  // Preserve the successful respond contract like Planning Mode; do not throw 400.
+  if (session.error && answeredQuestion) {
+    return { type: "question", data: answeredQuestion };
+  }
+  throw new InvalidSessionStateError("AI agent did not return a question or summary");
 }
 
 export async function retryAgentOnboardingSession(sessionId: string, store?: TaskStore): Promise<void> {
@@ -440,9 +591,14 @@ export function stopAgentOnboardingGeneration(sessionId: string): boolean {
   activeGenerations.delete(sessionId);
   const session = sessions.get(sessionId);
   if (session) {
+    const expiredAgent = session.agent;
+    session.agentEpoch += 1;
+    session.agent = undefined;
+    try { expiredAgent?.session.dispose?.(); } catch { /* best-effort provider cancellation */ }
     session.error = "Generation stopped by user. You can retry.";
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
   }
+  active.reject(new AgentOnboardingGenerationStoppedError());
   return true;
 }
 

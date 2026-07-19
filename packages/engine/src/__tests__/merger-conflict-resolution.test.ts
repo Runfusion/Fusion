@@ -398,8 +398,8 @@ describe("detectResolvableConflicts", () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only")) return "src/components/App.tsx\n";
-      // git diff-tree for trivial detection — return real diff content to indicate non-trivial
-      if (cmdStr.includes("diff-tree")) return "+real change\n-old line\n";
+      // git diff for trivial detection — return real diff content to indicate non-trivial
+      if (cmdStr.includes("git diff -p -w")) return "+real change\n-old line\n";
       return Buffer.from("");
     });
 
@@ -416,8 +416,8 @@ describe("detectResolvableConflicts", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only"))
         return "package-lock.json\nsrc/components/App.tsx\ndist/bundle.js\n";
-      // git diff-tree for trivial detection — return real diff for source files
-      if (cmdStr.includes("diff-tree")) return "+real change\n-old line\n";
+      // git diff for trivial detection — return real diff for source files
+      if (cmdStr.includes("git diff -p -w")) return "+real change\n-old line\n";
       return Buffer.from("");
     });
 
@@ -562,8 +562,8 @@ describe("trivial conflict detection (isTrivialWhitespaceConflict via detectReso
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
-      // git diff-tree with -w returns empty = trivial whitespace
-      if (cmdStr.includes("diff-tree")) return "";
+      // git diff with -w returns empty = trivial whitespace
+      if (cmdStr.includes("git diff -p -w")) return "";
       return Buffer.from("");
     });
 
@@ -581,8 +581,8 @@ describe("trivial conflict detection (isTrivialWhitespaceConflict via detectReso
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
-      // git diff-tree returns real content changes = non-trivial
-      if (cmdStr.includes("diff-tree")) return "+return 2;\n-return 1;\n";
+      // git diff returns real content changes = non-trivial
+      if (cmdStr.includes("git diff -p -w")) return "+return 2;\n-return 1;\n";
       return Buffer.from("");
     });
 
@@ -600,7 +600,7 @@ describe("trivial conflict detection (isTrivialWhitespaceConflict via detectReso
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
       // Real diff content = non-trivial
-      if (cmdStr.includes("diff-tree")) return "+const x = 999;\n-const x = 2;\n";
+      if (cmdStr.includes("git diff -p -w")) return "+const x = 999;\n-const x = 2;\n";
       return Buffer.from("");
     });
 
@@ -616,7 +616,7 @@ describe("trivial conflict detection (isTrivialWhitespaceConflict via detectReso
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
-      if (cmdStr.includes("diff-tree")) throw new Error("git error");
+      if (cmdStr.includes("git diff -p -w")) throw new Error("git error");
       return Buffer.from("");
     });
 
@@ -808,14 +808,21 @@ describe("resolveTrivialWhitespace", () => {
     mockedExecSync.mockReturnValue(Buffer.from(""));
   });
 
-  it("calls git add to resolve trivial whitespace conflict", async () => {
+  it("checks out ours before staging a trivial whitespace conflict", async () => {
     await resolveTrivialWhitespace("src/utils.ts", "/tmp/root");
 
+    const checkoutCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git checkout --ours"),
+    );
     const addCall = mockedExecSync.mock.calls.find((call) =>
       String(call[0]).includes("git add"),
     );
 
+    expect(checkoutCall).toBeDefined();
     expect(addCall).toBeDefined();
+    expect(mockedExecSync.mock.calls.indexOf(checkoutCall!)).toBeLessThan(
+      mockedExecSync.mock.calls.indexOf(addCall!),
+    );
     expect(String(addCall![0])).toContain("src/utils.ts");
   });
 
@@ -863,7 +870,7 @@ describe("isTrivialWhitespaceConflict", () => {
   });
 
   it("returns true when diff contains only whitespace changes", async () => {
-    // Mock git diff-tree to return empty diff (no content changes)
+    // Mock git diff to return empty diff (no content changes)
     mockedExecSync.mockReturnValue(
       "diff --git a/file.ts b/file.ts\nindex 123..456 100644\n--- a/file.ts\n+++ b/file.ts\n"
     );
@@ -873,7 +880,7 @@ describe("isTrivialWhitespaceConflict", () => {
   });
 
   it("returns false when diff contains content changes", async () => {
-    // Mock git diff-tree to return diff with actual content changes
+    // Mock git diff to return diff with actual content changes
     mockedExecSync.mockImplementation(() => {
       const error = new Error("exit code 1") as any;
       error.stdout = `diff --git a/file.ts b/file.ts
@@ -890,7 +897,7 @@ describe("isTrivialWhitespaceConflict", () => {
   });
 
   it("returns true when only line endings differ (CRLF vs LF)", async () => {
-    // Mock git diff-tree -w to show no content changes (whitespace ignored)
+    // Mock git diff -w to show no content changes (whitespace ignored)
     mockedExecSync.mockReturnValue(
       "diff --git a/file.ts b/file.ts\nindex 123..456 100644\n--- a/file.ts\n+++ b/file.ts\n"
     );
@@ -899,7 +906,7 @@ describe("isTrivialWhitespaceConflict", () => {
     expect(result).toBe(true);
   });
 
-  it("returns false when git diff-tree fails unexpectedly", async () => {
+  it("returns false when git diff fails unexpectedly", async () => {
     mockedExecSync.mockImplementation(() => {
       throw new Error("fatal: not a git repository");
     });
@@ -910,22 +917,21 @@ describe("isTrivialWhitespaceConflict", () => {
     expect(result).toBe(false);
   });
 
-  it("calls git diff-tree with correct index references (:2: and :3:)", async () => {
+  it("calls git diff with separate index references (:2: and :3:)", async () => {
     mockedExecSync.mockReturnValue("");
 
     await isTrivialWhitespaceConflict("src/utils.ts", "/tmp/root");
 
     const call = mockedExecSync.mock.calls.find((call) =>
-      String(call[0]).includes("git diff-tree")
+      String(call[0]).includes("git diff -p -w")
     );
     expect(call).toBeDefined();
     const cmdStr = String(call![0]);
     expect(cmdStr).toContain("-w"); // whitespace ignored
-    expect(cmdStr).toContain(':2:"src/utils.ts"');
-    expect(cmdStr).toContain(':3:"src/utils.ts"');
+    expect(cmdStr).toContain(":2:src/utils.ts");
+    expect(cmdStr).toContain(":3:src/utils.ts");
   });
 });
 
 // ── Build Verification Tests ─────────────────────────────────────────
-
 

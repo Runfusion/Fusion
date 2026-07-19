@@ -96,11 +96,17 @@ export function rowToTask(row: TaskRow): Task {
     validatorModelId: row.validatorModelId || undefined,
     planningModelProvider: row.planningModelProvider || undefined,
     planningModelId: row.planningModelId || undefined,
+    mergerModelProvider: row.mergerModelProvider || undefined,
+    mergerModelId: row.mergerModelId || undefined,
     mergeRetries: row.mergeRetries ?? undefined,
     workflowStepRetries: row.workflowStepRetries ?? undefined,
     stuckKillCount: row.stuckKillCount ?? undefined,
     resumeLimboCount: row.resumeLimboCount ?? undefined,
     graphResumeRetryCount: row.graphResumeRetryCount ?? undefined,
+    consecutiveToolFailureRetryCount: row.consecutiveToolFailureRetryCount ?? undefined,
+    executorEscalationAttempted: row.executorEscalationAttempted ? true : undefined,
+    toolFailureDetectorLogCursor: row.toolFailureDetectorLogCursor ?? undefined,
+    toolFailureRetryExhaustedAuditEmitted: row.toolFailureRetryExhaustedAuditEmitted ? true : undefined,
     resumeLimboTipSha: row.resumeLimboTipSha || undefined,
     resumeLimboStepSignature: row.resumeLimboStepSignature || undefined,
     executeRequeueLoopCount: row.executeRequeueLoopCount ?? undefined,
@@ -109,6 +115,8 @@ export function rowToTask(row: TaskRow): Task {
     planReviewReplanCount: row.planReviewReplanCount ?? undefined,
     recoveryRetryCount: row.recoveryRetryCount ?? undefined,
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
+    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; empty/null → undefined (no taint).
+    bulkCompletionRefusalAt: row.bulkCompletionRefusalAt || undefined,
     worktreeSessionRetryCount: row.worktreeSessionRetryCount ?? undefined,
     completionHandoffLimboRecoveryCount: row.completionHandoffLimboRecoveryCount ?? undefined,
     verificationFailureCount: row.verificationFailureCount ?? undefined,
@@ -124,7 +132,12 @@ export function rowToTask(row: TaskRow): Task {
     thinkingLevel: (row.thinkingLevel || undefined) as Task["thinkingLevel"],
     validatorThinkingLevel: (row.validatorThinkingLevel || undefined) as Task["validatorThinkingLevel"],
     planningThinkingLevel: (row.planningThinkingLevel || undefined) as Task["planningThinkingLevel"],
+    mergerThinkingLevel: (row.mergerThinkingLevel || undefined) as Task["mergerThinkingLevel"],
     executionMode: (row.executionMode || undefined) as Task["executionMode"],
+    // FNXC:PlannerOversight 2026-07-14-18:11: null → undefined (inherit); 0/1 → boolean.
+    sessionAdvisorEnabled: row.sessionAdvisorEnabled === null || row.sessionAdvisorEnabled === undefined
+      ? undefined
+      : row.sessionAdvisorEnabled === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     columnMovedAt: row.columnMovedAt || undefined,
@@ -199,6 +212,7 @@ export function rowToTask(row: TaskRow): Task {
     })(),
     issueInfo: fromJson<import("../types.js").IssueInfo>(row.issueInfo),
     githubTracking: fromJson<import("../types.js").TaskGithubTracking>(row.githubTracking) ?? undefined,
+    gitlabTracking: fromJson<import("../types.js").TaskGitLabTracking>(row.gitlabTracking) ?? undefined,
     sourceIssue: (() => {
       if (
         row.sourceIssueProvider === null
@@ -247,6 +261,7 @@ export function rowToTask(row: TaskRow): Task {
     sourceSessionId: row.sourceSessionId || undefined,
     sourceMessageId: row.sourceMessageId || undefined,
     sourceParentTaskId: row.sourceParentTaskId || undefined,
+    proposalClaimId: row.proposalClaimId || undefined,
     sourceMetadata: (() => {
       const parsed = fromJson<Record<string, unknown>>(row.sourceMetadata) ?? undefined;
       return withTaskBranchContextInSourceMetadata(parsed, parseTaskBranchContextFromSourceMetadata(parsed));
@@ -328,6 +343,7 @@ export function archiveEntryToTask(
     prInfos: slim ? undefined : entry.prInfos,
     issueInfo: slim ? undefined : entry.issueInfo,
     githubTracking: entry.githubTracking,
+    gitlabTracking: entry.gitlabTracking,
     sourceIssue: slim ? undefined : entry.sourceIssue,
     attachments: slim ? undefined : entry.attachments,
     comments: entry.comments,
@@ -348,6 +364,9 @@ export function archiveEntryToTask(
     validatorModelId: entry.validatorModelId,
     planningModelProvider: entry.planningModelProvider,
     planningModelId: entry.planningModelId,
+    mergerModelProvider: entry.mergerModelProvider,
+    mergerModelId: entry.mergerModelId,
+    mergerThinkingLevel: entry.mergerThinkingLevel,
     breakIntoSubtasks: entry.breakIntoSubtasks,
     noCommitsExpected: entry.noCommitsExpected,
     branchContext: entry.branchContext,
@@ -356,6 +375,7 @@ export function archiveEntryToTask(
     missionId: entry.missionId,
     sliceId: entry.sliceId,
     assigneeUserId: entry.assigneeUserId,
+    mergeDetails: slim ? undefined : entry.mergeDetails,
   };
 }
 

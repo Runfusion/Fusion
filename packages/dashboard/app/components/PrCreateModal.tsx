@@ -555,6 +555,8 @@ export function PrCreateModal({
       className="floating-window--pr-create"
       defaultSize={{ width: 720, height: 680 }}
       minSize={{ width: 480, height: 420 }}
+      /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Create PR becomes a ≤768px sheet, so its desktop floating geometry remains intact across mobile opens. */
+      suspendGeometryPersistenceOnMobile
       persistGeometryKey="floating-window:pr-create"
     >
       {/**

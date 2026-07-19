@@ -115,7 +115,8 @@ describe("EngineControlMenu", () => {
   });
 
 
-  it("matches the Command Center slider geometry contract for footer current-use markers", () => {
+  // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 requires touch-action:none on both concurrency slider surfaces because the mobile pan-y ancestor lock otherwise steals horizontal native thumb drags.
+  it("matches the Command Center slider geometry and mobile touch contract for footer current-use markers", () => {
     const footerWrap = cssRule(engineControlMenuCss, ".engine-control-menu__range-wrap");
     const footerRange = cssRule(engineControlMenuCss, ".engine-control-menu__range");
     const footerMarker = cssRule(engineControlMenuCss, ".engine-control-menu__use-marker");
@@ -123,19 +124,27 @@ describe("EngineControlMenu", () => {
     const commandTouchSliderRule = commandCenterControlsCss.match(/\.cc-controls-slider input\[type="range"\],\n\.cc-controls-touch-slider\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     const commandMarker = cssRule(commandCenterControlsCss, ".cc-controls-use-marker");
 
-    expect(footerWrap).toContain("--engine-control-range-thumb-size: var(--space-md);");
-    expect(commandWrap).toContain("--cc-controls-range-thumb-size: var(--space-md);");
+    expect(footerWrap).toContain("--engine-control-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);");
+    expect(commandWrap).toContain("--cc-controls-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);");
     expect(footerWrap).toContain("position: relative;");
     expect(footerWrap).toContain("display: flex;");
     expect(footerWrap).toContain("align-items: center;");
     expect(footerRange).toContain("inline-size: 100%;");
     expect(footerRange).toContain("min-block-size: var(--space-xl);");
     expect(footerRange).toContain("accent-color: var(--accent);");
-    expect(footerRange).toContain("touch-action: pan-y;");
+    expect(footerRange).toContain("touch-action: none;");
+    expect(footerRange).not.toContain("touch-action: pan-y;");
+    // FNXC:GlobalConcurrencyControls 2026-07-15-18:10: FN-8007 must locally size WebKit and Gecko desktop thumbs from the same token used by the marker inset, rather than relying on browser defaults.
+    for (const selector of [".engine-control-menu__range::-webkit-slider-thumb", ".engine-control-menu__range::-moz-range-thumb"]) {
+      const thumb = cssRule(engineControlMenuCss, selector);
+      expect(thumb).toContain("width: var(--engine-control-range-thumb-size);");
+      expect(thumb).toContain("height: var(--engine-control-range-thumb-size);");
+    }
     expect(commandTouchSliderRule).toContain("inline-size: 100%;");
     expect(commandTouchSliderRule).toContain("min-block-size: var(--space-xl);");
     expect(commandTouchSliderRule).toContain("accent-color: var(--accent);");
-    expect(commandTouchSliderRule).toContain("touch-action: pan-y;");
+    expect(commandTouchSliderRule).toContain("touch-action: none;");
+    expect(commandTouchSliderRule).not.toContain("touch-action: pan-y;");
     for (const declaration of ["position: absolute;", "inset-block-start: 50%;", "inset-inline-start: var(--use-offset, var(--use-pct));", "transform: translate(-50%, -50%);", "pointer-events: none;"]) {
       expect(footerMarker).toContain(declaration);
       expect(commandMarker).toContain(declaration);
@@ -495,6 +504,8 @@ describe("EngineControlMenu", () => {
     await openMenu();
 
     const loadingGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 restores native touch dragging only for enabled ranges; loading caps remain disabled no-ops.
+    expect(loadingGlobalMaxConcurrent).toHaveAttribute("disabled");
     expect(loadingGlobalMaxConcurrent).toBeDisabled();
 
     vi.useFakeTimers();
@@ -534,69 +545,43 @@ describe("EngineControlMenu", () => {
     expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
   });
 
-  it("renders running counts and current-use markers with clamped absolute utilization", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({
-      ...defaultSettings,
-      maxConcurrent: 50,
-    });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 40,
-      currentlyActive: 40,
-      projectsActive: { proj_123: 90 },
-    });
-
-    await openMenu();
-
-    expect(await screen.findByTestId("engine-control-global-running")).toHaveTextContent("40 running (all projects)");
-    expect(screen.getByTestId("engine-control-project-running")).toHaveTextContent("90 running (this project)");
-    expect(screen.getByTestId("engine-control-global-use-marker")).toHaveStyle({ "--use-pct": "100%" });
-    expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "100%" });
-  });
-
-  it("positions current-use markers by absolute utilization instead of slider-coordinate math", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({
-      ...defaultSettings,
-      maxConcurrent: 50,
-    });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 50,
-      currentlyActive: 17,
-      projectsActive: { proj_123: 17 },
-    });
-
-    await openMenu();
-
-    await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", "34%");
-    expectUseMarkerPct("engine-control-project-use-marker", "34%");
-    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe(`${((17 - 1) / (50 - 1)) * 100}%`);
-    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe(`${((17 - 1) / (50 - 1)) * 100}%`);
-    expect(screen.queryAllByTestId(/engine-control-.*-use-marker/)).toHaveLength(2);
-  });
-
-  it("positions mid-track footer markers using absolute utilization", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({
-      ...defaultSettings,
-      maxConcurrent: 10,
-    });
+  // FNXC:GlobalConcurrencyControls 2026-07-15-12:00: FN-8007 replaces FN-7160/FN-7235's utilization ratio with native range-thumb coordinates so markers share the running value's min-relative track position.
+  it("aligns footer global and project markers with their native thumbs", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
     mockGlobalConcurrency({
       globalMaxConcurrent: 10,
-      currentlyActive: 6,
-      projectsActive: { proj_123: 6 },
+      currentlyActive: 10,
+      projectsActive: { proj_123: 10 },
     });
 
     await openMenu();
 
     await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", "18.75%");
-    expectUseMarkerPct("engine-control-project-use-marker", "12%");
+    expectUseMarkerPct("engine-control-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", `${((10 - 1) / (50 - 1)) * 100}%`);
+    expectFooterUseOffset("engine-control-global-use-marker", (10 - 1) / (32 - 1));
+    expectFooterUseOffset("engine-control-project-use-marker", (10 - 1) / (50 - 1));
   });
 
-  it("keeps one active agent visibly above zero on both footer markers", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({
-      ...defaultSettings,
-      maxConcurrent: 10,
+  it("pins footer over-cap markers at the cap thumb instead of the track end", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
+    mockGlobalConcurrency({
+      globalMaxConcurrent: 10,
+      currentlyActive: 40,
+      projectsActive: { proj_123: 40 },
     });
+
+    await openMenu();
+
+    await screen.findByTestId("engine-control-global-use-marker");
+    expectUseMarkerPct("engine-control-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", `${((12 - 1) / (50 - 1)) * 100}%`);
+    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
+    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
+  });
+
+  it("maps one running agent to the visible footer slider start", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
     mockGlobalConcurrency({
       globalMaxConcurrent: 10,
       currentlyActive: 1,
@@ -606,10 +591,10 @@ describe("EngineControlMenu", () => {
     await openMenu();
 
     await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", "3.125%");
-    expectUseMarkerPct("engine-control-project-use-marker", "2%");
-    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe("0%");
-    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe("0%");
+    expectUseMarkerPct("engine-control-global-use-marker", "0%");
+    expectUseMarkerPct("engine-control-project-use-marker", "0%");
+    expectFooterUseOffset("engine-control-global-use-marker", 0);
+    expectFooterUseOffset("engine-control-project-use-marker", 0);
   });
 
   it("positions zero running at the start of both footer markers", async () => {
@@ -646,15 +631,15 @@ describe("EngineControlMenu", () => {
     const maxConcurrent = screen.getByLabelText(/max concurrent tasks/i);
     vi.useFakeTimers();
 
-    expectUseMarkerPct("engine-control-global-use-marker", `${(16 / 48) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", "50%");
+    expectUseMarkerPct("engine-control-global-use-marker", `${((16 - 1) / (48 - 1)) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", `${((30 - 1) / (60 - 1)) * 100}%`);
 
     fireEvent.change(maxConcurrent, { target: { value: "50" } });
 
-    expectUseMarkerPct("engine-control-global-use-marker", `${(16 / 48) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", "60%");
-    expectFooterUseOffset("engine-control-global-use-marker", 16 / 48);
-    expectFooterUseOffset("engine-control-project-use-marker", 30 / 50);
+    expectUseMarkerPct("engine-control-global-use-marker", `${((16 - 1) / (48 - 1)) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", `${((30 - 1) / (50 - 1)) * 100}%`);
+    expectFooterUseOffset("engine-control-global-use-marker", (16 - 1) / (48 - 1));
+    expectFooterUseOffset("engine-control-project-use-marker", (30 - 1) / (50 - 1));
   });
 
   it("suppresses footer running counts and markers while utilization is loading", async () => {

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   mergeBuiltInZaiProviderModels,
   registerBuiltInZaiProvider,
@@ -35,6 +35,16 @@ async function withTempHome() {
   };
 }
 
+function createInMemoryModelRegistry(): ModelRegistry {
+  const providers = new Map<string, any>();
+  return {
+    registerProvider(providerId: string, config: any) { providers.set(providerId, config); },
+    refresh: async () => undefined,
+    getAvailable: () => Array.from(providers.entries()).flatMap(([provider, config]) => (config.models ?? []).map((model: any) => ({ ...model, provider }))),
+    getAll: () => Array.from(providers.entries()).flatMap(([provider, config]) => (config.models ?? []).map((model: any) => ({ ...model, provider }))),
+  } as ModelRegistry;
+}
+
 function createRouterHarness(modelRegistry: ModelRegistry) {
   const getHandlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const router = {
@@ -66,8 +76,7 @@ describe("registerModelRoutes Z.ai real registry", () => {
   it("surfaces glm-5.2 through /api/models after a user zai extension replacement", async () => {
     const restoreHome = await withTempHome();
     try {
-      const authStorage = AuthStorage.inMemory({ zai: { type: "api_key", key: "test-zai-key" } });
-      const modelRegistry = ModelRegistry.inMemory(authStorage);
+      const modelRegistry = await createInMemoryModelRegistry();
       registerBuiltInZaiProvider(modelRegistry);
 
       modelRegistry.registerProvider("zai", {

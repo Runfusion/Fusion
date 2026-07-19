@@ -1,7 +1,12 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+} from "../../../../core/src/__test-utils__/pg-test-harness.js";
+import * as schema from "../../../../core/src/postgres/schema/index.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
   const mock = vi.fn(function () {});
@@ -25,6 +30,7 @@ const mocks = vi.hoisted(() => {
     listPlugins: ReturnType<typeof vi.fn>;
     getPlugin: ReturnType<typeof vi.fn>;
     updatePluginSettings: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
   }> = [];
 
   let loaderTaskStore: { getRootDir?: () => string } | undefined;
@@ -45,6 +51,7 @@ const mocks = vi.hoisted(() => {
         listPlugins: vi.fn().mockResolvedValue([]),
         getPlugin: vi.fn(),
         updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
       };
       pluginStoreInstances.push(instance);
       return instance;
@@ -82,6 +89,13 @@ const mocks = vi.hoisted(() => {
 vi.mock("@fusion/core", () => ({
   PluginStore: mocks.PluginStore,
   PluginLoader: mocks.PluginLoader,
+  CentralCore: vi.fn(function CentralCore() {
+    return {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      asyncLayer: undefined,
+    };
+  }),
   validatePluginManifest: vi.fn().mockReturnValue({ valid: true, errors: [] }),
   resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-global"),
 }));
@@ -191,61 +205,6 @@ describe("plugin commands", () => {
     expect(mocks.PluginStore).not.toHaveBeenCalled();
   });
 
-  it("writes runPluginInstall metadata to central tables only", async () => {
-    const actualCore = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
-    const projectDir = await mkdtemp(join(tmpdir(), "fn-plugin-project-"));
-    const centralDir = await mkdtemp(join(tmpdir(), "fn-plugin-central-"));
-    tempDirs.push(projectDir, centralDir);
-
-    const realStore = new actualCore.PluginStore(projectDir, { centralGlobalDir: centralDir });
-    await realStore.init();
-
-    vi.mocked(resolveProject).mockResolvedValue({
-      projectPath: projectDir,
-      store: { getPluginStore: () => realStore },
-    } as never);
-
-    const pluginDir = await createTempPluginFixture([
-      {
-        path: "manifest.json",
-        content: JSON.stringify({ id: "paperclip-runtime", name: "Paperclip Runtime", version: "1.0.0" }),
-      },
-      {
-        path: "package.json",
-        content: JSON.stringify({ exports: { ".": { import: "./dist/index.js" } } }),
-      },
-      {
-        path: "dist/index.js",
-        content:
-          "export default { manifest: { id: 'paperclip-runtime', name: 'Paperclip Runtime', version: '1.0.0' }, async onLoad() {}, async onUnload() {} };",
-      },
-    ]);
-    tempDirs.push(pluginDir);
-
-    await expect(runPluginInstall(pluginDir)).resolves.toBeUndefined();
-
-    const centralDb = new actualCore.CentralDatabase(centralDir);
-    centralDb.init();
-    const installCount = centralDb
-      .prepare("SELECT COUNT(*) as count FROM plugin_installs WHERE id = ?")
-      .get("paperclip-runtime") as { count: number };
-    const stateCount = centralDb
-      .prepare("SELECT COUNT(*) as count FROM project_plugin_states WHERE pluginId = ? AND projectPath = ?")
-      .get("paperclip-runtime", projectDir) as { count: number };
-
-    const localDb = new actualCore.Database(join(projectDir, ".fusion"));
-    localDb.init();
-    const legacyCount = localDb
-      .prepare("SELECT COUNT(*) as count FROM plugins WHERE id = ?")
-      .get("paperclip-runtime") as { count: number };
-
-    expect(installCount.count).toBe(1);
-    expect(stateCount.count).toBe(1);
-    expect(legacyCount.count).toBe(0);
-
-    centralDb.close();
-    localDb.close();
-  });
 
   it("includes getRootDir on the plugin loader taskStore mock (FN-2687)", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -322,6 +281,7 @@ describe("plugin commands", () => {
         .mockResolvedValueOnce({ id: "paperclip-runtime", name: "Paperclip Runtime", enabled: true, state: "started" })
         .mockResolvedValueOnce({ id: "paperclip-runtime", name: "Paperclip Runtime", enabled: true, state: "error", lastSecurityScan: { verdict: "blocked", summary: "blocked", findings: [], scannedAt: "now", scannedFiles: [] } }),
       updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
     };
     mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
     mocks.PluginLoader.mockImplementationOnce(() => ({ loadPlugin: vi.fn(), reloadPlugin: vi.fn().mockResolvedValue(undefined) }) as never);
@@ -341,6 +301,7 @@ describe("plugin commands", () => {
         settings: { enabled: true, retries: 2 },
       }),
       updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
     };
     mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
     await runPluginSettings("paperclip-runtime", undefined, undefined, { projectName: "demo" });
@@ -353,5 +314,63 @@ describe("plugin commands", () => {
 
     expect(storeInstance.getPlugin).toHaveBeenCalledTimes(3);
     expect(storeInstance.updatePluginSettings).toHaveBeenCalledWith("paperclip-runtime", { enabled: false });
+  });
+});
+
+/*
+ * FNXC:CliTests 2026-07-16-05:20:
+ * FN-8091 moves the central-only install persistence assertion off the removed SQLite central/local database runtime.
+ * The PostgreSQL harness preserves the invariant: one global installation and one path-scoped project state are written without constructing a local plugin store.
+ */
+pgDescribe("runPluginInstall central-only persistence (PostgreSQL)", () => {
+  const h = createSharedPgTaskStoreTestHarness({ prefix: "fn_plugin_install" });
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectPath: h.rootDir(),
+      store: h.store(),
+    } as never);
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  it("writes runPluginInstall metadata to central tables only", async () => {
+    const pluginStore = h.store().getPluginStore();
+    expect(pluginStore.backendMode).toBe(true);
+
+    const pluginDir = await createTempPluginFixture([
+      {
+        path: "manifest.json",
+        content: JSON.stringify({ id: "paperclip-runtime", name: "Paperclip Runtime", version: "1.0.0" }),
+      },
+      {
+        path: "package.json",
+        content: JSON.stringify({ exports: { ".": { import: "./dist/index.js" } } }),
+      },
+      {
+        path: "dist/index.js",
+        content:
+          "export default { manifest: { id: 'paperclip-runtime', name: 'Paperclip Runtime', version: '1.0.0' }, async onLoad() {}, async onUnload() {} };",
+      },
+    ]);
+
+    try {
+      await expect(runPluginInstall(pluginDir)).resolves.toBeUndefined();
+
+      const installs = await h.layer().db.select().from(schema.central.pluginInstalls);
+      const states = await h.layer().db.select().from(schema.central.projectPluginStates);
+
+      expect(installs.filter(({ id }) => id === "paperclip-runtime")).toHaveLength(1);
+      expect(
+        states.filter(
+          ({ pluginId, projectPath }) =>
+            pluginId === "paperclip-runtime" && projectPath === h.rootDir(),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true });
+    }
   });
 });

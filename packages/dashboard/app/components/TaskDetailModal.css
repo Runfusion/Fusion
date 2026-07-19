@@ -382,7 +382,7 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   low/high/urgent, oversight observe/steer/autonomous/off, execution-mode
   fast) are untouched.
   */
-  --detail-priority-control-min-height: 30px;
+  --detail-priority-control-min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
   --detail-control-border-radius: var(--radius-md);
 
   display: flex;
@@ -391,166 +391,118 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   gap: var(--space-xs);
 }
 
-.detail-priority-chip {
-  gap: var(--space-xs);
-  /*
-  FNXC:TaskDetail 2026-07-07-15:40:
-  FN-7633 — Priority, Execution-mode, and the Oversight trigger must all
-  resolve the exact SAME box height, not merely the same floor. FN-7618 gave
-  the Oversight trigger `align-self: stretch` inside its own `inline-flex`
-  wrapper, so it fills the cluster row height, while this control (and
-  Execution-mode) were only floored via `min-height` and could resolve
-  shorter once their content/line-height differed from the trigger's. Pin an
-  explicit `height` (not just `min-height`) from the SAME
-  `--detail-priority-control-min-height` token used everywhere else in this
-  cluster so no control can outgrow or undershoot the others regardless of
-  flex stretch behavior. `min-height` stays as a floor for any context where
-  content needs more room (e.g. unexpected font scaling).
-  */
+/*
+FNXC:TaskDetail 2026-07-17-17:30:
+FN-8287 extends the FN-7585/FN-7633 height-pinned pattern into one square-box
+rule for every inline action: the FN-8194/FN-8209 attach, GitHub, and priority
+icons now share the oversight and execution-mode controls' tokenized height,
+width, border, and radius. Pinning both dimensions prevents theme-specific
+space or icon tokens from making this cluster visually uneven.
+*/
+.detail-inline-attach,
+.detail-inline-github-toggle,
+.detail-priority-trigger,
+.detail-oversight-menu-trigger,
+.detail-execution-mode-toggle {
   height: var(--detail-priority-control-min-height);
   min-height: var(--detail-priority-control-min-height);
-  padding-block: var(--space-xs);
+  width: var(--detail-priority-control-min-height);
+  min-width: var(--detail-priority-control-min-height);
   box-sizing: border-box;
-  /*
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — override `.card-priority-badge`'s transparent border with a real,
-  visible border so the `normal` level (no `--low/--high/--urgent` tint) still
-  renders as a bordered box instead of borderless text, matching the
-  Execution-mode toggle and Oversight chip/trigger.
-  */
   border-width: var(--btn-border-width);
   border-color: var(--border);
   border-radius: var(--detail-control-border-radius);
 }
 
-.detail-priority-chip--saving {
-  opacity: 0.75;
+/*
+FNXC:QuickAddActionRow 2026-07-17-12:00:
+FN-8209: Task Detail uses the same compact icon-only priority affordance as
+Quick Add. Keep the picker anchored to its trigger so it remains usable when
+the metadata row wraps at mobile widths.
+*/
+.detail-priority-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
 }
 
-/*
-FNXC:TaskDetail 2026-07-05-12:00:
-FN-7597 — the untinted `normal` priority level has no `--low/--high/--urgent`
-tint, so without this rule it renders as a bordered-but-empty shell while the
-Oversight chip's `--off` level always gets a neutral, token-based background
-(`.card-oversight-badge--off` in TaskCard.css). Give `.detail-priority-chip`'s
-`normal` state the SAME neutral `color-mix(... var(--text-muted) ...)`
-treatment so the two dropdowns read as one consistent control style. Scoped
-to the detail chip (not a global `.card-priority-badge--normal` rule) so the
-read-only TaskCard priority badge (out of scope) is untouched.
-*/
-.detail-priority-chip.card-priority-badge--normal {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+.detail-priority-picker-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.detail-priority-picker-heading,
+.detail-priority-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+}
+
+.detail-priority-picker-heading {
   color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
-/*
-FNXC:TaskDetail 2026-07-05-13:30:
-FN-7601 — the FN-7585 base `.detail-priority-chip` rule pins `border-color:
-var(--border)` for every level, so once the chip shrank to a compact 30px box
-the only remaining differentiator (the ~15-18% tint backgrounds inherited
-from `.card-priority-badge--{low,high,urgent}`) reads as the same washed-out
-box for low vs high. Give each non-neutral level its own tinted border AND a
-stronger background on top of the shared base/normal rules above (higher
-specificity via the `.detail-priority-chip.card-priority-badge--X` compound
-selector) so low/high/urgent are unmistakably distinct colors at a glance,
-while normal keeps the FN-7597 neutral treatment and the FN-7585 shared
-border-width/radius/min-height stay untouched. Scoped to `.detail-priority-chip`
-so the read-only `.card-priority-badge--{low,high,urgent}` tints in
-TaskCard.css (out of scope) are unaffected.
-*/
-.detail-priority-chip.card-priority-badge--low {
-  background: color-mix(in srgb, var(--color-info) 22%, transparent);
-  border-color: color-mix(in srgb, var(--color-info) 65%, var(--border));
-  color: var(--color-info);
-}
-
-.detail-priority-chip.card-priority-badge--high {
-  background: color-mix(in srgb, var(--color-warning) 28%, transparent);
-  border-color: color-mix(in srgb, var(--color-warning) 65%, var(--border));
-  color: var(--color-warning);
-}
-
-.detail-priority-chip.card-priority-badge--urgent {
-  background: color-mix(in srgb, var(--color-error) 30%, transparent);
-  border-color: color-mix(in srgb, var(--color-error) 65%, var(--border));
-  color: var(--color-error-dark);
-}
-
-.detail-priority-select {
+.detail-priority-picker-option {
+  width: 100%;
   border: 0;
   background: transparent;
-  color: inherit;
-  font: inherit;
+  color: var(--text);
   cursor: pointer;
-  padding: 0;
-  min-height: inherit;
+  font: inherit;
+  text-align: left;
 }
 
+.detail-priority-picker-option:hover,
+.detail-priority-picker-option.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.detail-priority-picker-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:TaskDetail 2026-07-17-00:00:
+FN-8243 — restore the tokenized `.detail-priority-select:focus-visible` rule
+required by css-hygiene-scan.test.ts's focus-coverage allow-list. The base
+`.detail-priority-select` styling was dropped during the FN-8209 Priority
+select→picker migration, but the hygiene allow-list still expects this
+focus-visible selector. Use `--focus-ring-strong` to match the sibling
+`.detail-oversight-select` / `.detail-priority-picker-option` focus rules;
+no raw colors so the tokenized-focus assertion stays green.
+*/
 .detail-priority-select:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
   border-radius: var(--radius-sm);
 }
 
-.detail-priority-select:disabled {
+.detail-priority-picker-option:disabled {
   cursor: wait;
-}
-
-/*
-FNXC:TaskDetail 2026-07-05-12:00:
-FN-7597 — drop the Priority-only forced uppercase on the select/option so its
-typography matches `.detail-oversight-select` exactly (which relies on the
-ancestor `.card-*-badge` label's own `text-transform: uppercase` instead of
-redeclaring it here). Visual case is unchanged since the label already
-uppercases its content; this only removes a duplicated, drift-prone override.
-*/
-.detail-priority-select option {
-  color: var(--text);
-  background: var(--surface);
 }
 
 .detail-execution-mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  /*
-  FNXC:TaskDetail 2026-07-07-15:40:
-  FN-7633 — same shared-height fix as `.detail-priority-chip` above: pin an
-  explicit `height` (not just `min-height`) from the shared
-  `--detail-priority-control-min-height` token so this control cannot resolve
-  shorter than the Oversight trigger, which FN-7618 made stretch to the
-  cluster row height via its wrapper's `align-self: stretch`.
-  */
-  height: var(--detail-priority-control-min-height);
-  min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
-  box-sizing: border-box;
-  /*
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — pin the same shared border/radius token set as the Priority and
-  Oversight controls even though `.btn` already applies a border, so a future
-  change to `.btn`'s defaults cannot silently desync this cluster.
-  */
-  border-width: var(--btn-border-width);
-  border-color: var(--border);
-  border-radius: var(--detail-control-border-radius);
-}
-
-.detail-execution-mode-toggle svg {
-  width: 1em;
-  height: 1em;
 }
 
 .detail-execution-mode-toggle--fast {
   color: var(--color-warning);
-}
-
-.detail-execution-mode-toggle--fast svg {
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
-  border-radius: var(--radius-pill);
-  padding: var(--space-xs);
-  box-shadow: var(--glow-warning);
 }
 
 .detail-execution-mode-toggle--saving {
@@ -732,50 +684,17 @@ affect its size or anchoring — only the trigger's box height changes.
 }
 
 .detail-oversight-menu-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
   padding-block: var(--space-xs);
-  box-sizing: border-box;
   /*
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — pin the same shared border/radius trio as Priority/Execution-mode
-  so the Oversight trigger matches the rest of the control cluster.
-
   FNXC:PlannerOversight 2026-07-05-00:00:
   FN-7604 — this trigger is now the single universal surface at every
   viewport (the desktop-only `.detail-oversight-chip` it used to swap in for
-  was removed).
-
-  FNXC:TaskDetail 2026-07-05-14:00:
-  FN-7618 — `align-self: stretch` makes the trigger fill the height of its
-  `.detail-oversight-menu-dropdown` wrapper (now `inline-flex`/`align-items:
-  stretch`), which itself stretches to the shared cluster row height. Kept
-  below as a harmless safety net (a no-op once `height` is explicit) for any
-  context where the wrapper isn't stretched.
-
-  FNXC:TaskDetail 2026-07-07-15:40:
-  FN-7633 — relying on `align-self: stretch` alone made this trigger resolve
-  a TALLER box than Priority/Execution-mode, which only had `min-height` as a
-  floor (not a fixed height), so the three controls no longer read as one
-  uniform row. Pin the SAME explicit `height` (not just `min-height`) from
-  the shared `--detail-priority-control-min-height` token used by
-  `.detail-priority-chip` and `.detail-execution-mode-toggle` above, so all
-  three controls resolve identical box heights regardless of flex
-  stretch/content differences. `min-height` stays as the floor.
+  was removed). Its shared square sizing is declared with every inline action
+  above; this stretch fallback only preserves the dropdown wrapper contract.
   */
-  height: var(--detail-priority-control-min-height);
-  min-height: var(--detail-priority-control-min-height);
   align-self: stretch;
-  border-width: var(--btn-border-width);
-  border-color: var(--border);
-  border-radius: var(--detail-control-border-radius);
 }
 
-.detail-oversight-menu-trigger svg {
-  width: 1em;
-  height: 1em;
-}
 
 .detail-oversight-menu {
   position: absolute;
@@ -1060,6 +979,53 @@ for a "skipped" outcome upstream).
   color: var(--text-muted);
   line-height: 1.5;
   word-break: break-word;
+}
+
+.detail-error-detail,
+.detail-error-hint {
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.detail-error-detail {
+  color: var(--text);
+}
+
+.detail-error-hint {
+  color: var(--text-muted);
+}
+
+.detail-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.detail-error-retry-picker {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.detail-error-retry-picker .select {
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .detail-error-actions {
+    align-items: stretch;
+  }
+
+  .detail-error-actions .btn {
+    flex: 1 1 auto;
+  }
 }
 
 .task-pause-reason {
@@ -1516,6 +1482,7 @@ Planner Chat should not open expanded by default. When the user expands it, the 
 
 .task-detail-content--planner-chat-expanded .detail-description-toggle,
 .task-detail-content--planner-chat-expanded .detail-near-duplicate-banner,
+.task-detail-content--planner-chat-expanded .detail-plan-approval-banner,
 .task-detail-content--planner-chat-expanded .task-fields-section,
 .task-detail-content--planner-chat-expanded .branch-group-card,
 .task-detail-content--planner-chat-expanded .workspace-worktrees-summary,
@@ -3279,8 +3246,22 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
     max-inline-size: calc(100vw - (var(--space-md) * 2));
   }
 
+  /*
+  FNXC:TaskDetailActivity 2026-07-16-00:00:
+  FN-8166 removes the residual mobile Feed container right inset so `.detail-body`
+  provides equal left and right insets. Reserve overlay-toggle clearance only on
+  top-of-panel first-row elements, keeping the first visible row uncovered.
+  */
   .detail-activity {
-    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));
+    padding-inline-end: 0;
+  }
+
+  .detail-activity:not(.detail-activity--interventions) > h4,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-truncated,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-loading,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-empty,
+  .detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child {
+    padding-inline-end: calc(var(--space-2xl) + var(--space-sm));
   }
 
   /* FNXC:PlannerOversight 2026-07-05-00:00: mobile reserves more padding for the overlay toggle; neutralize it for Interventions too so FN-7519's timeline stays full width on mobile per FN-7581. */
@@ -3365,10 +3346,22 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
     margin-left: 0;
   }
 
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-16-00:00:
+  FN-8189 hides the mobile `.detail-body` scrollbar so a non-overlay vertical
+  track cannot reserve right-edge layout space and recreate the lopsided gutter
+  fixed by FN-8166. Keep touch scrolling automatic; desktop retains its thin,
+  visible scrollbar outside this breakpoint.
+  */
   .detail-body {
     padding: calc(var(--space-md) + var(--space-xs) / 2);
     overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .detail-body::-webkit-scrollbar {
+    display: none;
   }
 
   .detail-title {
@@ -3536,6 +3529,44 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   background: color-mix(in srgb, var(--color-warning) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   margin-bottom: var(--space-md);
+}
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-11:09:
+Plan-approval holds must explain why the operator is being asked before Approve/Reject.
+Reuse the near-duplicate banner layout; replan-cap escalations use a stronger warning tint.
+*/
+.detail-plan-approval-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info, var(--in-progress)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info, var(--in-progress)) 28%, transparent);
+  margin-bottom: var(--space-md);
+}
+
+.detail-plan-approval-banner--replan-cap {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 32%, transparent);
+}
+
+.detail-plan-approval-banner__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-plan-approval-banner__headline {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-plan-approval-banner__copy {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.45;
 }
 
 .detail-near-duplicate-banner__header {

@@ -1,8 +1,18 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { COLOR_THEMES } from "../themeOptions";
 import { ThemeDropdown } from "../ThemeDropdown";
+
+// FNXC:Theme 2026-07-16-14:30: FN-8146 pins the historical Settings-grid set, including restored shadcn-mono, so a removal from COLOR_THEMES cannot make the all-themes checks pass circularly.
+const EXPECTED_THEME_IDS = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'] as const;
+
+function renderedThemeIds(listbox: HTMLElement) {
+  return within(listbox).getAllByRole("option").map((option) => {
+    const swatch = option.querySelector<HTMLElement>(".theme-option-swatch");
+    expect(swatch).toBeTruthy();
+    return [...(swatch?.classList ?? [])].find((className) => className.startsWith("theme-swatch-"))?.replace("theme-swatch-", "");
+  });
+}
 
 describe("ThemeDropdown", () => {
   beforeEach(() => {
@@ -21,12 +31,33 @@ describe("ThemeDropdown", () => {
 
     const listbox = screen.getByRole("listbox", { name: /color theme/i });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    for (const theme of COLOR_THEMES) {
-      const option = within(listbox)
-        .getAllByRole("option")
-        .find((element) => element.textContent?.trim().startsWith(theme.label));
-      expect(option?.querySelector(`.${theme.className}`)).toBeTruthy();
-    }
+    expect(renderedThemeIds(listbox)).toEqual(EXPECTED_THEME_IDS);
+  });
+
+  it("renders a current-row trigger with mode context and all historical theme options", () => {
+    render(
+      <ThemeDropdown
+        triggerVariant="current-row"
+        colorTheme="forest"
+        themeMode="system"
+        resolvedThemeMode="light"
+        onColorThemeChange={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: /current theme system \/ forest/i });
+    expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+    expect(trigger.querySelector(".theme-dropdown-current-row-icon svg")).toBeTruthy();
+    expect(trigger.querySelector(".theme-swatch-forest")).toBeTruthy();
+
+    fireEvent.click(trigger);
+    expect(renderedThemeIds(screen.getByRole("listbox", { name: /color theme/i }))).toEqual(EXPECTED_THEME_IDS);
+  });
+
+  it("keeps tokenized space below the Settings current-theme row", () => {
+    const css = readFileSync("app/components/ThemeDropdown.css", "utf8");
+
+    expect(css).toMatch(/\.theme-dropdown--current-row\s*\{\s*margin-bottom:\s*var\(--space-lg\);\s*\}/);
   });
 
   it("labels only Shadcn Ember as the default option", () => {
@@ -164,6 +195,13 @@ describe("ThemeDropdown", () => {
     expect(popover).toBeTruthy();
     expect(getComputedStyle(popover!).position).toBe("absolute");
     expect(getComputedStyle(popover!).zIndex).toBe("10002");
+  });
+
+  it("keeps Shadcn Mono and Mono Red swatches scoped to the active light mode", () => {
+    const css = readFileSync("app/components/ThemeSelector.css", "utf8");
+
+    expect(css).toContain('[data-theme="light"] .theme-swatch-shadcn-mono,\n[data-theme="light"] .theme-swatch-shadcn-mono-red');
+    expect(css).not.toContain('[data-theme="light"] .theme-swatch-shadcn-mono,\n.theme-swatch-shadcn-mono-red');
   });
 
   it("preserves the mobile static in-flow popover branch without dropdown elevation", () => {

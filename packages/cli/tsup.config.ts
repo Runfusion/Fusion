@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuildBuild } from "esbuild";
@@ -8,12 +9,28 @@ import { ALL_STAGED_BUNDLED_IDS, RUNTIME_PLUGIN_IDS } from "./src/plugins/staged
 
 export { ALL_STAGED_BUNDLED_IDS };
 
+/*
+FNXC:CliPackaging 2026-07-15-03:25:
+Local `pnpm build` was spending ~17s on plugin-sdk DTS plus multi-plugin esbuild and optional desktop rebuild on every CLI build. Full packaging (desktop runtime, all staged plugins, self-contained DTS) is only required for publish/CI/release. Default local builds emit bin.js/extension.js + PG migrations; set FUSION_CLI_FULL_PACKAGE=1 (or run under CI=true) for the complete package surface.
+*/
+export function wantsFullCliPackage(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = env.FUSION_CLI_FULL_PACKAGE;
+  if (explicit === "0" || explicit === "false") return false;
+  if (explicit === "1" || explicit === "true") return true;
+  if (env.CI === "true" || env.CI === "1") return true;
+  if (env.npm_lifecycle_event === "prepack") return true;
+  return false;
+}
+
+const fullCliPackage = wantsFullCliPackage();
+
 const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-droid-runtime",
   // FNXC:GrokAcp 2026-07-11-14:00: Grok ACP ships mcp-schema-server.cjs so
   // session/new can forward executable Fusion fn_* tools to grok agent stdio.
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
   "fusion-plugin-omp-runtime",
 ]);
@@ -49,9 +66,11 @@ const cliPrintingPressPluginSrc = join(__dirname, "..", "..", "plugins", "fusion
 const cliPrintingPressPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-cli-printing-press");
 const compoundEngineeringPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-compound-engineering");
 const compoundEngineeringPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-compound-engineering");
+const qualityPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-quality");
+const qualityPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-quality");
 const linearImportPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-linear-import");
 const linearImportPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-linear-import");
-const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.ts");
+const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.mjs");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -73,6 +92,7 @@ type BundlePluginEntryOptions = {
   srcDir: string;
   destDir: string;
   withMcpAsset?: boolean;
+  external?: string[];
 };
 
 type PackageManifest = {
@@ -146,7 +166,7 @@ function writeSanitizedCopiedManifest(srcPkgPath: string, destPkgPath: string) {
   writeFileSync(destPkgPath, JSON.stringify(destPkg, null, 2));
 }
 
-async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false }: BundlePluginEntryOptions) {
+async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false, external = [] }: BundlePluginEntryOptions) {
   if (existsSync(destDir)) {
     rmSync(destDir, { recursive: true, force: true });
   }
@@ -184,7 +204,14 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     platform: "node",
     target: "node22",
     outfile: join(destDir, "bundled.js"),
-    external: ["@fusion/engine"],
+    external: ["@fusion/engine", ...external],
+    /*
+     * FNXC:BundledPlugins 2026-07-17-09:20:
+     * CJS dependencies bundled into ESM output (e.g. Baileys in the WhatsApp plugin) compile to esbuild's __require helper, which throws "Dynamic require of \"crypto\" is not supported" at load time in an ESM module. Inject the same createRequire shim dist/bin.js uses so every bundled.js can require node builtins.
+     */
+    banner: {
+      js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
+    },
     alias: {
       "@fusion/plugin-sdk": join(__dirname, "..", "plugin-sdk", "src", "index.ts"),
       /*
@@ -218,6 +245,42 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
       );
     }
     cpSync(mcpServerAsset, join(destDir, "mcp-schema-server.cjs"));
+  }
+
+  if (pluginId === "fusion-plugin-claude-runtime") {
+    /*
+     * FNXC:ClaudeAcpRuntime 2026-07-18-12:30:
+     * A published CLI npm package is portable, while ACP's native binary is
+     * platform-specific. Do not bake the build host's binary into the staged
+     * plugin: stage the identity-pinned JS launcher and declare it as a CLI
+     * dependency so npm installs exactly the matching optional native package
+     * on every operator platform. The launcher resolves that package by name
+     * through the installed CLI's ancestor node_modules.
+     */
+    const bridgeRequire = createRequire(join(srcDir, "package.json"));
+    const launcherPackageJson = bridgeRequire.resolve("claude-code-cli-acp/package.json");
+    const launcherSourceDir = dirname(launcherPackageJson);
+    const bridgeDest = join(destDir, "bridge");
+    const launcherDestDir = join(bridgeDest, "node_modules", "claude-code-cli-acp");
+
+    mkdirSync(launcherDestDir, { recursive: true });
+    cpSync(join(launcherSourceDir, "bin"), join(launcherDestDir, "bin"), { recursive: true });
+    cpSync(launcherPackageJson, join(launcherDestDir, "package.json"));
+
+    const bridgeWrapper = join(bridgeDest, `claude-code-cli-acp${process.platform === "win32" ? ".cmd" : ""}`);
+    if (process.platform === "win32") {
+      writeFileSync(bridgeWrapper, "@echo off\r\nnode \"%~dp0node_modules\\claude-code-cli-acp\\bin\\claude-code-cli-acp.js\" %*\r\n");
+    } else {
+      writeFileSync(
+        bridgeWrapper,
+        "#!/usr/bin/env node\nimport \"./node_modules/claude-code-cli-acp/bin/claude-code-cli-acp.js\";\n",
+      );
+      chmodSync(bridgeWrapper, 0o755);
+    }
+
+    if (!existsSync(join(launcherDestDir, "bin", "claude-code-cli-acp.js"))) {
+      throw new Error(`[tsup] Missing required Claude ACP launcher after staging`);
+    }
   }
 
   const bundledOutput = join(destDir, "bundled.js");
@@ -305,7 +368,23 @@ function assertAllStagedBundledPluginsLoadable() {
 const pluginSdkEntry = join(__dirname, "..", "plugin-sdk", "src", "index.ts");
 
 const cliBuildConfig = {
-  entry: ["src/bin.ts", "src/extension.ts"],
+  /*
+   * FNXC:CliPackaging 2026-07-17-21:05:
+   * Projects with isolationMode "child-process" fork a runtime worker that the engine's
+   * getWorkerPath() resolves as child-process-worker.js NEXT TO the running compiled module —
+   * i.e. dist/child-process-worker.js beside the bundled dist/bin.js in a published install.
+   * The published package never shipped that file, so child-process isolation always failed
+   * with ERR_MODULE_NOT_FOUND. Emit the engine worker as a sibling named entry here so it
+   * inherits the exact bin.js bundling shape (ESM, @fusion/* bundled via noExternal, native and
+   * platform-specific deps external and resolved from the installed package's node_modules,
+   * createRequire banner). The worker is spawned with node fork() + IPC, so it must be a plain
+   * Node-runnable ESM file; every external below is a published dependency of @runfusion/fusion.
+   */
+  entry: {
+    bin: "src/bin.ts",
+    extension: "src/extension.ts",
+    "child-process-worker": "../engine/src/runtimes/child-process-worker.ts",
+  },
   format: ["esm"],
   platform: "node",
   target: "node22",
@@ -333,6 +412,13 @@ const cliBuildConfig = {
     "cpu-features",
     "embedded-postgres",
     /^@embedded-postgres\//,
+    /*
+    FNXC:ReviewArtifacts 2026-07-19-10:00:
+    The engine lazy-loads playwright-core only for a gated local feature-video.
+    Keep it external because Playwright has optional Chromium BiDi internals that
+    esbuild cannot resolve, while the published CLI installs this direct runtime dep.
+    */
+    "playwright-core",
   ],
   splitting: false,
   // Keep clean disabled so the dedicated plugin-sdk tsup config can emit into
@@ -360,6 +446,47 @@ const cliBuildConfig = {
         `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,
       );
     }
+
+    /*
+    FNXC:CliPackaging 2026-07-17-19:55:
+    The dashboard's plugin-registry route resolves ./registry-manifest.json next to the
+    bundled server (new URL relative to import.meta.url in plugin-routes.ts), i.e.
+    dist/registry-manifest.json beside bin.js after bundling. It was never staged into
+    the CLI dist, so every published install served an empty plugin registry with a
+    warning. Stage it from the dashboard source of truth in both fast and full modes.
+    */
+    const registryManifestSrc = join(__dirname, "..", "dashboard", "src", "registry-manifest.json");
+    if (existsSync(registryManifestSrc)) {
+      cpSync(registryManifestSrc, join(__dirname, "dist", "registry-manifest.json"));
+      console.log("Copied registry-manifest.json to dist/");
+    } else {
+      console.warn(`WARNING: registry manifest not found at ${registryManifestSrc}; plugin registry will be empty.`);
+    }
+
+    /*
+    FNXC:CliPackaging 2026-07-15-03:25:
+    Fast local packaging: migrations + optional dashboard client copy only. Skip desktop ensure-build, multi-plugin esbuild staging, and assertAllStagedBundledPluginsLoadable — those dominate CPU/wall time and are only needed for published artifacts. Prior staged dist/plugins/desktop is left in place if present so a previous full build remains usable.
+    */
+    if (!fullCliPackage) {
+      if (existsSync(dashboardClientSrc)) {
+        if (existsSync(dashboardClientDest)) {
+          rmSync(dashboardClientDest, { recursive: true, force: true });
+        }
+        cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });
+        console.log("Copied dashboard client assets to dist/client/ (fast package mode)");
+      } else if (!existsSync(join(dashboardClientDest, "index.html"))) {
+        mkdirSync(dashboardClientDest, { recursive: true });
+        writeFileSync(join(dashboardClientDest, "index.html"), dashboardClientStub, "utf-8");
+        console.warn(
+          `WARNING: Dashboard client assets not found at ${dashboardClientSrc}. Generated minimal stub (fast package mode).`,
+        );
+      }
+      console.log(
+        "CLI fast package mode: skipped desktop ensure-build, bundled-plugin staging, and full plugin-sdk DTS. Set FUSION_CLI_FULL_PACKAGE=1 or use `pnpm build:full` for release packaging.",
+      );
+      return;
+    }
+
     if (existsSync(desktopRuntimeDest)) {
       rmSync(desktopRuntimeDest, { recursive: true, force: true });
     }
@@ -435,20 +562,20 @@ const cliBuildConfig = {
       destDir: dependencyGraphPluginDest,
     });
 
-    if (existsSync(whatsappChatPluginDest)) {
-      rmSync(whatsappChatPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(whatsappChatPluginSrc)) {
-      mkdirSync(whatsappChatPluginDest, { recursive: true });
-      cpSync(join(whatsappChatPluginSrc, "manifest.json"), join(whatsappChatPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(whatsappChatPluginSrc, "package.json"), join(whatsappChatPluginDest, "package.json"));
-      cpSync(join(whatsappChatPluginSrc, "src"), join(whatsappChatPluginDest, "src"), { recursive: true });
-      console.log("Copied WhatsApp chat plugin to dist/plugins/fusion-plugin-whatsapp-chat/");
-    } else {
-      console.warn(
-        `WARNING: WhatsApp chat plugin source not found at ${whatsappChatPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    /*
+     * FNXC:BundledPlugins 2026-07-15-00:00:
+     * FN-7956 moves WhatsApp Chat, Reports, and CLI Printing Press off raw `src/` staging because npm/global installs place them under `node_modules`, where Node refuses TypeScript type stripping. Route them through bundlePluginEntry so each published plugin root contains install-safe `bundled.js` output and no `.ts` entry tree.
+     */
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-whatsapp-chat",
+      srcDir: whatsappChatPluginSrc,
+      destDir: whatsappChatPluginDest,
+      /*
+       * FNXC:BundledPlugins 2026-07-15-09:12:
+       * Baileys contains optional dynamic require() paths for QR/link-preview/media helpers that are not needed for plugin module load. Keep those optional packages external so the published WhatsApp Chat bundled.js can be produced and loaded without reintroducing a raw TypeScript src/ entry under node_modules.
+       */
+      external: ["jimp", "link-preview-js", "qrcode-terminal"],
+    });
 
     await bundlePluginEntry({
       pluginId: "fusion-plugin-roadmap",
@@ -468,35 +595,23 @@ const cliBuildConfig = {
       destDir: linearImportPluginDest,
     });
 
-    if (existsSync(reportsPluginDest)) {
-      rmSync(reportsPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(reportsPluginSrc)) {
-      mkdirSync(reportsPluginDest, { recursive: true });
-      cpSync(join(reportsPluginSrc, "manifest.json"), join(reportsPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(reportsPluginSrc, "package.json"), join(reportsPluginDest, "package.json"));
-      cpSync(join(reportsPluginSrc, "src"), join(reportsPluginDest, "src"), { recursive: true });
-      console.log("Copied reports plugin to dist/plugins/fusion-plugin-reports/");
-    } else {
-      console.warn(
-        `WARNING: Reports plugin source not found at ${reportsPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-quality",
+      srcDir: qualityPluginSrc,
+      destDir: qualityPluginDest,
+    });
 
-    if (existsSync(cliPrintingPressPluginDest)) {
-      rmSync(cliPrintingPressPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(cliPrintingPressPluginSrc)) {
-      mkdirSync(cliPrintingPressPluginDest, { recursive: true });
-      cpSync(join(cliPrintingPressPluginSrc, "manifest.json"), join(cliPrintingPressPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(cliPrintingPressPluginSrc, "package.json"), join(cliPrintingPressPluginDest, "package.json"));
-      cpSync(join(cliPrintingPressPluginSrc, "src"), join(cliPrintingPressPluginDest, "src"), { recursive: true });
-      console.log("Copied cli-printing-press plugin to dist/plugins/fusion-plugin-cli-printing-press/");
-    } else {
-      console.warn(
-        `WARNING: cli-printing-press plugin source not found at ${cliPrintingPressPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-reports",
+      srcDir: reportsPluginSrc,
+      destDir: reportsPluginDest,
+    });
+
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-cli-printing-press",
+      srcDir: cliPrintingPressPluginSrc,
+      destDir: cliPrintingPressPluginDest,
+    });
 
     // Bundle each runtime plugin into a self-contained ESM file so npm/npx
     // installs can load them without the workspace `@fusion/plugin-sdk`.
@@ -539,21 +654,27 @@ const pluginSdkBuildConfig = {
   platform: "node",
   target: "node22",
   tsconfig: join(__dirname, "..", "plugin-sdk", "tsconfig.json"),
-  dts: {
-    /*
-     * FNXC:PluginSDK 2026-06-13-12:00:
-     * FN-6409 requires the published @runfusion/fusion/plugin-sdk declaration entry to be self-contained. External plugin authors cannot resolve private @fusion/core types from scaffolded projects, so leaving @fusion/* imports in dist/plugin-sdk/index.d.ts makes tsc fail with TS2307 before ctx parameters can typecheck.
-     */
-    resolve: [/^@fusion\//],
-    compilerOptions: {
-      rootDir: join(__dirname, ".."),
-      baseUrl: ".",
-      paths: {
-        "@fusion/core": ["../core/src/index.ts"],
-      },
-      removeComments: true,
-    },
-  },
+  /*
+   * FNXC:CliPackaging 2026-07-15-03:25:
+   * Self-contained plugin-sdk DTS (~17s) is release/publish surface. Local fast builds skip DTS; full package mode (CI / FUSION_CLI_FULL_PACKAGE) keeps FN-6409 resolve behavior.
+   */
+  dts: fullCliPackage
+    ? {
+        /*
+         * FNXC:PluginSDK 2026-06-13-12:00:
+         * FN-6409 requires the published @runfusion/fusion/plugin-sdk declaration entry to be self-contained. External plugin authors cannot resolve private @fusion/core types from scaffolded projects, so leaving @fusion/* imports in dist/plugin-sdk/index.d.ts makes tsc fail with TS2307 before ctx parameters can typecheck.
+         */
+        resolve: [/^@fusion\//],
+        compilerOptions: {
+          rootDir: join(__dirname, ".."),
+          baseUrl: ".",
+          paths: {
+            "@fusion/core": ["../core/src/index.ts"],
+          },
+          removeComments: true,
+        },
+      }
+    : false,
   noExternal: [/^@fusion\//],
   esbuildOptions(options: { alias?: Record<string, string> }) {
     options.alias = {

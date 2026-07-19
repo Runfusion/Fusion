@@ -12,12 +12,12 @@ import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-sto
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { toJsonNullable } from "../db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { runCommandAsync } from "../run-command.js";
 import { getStepParser } from "../step-parsers.js";
 import { getTaskMergeBlocker } from "../task-merge.js";
-import { deleteTaskDocument as deleteTaskDocumentAsync, getArtifact as getArtifactAsync, getArtifacts as getArtifactsAsync, getTaskDocument as getTaskDocumentAsync, getTaskDocumentRevisions as getTaskDocumentRevisionsAsync, listTaskDocuments as listTaskDocumentsAsync, updateArtifactRow as updateArtifactRowAsync } from "./async-comments-attachments.js";
+import { deleteTaskDocument as deleteTaskDocumentAsync, getArtifact as getArtifactAsync, getArtifacts as getArtifactsAsync, getLiveTaskColumn, getTaskDocument as getTaskDocumentAsync, getTaskDocumentRevisions as getTaskDocumentRevisionsAsync, listTaskDocuments as listTaskDocumentsAsync, updateArtifactRow as updateArtifactRowAsync } from "./async-comments-attachments.js";
 import { emitUsageEvent as emitUsageEventAsync, recordPluginActivation as recordPluginActivationAsync } from "./async-events.js";
 import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMergeQueueAsync, peekMergeQueueHead as peekMergeQueueHeadAsync } from "./async-merge-coordination.js";
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async-workflow-workitems.js";
@@ -110,15 +110,15 @@ export async function recordPluginActivationImpl(store: TaskStore, input: Plugin
     };
 }
 
-export function computeWorkflowColumnsGraduationReportImpl(store: TaskStore,
+export async function computeWorkflowColumnsGraduationReportImpl(store: TaskStore,
     options: { since?: string; limit?: number } = {},
-  ): WorkflowColumnsGraduationReport {
+  ): Promise<WorkflowColumnsGraduationReport> {
     const limit = options.limit ?? 1000;
-    const parity = store.getWorkflowParitySummary(options);
+    const parity = await store.getWorkflowParitySummary(options);
     const dualAcceptEvents: RunAuditEvent[] = [];
     for (const mutationType of DUAL_ACCEPT_PARITY_MUTATIONS) {
       dualAcceptEvents.push(
-        ...store.getRunAuditEvents({
+        ...await store.getRunAuditEventsAsync({
           domain: "database",
           mutationType: mutationType as unknown as RunAuditEvent["mutationType"],
           startTime: options.since,
@@ -387,16 +387,36 @@ export async function runGitCommandImpl(store: TaskStore, command: string, timeo
     });
 }
 
-export function clearStaleExecutionStartBranchReferencesImpl(store: TaskStore, deletedBranches: string[], ownerTaskId?: string): string[] {
+export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskStore, deletedBranches: string[], ownerTaskId?: string): Promise<string[]> {
     if (deletedBranches.length === 0) return [];
-    /*
-    FNXC:PostgresCutover 2026-07-04-00:00:
-    Intentional PG safe-default: stale-branch clearing is best-effort cleanup (executionStartBranch
-    references to deleted branches). Returning [] means no branches cleared in PG mode — stale
-    references accumulate but don't break functionality. Converting to async would cascade through
-    15+ test mocks (vi.fn().mockReturnValue([])). Disproportionate to the low risk.
-    */
-    if (store.backendMode) return [];
+    if (store.backendMode) {
+      /*
+      FNXC:PostgresBranchCleanup 2026-07-14-17:30:
+      Deleted execution-start branches must be cleared from every other live task in PostgreSQL. Returning an empty safe default leaves durable references to branches that no longer exist and turns later worktree creation into a false hard failure.
+      */
+      const now = new Date().toISOString();
+      const conditions = [
+        isNull(schema.project.tasks.deletedAt),
+        inArray(schema.project.tasks.executionStartBranch, deletedBranches),
+      ];
+      if (ownerTaskId) conditions.push(ne(schema.project.tasks.id, ownerTaskId));
+      const rows = await store.asyncLayer!.db
+        .update(schema.project.tasks)
+        .set({ executionStartBranch: null, updatedAt: now })
+        .where(and(...conditions))
+        .returning({ id: schema.project.tasks.id });
+      const clearedIds = rows.map((row) => row.id);
+      if (store.isWatching) {
+        for (const id of clearedIds) {
+          const cached = store.taskCache.get(id);
+          if (cached) {
+            cached.executionStartBranch = undefined;
+            cached.updatedAt = now;
+          }
+        }
+      }
+      return clearedIds;
+    }
     const placeholders = deletedBranches.map(() => "?").join(",");
     const params: string[] = [...deletedBranches];
     let whereClause = `executionStartBranch IN (${placeholders})`;
@@ -603,6 +623,12 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
 }
 
 export async function updateTaskCommentImpl(store: TaskStore, id: string, commentId: string, text: string): Promise<Task> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
+      if (state === null) throw new Error(`Task ${id} not found`);
+    }
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
@@ -631,6 +657,12 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
 }
 
 export async function deleteTaskCommentImpl(store: TaskStore, id: string, commentId: string): Promise<Task> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
+      if (state === null) throw new Error(`Task ${id} not found`);
+    }
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
@@ -768,7 +800,7 @@ export async function updateArtifactImpl(store: TaskStore, id: string, updates: 
 export async function getArtifactsImpl(store: TaskStore, taskId: string): Promise<Artifact[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getArtifactsAsync(layer.db, taskId);
+      return getArtifactsAsync(layer.db, taskId, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return [];
@@ -783,7 +815,7 @@ export async function getArtifactsImpl(store: TaskStore, taskId: string): Promis
 export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Promise<TaskDocument[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return listTaskDocumentsAsync(layer.db, taskId);
+      return listTaskDocumentsAsync(layer.db, taskId, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return [];
@@ -798,7 +830,7 @@ export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Pr
 export async function getTaskDocumentImpl(store: TaskStore, taskId: string, key: string): Promise<TaskDocument | null> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getTaskDocumentAsync(layer.db, taskId, key);
+      return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return null;
@@ -825,7 +857,7 @@ export async function getTaskDocumentRevisionsImpl(store: TaskStore,
     */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key);
+      const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId);
       const sorted = [...rows].sort((a, b) => b.revision - a.revision);
       const mapped = sorted.map((row) => store.rowToTaskDocumentRevision(row));
       return options?.limit !== undefined ? mapped.slice(0, Math.max(0, options.limit)) : mapped;
@@ -1046,9 +1078,13 @@ export async function linkGithubIssueImpl(store: TaskStore,
     });
 }
 
+/*
+FNXC:AgentLogRead 2026-07-16-00:00:
+Issue #2149 requires read-only type filtering to reach the file store before pagination so task-chat log pages and their totals are coherent.
+*/
 export async function getAgentLogsImpl(store: TaskStore,
     taskId: string,
-    options?: { limit?: number; offset?: number },
+    options?: { limit?: number; offset?: number; type?: AgentLogEntry["type"] },
   ): Promise<AgentLogEntry[]> {
     // Ensure buffered entries are visible before reading.
     store.flushAgentLogBuffer();
@@ -1068,12 +1104,16 @@ export async function getAgentLogsImpl(store: TaskStore,
 
     if (limit === 0) return [];
 
-    return readAgentLogEntries(store.taskDir(taskId), { limit, offset }).map(
+    return readAgentLogEntries(store.taskDir(taskId), { limit, offset, type: options?.type }).map(
       ({ lineNo: _lineNo, sourceRef: _sourceRef, ...entry }) => entry,
     );
 }
 
-export async function getAgentLogCountImpl(store: TaskStore, taskId: string): Promise<number> {
+export async function getAgentLogCountImpl(
+  store: TaskStore,
+  taskId: string,
+  options?: { type?: AgentLogEntry["type"] },
+): Promise<number> {
     store.flushAgentLogBuffer();
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-15:45:
     // Backend mode: skip the sync readTaskFromDb check. The agent log file
@@ -1084,5 +1124,5 @@ export async function getAgentLogCountImpl(store: TaskStore, taskId: string): Pr
         return 0;
       }
     }
-    return countAgentLogEntries(store.taskDir(taskId));
+    return countAgentLogEntries(store.taskDir(taskId), { type: options?.type });
 }

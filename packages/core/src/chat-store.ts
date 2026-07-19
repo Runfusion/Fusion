@@ -4,24 +4,20 @@
  * Manages CRUD operations for chat sessions and messages.
  * Provides event emission for dashboard reactivity.
  *
- * Follows the same patterns as MissionStore:
- * - EventEmitter for change notifications
- * - SQLite for structured data storage
- * - JSON columns for nested data
+ * Uses PostgreSQL through the project AsyncDataLayer and emits change events
+ * for dashboard reactivity.
  */
 
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { Database } from "./db.js";
-import { fromJson, toJsonNullable } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import * as schema from "./postgres/schema/index.js";
 import * as asyncChatStore from "./async-chat-store.js";
 import type {
   ChatSession,
   ChatSessionStatus,
   ChatMessage,
-  ChatMessageRole,
   ChatAttachment,
   ChatMessageCreateInput,
   ChatSessionCreateInput,
@@ -77,222 +73,17 @@ export interface ChatStoreEvents {
   "chat:room:messages:cleared": [payload: { roomId: string; deletedCount: number }];
 }
 
-// ── Row Interfaces ───────────────────────────────────────────────────
-
-/** Database row shape for chat_sessions. */
-interface ChatSessionRow {
-  id: string;
-  agentId: string;
-  title: string | null;
-  status: string;
-  projectId: string | null;
-  modelProvider: string | null;
-  modelId: string | null;
-  thinkingLevel: string | null;
-  createdAt: string;
-  updatedAt: string;
-  cliSessionFile: string | null;
-  inFlightGeneration: string | null;
-  cliExecutorAdapterId: string | null;
-}
-
-/** Database row shape for chat_messages. */
-interface ChatMessageRow {
-  id: string;
-  sessionId: string;
-  role: string;
-  content: string;
-  thinkingOutput: string | null;
-  metadata: string | null;
-  attachments: string | null;
-  createdAt: string;
-}
-
-interface ChatRoomRow {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  projectId: string | null;
-  createdBy: string | null;
-  status: string;
-  thinkingLevel: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ChatRoomMemberRow {
-  roomId: string;
-  agentId: string;
-  role: string;
-  addedAt: string;
-}
-
-interface ChatRoomMessageRow {
-  id: string;
-  roomId: string;
-  role: string;
-  content: string;
-  thinkingOutput: string | null;
-  metadata: string | null;
-  attachments: string | null;
-  senderAgentId: string | null;
-  mentions: string | null;
-  createdAt: string;
-}
-
-interface ChatTokenUsageRow {
-  id: string;
-  sourceKind: string;
-  chatSessionId: string | null;
-  roomId: string | null;
-  messageId: string | null;
-  projectId: string | null;
-  agentId: string | null;
-  modelProvider: string | null;
-  modelId: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-  createdAt: string;
-}
-
 // ── ChatStore Class ─────────────────────────────────────────────────
 
 export class ChatStore extends EventEmitter<ChatStoreEvents> {
   /**
-   * FNXC:ChatStore 2026-06-24-21:30:
-   * When non-null, the store is in backend (PostgreSQL) mode and delegates to
-   * the async helpers in async-chat-store.ts. The sync db is unused in this
-   * mode. This is the dual-path pattern for the chat system.
+   * FNXC:PostgresChatStore 2026-07-14-19:15:
+   * Chat persistence is PostgreSQL-only after the storage cutover. Requiring
+   * AsyncDataLayer at construction prevents a reachable SQLite fallback.
    */
-  private readonly asyncLayer: AsyncDataLayer | null;
-
-  constructor(
-    private fusionDir: string,
-    private db: Database | null,
-    options?: { asyncLayer?: AsyncDataLayer | null },
-  ) {
+  constructor(private readonly asyncLayer: AsyncDataLayer) {
     super();
     this.setMaxListeners(100);
-    this.asyncLayer = options?.asyncLayer ?? null;
-  }
-
-  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
-  private get backendMode(): boolean {
-    return this.asyncLayer !== null;
-  }
-
-  /**
-   * FNXC:ChatStore 2026-06-24-21:35:
-   * Asserts the sync SQLite database is available. In backend mode this is
-   * never called (the async branch returns first).
-   */
-  private syncDb(): Database {
-    if (!this.db) {
-      throw new Error("ChatStore: sync Database is null (backend mode requires asyncLayer)");
-    }
-    return this.db;
-  }
-
-  // ── Row-to-Object Converters ───────────────────────────────────────
-
-  /**
-   * Convert a database row to a ChatSession object.
-   */
-  private rowToSession(row: ChatSessionRow): ChatSession {
-    return {
-      id: row.id,
-      agentId: row.agentId,
-      title: row.title ?? null,
-      status: row.status as ChatSessionStatus,
-      projectId: row.projectId ?? null,
-      modelProvider: row.modelProvider ?? null,
-      modelId: row.modelId ?? null,
-      thinkingLevel: row.thinkingLevel ?? null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      cliSessionFile: row.cliSessionFile ?? null,
-      inFlightGeneration: fromJson<ChatInFlightGenerationState>(row.inFlightGeneration) ?? null,
-      cliExecutorAdapterId: row.cliExecutorAdapterId ?? null,
-    };
-  }
-
-  /**
-   * Convert a database row to a ChatMessage object.
-   */
-  private rowToMessage(row: ChatMessageRow): ChatMessage {
-    return {
-      id: row.id,
-      sessionId: row.sessionId,
-      role: row.role as ChatMessageRole,
-      content: row.content,
-      thinkingOutput: row.thinkingOutput ?? null,
-      metadata: fromJson<Record<string, unknown>>(row.metadata) ?? null,
-      attachments: fromJson<ChatAttachment[]>(row.attachments) ?? undefined,
-      createdAt: row.createdAt,
-    };
-  }
-
-  private rowToRoom(row: ChatRoomRow): ChatRoom {
-    return {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      description: row.description ?? null,
-      projectId: row.projectId ?? null,
-      createdBy: row.createdBy ?? null,
-      status: row.status as ChatRoomStatus,
-      thinkingLevel: row.thinkingLevel ?? null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-  }
-
-  private rowToRoomMember(row: ChatRoomMemberRow): ChatRoomMember {
-    return {
-      roomId: row.roomId,
-      agentId: row.agentId,
-      role: row.role as RoomMemberRole,
-      addedAt: row.addedAt,
-    };
-  }
-
-  private rowToRoomMessage(row: ChatRoomMessageRow): ChatRoomMessage {
-    return {
-      id: row.id,
-      roomId: row.roomId,
-      role: row.role as ChatMessageRole,
-      content: row.content,
-      thinkingOutput: row.thinkingOutput ?? null,
-      metadata: fromJson<Record<string, unknown>>(row.metadata) ?? null,
-      attachments: fromJson<ChatAttachment[]>(row.attachments) ?? undefined,
-      senderAgentId: row.senderAgentId ?? null,
-      mentions: fromJson<string[]>(row.mentions) ?? [],
-      createdAt: row.createdAt,
-    };
-  }
-
-  private rowToTokenUsage(row: ChatTokenUsageRow): ChatTokenUsageRecord {
-    return {
-      id: row.id,
-      sourceKind: row.sourceKind as ChatTokenUsageSourceKind,
-      chatSessionId: row.chatSessionId ?? null,
-      roomId: row.roomId ?? null,
-      messageId: row.messageId ?? null,
-      projectId: row.projectId ?? null,
-      agentId: row.agentId ?? null,
-      modelProvider: row.modelProvider ?? null,
-      modelId: row.modelId ?? null,
-      inputTokens: row.inputTokens ?? 0,
-      outputTokens: row.outputTokens ?? 0,
-      cachedTokens: row.cachedTokens ?? 0,
-      cacheWriteTokens: row.cacheWriteTokens ?? 0,
-      totalTokens: row.totalTokens ?? 0,
-      createdAt: row.createdAt,
-    };
   }
 
   private normalizeRoomName(name: string): string {
@@ -316,32 +107,9 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The created session
    */
   async createSession(input: ChatSessionCreateInput): Promise<ChatSession> {
-    if (this.backendMode) {
-      const now = new Date().toISOString();
-      const session: ChatSession = {
-        id: `chat-${randomUUID().slice(0, 8)}`,
-        agentId: input.agentId,
-        title: input.title ?? null,
-        status: "active",
-        projectId: input.projectId ?? null,
-        modelProvider: input.modelProvider ?? null,
-        modelId: input.modelId ?? null,
-        thinkingLevel: input.thinkingLevel ?? null,
-        createdAt: now,
-        updatedAt: now,
-        cliSessionFile: null,
-        inFlightGeneration: null,
-        cliExecutorAdapterId: input.cliExecutorAdapterId ?? null,
-      };
-      const created = await asyncChatStore.createChatSession(this.asyncLayer!.db, session);
-      this.emit("chat:session:created", created);
-      return created;
-    }
     const now = new Date().toISOString();
-    const id = `chat-${randomUUID().slice(0, 8)}`;
-
     const session: ChatSession = {
-      id,
+      id: `chat-${randomUUID().slice(0, 8)}`,
       agentId: input.agentId,
       title: input.title ?? null,
       status: "active",
@@ -351,32 +119,14 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       thinkingLevel: input.thinkingLevel ?? null,
       createdAt: now,
       updatedAt: now,
+      pinnedAt: null,
       cliSessionFile: null,
       inFlightGeneration: null,
       cliExecutorAdapterId: input.cliExecutorAdapterId ?? null,
     };
-
-    this.syncDb().prepare(`
-      INSERT INTO chat_sessions (id, agentId, title, status, projectId, modelProvider, modelId, thinkingLevel, createdAt, updatedAt, inFlightGeneration, cliExecutorAdapterId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      session.id,
-      session.agentId,
-      session.title,
-      session.status,
-      session.projectId,
-      session.modelProvider,
-      session.modelId,
-      session.thinkingLevel,
-      session.createdAt,
-      session.updatedAt,
-      null,
-      session.cliExecutorAdapterId,
-    );
-
-    this.syncDb().bumpLastModified();
-    this.emit("chat:session:created", session);
-    return session;
+    const created = await asyncChatStore.createChatSession(this.asyncLayer.db, session);
+    this.emit("chat:session:created", created);
+    return created;
   }
 
   /**
@@ -386,12 +136,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The session, or undefined if not found
    */
   async getSession(id: string): Promise<ChatSession | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatSession(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare("SELECT * FROM chat_sessions WHERE id = ?").get(id) as unknown as ChatSessionRow | undefined;
-    if (!row) return undefined;
-    return this.rowToSession(row);
+    return asyncChatStore.getChatSession(this.asyncLayer.db, id);
   }
 
   /**
@@ -405,32 +150,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     agentId?: string;
     status?: ChatSessionStatus;
   }): Promise<ChatSession[]> {
-    if (this.backendMode) {
-      return asyncChatStore.listChatSessions(this.asyncLayer!.db, options);
-    }
-    const whereClauses: string[] = [];
-    const params: string[] = [];
-
-    if (options?.projectId) {
-      whereClauses.push("projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options?.agentId) {
-      whereClauses.push("agentId = ?");
-      params.push(options.agentId);
-    }
-    if (options?.status) {
-      whereClauses.push("status = ?");
-      params.push(options.status);
-    }
-
-    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM chat_sessions ${whereSql} ORDER BY updatedAt DESC
-    `).all(...params);
-
-    return (rows as unknown as ChatSessionRow[]).map((row) => this.rowToSession(row));
+    return asyncChatStore.listChatSessions(this.asyncLayer.db, options);
   }
 
   /**
@@ -446,62 +166,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     modelProvider?: string;
     modelId?: string;
   }): Promise<ChatSession | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.findLatestActiveChatSessionForTarget(this.asyncLayer!.db, options);
-    }
-    const normalizedAgentId = options.agentId.trim();
-    if (!normalizedAgentId) {
-      return undefined;
-    }
-
-    const normalizedProvider = options.modelProvider?.trim();
-    const normalizedModelId = options.modelId?.trim();
-
-    if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
-      throw new Error("modelProvider and modelId must both be provided together, or neither");
-    }
-
-    const whereClauses: string[] = ["status = ?", "agentId = ?"];
-    const baseParams: string[] = ["active", normalizedAgentId];
-
-    if (options.projectId && options.projectId.trim()) {
-      whereClauses.push("projectId = ?");
-      baseParams.push(options.projectId.trim());
-    }
-
-    const baseWhereSql = whereClauses.join(" AND ");
-
-    if (normalizedProvider && normalizedModelId) {
-      const row = this.syncDb().prepare(`
-        SELECT * FROM chat_sessions
-        WHERE ${baseWhereSql} AND modelProvider = ? AND modelId = ?
-        ORDER BY updatedAt DESC
-        LIMIT 1
-      `).get(...baseParams, normalizedProvider, normalizedModelId) as ChatSessionRow | undefined;
-      return row ? this.rowToSession(row) : undefined;
-    }
-
-    const modelLessRow = this.syncDb().prepare(`
-      SELECT * FROM chat_sessions
-      WHERE ${baseWhereSql}
-        AND COALESCE(TRIM(modelProvider), '') = ''
-        AND COALESCE(TRIM(modelId), '') = ''
-      ORDER BY updatedAt DESC
-      LIMIT 1
-    `).get(...baseParams) as ChatSessionRow | undefined;
-
-    if (modelLessRow) {
-      return this.rowToSession(modelLessRow);
-    }
-
-    const fallbackRow = this.syncDb().prepare(`
-      SELECT * FROM chat_sessions
-      WHERE ${baseWhereSql}
-      ORDER BY updatedAt DESC
-      LIMIT 1
-    `).get(...baseParams) as ChatSessionRow | undefined;
-
-    return fallbackRow ? this.rowToSession(fallbackRow) : undefined;
+    return asyncChatStore.findLatestActiveChatSessionForTarget(this.asyncLayer.db, options);
   }
 
   /**
@@ -512,56 +177,23 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The updated session, or undefined if not found
    */
   async updateSession(id: string, input: ChatSessionUpdateInput): Promise<ChatSession | undefined> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.updateChatSession(this.asyncLayer!.db, id, input);
-      if (updated) this.emit("chat:session:updated", updated);
-      return updated;
-    }
-    const existing = await this.getSession(id);
-    if (!existing) return undefined;
-
-    const now = new Date().toISOString();
-    const setClauses: string[] = ["updatedAt = ?"];
-    const params: (string | null)[] = [now];
-
-    if (input.title !== undefined) {
-      setClauses.push("title = ?");
-      params.push(input.title);
-    }
-    if (input.status !== undefined) {
-      setClauses.push("status = ?");
-      params.push(input.status);
-    }
-    if (input.modelProvider !== undefined) {
-      setClauses.push("modelProvider = ?");
-      params.push(input.modelProvider);
-    }
-    if (input.modelId !== undefined) {
-      setClauses.push("modelId = ?");
-      params.push(input.modelId);
-    }
+    const update = {
+      ...input,
+      ...(input.status === "archived" ? { pinnedAt: null } : {}),
+    };
     /*
-     * FNXC:Chat-ModelSwitch 2026-07-12-00:00:
-     * Existing direct chats must be able to retarget to a real agent without recreating the conversation. Keep this independent from modelProvider/modelId so omitted model keys remain untouched.
-     */
-    if (input.agentId !== undefined) {
-      setClauses.push("agentId = ?");
-      params.push(input.agentId);
-    }
-    if (input.thinkingLevel !== undefined) {
-      setClauses.push("thinkingLevel = ?");
-      params.push(input.thinkingLevel);
-    }
-
-    params.push(id);
-
-    this.syncDb().prepare(`
-      UPDATE chat_sessions SET ${setClauses.join(", ")} WHERE id = ?
-    `).run(...params);
-
-    const updated = (await this.getSession(id))!;
-    this.syncDb().bumpLastModified();
-    this.emit("chat:session:updated", updated);
+    FNXC:ChatPinned 2026-07-16-12:30:
+    Archive and pin operations lock the target row in their transactions.
+    This prevents an archive from clearing a pin while a prior pin read later
+    writes it back, preserving both archived-session pin invariants.
+    */
+    const updated = input.status === "archived"
+      ? await this.asyncLayer.transactionImmediate(async (tx) => {
+        const session = await asyncChatStore.getChatSessionForUpdate(tx, id);
+        return session ? asyncChatStore.updateChatSession(tx, id, update) : undefined;
+      })
+      : await asyncChatStore.updateChatSession(this.asyncLayer.db, id, update);
+    if (updated) this.emit("chat:session:updated", updated);
     return updated;
   }
 
@@ -573,7 +205,47 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The archived session, or undefined if not found
    */
   async archiveSession(id: string): Promise<ChatSession | undefined> {
-    return this.updateSession(id, { status: "archived" });
+    return this.updateSession(id, { status: "archived", pinnedAt: null });
+  }
+
+  /**
+   * Pin or unpin a Direct chat session.
+   *
+   * FNXC:ChatPinned 2026-07-16-12:00:
+   * PostgreSQL READ COMMITTED transactions do not serialize count-and-write
+   * operations. The non-null, namespaced advisory key serializes mutations for
+   * one scope; null ownerProjectId is counted with isNull and canonicalized as
+   * `default`, while a real project named default remains collision-safe.
+   */
+  async setSessionPinned(id: string, pinned: boolean, _options?: { projectId?: string }): Promise<ChatSession | undefined> {
+    const updated = await this.asyncLayer.transactionImmediate(async (tx) => {
+      const session = await asyncChatStore.getChatSessionForUpdate(tx, id);
+      if (!session) return undefined;
+      if (!pinned) return asyncChatStore.updateChatSession(tx, id, { pinnedAt: null });
+      if (session.status === "archived") {
+        throw new Error("Archived conversations cannot be pinned");
+      }
+
+      const scopeKey = session.projectId ?? "default";
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`chat-pin:${scopeKey}`}, 0))`);
+      const scopePredicate = session.projectId === null
+        ? isNull(schema.project.chatSessions.ownerProjectId)
+        : eq(schema.project.chatSessions.ownerProjectId, session.projectId);
+      const existingPins = await tx
+        .select({ id: schema.project.chatSessions.id })
+        .from(schema.project.chatSessions)
+        .where(and(
+          scopePredicate,
+          eq(schema.project.chatSessions.status, "active"),
+          isNotNull(schema.project.chatSessions.pinnedAt),
+        ));
+      if (existingPins.length >= 3 && session.pinnedAt === null) {
+        throw new Error("You can pin up to 3 conversations per project");
+      }
+      return asyncChatStore.updateChatSession(tx, id, { pinnedAt: session.pinnedAt ?? new Date().toISOString() });
+    });
+    if (updated) this.emit("chat:session:updated", updated);
+    return updated;
   }
 
   /**
@@ -588,14 +260,8 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @param cliSessionFile - Absolute path to the session file, or null to clear
    */
   async setCliSessionFile(id: string, cliSessionFile: string | null): Promise<void> {
-    if (this.backendMode) {
-      await asyncChatStore.setCliSessionFile(this.asyncLayer!.db, id, cliSessionFile);
-      return;
-    }
-    this.syncDb()
-      .prepare("UPDATE chat_sessions SET cliSessionFile = ? WHERE id = ?")
-      .run(cliSessionFile, id);
-    this.syncDb().bumpLastModified();
+    await asyncChatStore.setCliSessionFile(this.asyncLayer.db, id, cliSessionFile);
+    return;
   }
 
   /**
@@ -608,38 +274,14 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @param adapterId - cli-agent adapter id, or null to revert to the provider path
    */
   async setCliExecutorAdapterId(id: string, adapterId: string | null): Promise<ChatSession | undefined> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.setCliExecutorAdapterId(this.asyncLayer!.db, id, adapterId);
-      if (updated) this.emit("chat:session:updated", updated);
-      return updated;
-    }
-    const existing = await this.getSession(id);
-    if (!existing) return undefined;
-    this.syncDb()
-      .prepare("UPDATE chat_sessions SET cliExecutorAdapterId = ?, updatedAt = ? WHERE id = ?")
-      .run(adapterId, new Date().toISOString(), id);
-    this.syncDb().bumpLastModified();
-    const updated = (await this.getSession(id))!;
-    this.emit("chat:session:updated", updated);
+    const updated = await asyncChatStore.setCliExecutorAdapterId(this.asyncLayer.db, id, adapterId);
+    if (updated) this.emit("chat:session:updated", updated);
     return updated;
   }
 
   async setInFlightGeneration(id: string, inFlightGeneration: ChatInFlightGenerationState | null): Promise<ChatSession | undefined> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.setInFlightGeneration(this.asyncLayer!.db, id, inFlightGeneration);
-      if (updated) this.emit("chat:session:updated", updated);
-      return updated;
-    }
-    const existing = await this.getSession(id);
-    if (!existing) return undefined;
-
-    this.syncDb()
-      .prepare("UPDATE chat_sessions SET inFlightGeneration = ? WHERE id = ?")
-      .run(toJsonNullable(inFlightGeneration), id);
-
-    const updated = (await this.getSession(id))!;
-    this.syncDb().bumpLastModified();
-    this.emit("chat:session:updated", updated);
+    const updated = await asyncChatStore.setInFlightGeneration(this.asyncLayer.db, id, inFlightGeneration);
+    if (updated) this.emit("chat:session:updated", updated);
     return updated;
   }
 
@@ -651,18 +293,9 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns true if deleted, false if not found
    */
   async deleteSession(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const deleted = await asyncChatStore.deleteChatSession(this.asyncLayer!.db, id);
-      if (deleted) this.emit("chat:session:deleted", id);
-      return deleted;
-    }
-    const existing = await this.getSession(id);
-    if (!existing) return false;
-
-    this.syncDb().prepare("DELETE FROM chat_sessions WHERE id = ?").run(id);
-    this.syncDb().bumpLastModified();
-    this.emit("chat:session:deleted", id);
-    return true;
+    const deleted = await asyncChatStore.deleteChatSession(this.asyncLayer.db, id);
+    if (deleted) this.emit("chat:session:deleted", id);
+    return deleted;
   }
 
   async deleteSessionsForAgentId(agentId: string, options?: { projectId?: string | null }): Promise<number> {
@@ -697,86 +330,27 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     if (!session) {
       throw new Error(`Chat session ${sessionId} not found`);
     }
-
-    if (this.backendMode) {
-      const now = new Date().toISOString();
-      const message: ChatMessage = {
-        id: `msg-${randomUUID().slice(0, 8)}`,
-        sessionId,
-        role: input.role,
-        content: input.content,
-        thinkingOutput: input.thinkingOutput ?? null,
-        metadata: input.metadata ?? null,
-        attachments: input.attachments,
-        createdAt: now,
-      };
-      const created = await asyncChatStore.addChatMessage(this.asyncLayer!.db, message);
-      this.emit("chat:message:added", created);
-      return created;
-    }
-    const now2 = new Date().toISOString();
-    const id = `msg-${randomUUID().slice(0, 8)}`;
-
+    const now = new Date().toISOString();
     const message: ChatMessage = {
-      id,
+      id: `msg-${randomUUID().slice(0, 8)}`,
       sessionId,
       role: input.role,
       content: input.content,
       thinkingOutput: input.thinkingOutput ?? null,
       metadata: input.metadata ?? null,
       attachments: input.attachments,
-      createdAt: now2,
+      createdAt: now,
     };
-
-    this.syncDb().prepare(`
-      INSERT INTO chat_messages (id, sessionId, role, content, thinkingOutput, metadata, attachments, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      message.id,
-      message.sessionId,
-      message.role,
-      message.content,
-      message.thinkingOutput,
-      toJsonNullable(message.metadata),
-      toJsonNullable(message.attachments),
-      message.createdAt,
-    );
-
-    // Update session's updatedAt timestamp
-    this.syncDb().prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(now2, sessionId);
-
-    this.syncDb().bumpLastModified();
-    this.emit("chat:message:added", message);
-    return message;
+    const created = await asyncChatStore.addChatMessage(this.asyncLayer.db, message);
+    this.emit("chat:message:added", created);
+    return created;
   }
 
   /**
    * Append a file attachment metadata record to an existing message.
    */
   async addMessageAttachment(sessionId: string, messageId: string, attachment: ChatAttachment): Promise<ChatMessage> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.addChatMessageAttachment(this.asyncLayer!.db, sessionId, messageId, attachment);
-      this.emit("chat:message:updated", updated);
-      return updated;
-    }
-    const message = await this.getMessage(messageId);
-    if (!message || message.sessionId !== sessionId) {
-      throw new Error(`Message ${messageId} not found in session ${sessionId}`);
-    }
-
-    const updatedAttachments = [...(message.attachments ?? []), attachment];
-    this.syncDb().prepare(`
-      UPDATE chat_messages
-      SET attachments = ?
-      WHERE id = ?
-    `).run(toJsonNullable(updatedAttachments), messageId);
-
-    const updated = await this.getMessage(messageId);
-    if (!updated) {
-      throw new Error(`Failed to update message ${messageId}`);
-    }
-
-    this.syncDb().bumpLastModified();
+    const updated = await asyncChatStore.addChatMessageAttachment(this.asyncLayer.db, sessionId, messageId, attachment);
     this.emit("chat:message:updated", updated);
     return updated;
   }
@@ -789,31 +363,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns Array of messages ordered by createdAt ASC (default) or DESC
    */
   async getMessages(sessionId: string, filter?: ChatMessagesFilter): Promise<ChatMessage[]> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatMessages(this.asyncLayer!.db, sessionId, filter);
-    }
-    const whereClauses: string[] = ["sessionId = ?"];
-    const params: (string | number)[] = [sessionId];
-
-    // Cursor-based pagination: only return messages created before the cursor
-    if (filter?.before) {
-      whereClauses.push("createdAt < ?");
-      params.push(filter.before);
-    }
-
-    const whereSql = whereClauses.join(" AND ");
-    const limit = filter?.limit ?? 100;
-    const offset = filter?.offset ?? 0;
-    const order = filter?.order === "desc" ? "DESC" : "ASC";
-
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM chat_messages
-      WHERE ${whereSql}
-      ORDER BY createdAt ${order}
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    return (rows as unknown as ChatMessageRow[]).map((row) => this.rowToMessage(row));
+    return asyncChatStore.getChatMessages(this.asyncLayer.db, sessionId, filter);
   }
 
   /**
@@ -823,12 +373,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The message, or undefined if not found
    */
   async getMessage(id: string): Promise<ChatMessage | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatMessage(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare("SELECT * FROM chat_messages WHERE id = ?").get(id) as unknown as ChatMessageRow | undefined;
-    if (!row) return undefined;
-    return this.rowToMessage(row);
+    return asyncChatStore.getChatMessage(this.asyncLayer.db, id);
   }
 
   /**
@@ -839,52 +384,11 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns Map of sessionId -> latest ChatMessage for that session
    */
   async getLastMessageForSessions(sessionIds: string[]): Promise<Map<string, ChatMessage>> {
-    if (this.backendMode) {
-      return asyncChatStore.getLastMessageForSessions(this.asyncLayer!.db, sessionIds);
-    }
-    if (!sessionIds || sessionIds.length === 0) {
-      return new Map();
-    }
-
-    // Create placeholders for the IN clause
-    const placeholders = sessionIds.map(() => "?").join(", ");
-
-    // Use a subquery to get the latest message per session using MAX(createdAt)
-    // Then join back to get the full message row
-    const rows = this.syncDb().prepare(`
-      SELECT cm.* FROM chat_messages cm
-      INNER JOIN (
-        SELECT sessionId, MAX(createdAt) as maxCreatedAt
-        FROM chat_messages
-        WHERE sessionId IN (${placeholders})
-        GROUP BY sessionId
-      ) latest ON cm.sessionId = latest.sessionId AND cm.createdAt = latest.maxCreatedAt
-    `).all(...sessionIds);
-
-    const result = new Map<string, ChatMessage>();
-    for (const row of rows as unknown as ChatMessageRow[]) {
-      const message = this.rowToMessage(row);
-      result.set(message.sessionId, message);
-    }
-    return result;
+    return asyncChatStore.getLastMessageForSessions(this.asyncLayer.db, sessionIds);
   }
 
-  hasMessages(sessionId: string): boolean {
-    if (this.backendMode) {
-      // Async path not available for sync query; callers in backend mode should use getMessages
-      return false;
-    }
-    const row = this.syncDb().prepare("SELECT 1 FROM chat_messages WHERE sessionId = ? LIMIT 1").get(sessionId) as { 1: number } | undefined;
-    return Boolean(row);
-  }
-
-  /**
-   * Escape a raw search term for safe use inside a SQL `LIKE ... ESCAPE '\'` pattern.
-   * Escapes the LIKE wildcard characters (`%`, `_`) and the escape character itself (`\`)
-   * so a literal user-typed `%`/`_` is matched literally instead of acting as a wildcard.
-   */
-  private escapeLikePattern(raw: string): string {
-    return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+  async hasMessages(sessionId: string): Promise<boolean> {
+    return (await asyncChatStore.getChatMessages(this.asyncLayer.db, sessionId, { limit: 1 })).length > 0;
   }
 
   /**
@@ -913,37 +417,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     if (!trimmed || !sessionIds || sessionIds.length === 0) {
       return new Map();
     }
-
-    if (this.backendMode) {
-      return asyncChatStore.searchChatSessionsByMessageContent(this.asyncLayer!.db, trimmed, sessionIds);
-    }
-
-    const escaped = this.escapeLikePattern(trimmed);
-    const pattern = `%${escaped}%`;
-    const placeholders = sessionIds.map(() => "?").join(", ");
-
-    // Single bounded query: find the most recent matching message per session via a
-    // GROUP BY + join-back, avoiding N+1 per-session queries. Ties on createdAt (common in
-    // fast test/bulk-insert scenarios where multiple messages share a millisecond timestamp)
-    // are broken by SQLite's implicit rowid, which tracks insertion order.
-    const rows = this.syncDb().prepare(`
-      SELECT cm.* FROM chat_messages cm
-      INNER JOIN (
-        SELECT sessionId, MAX(rowid) as maxRowid
-        FROM chat_messages
-        WHERE sessionId IN (${placeholders}) AND content LIKE ? ESCAPE '\\'
-        GROUP BY sessionId
-      ) matched ON cm.sessionId = matched.sessionId AND cm.rowid = matched.maxRowid
-    `).all(...sessionIds, pattern);
-
-    const result = new Map<string, string>();
-    for (const row of rows as unknown as ChatMessageRow[]) {
-      const message = this.rowToMessage(row);
-      if (result.has(message.sessionId)) continue;
-      const content = message.content || "";
-      result.set(message.sessionId, content.length > 100 ? content.slice(0, 100) + "…" : content);
-    }
-    return result;
+    return asyncChatStore.searchChatSessionsByMessageContent(this.asyncLayer.db, trimmed, sessionIds);
   }
 
   /**
@@ -953,38 +427,15 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns true if deleted, false if not found
    */
   async deleteMessage(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const existing = await asyncChatStore.getChatMessage(this.asyncLayer!.db, id);
-      if (!existing) return false;
-      const deleted = await asyncChatStore.deleteChatMessage(this.asyncLayer!.db, id);
-      if (deleted) {
-        this.emit("chat:message:deleted", id);
-        const updatedSession = await this.getSession(existing.sessionId);
-        if (updatedSession) this.emit("chat:session:updated", updatedSession);
-      }
-      return deleted;
-    }
-    const existing = await this.getMessage(id);
+    const existing = await asyncChatStore.getChatMessage(this.asyncLayer.db, id);
     if (!existing) return false;
-
-    const sessionId = existing.sessionId;
-    const now = new Date().toISOString();
-
-    this.syncDb().prepare("DELETE FROM chat_messages WHERE id = ?").run(id);
-
-    // Update the parent session's updatedAt timestamp
-    this.syncDb().prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(now, sessionId);
-
-    this.syncDb().bumpLastModified();
-    this.emit("chat:message:deleted", id);
-
-    // Emit session:updated for the parent session
-    const updatedSession = await this.getSession(sessionId);
-    if (updatedSession) {
-      this.emit("chat:session:updated", updatedSession);
+    const deleted = await asyncChatStore.deleteChatMessage(this.asyncLayer.db, id);
+    if (deleted) {
+      this.emit("chat:message:deleted", id);
+      const updatedSession = await this.getSession(existing.sessionId);
+      if (updatedSession) this.emit("chat:session:updated", updatedSession);
     }
-
-    return true;
+    return deleted;
   }
 
   /**
@@ -994,77 +445,23 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * transcript here AND from the model's resumable pi session context (rewound separately by
    * ChatManager.rewindSessionForEdit) — so future responses are not biased by discarded turns.
    *
-   * Ordering is resolved by (createdAt ASC, rowid ASC) rather than createdAt alone, since
-   * multiple messages can share an identical createdAt timestamp (same-millisecond inserts);
-   * rowid is SQLite's implicit monotonic insertion-order tiebreaker, guaranteeing the edited
-   * message and every later message (in true insertion order) are always included, with no
-   * sibling straggler surviving the truncation. The Postgres backend has no rowid, so it
-   * tiebreaks on (createdAt ASC, id ASC) — deterministic, matching getLastMessageForSessions.
+   * Ordering uses (createdAt ASC, id ASC), so same-millisecond messages have a
+   * deterministic PostgreSQL tiebreaker matching getLastMessageForSessions.
    *
    * @param sessionId - Parent session ID
    * @param fromMessageId - Id of the earliest message to delete (inclusive)
    * @returns deletedIds (in ASC order) and retained messages (pre-edit history, ASC order)
    */
   async deleteMessagesFrom(sessionId: string, fromMessageId: string): Promise<{ deletedIds: string[]; retained: ChatMessage[] }> {
-    if (this.backendMode) {
-      const result = await asyncChatStore.deleteChatMessagesFrom(this.asyncLayer!.db, sessionId, fromMessageId);
-      if (result.deletedIds.length > 0) {
-        for (const id of result.deletedIds) {
-          this.emit("chat:message:deleted", id);
-        }
-        const updatedSession = await this.getSession(sessionId);
-        if (updatedSession) this.emit("chat:session:updated", updatedSession);
+    const result = await asyncChatStore.deleteChatMessagesFrom(this.asyncLayer.db, sessionId, fromMessageId);
+    if (result.deletedIds.length > 0) {
+      for (const id of result.deletedIds) {
+        this.emit("chat:message:deleted", id);
       }
-      return result;
+      const updatedSession = await this.getSession(sessionId);
+      if (updatedSession) this.emit("chat:session:updated", updatedSession);
     }
-
-    const target = this.syncDb().prepare(
-      "SELECT id, sessionId, rowid as rowid_ FROM chat_messages WHERE id = ?",
-    ).get(fromMessageId) as { id: string; sessionId: string; rowid_: number } | undefined;
-
-    if (!target || target.sessionId !== sessionId) {
-      return { deletedIds: [], retained: await this.getMessages(sessionId) };
-    }
-
-    // Ordered id list for the session (createdAt ASC, rowid ASC tiebreak) so we can
-    // deterministically split retained-vs-deleted around the target message.
-    const orderedRows = this.syncDb().prepare(
-      "SELECT id, rowid as rowid_ FROM chat_messages WHERE sessionId = ? ORDER BY createdAt ASC, rowid_ ASC",
-    ).all(sessionId) as { id: string; rowid_: number }[];
-
-    const targetIndex = orderedRows.findIndex((row) => row.id === fromMessageId);
-    if (targetIndex === -1) {
-      return { deletedIds: [], retained: await this.getMessages(sessionId) };
-    }
-
-    const retainedIds = orderedRows.slice(0, targetIndex).map((row) => row.id);
-    const deletedIds = orderedRows.slice(targetIndex).map((row) => row.id);
-
-    const retained: ChatMessage[] = [];
-    for (const id of retainedIds) {
-      const message = await this.getMessage(id);
-      if (message) retained.push(message);
-    }
-
-    if (deletedIds.length === 0) {
-      return { deletedIds: [], retained };
-    }
-
-    const now = new Date().toISOString();
-    const placeholders = deletedIds.map(() => "?").join(", ");
-    this.syncDb().prepare(`DELETE FROM chat_messages WHERE id IN (${placeholders})`).run(...deletedIds);
-    this.syncDb().prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(now, sessionId);
-    this.syncDb().bumpLastModified();
-
-    for (const id of deletedIds) {
-      this.emit("chat:message:deleted", id);
-    }
-    const updatedSession = await this.getSession(sessionId);
-    if (updatedSession) {
-      this.emit("chat:session:updated", updatedSession);
-    }
-
-    return { deletedIds, retained };
+    return result;
   }
 
   /**
@@ -1075,30 +472,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * is what lets a later edit rewind losslessly via SessionManager.branch()/resetLeaf().
    */
   async updateMessageMetadata(messageId: string, metadata: Record<string, unknown> | null, options?: { merge?: boolean }): Promise<ChatMessage> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.updateChatMessageMetadata(this.asyncLayer!.db, messageId, metadata, options);
-      this.emit("chat:message:updated", updated);
-      return updated;
-    }
-
-    const existing = await this.getMessage(messageId);
-    if (!existing) {
-      throw new Error(`Message ${messageId} not found`);
-    }
-
-    const merge = options?.merge !== false;
-    const nextMetadata = metadata === null
-      ? (merge ? existing.metadata : null)
-      : (merge ? { ...(existing.metadata ?? {}), ...metadata } : metadata);
-
-    this.syncDb().prepare("UPDATE chat_messages SET metadata = ? WHERE id = ?").run(toJsonNullable(nextMetadata), messageId);
-
-    const updated = await this.getMessage(messageId);
-    if (!updated) {
-      throw new Error(`Failed to update message ${messageId}`);
-    }
-
-    this.syncDb().bumpLastModified();
+    const updated = await asyncChatStore.updateChatMessageMetadata(this.asyncLayer.db, messageId, metadata, options);
     this.emit("chat:message:updated", updated);
     return updated;
   }
@@ -1125,300 +499,89 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     };
 
     const memberIds = [...new Set((input.memberAgentIds ?? []).map((id) => id.trim()).filter(Boolean))];
-
-    if (this.backendMode) {
-      const result = await asyncChatStore.createChatRoom(this.asyncLayer!, room, memberIds);
-      this.emit("chat:room:created", result.room);
-      for (const member of result.members) {
-        this.emit("chat:room:member:added", member);
-      }
-      return result.room;
-    }
-
-    const existingSlug = this.syncDb().prepare(
-      "SELECT id FROM chat_rooms WHERE projectId IS ? AND slug = ?",
-    ).get(room.projectId, room.slug) as { id: string } | undefined;
-    if (existingSlug) {
-      throw new Error(`Room slug ${room.slug} already exists in this project`);
-    }
-
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        INSERT INTO chat_rooms (id, name, slug, description, projectId, createdBy, status, thinkingLevel, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        room.id,
-        room.name,
-        room.slug,
-        room.description,
-        room.projectId,
-        room.createdBy,
-        room.status,
-        room.thinkingLevel,
-        room.createdAt,
-        room.updatedAt,
-      );
-
-      const insertMember = this.syncDb().prepare(`
-        INSERT INTO chat_room_members (roomId, agentId, role, addedAt)
-        VALUES (?, ?, ?, ?)
-      `);
-      for (const agentId of memberIds) {
-        const role: RoomMemberRole = room.createdBy !== null && agentId === room.createdBy ? "owner" : "member";
-        insertMember.run(room.id, agentId, role, now);
-      }
-    });
-
-    const insertedMembers = await this.listRoomMembers(room.id);
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:created", room);
-    for (const member of insertedMembers) {
+    const result = await asyncChatStore.createChatRoom(this.asyncLayer, room, memberIds);
+    this.emit("chat:room:created", result.room);
+    for (const member of result.members) {
       this.emit("chat:room:member:added", member);
     }
-    return room;
+    return result.room;
   }
 
   async getRoom(id: string): Promise<ChatRoom | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatRoom(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare("SELECT * FROM chat_rooms WHERE id = ?").get(id) as ChatRoomRow | undefined;
-    return row ? this.rowToRoom(row) : undefined;
+    return asyncChatStore.getChatRoom(this.asyncLayer.db, id);
   }
 
   async getRoomBySlug(projectId: string | null, slug: string): Promise<ChatRoom | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatRoomBySlug(this.asyncLayer!.db, projectId, slug);
-    }
-    const row = this.syncDb().prepare("SELECT * FROM chat_rooms WHERE projectId IS ? AND slug = ?").get(projectId, slug) as ChatRoomRow | undefined;
-    return row ? this.rowToRoom(row) : undefined;
+    return asyncChatStore.getChatRoomBySlug(this.asyncLayer.db, projectId, slug);
   }
 
   async listRooms(options?: { projectId?: string; status?: ChatRoomStatus }): Promise<ChatRoom[]> {
-    if (this.backendMode) {
-      return asyncChatStore.listChatRooms(this.asyncLayer!.db, options);
-    }
-    const whereClauses: string[] = [];
-    const params: string[] = [];
-    if (options?.projectId) {
-      whereClauses.push("projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options?.status) {
-      whereClauses.push("status = ?");
-      params.push(options.status);
-    }
-    const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(" AND ")}` : "";
-    const rows = this.syncDb().prepare(`SELECT * FROM chat_rooms ${whereSql} ORDER BY updatedAt DESC`).all(...params) as ChatRoomRow[];
-    return rows.map((row) => this.rowToRoom(row));
+    return asyncChatStore.listChatRooms(this.asyncLayer.db, options);
   }
 
   async updateRoom(id: string, input: ChatRoomUpdateInput): Promise<ChatRoom | undefined> {
-    if (this.backendMode) {
-      // Build slug/name from the input mirroring the sync path.
-      let updateInput: Parameters<typeof asyncChatStore.updateChatRoom>[2] = {};
-      if (input.name !== undefined) {
-        const normalizedName = this.normalizeRoomName(input.name);
-        if (!normalizedName) throw new Error("Room name cannot be empty");
-        const slug = this.buildRoomSlug(normalizedName);
-        if (!slug) throw new Error("Room name must include letters or numbers");
-        const existing = await this.getRoom(id);
-        if (existing) {
-          const slugConflict = await asyncChatStore.getChatRoomBySlug(this.asyncLayer!.db, existing.projectId, slug);
-          if (slugConflict && slugConflict.id !== id) {
-            throw new Error(`Room slug ${slug} already exists in this project`);
-          }
-        }
-        updateInput = { name: normalizedName, slug };
-      }
-      if (input.description !== undefined) updateInput.description = input.description;
-      if (input.status !== undefined) updateInput.status = input.status;
-      const updated = await asyncChatStore.updateChatRoom(this.asyncLayer!.db, id, updateInput);
-      if (updated) this.emit("chat:room:updated", updated);
-      return updated;
-    }
-    const existing = await this.getRoom(id);
-    if (!existing) return undefined;
-
-    const now = new Date().toISOString();
-    const setClauses: string[] = ["updatedAt = ?"];
-    const params: Array<string | null> = [now];
-
+    // Build slug/name from the input mirroring the sync path.
+    let updateInput: Parameters<typeof asyncChatStore.updateChatRoom>[2] = {};
     if (input.name !== undefined) {
       const normalizedName = this.normalizeRoomName(input.name);
       if (!normalizedName) throw new Error("Room name cannot be empty");
       const slug = this.buildRoomSlug(normalizedName);
       if (!slug) throw new Error("Room name must include letters or numbers");
-
-      const existingSlug = this.syncDb().prepare(
-        "SELECT id FROM chat_rooms WHERE projectId IS ? AND slug = ? AND id != ?",
-      ).get(existing.projectId, slug, id) as { id: string } | undefined;
-      if (existingSlug) {
-        throw new Error(`Room slug ${slug} already exists in this project`);
+      const existing = await this.getRoom(id);
+      if (existing) {
+        const slugConflict = await asyncChatStore.getChatRoomBySlug(this.asyncLayer.db, existing.projectId, slug);
+        if (slugConflict && slugConflict.id !== id) {
+          throw new Error(`Room slug ${slug} already exists in this project`);
+        }
       }
-
-      setClauses.push("name = ?", "slug = ?");
-      params.push(normalizedName, slug);
+      updateInput = { name: normalizedName, slug };
     }
-    if (input.description !== undefined) {
-      setClauses.push("description = ?");
-      params.push(input.description);
-    }
-    if (input.status !== undefined) {
-      setClauses.push("status = ?");
-      params.push(input.status);
-    }
-    if (input.thinkingLevel !== undefined) {
-      setClauses.push("thinkingLevel = ?");
-      params.push(input.thinkingLevel);
-    }
-
-    params.push(id);
-    this.syncDb().prepare(`UPDATE chat_rooms SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
-
-    const updated = (await this.getRoom(id))!;
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:updated", updated);
+    if (input.description !== undefined) updateInput.description = input.description;
+    if (input.status !== undefined) updateInput.status = input.status;
+    const updated = await asyncChatStore.updateChatRoom(this.asyncLayer.db, id, updateInput);
+    if (updated) this.emit("chat:room:updated", updated);
     return updated;
   }
 
   async deleteRoom(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const deleted = await asyncChatStore.deleteChatRoom(this.asyncLayer!.db, id);
-      if (deleted) this.emit("chat:room:deleted", id);
-      return deleted;
-    }
-    const existing = await this.getRoom(id);
-    if (!existing) return false;
-
-    this.syncDb().prepare("DELETE FROM chat_rooms WHERE id = ?").run(id);
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:deleted", id);
-    return true;
+    const deleted = await asyncChatStore.deleteChatRoom(this.asyncLayer.db, id);
+    if (deleted) this.emit("chat:room:deleted", id);
+    return deleted;
   }
 
   async cleanupOldChats(maxAgeMs: number): Promise<{ sessionsDeleted: number; roomsDeleted: number }> {
-    if (this.backendMode) {
-      const result = await asyncChatStore.cleanupOldChats(this.asyncLayer!.db, maxAgeMs);
-      for (const sessionId of result.deletedSessionIds) {
-        this.emit("chat:session:deleted", sessionId);
-      }
-      for (const roomId of result.deletedRoomIds) {
-        this.emit("chat:room:deleted", roomId);
-      }
-      return { sessionsDeleted: result.sessionsDeleted, roomsDeleted: result.roomsDeleted };
-    }
-    if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
-      return { sessionsDeleted: 0, roomsDeleted: 0 };
-    }
-
-    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-
-    const result = this.syncDb().transaction(() => {
-      const staleSessionRows = this.syncDb().prepare("SELECT id FROM chat_sessions WHERE updatedAt < ?").all(cutoff) as Array<{ id: string }>;
-      const staleRoomRows = this.syncDb().prepare("SELECT id FROM chat_rooms WHERE updatedAt < ?").all(cutoff) as Array<{ id: string }>;
-
-      if (staleSessionRows.length > 0) {
-        this.syncDb().prepare("DELETE FROM chat_sessions WHERE updatedAt < ?").run(cutoff);
-      }
-      if (staleRoomRows.length > 0) {
-        this.syncDb().prepare("DELETE FROM chat_rooms WHERE updatedAt < ?").run(cutoff);
-      }
-
-      return {
-        staleSessionIds: staleSessionRows.map((row) => row.id),
-        staleRoomIds: staleRoomRows.map((row) => row.id),
-      };
-    });
-
-    if (result.staleSessionIds.length === 0 && result.staleRoomIds.length === 0) {
-      return { sessionsDeleted: 0, roomsDeleted: 0 };
-    }
-
-    this.syncDb().bumpLastModified();
-    for (const sessionId of result.staleSessionIds) {
+    const result = await asyncChatStore.cleanupOldChats(this.asyncLayer.db, maxAgeMs);
+    for (const sessionId of result.deletedSessionIds) {
       this.emit("chat:session:deleted", sessionId);
     }
-    for (const roomId of result.staleRoomIds) {
+    for (const roomId of result.deletedRoomIds) {
       this.emit("chat:room:deleted", roomId);
     }
-
-    return {
-      sessionsDeleted: result.staleSessionIds.length,
-      roomsDeleted: result.staleRoomIds.length,
-    };
+    return { sessionsDeleted: result.sessionsDeleted, roomsDeleted: result.roomsDeleted };
   }
 
   async addRoomMember(roomId: string, agentId: string, role: RoomMemberRole = "member"): Promise<ChatRoomMember> {
     const now = new Date().toISOString();
-    if (this.backendMode) {
-      await asyncChatStore.addChatRoomMember(this.asyncLayer!.db, roomId, agentId, role, now);
-      const members = await this.listRoomMembers(roomId);
-      const member = members.find((m) => m.agentId === agentId);
-      if (!member) throw new Error(`Failed to load room member ${agentId}`);
-      this.emit("chat:room:member:added", member);
-      return member;
-    }
-    const result = this.syncDb().prepare(`
-      INSERT OR IGNORE INTO chat_room_members (roomId, agentId, role, addedAt)
-      VALUES (?, ?, ?, ?)
-    `).run(roomId, agentId, role, now);
-
-    const member = this.syncDb().prepare("SELECT * FROM chat_room_members WHERE roomId = ? AND agentId = ?").get(roomId, agentId) as ChatRoomMemberRow | undefined;
+    await asyncChatStore.addChatRoomMember(this.asyncLayer.db, roomId, agentId, role, now);
+    const members = await this.listRoomMembers(roomId);
+    const member = members.find((m) => m.agentId === agentId);
     if (!member) throw new Error(`Failed to load room member ${agentId}`);
-    const mapped = this.rowToRoomMember(member);
-
-    if (result.changes > 0) {
-      this.syncDb().bumpLastModified();
-      this.emit("chat:room:member:added", mapped);
-    }
-    return mapped;
+    this.emit("chat:room:member:added", member);
+    return member;
   }
 
   async removeRoomMember(roomId: string, agentId: string): Promise<boolean> {
-    if (this.backendMode) {
-      const removed = await asyncChatStore.removeChatRoomMember(this.asyncLayer!.db, roomId, agentId);
-      if (removed) this.emit("chat:room:member:removed", { roomId, agentId });
-      return removed;
-    }
-    const result = this.syncDb().prepare("DELETE FROM chat_room_members WHERE roomId = ? AND agentId = ?").run(roomId, agentId);
-    const removed = result.changes > 0;
-    if (removed) {
-      this.syncDb().bumpLastModified();
-      this.emit("chat:room:member:removed", { roomId, agentId });
-    }
+    const removed = await asyncChatStore.removeChatRoomMember(this.asyncLayer.db, roomId, agentId);
+    if (removed) this.emit("chat:room:member:removed", { roomId, agentId });
     return removed;
   }
 
   async listRoomMembers(roomId: string): Promise<ChatRoomMember[]> {
-    if (this.backendMode) {
-      return asyncChatStore.listChatRoomMembers(this.asyncLayer!.db, roomId);
-    }
-    const rows = this.syncDb().prepare("SELECT * FROM chat_room_members WHERE roomId = ? ORDER BY addedAt ASC").all(roomId) as ChatRoomMemberRow[];
-    return rows.map((row) => this.rowToRoomMember(row));
+    return asyncChatStore.listChatRoomMembers(this.asyncLayer.db, roomId);
   }
 
   async listRoomsForAgent(agentId: string, options?: { projectId?: string; status?: ChatRoomStatus }): Promise<ChatRoom[]> {
-    if (this.backendMode) {
-      return asyncChatStore.listChatRoomsForAgent(this.asyncLayer!.db, agentId, options);
-    }
-    const whereClauses: string[] = ["m.agentId = ?"];
-    const params: string[] = [agentId];
-    if (options?.projectId) {
-      whereClauses.push("r.projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options?.status) {
-      whereClauses.push("r.status = ?");
-      params.push(options.status);
-    }
-    const rows = this.syncDb().prepare(`
-      SELECT r.* FROM chat_rooms r
-      INNER JOIN chat_room_members m ON m.roomId = r.id
-      WHERE ${whereClauses.join(" AND ")}
-      ORDER BY r.updatedAt DESC
-    `).all(...params) as ChatRoomRow[];
-    return rows.map((row) => this.rowToRoom(row));
+    return asyncChatStore.listChatRoomsForAgent(this.asyncLayer.db, agentId, options);
   }
 
   async addRoomMessage(roomId: string, input: ChatRoomMessageCreateInput): Promise<ChatRoomMessage> {
@@ -1426,27 +589,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     if (!room) {
       throw new Error(`Chat room ${roomId} not found`);
     }
-
-    if (this.backendMode) {
-      const now = new Date().toISOString();
-      const message: ChatRoomMessage = {
-        id: `rmsg-${randomUUID().slice(0, 8)}`,
-        roomId,
-        role: input.role,
-        content: input.content,
-        thinkingOutput: input.thinkingOutput ?? null,
-        metadata: input.metadata ?? null,
-        attachments: input.attachments,
-        senderAgentId: input.senderAgentId ?? null,
-        mentions: input.mentions ?? [],
-        createdAt: now,
-      };
-      const created = await asyncChatStore.addChatRoomMessage(this.asyncLayer!.db, message);
-      this.emit("chat:room:message:added", created);
-      return created;
-    }
-
-    const now2 = new Date().toISOString();
+    const now = new Date().toISOString();
     const message: ChatRoomMessage = {
       id: `rmsg-${randomUUID().slice(0, 8)}`,
       roomId,
@@ -1457,52 +600,15 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       attachments: input.attachments,
       senderAgentId: input.senderAgentId ?? null,
       mentions: input.mentions ?? [],
-      createdAt: now2,
+      createdAt: now,
     };
-
-    this.syncDb().prepare(`
-      INSERT INTO chat_room_messages (id, roomId, role, content, thinkingOutput, metadata, attachments, senderAgentId, mentions, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      message.id,
-      message.roomId,
-      message.role,
-      message.content,
-      message.thinkingOutput,
-      toJsonNullable(message.metadata),
-      toJsonNullable(message.attachments),
-      message.senderAgentId,
-      toJsonNullable(message.mentions),
-      message.createdAt,
-    );
-
-    this.syncDb().prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(now2, roomId);
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:message:added", message);
-    return message;
+    const created = await asyncChatStore.addChatRoomMessage(this.asyncLayer.db, message);
+    this.emit("chat:room:message:added", created);
+    return created;
   }
 
   async getRoomMessages(roomId: string, filter?: ChatRoomMessagesFilter): Promise<ChatRoomMessage[]> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatRoomMessages(this.asyncLayer!.db, roomId, filter);
-    }
-    const whereClauses: string[] = ["roomId = ?"];
-    const params: Array<string | number> = [roomId];
-    if (filter?.before) {
-      whereClauses.push("createdAt < ?");
-      params.push(filter.before);
-    }
-
-    const order = filter?.order === "desc" ? "DESC" : "ASC";
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM chat_room_messages
-      WHERE ${whereClauses.join(" AND ")}
-      ORDER BY createdAt ${order}
-      LIMIT ? OFFSET ?
-    `).all(...params, filter?.limit ?? 100, filter?.offset ?? 0) as ChatRoomMessageRow[];
-
-    const normalizedRows = filter?.order === "desc" ? [...rows].reverse() : rows;
-    return normalizedRows.map((row) => this.rowToRoomMessage(row));
+    return asyncChatStore.getChatRoomMessages(this.asyncLayer.db, roomId, filter);
   }
 
   async listRoomMessagesSince(
@@ -1510,126 +616,38 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     sinceIso: string,
     options?: { excludeSenderAgentId?: string; limit?: number },
   ): Promise<ChatRoomMessage[]> {
-    if (this.backendMode) {
-      return asyncChatStore.listChatRoomMessagesSince(this.asyncLayer!.db, roomId, sinceIso, options);
-    }
-    const whereClauses: string[] = ["roomId = ?", "createdAt > ?"];
-    const params: Array<string | number | null> = [roomId, sinceIso];
-
-    if (options?.excludeSenderAgentId) {
-      whereClauses.push("(senderAgentId IS NULL OR senderAgentId != ?)");
-      params.push(options.excludeSenderAgentId);
-    }
-
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM chat_room_messages
-      WHERE ${whereClauses.join(" AND ")}
-      ORDER BY createdAt ASC
-      LIMIT ?
-    `).all(...params, options?.limit ?? 50) as ChatRoomMessageRow[];
-
-    return rows.map((row) => this.rowToRoomMessage(row));
+    return asyncChatStore.listChatRoomMessagesSince(this.asyncLayer.db, roomId, sinceIso, options);
   }
 
   async getRoomMessage(id: string): Promise<ChatRoomMessage | undefined> {
-    if (this.backendMode) {
-      return asyncChatStore.getChatRoomMessage(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare("SELECT * FROM chat_room_messages WHERE id = ?").get(id) as ChatRoomMessageRow | undefined;
-    return row ? this.rowToRoomMessage(row) : undefined;
+    return asyncChatStore.getChatRoomMessage(this.asyncLayer.db, id);
   }
 
   async deleteRoomMessage(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const existing = await asyncChatStore.getChatRoomMessage(this.asyncLayer!.db, id);
-      if (!existing) return false;
-      const deleted = await asyncChatStore.deleteChatRoomMessage(this.asyncLayer!.db, id);
-      if (deleted) {
-        this.emit("chat:room:message:deleted", id);
-        const updatedRoom = await this.getRoom(existing.roomId);
-        if (updatedRoom) this.emit("chat:room:updated", updatedRoom);
-      }
-      return deleted;
+    const existing = await asyncChatStore.getChatRoomMessage(this.asyncLayer.db, id);
+    if (!existing) return false;
+    const deleted = await asyncChatStore.deleteChatRoomMessage(this.asyncLayer.db, id);
+    if (deleted) {
+      this.emit("chat:room:message:deleted", id);
+      const updatedRoom = await this.getRoom(existing.roomId);
+      if (updatedRoom) this.emit("chat:room:updated", updatedRoom);
     }
-    const message = await this.getRoomMessage(id);
-    if (!message) return false;
-
-    const now = new Date().toISOString();
-    this.syncDb().prepare("DELETE FROM chat_room_messages WHERE id = ?").run(id);
-    this.syncDb().prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(now, message.roomId);
-
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:message:deleted", id);
-
-    const updatedRoom = await this.getRoom(message.roomId);
-    if (updatedRoom) {
-      this.emit("chat:room:updated", updatedRoom);
-    }
-
-    return true;
+    return deleted;
   }
 
   async clearRoomMessages(roomId: string): Promise<number> {
-    if (this.backendMode) {
-      const deleted = await asyncChatStore.clearChatRoomMessages(this.asyncLayer!.db, roomId);
-      if (deleted > 0) this.emit("chat:room:messages:cleared", { roomId, deletedCount: deleted });
-      return deleted;
-    }
-    const room = await this.getRoom(roomId);
-    if (!room) {
-      return 0;
-    }
-
-    const deleted = this.syncDb().prepare("DELETE FROM chat_room_messages WHERE roomId = ?").run(roomId);
-    const deletedCount = Number(deleted.changes);
-    if (deletedCount <= 0) {
-      return 0;
-    }
-
-    const now = new Date().toISOString();
-    this.syncDb().prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(now, roomId);
-    this.syncDb().bumpLastModified();
-    this.emit("chat:room:messages:cleared", { roomId, deletedCount });
-
-    const updatedRoom = await this.getRoom(roomId);
-    if (updatedRoom) {
-      this.emit("chat:room:updated", updatedRoom);
-    }
-
-    return deletedCount;
+    const deleted = await asyncChatStore.clearChatRoomMessages(this.asyncLayer.db, roomId);
+    if (deleted > 0) this.emit("chat:room:messages:cleared", { roomId, deletedCount: deleted });
+    return deleted;
   }
 
   async addRoomMessageAttachment(roomId: string, messageId: string, attachment: ChatAttachment): Promise<ChatRoomMessage> {
-    if (this.backendMode) {
-      const updated = await asyncChatStore.addChatRoomMessageAttachment(this.asyncLayer!.db, roomId, messageId, attachment);
-      this.emit("chat:room:message:updated", updated);
-      return updated;
-    }
-    const message = await this.getRoomMessage(messageId);
-    if (!message || message.roomId !== roomId) {
-      throw new Error(`Message ${messageId} not found in room ${roomId}`);
-    }
-
-    const updatedAttachments = [...(message.attachments ?? []), attachment];
-    this.syncDb().prepare("UPDATE chat_room_messages SET attachments = ? WHERE id = ?").run(
-      toJsonNullable(updatedAttachments),
-      messageId,
-    );
-
-    const now = new Date().toISOString();
-    this.syncDb().prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(now, roomId);
-
-    const updated = await this.getRoomMessage(messageId);
-    if (!updated) {
-      throw new Error(`Failed to update room message ${messageId}`);
-    }
-
-    this.syncDb().bumpLastModified();
+    const updated = await asyncChatStore.addChatRoomMessageAttachment(this.asyncLayer.db, roomId, messageId, attachment);
     this.emit("chat:room:message:updated", updated);
     return updated;
   }
 
-  recordTokenUsage(input: ChatTokenUsageCreateInput): ChatTokenUsageRecord | undefined {
+  async recordTokenUsage(input: ChatTokenUsageCreateInput): Promise<ChatTokenUsageRecord | undefined> {
     const inputTokens = Math.max(0, Math.trunc(input.inputTokens));
     const outputTokens = Math.max(0, Math.trunc(input.outputTokens));
     const cachedTokens = Math.max(0, Math.trunc(input.cachedTokens));
@@ -1656,55 +674,36 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       totalTokens,
       createdAt: input.createdAt ?? new Date().toISOString(),
     };
-
-    /*
-     * FNXC:ChatTokenAccounting 2026-07-02-00:00:
-     * Chat interactions are first-class token consumers for Command Center totals, but they are stored in a separate append-only table instead of task.tokenUsage so task execution panels stay task-scoped and planner chat cannot double-count executor/reviewer/triage/merger sessions.
-     */
-    if (this.backendMode) {
-      const layer = this.asyncLayer!;
-      void layer.db.execute(sql`INSERT INTO project.chat_token_usage (
-        id, source_kind, chat_session_id, room_id, message_id, project_id, agent_id,
-        model_provider, model_id, input_tokens, output_tokens, cached_tokens,
-        cache_write_tokens, total_tokens, created_at
-      ) VALUES (
-        ${record.id}, ${record.sourceKind}, ${record.chatSessionId}, ${record.roomId},
-        ${record.messageId}, ${record.projectId}, ${record.agentId},
-        ${record.modelProvider}, ${record.modelId}, ${record.inputTokens}, ${record.outputTokens},
-        ${record.cachedTokens}, ${record.cacheWriteTokens}, ${record.totalTokens}, ${record.createdAt}
-      )`);
-      return record;
-    }
-    this.syncDb().prepare(`
-      INSERT INTO chat_token_usage (
-        id, sourceKind, chatSessionId, roomId, messageId, projectId, agentId,
-        modelProvider, modelId, inputTokens, outputTokens, cachedTokens,
-        cacheWriteTokens, totalTokens, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id,
-      record.sourceKind,
-      record.chatSessionId,
-      record.roomId,
-      record.messageId,
-      record.projectId,
-      record.agentId,
-      record.modelProvider,
-      record.modelId,
-      record.inputTokens,
-      record.outputTokens,
-      record.cachedTokens,
-      record.cacheWriteTokens,
-      record.totalTokens,
-      record.createdAt,
-    );
-    this.syncDb().bumpLastModified();
+    const layer = this.asyncLayer;
+    /* FNXC:PostgresChatUsage 2026-07-14-18:49: Token accounting is durable before a chat turn reports completion; callers await the insert so shutdown and immediate analytics cannot lose or race the record. */
+    /* FNXC:MultiProjectIsolation 2026-07-15-23:40: the record's domain projectId is written to owner_project_id; project_id (the RLS partition) is omitted so the fusion_assign_project_id trigger/GUC owns it (migration 0011). */
+    await layer.db.execute(sql`INSERT INTO project.chat_token_usage (
+      id, source_kind, chat_session_id, room_id, message_id, owner_project_id, agent_id,
+      model_provider, model_id, input_tokens, output_tokens, cached_tokens,
+      cache_write_tokens, total_tokens, created_at
+    ) VALUES (
+      ${record.id}, ${record.sourceKind}, ${record.chatSessionId}, ${record.roomId},
+      ${record.messageId}, ${record.projectId}, ${record.agentId},
+      ${record.modelProvider}, ${record.modelId}, ${record.inputTokens}, ${record.outputTokens},
+      ${record.cachedTokens}, ${record.cacheWriteTokens}, ${record.totalTokens}, ${record.createdAt}
+    )`);
     return record;
   }
 
-  listTokenUsage(): ChatTokenUsageRecord[] {
-    if (this.backendMode) return [];
-    const rows = this.syncDb().prepare("SELECT * FROM chat_token_usage ORDER BY createdAt ASC").all() as ChatTokenUsageRow[];
-    return rows.map((row) => this.rowToTokenUsage(row));
+  /** Authoritative PostgreSQL token-usage reader. */
+  async listTokenUsageAsync(): Promise<ChatTokenUsageRecord[]> {
+    /* FNXC:PostgresChatUsage 2026-07-14-18:40: Public chat accounting reads must return durable PostgreSQL records instead of the synchronous compatibility facade's empty value. */
+    const rows = await this.asyncLayer.db
+      .select()
+      .from(schema.project.chatTokenUsage)
+      .orderBy(asc(schema.project.chatTokenUsage.createdAt), asc(schema.project.chatTokenUsage.id));
+    return rows.map((row) => ({
+      id: row.id, sourceKind: row.sourceKind as ChatTokenUsageSourceKind,
+      chatSessionId: row.chatSessionId, roomId: row.roomId, messageId: row.messageId,
+      projectId: row.ownerProjectId, agentId: row.agentId, modelProvider: row.modelProvider,
+      modelId: row.modelId, inputTokens: row.inputTokens, outputTokens: row.outputTokens,
+      cachedTokens: row.cachedTokens, cacheWriteTokens: row.cacheWriteTokens,
+      totalTokens: row.totalTokens, createdAt: row.createdAt,
+    }));
   }
 }

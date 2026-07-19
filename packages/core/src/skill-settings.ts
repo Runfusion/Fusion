@@ -90,13 +90,19 @@ export function getSkillSettingState(
   return undefined;
 }
 
+/**
+ * FNXC:PluginSkills 2026-07-14-00:00:
+ * FN-7954 closes the plugin-skill toggle write/read key-schema mismatch for custom skillFiles paths. Dashboard toggles persist entries under the resolved plugin-root-relative SKILL.md path, so read paths must pass that same relative path when it is known; omitting skillRelativePath intentionally preserves the legacy name-derived skills/<name>/SKILL.md lookup for callers without a pluginRoot.
+ */
 export function resolvePluginSkillEnabled(
   settings: SkillSettingsScope,
   pluginId: string,
   skillName: string,
   staticEnabled: boolean | undefined,
+  skillRelativePath?: string,
 ): boolean {
-  const skillId = computeSkillId(`plugin:${pluginId}`, `skills/${skillName}/SKILL.md`);
+  const relativePath = skillRelativePath ?? `skills/${skillName}/SKILL.md`;
+  const skillId = computeSkillId(`plugin:${pluginId}`, relativePath);
   const settingState = getSkillSettingState(skillId, settings);
   return settingState === undefined ? staticEnabled !== false : settingState === "enabled";
 }

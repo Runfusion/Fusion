@@ -13,7 +13,16 @@ import {
 } from "../agent-heartbeat.js";
 import { AgentLogger } from "../agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
-import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent, MessageStore, Message } from "@fusion/core";
+import {
+  TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
+  type AgentStore,
+  type AgentHeartbeatRun,
+  type TaskStore,
+  type TaskDetail,
+  type Agent,
+  type MessageStore,
+  type Message,
+} from "@fusion/core";
 import { createMessage, createBudgetStatus } from "./heartbeat-test-helpers.js";
 vi.mock("../logger.js", async () => {
   const { createMockLogger, formatMockError } = await import("./heartbeat-test-helpers.js");
@@ -114,6 +123,12 @@ describe("executeHeartbeat", () => {
         dependencies: [],
         column: "triage",
       }),
+      /*
+      FNXC:TaskCreateDedup 2026-07-18-14:45:
+      FN-8277 parent-scoped uniqueness pre-check calls findRecentTasksBySourceParentTaskId before createTask.
+      Default empty candidates so heartbeat fn_task_create tool tests reach the store write.
+      */
+      findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
       logEntry: vi.fn().mockResolvedValue({}),
       addComment: vi.fn().mockResolvedValue({}),
       appendAgentLog: vi.fn().mockResolvedValue(undefined),
@@ -222,6 +237,7 @@ describe("executeHeartbeat", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   describe("reports health check", () => {
@@ -248,6 +264,48 @@ describe("executeHeartbeat", () => {
       expect(section).toContain("agent-3");
       expect(section).toContain("| Name | State | Task | Last Heartbeat | Health |");
       expect(section).toContain("healthy");
+    });
+
+    it("FN-8184: reports runtimeConfig cadence with one multiplier application and strict stale boundary", async () => {
+      vi.useFakeTimers();
+      const now = new Date("2026-01-01T12:00:00.000Z");
+      vi.setSystemTime(now);
+      const intervalMs = 10_800_000;
+      const effectiveIntervalMs = 81_000_000;
+      const staleThresholdMs = effectiveIntervalMs * 1.5;
+      const store = createStoreWithAgentForExec();
+      mockTaskStore = createMockTaskStore({ getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 7.5 }) });
+      vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => agentId === "agent-runtime"
+        ? { id: agentId, runtimeConfig: { heartbeatIntervalMs: intervalMs } } as Agent
+        : mockAgent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-runtime", name: "Runtime Healthy", state: "active", taskId: null, lastHeartbeatAt: new Date(now.getTime() - 4.5 * 60 * 60_000).toISOString(), updatedAt: now.toISOString() } as Agent,
+        { id: "agent-boundary", name: "Strict Boundary", state: "idle", taskId: null, lastHeartbeatAt: new Date(now.getTime() - staleThresholdMs).toISOString(), updatedAt: now.toISOString() } as Agent,
+        { id: "agent-overdue", name: "Strict Overdue", state: "active", taskId: null, lastHeartbeatAt: new Date(now.getTime() - staleThresholdMs - 1).toISOString(), updatedAt: now.toISOString() } as Agent,
+      ]);
+      vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => ({ id: agentId, runtimeConfig: { heartbeatIntervalMs: intervalMs } } as Agent));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Runtime Healthy \| active \| — \| .* \| healthy \|/);
+      expect(section).toMatch(/\| Strict Boundary \| idle \| — \| .* \| healthy \|/);
+      expect(section).toMatch(/\| Strict Overdue \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("intervalSource=runtimeConfig"));
+    });
+
+    it("FN-8184: getAgentHeartbeatConfig scales task-store-backed values exactly once", async () => {
+      const store = createStoreWithAgentForExec();
+      mockTaskStore = createMockTaskStore({ getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 7.5 }) });
+      vi.mocked(store.getAgent).mockResolvedValue({
+        ...mockAgent,
+        runtimeConfig: { heartbeatIntervalMs: 10_800_000, heartbeatTimeoutMs: 60_000 },
+      } as Agent);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      await expect(monitor.getAgentHeartbeatConfig("agent-001")).resolves.toMatchObject({
+        pollIntervalMs: 81_000_000,
+        heartbeatTimeoutMs: 450_000,
+      });
     });
 
     it("FN-6954: buildReportsHealthSection suppresses running state for parked task with no live proof", async () => {
@@ -454,6 +512,37 @@ describe("executeHeartbeat", () => {
       expect(section).toContain("Overdue A");
       expect(section).toContain("Overdue B");
       expect(section).toContain("**stale**");
+    });
+
+    it("classifies the FN-8018 field ages as stale using persisted timestamps", async () => {
+      const now = Date.now();
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getCachedAgent).mockImplementation((id: string) => ({
+        id,
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      }) as unknown as Agent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-backend", name: "Backend Engineer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (6 * 60 + 32) * 60_000).toISOString(), updatedAt: new Date(now - (6 * 60 + 32) * 60_000).toISOString() } as Agent,
+        { id: "agent-frontend", name: "Frontend Engineer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (5 * 60 + 59) * 60_000).toISOString(), updatedAt: new Date(now - (5 * 60 + 59) * 60_000).toISOString() } as Agent,
+        { id: "agent-writer", name: "Technical Writer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (6 * 60 + 34) * 60_000).toISOString(), updatedAt: new Date(now - (6 * 60 + 34) * 60_000).toISOString() } as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Backend Engineer \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(section).toMatch(/\| Frontend Engineer \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(section).toMatch(/\| Technical Writer \| active \| — \| .* \| \*\*stale\*\* \|/);
+    });
+
+    it("classifies an invalid persisted heartbeat as stale", async () => {
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-invalid-heartbeat", name: "Invalid Heartbeat", state: "active", taskId: null, lastHeartbeatAt: "not-a-timestamp", updatedAt: new Date().toISOString() } as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Invalid Heartbeat \| active \| — \| unknown \| \*\*stale\*\* \|/);
     });
 
     it.each([
@@ -1533,7 +1622,7 @@ describe("executeHeartbeat", () => {
       expect(result.resultJson).toEqual({ reason: "no_assignment" });
     });
 
-    it("identity agent without task receives correct tools (fn_task_create, fn_list_agents, fn_delegate_task, fn_heartbeat_done)", async () => {
+    it("identity agent without task receives delegation and task assignment tools", async () => {
       const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
@@ -1547,10 +1636,11 @@ describe("executeHeartbeat", () => {
       expect(callArgs.tools).toBe("coding");
       const toolNames = callArgs.customTools!.map((tool: any) => tool.name);
 
-      // Should have fn_task_create, fn_list_agents, fn_delegate_task
+      // Delegation and direct reassignment must remain available together.
       expect(toolNames).toContain("fn_task_create");
       expect(toolNames).toContain("fn_list_agents");
       expect(toolNames).toContain("fn_delegate_task");
+      expect(toolNames).toContain("fn_task_assign");
       // Should have fn_heartbeat_done
       expect(toolNames).toContain("fn_heartbeat_done");
       // Should have memory tools
@@ -1590,6 +1680,48 @@ describe("executeHeartbeat", () => {
       expect(systemPrompt).toContain('scope="agent"');
       expect(systemPrompt).toContain('scope="project"');
       expect(systemPrompt).toContain("fn_heartbeat_done");
+    });
+
+    it("no-task run gates proactive patrol prompts from workflow setting", async () => {
+      for (const [storedValue, shouldPatrol] of [[undefined, true], [true, true], [false, false]] as const) {
+        vi.clearAllMocks();
+        const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+        const taskStore = createMockTaskStore({
+          getSettings: vi.fn().mockResolvedValue({ defaultWorkflowId: "builtin:coding" }),
+          getWorkflowSettingsProjectId: vi.fn().mockReturnValue("test-project"),
+          getWorkflowSettingValues: vi.fn().mockReturnValue(
+            storedValue === undefined ? {} : { plannerHeartbeatPatrolEnabled: storedValue },
+          ),
+        } as Partial<TaskStore>);
+
+        const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(result.status).toBe("completed");
+        expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
+        const callArgs = mockedCreateFnAgent.mock.calls[0]![0]!;
+        const systemPrompt = callArgs.systemPrompt;
+        const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] ?? "";
+        const savedRun = await store.getRunDetail("agent-001", result.id);
+
+        if (shouldPatrol) {
+          expect(systemPrompt).toContain("Use fn_task_create to spawn follow-up work");
+          expect(executionPrompt).toContain("create a focused task instead of attempting unscheduled implementation");
+          expect(savedRun?.systemPrompt).toContain("Use fn_task_create to spawn follow-up work");
+          expect(savedRun?.executionPrompt).toContain("create a focused task instead of attempting unscheduled implementation");
+          expect(systemPrompt).not.toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+        } else {
+          expect(systemPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+          expect(executionPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+          expect(savedRun?.systemPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+          expect(savedRun?.executionPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+          expect(systemPrompt).not.toContain("Use fn_task_create to spawn follow-up work");
+          expect(executionPrompt).not.toContain("create a focused task instead of attempting unscheduled implementation");
+        }
+      }
     });
 
     it("identity agent without task receives no-task execution prompt mentioning 'no assigned task'", async () => {
@@ -3143,51 +3275,89 @@ describe("executeHeartbeat", () => {
       expect(callArgs.systemPrompt).toContain("fn_task_log");
       expect(callArgs.systemPrompt).toContain("fn_task_document_write");
       expect(callArgs.tools).toBe("coding");
-      // fn_artifact_register/list/view, agent config/provisioning, goals/evaluations/identity,
-      // task read discovery, workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(41);
-      expect(callArgs.customTools![0]!.name).toBe("fn_task_create");
-      expect(callArgs.customTools![1]!.name).toBe("fn_task_log");
-      expect(callArgs.customTools![2]!.name).toBe("fn_task_document_write");
-      expect(callArgs.customTools![3]!.name).toBe("fn_task_document_read");
-      expect(callArgs.customTools![4]!.name).toBe("fn_artifact_register");
-      expect(callArgs.customTools![5]!.name).toBe("fn_artifact_list");
-      expect(callArgs.customTools![6]!.name).toBe("fn_artifact_view");
-      expect(callArgs.customTools![7]!.name).toBe("fn_list_agents");
-      expect(callArgs.customTools![8]!.name).toBe("fn_delegate_task");
-      expect(callArgs.customTools![9]!.name).toBe("fn_get_agent_config");
-      expect(callArgs.customTools![10]!.name).toBe("fn_update_agent_config");
-      expect(callArgs.customTools![11]!.name).toBe("fn_agent_create");
-      expect(callArgs.customTools![12]!.name).toBe("fn_agent_delete");
-      expect(callArgs.customTools![13]!.name).toBe("fn_goal_list");
-      expect(callArgs.customTools![14]!.name).toBe("fn_goal_show");
-      expect(callArgs.customTools![15]!.name).toBe("fn_read_evaluations");
-      expect(callArgs.customTools![16]!.name).toBe("fn_update_identity");
-      expect(callArgs.customTools![17]!.name).toBe("fn_task_list");
-      expect(callArgs.customTools![18]!.name).toBe("fn_task_show");
-      expect(callArgs.customTools![19]!.name).toBe("fn_task_search");
-      expect(callArgs.customTools![20]!.name).toBe("fn_workflow_list");
-      expect(callArgs.customTools![21]!.name).toBe("fn_workflow_get");
-      expect(callArgs.customTools![22]!.name).toBe("fn_workflow_validate");
-      expect(callArgs.customTools![23]!.name).toBe("fn_workflow_create");
-      expect(callArgs.customTools![24]!.name).toBe("fn_workflow_update");
-      expect(callArgs.customTools![25]!.name).toBe("fn_workflow_delete");
-      expect(callArgs.customTools![26]!.name).toBe("fn_workflow_settings");
-      expect(callArgs.customTools![27]!.name).toBe("fn_trait_list");
-      expect(callArgs.customTools![28]!.name).toBe("fn_ask_question");
-      expect(callArgs.customTools![29]!.name).toBe("fn_research_run");
-      expect(callArgs.customTools![30]!.name).toBe("fn_research_list");
-      expect(callArgs.customTools![31]!.name).toBe("fn_research_get");
-      expect(callArgs.customTools![32]!.name).toBe("fn_research_cancel");
-      expect(callArgs.customTools![33]!.name).toBe("fn_research_retry");
-      expect(callArgs.customTools![34]!.name).toBe("fn_workflow_select");
-      expect(callArgs.customTools![35]!.name).toBe("fn_task_promote");
-      expect(callArgs.customTools![36]!.name).toBe("fn_web_fetch");
-      expect(callArgs.customTools![37]!.name).toBe("fn_memory_search");
-      expect(callArgs.customTools![38]!.name).toBe("fn_memory_get");
-      expect(callArgs.customTools![39]!.name).toBe("fn_memory_append");
-      // fn_heartbeat_done is last (terminal tool)
-      expect(callArgs.customTools![40]!.name).toBe("fn_heartbeat_done");
+      /*
+      FNXC:TaskAgentLog 2026-07-16-08:05:
+      Heartbeat customTools include FN-8058 fn_task_logs_read after fn_task_log so durable agents can read agent-log.jsonl. Count stays exact so new tools fail loudly.
+
+      FNXC:MissionToolParity 2026-07-18-12:40:
+      FN-8294 adds the full Mission hierarchy surface (15 tools) to task-scoped heartbeat sessions via createMissionTools, after agent provisioning and before goal retrieval. Count rose 43→58; keep exact so new tools fail loudly.
+
+      FNXC:Ideation 2026-07-18-14:05:
+      FN-8295 mounts createIdeationTools (5 tools) immediately after missions on task-scoped and no-task heartbeats. Count rose 58→63.
+
+      FNXC:ResearchMissionBridge 2026-07-18-16:35:
+      FN-8297 adds fn_research_promote_finding on the Mission tool surface (after feature_link_task). Count rose 63→64.
+      */
+      // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, ideation, goals/evaluations/identity,
+      // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
+      expect(callArgs.customTools).toHaveLength(64);
+      expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
+        "fn_task_create",
+        "fn_task_log",
+        "fn_task_logs_read",
+        "fn_task_document_write",
+        "fn_task_document_read",
+        "fn_artifact_register",
+        "fn_artifact_list",
+        "fn_artifact_view",
+        "fn_list_agents",
+        "fn_delegate_task",
+        "fn_task_assign",
+        "fn_get_agent_config",
+        "fn_update_agent_config",
+        "fn_agent_create",
+        "fn_agent_delete",
+        "fn_mission_list",
+        "fn_mission_show",
+        "fn_mission_create",
+        "fn_mission_update",
+        "fn_mission_delete",
+        "fn_milestone_add",
+        "fn_milestone_update",
+        "fn_milestone_delete",
+        "fn_slice_add",
+        "fn_slice_activate",
+        "fn_slice_delete",
+        "fn_feature_add",
+        "fn_feature_update",
+        "fn_feature_delete",
+        "fn_feature_link_task",
+        "fn_research_promote_finding",
+        "fn_ideation_list",
+        "fn_ideation_show",
+        "fn_ideation_start",
+        "fn_ideation_diverge",
+        "fn_ideation_converge",
+        "fn_goal_list",
+        "fn_goal_show",
+        "fn_read_evaluations",
+        "fn_update_identity",
+        "fn_task_list",
+        "fn_task_show",
+        "fn_task_search",
+        "fn_workflow_list",
+        "fn_workflow_get",
+        "fn_workflow_validate",
+        "fn_workflow_create",
+        "fn_workflow_update",
+        "fn_workflow_delete",
+        "fn_workflow_settings",
+        "fn_trait_list",
+        "fn_ask_question",
+        "fn_research_run",
+        "fn_research_list",
+        "fn_research_get",
+        "fn_research_cancel",
+        "fn_research_retry",
+        "fn_workflow_select",
+        "fn_task_promote",
+        "fn_web_fetch",
+        "fn_memory_search",
+        "fn_memory_get",
+        "fn_memory_append",
+        // fn_heartbeat_done is last (terminal tool)
+        "fn_heartbeat_done",
+      ]);
     });
 
     it("loads workspace memory into system prompt and identity snapshot when inline memory is empty", async () => {
@@ -3524,7 +3694,7 @@ describe("executeHeartbeat", () => {
       expect(taskLogTool.name).toBe("fn_task_log");
     });
 
-    it("passes execution settings model ahead of stale runtime model", async () => {
+    it("uses complete assigned runtime model ahead of shared execution settings", async () => {
       const store = createStoreWithAgentForExec({
         runtimeConfig: { model: "anthropic/claude-sonnet-4-5" },
       });
@@ -3545,8 +3715,8 @@ describe("executeHeartbeat", () => {
 
       expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
       const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
-      expect(callArgs.defaultProvider).toBe("openai");
-      expect(callArgs.defaultModelId).toBe("gpt-4.1");
+      expect(callArgs.defaultProvider).toBe("anthropic");
+      expect(callArgs.defaultModelId).toBe("claude-sonnet-4-5");
       expect(callArgs.fallbackProvider).toBeUndefined();
       expect(callArgs.fallbackModelId).toBeUndefined();
     });
@@ -3736,6 +3906,7 @@ describe("executeHeartbeat", () => {
       await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
       // FN-7536+: createTask input no longer carries `column` (defaulted server-side to triage) and now forwards `githubTracking`; objectContaining tolerates the extra key.
+      // FNXC:TaskCreateDedup 2026-07-18-14:45: second arg also carries onProposalClaimConflict after FN-8277; match loosely.
       expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
         description: "Follow-up task",
         dependencies: undefined,
@@ -3750,7 +3921,7 @@ describe("executeHeartbeat", () => {
             contentFingerprint: expect.any(String),
           }),
         }),
-      }), { settings: {} });
+      }), expect.objectContaining({ settings: {} }));
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {

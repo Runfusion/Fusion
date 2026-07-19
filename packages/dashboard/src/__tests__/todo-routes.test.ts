@@ -71,6 +71,12 @@ function createMockTodoStore() {
         }))
     ),
 
+    getList: vi.fn((id: string) => lists.get(id)),
+
+    getItem: vi.fn((id: string) => items.get(id)),
+
+    listItems: vi.fn((listId: string) => listItemsForList(listId)),
+
     createItem: vi.fn((listId: string, input: { text: string }) => {
       if (!lists.has(listId)) {
         throw new Error(`Todo list ${listId} not found`);
@@ -140,13 +146,18 @@ function createMockTodoStore() {
 describe("Todo Routes", () => {
   let app: express.Express;
   let mockTodoStore: ReturnType<typeof createMockTodoStore>;
-  let mockStore: { getTodoStore: ReturnType<typeof vi.fn>; getRootDir: ReturnType<typeof vi.fn> };
+  let mockStore: {
+    getTodoStore: ReturnType<typeof vi.fn>;
+    getRootDir: ReturnType<typeof vi.fn>;
+    createTask: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     mockTodoStore = createMockTodoStore();
     mockStore = {
       getTodoStore: vi.fn(() => mockTodoStore),
       getRootDir: vi.fn(() => "/test/root"),
+      createTask: vi.fn(async (input) => ({ id: "FN-TODO-TASK", ...input })),
     };
 
     mockGetOrCreateProjectStore.mockResolvedValue(mockStore);
@@ -249,6 +260,45 @@ describe("Todo Routes", () => {
   });
 
   describe("item endpoints", () => {
+    it("GET /:id returns a list with its ordered items and 404s when missing", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const first = mockTodoStore.createItem(list.id, { text: "First" });
+      const second = mockTodoStore.createItem(list.id, { text: "Second" });
+
+      const response = await performGet(app, `/api/todos/${list.id}`);
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ id: list.id, title: "Inbox" });
+      expect(response.body.items.map((item: TodoItem) => item.id)).toEqual([first.id, second.id]);
+
+      const missing = await performGet(app, "/api/todos/TDL-MISSING");
+      expect(missing.status).toBe(404);
+    });
+
+    it("GET /:id/items returns ordered items and 404s for a missing list", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const first = mockTodoStore.createItem(list.id, { text: "First" });
+      const second = mockTodoStore.createItem(list.id, { text: "Second" });
+
+      const response = await performGet(app, `/api/todos/${list.id}/items`);
+      expect(response.status).toBe(200);
+      expect(response.body.map((item: TodoItem) => item.id)).toEqual([first.id, second.id]);
+
+      const missing = await performGet(app, "/api/todos/TDL-MISSING/items");
+      expect(missing.status).toBe(404);
+    });
+
+    it("GET /items/:id returns an item and 404s when missing", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Read me" });
+
+      const response = await performGet(app, `/api/todos/items/${item.id}`);
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ id: item.id, text: "Read me" });
+
+      const missing = await performGet(app, "/api/todos/items/TDI-MISSING");
+      expect(missing.status).toBe(404);
+    });
+
     it("POST /:id/items creates item with valid text", async () => {
       const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
       const response = await performRequest(
@@ -260,6 +310,94 @@ describe("Todo Routes", () => {
       );
       expect(response.status).toBe(201);
       expect(response.body.text).toBe("Buy milk");
+    });
+
+    it("POST /items/:id/create-task creates a task with todo provenance and no forced column", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Ship Todo API" });
+
+      const response = await performRequest(app, "POST", `/api/todos/items/${item.id}/create-task`);
+      expect(response.status).toBe(201);
+      expect(response.body.id).toBe("FN-TODO-TASK");
+      expect(mockStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: item.text.slice(0, 200),
+        description: item.text,
+        source: {
+          sourceType: "api",
+          sourceMetadata: { todoItemId: item.id, todoListId: item.listId },
+        },
+      }));
+      expect(mockStore.createTask.mock.calls[0]?.[0]).not.toHaveProperty("column");
+    });
+
+    it("POST /items/:id/create-task honors trimmed optional task fields", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Original title" });
+
+      const response = await performRequest(
+        app,
+        "POST",
+        `/api/todos/items/${item.id}/create-task`,
+        JSON.stringify({
+          title: " Custom title ",
+          priority: "high",
+          workflowId: " workflow-custom ",
+          assignedAgentId: " agent-1 ",
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(response.status).toBe(201);
+      expect(mockStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Custom title",
+        priority: "high",
+        workflowId: "workflow-custom",
+        assignedAgentId: "agent-1",
+      }));
+    });
+
+    it("POST /items/:id/create-task omits blank workflow and agent IDs", async () => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Task" });
+
+      const response = await performRequest(
+        app,
+        "POST",
+        `/api/todos/items/${item.id}/create-task`,
+        JSON.stringify({ workflowId: "  ", assignedAgentId: "\t" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(response.status).toBe(201);
+      const input = mockStore.createTask.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(input).not.toHaveProperty("workflowId");
+      expect(input).not.toHaveProperty("assignedAgentId");
+    });
+
+    it.each([
+      [{ title: "   " }, "blank"],
+      [{ title: "A".repeat(201) }, "200 characters"],
+      [{ priority: "critical" }, "priority"],
+    ])("POST /items/:id/create-task rejects invalid input %#", async (body, message) => {
+      const list = mockTodoStore.createList("proj-a", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Task" });
+      const response = await performRequest(
+        app,
+        "POST",
+        `/api/todos/items/${item.id}/create-task`,
+        JSON.stringify(body),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain(message);
+      expect(mockStore.createTask).not.toHaveBeenCalled();
+    });
+
+    it("POST /items/:id/create-task returns 404 for a missing item", async () => {
+      const response = await performRequest(app, "POST", "/api/todos/items/TDI-MISSING/create-task");
+      expect(response.status).toBe(404);
+      expect(mockStore.createTask).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -401,6 +539,23 @@ describe("Todo Routes", () => {
       expect(response.status).toBe(201);
       expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith("project-body");
       expect(mockTodoStore.createList).toHaveBeenCalledWith("project-body", { title: "List" });
+    });
+
+    it("uses a body projectId to resolve the scoped store for create-task", async () => {
+      const list = mockTodoStore.createList("project-body", { title: "Inbox" });
+      const item = mockTodoStore.createItem(list.id, { text: "Scoped task" });
+
+      const response = await performRequest(
+        app,
+        "POST",
+        `/api/todos/items/${item.id}/create-task`,
+        JSON.stringify({ projectId: "project-task-scope" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(response.status).toBe(201);
+      expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith("project-task-scope");
+      expect(mockStore.createTask).toHaveBeenCalledTimes(1);
     });
 
     it("passes projectId from body to item update route via scoped resolver", async () => {

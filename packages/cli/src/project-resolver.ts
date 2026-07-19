@@ -14,13 +14,14 @@ import { createInterface } from "node:readline/promises";
 import {
   CentralCore,
   createTaskStoreForBackend,
+  hasProjectIdentity,
   isValidSqliteDatabaseFile,
   readProjectIdentity,
   writeProjectIdentity,
   detectWorkspaceRepos,
   saveWorkspaceConfig,
   suggestTaskPrefix,
-  TaskStore,
+  type TaskStore,
   type RegisteredProject,
 } from "@fusion/core";
 import { ProjectManager } from "@fusion/engine";
@@ -28,6 +29,7 @@ import { ProjectManager } from "@fusion/engine";
 // Singleton instances for reuse across commands
 let centralCoreInstance: CentralCore | null = null;
 let projectManagerInstance: ProjectManager | null = null;
+const resolvedProjectStores = new Map<TaskStore, () => Promise<void>>();
 
 /**
  * Error thrown when project resolution fails with actionable context.
@@ -117,8 +119,10 @@ export function findKbDir(startPath: string): string | null {
 
   // Safety limit to prevent infinite loops
   for (let i = 0; i < 100; i++) {
-    const dbPath = resolve(current, ".fusion", "fusion.db");
-    if (isValidSqliteDatabaseFile(dbPath)) {
+    const fusionDir = resolve(current, ".fusion");
+    // FNXC:ProjectIdentityMarker 2026-07-14-17:20: Project discovery uses the
+    // PG-neutral marker, with SQLite recognition retained only for migration.
+    if (hasProjectIdentity(fusionDir) || isValidSqliteDatabaseFile(resolve(fusionDir, "fusion.db"))) {
       return current;
     }
 
@@ -426,18 +430,13 @@ export async function resolveProject(options: ResolveOptions = {}): Promise<Reso
  * FNXC:PostgresCutover 2026-07-04: boot a project TaskStore through the
  * PostgreSQL startup factory (embedded by default, external via DATABASE_URL)
  * instead of a legacy SQLite TaskStore whose runtime was removed under
- * VAL-REMOVAL-005. Returns the legacy store only on the FUSION_NO_EMBEDDED_PG=1
- * opt-out. Shared by createResolvedProject and the onboarding init paths so
+ * VAL-REMOVAL-005. Shared by createResolvedProject and the onboarding init paths so
  * every `fn project`/`fn init` store construction stays backend-first.
  */
 async function createProjectStore(rootDir: string): Promise<TaskStore> {
   const boot = await createTaskStoreForBackend({ rootDir });
-  if (boot) {
-    return boot.taskStore;
-  }
-  const store = new TaskStore(rootDir);
-  await store.init();
-  return store;
+  resolvedProjectStores.set(boot.taskStore, boot.shutdown);
+  return boot.taskStore;
 }
 
 /**
@@ -476,6 +475,11 @@ async function createResolvedProject(project: RegisteredProject): Promise<Resolv
  * Call this on CLI exit to close database connections.
  */
 export async function cleanupProjectResolution(): Promise<void> {
+  /* FNXC:PostgresProjectResolverLifecycle 2026-07-14-18:08: ResolvedProject exposes only its TaskStore, so module cleanup must retain and release every startup-factory ownership handle on signals and normal explicit cleanup. */
+  for (const [store, shutdown] of resolvedProjectStores) {
+    resolvedProjectStores.delete(store);
+    await shutdown().catch(() => undefined);
+  }
   if (projectManagerInstance) {
     // ProjectManager doesn't have a close method, but we should stop all runtimes
     try {
@@ -552,7 +556,9 @@ export async function isProjectNameTaken(
  * Validate that a path contains an initialized fn project (.fusion/ directory exists).
  */
 export function isKbProject(path: string): boolean {
-  return isValidSqliteDatabaseFile(resolve(path, ".fusion", "fusion.db"));
+  const fusionDir = resolve(path, ".fusion");
+  return hasProjectIdentity(fusionDir)
+    || isValidSqliteDatabaseFile(resolve(fusionDir, "fusion.db"));
 }
 
 /**
@@ -976,29 +982,46 @@ export async function getProjectsWithStatus(): Promise<
 
   const projects = await central.listProjects();
 
-  const results = await Promise.all(
-    projects.map(async (project) => {
+  /*
+   * FNXC:PostgresProjectStatus 2026-07-14-23:02:
+   * Each status read owns a short-lived PostgreSQL pool. Bound fan-out so a large registry cannot open one pool per project simultaneously, while retaining input order and per-project soft failure semantics.
+   */
+  const results = new Array<{
+    project: RegisteredProject;
+    runtimeStatus: import("@fusion/engine").RuntimeStatus | "not_started";
+    taskCount: number;
+  }>(projects.length);
+  let nextProjectIndex = 0;
+  const workerCount = Math.min(4, projects.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextProjectIndex < projects.length) {
+      const projectIndex = nextProjectIndex++;
+      const project = projects[projectIndex];
       const runtime = pm.getRuntime(project.id);
       const runtimeStatus = runtime?.getStatus() ?? "not_started";
 
       // Get task count from store
       let taskCount = 0;
+      let shutdown: (() => Promise<void>) | undefined;
       try {
-        const store = new (await import("@fusion/core")).TaskStore(project.path);
-        await store.init();
-        const tasks = await store.listTasks({ slim: true });
+        /* FNXC:PostgresProjectStatus 2026-07-14-18:42:
+         * Status aggregation must use the mandatory PostgreSQL startup factory.
+         * A bare TaskStore entered the removed SQLite fallback and also leaked
+         * its store because this read-only helper never retained ownership.
+         */
+        const boot = await createTaskStoreForBackend({ rootDir: project.path, projectId: project.id });
+        shutdown = boot.shutdown;
+        const tasks = await boot.taskStore.listTasks({ slim: true });
         taskCount = tasks.length;
       } catch {
         // If we can't read tasks, just report 0
+      } finally {
+        await shutdown?.().catch(() => undefined);
       }
 
-      return { project, runtimeStatus, taskCount } as {
-        project: RegisteredProject;
-        runtimeStatus: import("@fusion/engine").RuntimeStatus | "not_started";
-        taskCount: number;
-      };
-    })
-  );
+      results[projectIndex] = { project, runtimeStatus, taskCount };
+    }
+  }));
 
   return results;
 }
@@ -1030,27 +1053,31 @@ export async function getProjectTaskCounts(
   projectId: string,
   store?: TaskStore
 ): Promise<Record<string, number>> {
-  const taskStore =
-    store ??
-    (await (async () => {
-      const central = await getCentralCore();
-      const project = await central.getProject(projectId);
-      if (!project) return undefined;
-      const s = new (await import("@fusion/core")).TaskStore(project.path);
-      await s.init();
-      return s;
-    })());
-
-  if (!taskStore) return {};
-
-  const tasks = await taskStore.listTasks({ slim: true });
-  const counts: Record<string, number> = {};
-
-  for (const task of tasks) {
-    counts[task.column] = (counts[task.column] || 0) + 1;
+  let shutdown: (() => Promise<void>) | undefined;
+  let taskStore = store;
+  if (!taskStore) {
+    const central = await getCentralCore();
+    const project = await central.getProject(projectId);
+    if (!project) return {};
+    /* FNXC:PostgresProjectStatus 2026-07-14-18:42:
+     * One-shot task counts own a PostgreSQL backend for exactly this read.
+     * Never construct the public TaskStore without an AsyncDataLayer.
+     */
+    const boot = await createTaskStoreForBackend({ rootDir: project.path, projectId });
+    taskStore = boot.taskStore;
+    shutdown = boot.shutdown;
   }
 
-  return counts;
+  try {
+    const tasks = await taskStore.listTasks({ slim: true });
+    const counts: Record<string, number> = {};
+    for (const task of tasks) {
+      counts[task.column] = (counts[task.column] || 0) + 1;
+    }
+    return counts;
+  } finally {
+    await shutdown?.().catch(() => undefined);
+  }
 }
 
 /**
@@ -1104,6 +1131,42 @@ export async function getStore(options?: { project?: string; cwd?: string }): Pr
     interactive: true,
   });
   return resolved.store;
+}
+
+/** A factory-owned project store whose backend lifecycle has one awaited release path. */
+export interface ResolvedProjectStoreOwner {
+  readonly store: TaskStore;
+  close(): Promise<void>;
+}
+
+/**
+ * Resolve a project store together with the startup-factory ownership handle.
+ * Short-lived commands must prefer this over getStore() so success, errors, and
+ * requested CLI exits can await backend shutdown before returning control.
+ */
+export async function resolveProjectStore(
+  options?: { project?: string; cwd?: string },
+): Promise<ResolvedProjectStoreOwner> {
+  /*
+  FNXC:PostgresProjectResolverLifecycle 2026-07-14-22:20:
+  One-shot CLI commands need an owner-aware handle for factory-created TaskStores. Releasing the handle removes it from module cleanup and awaits the exact startup-factory shutdown once, so commands do not depend on asynchronous process-exit hooks to flush PostgreSQL resources.
+  */
+  const resolved = await resolveProject({
+    project: options?.project,
+    cwd: options?.cwd,
+    interactive: true,
+  });
+  let closed = false;
+  return {
+    store: resolved.store,
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      const shutdown = resolvedProjectStores.get(resolved.store);
+      resolvedProjectStores.delete(resolved.store);
+      await shutdown?.().catch(() => undefined);
+    },
+  };
 }
 
 // Export getStore as default for backward compatibility

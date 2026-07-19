@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   validator_model_id text,
   planning_model_provider text,
   planning_model_id text,
+  merger_model_provider text,
+  merger_model_id text,
+  merger_thinking_level text,
   merge_retries integer,
   workflow_step_retries integer,
   resume_limbo_count integer DEFAULT 0,
@@ -78,6 +81,8 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   execute_requeue_loop_signature text,
   recovery_retry_count integer,
   task_done_retry_count integer DEFAULT 0,
+  -- FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
+  bulk_completion_refusal_at text,
   worktree_session_retry_count integer DEFAULT 0,
   completion_handoff_limbo_recovery_count integer DEFAULT 0,
   merge_conflict_bounce_count integer DEFAULT 0,
@@ -163,6 +168,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   source_message_id text,
   source_parent_task_id text,
   source_metadata jsonb,
+  proposal_claim_id text,
   checked_out_by text,
   checked_out_at text,
   checkout_node_id text,
@@ -237,6 +243,31 @@ CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsPrefixStatus"
 CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsExpiry"
   ON project.distributed_task_id_reservations(status, expires_at);
 
+-- FNXC:SymbolLock 2026-07-30-14:10: baseline creates the table only; 0025
+-- applies RLS after 0006 defines the ownership trigger and policy machinery.
+CREATE TABLE IF NOT EXISTS project.symbol_locks (
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  symbol_key text NOT NULL,
+  owner_task_id text NOT NULL,
+  mission_id text,
+  feature_id text,
+  lineage_id text,
+  node_id text,
+  agent_id text,
+  status text NOT NULL,
+  acquired_at text NOT NULL,
+  renewed_at text NOT NULL,
+  expires_at text NOT NULL,
+  created_at text NOT NULL,
+  updated_at text NOT NULL,
+  PRIMARY KEY (project_id, symbol_key),
+  CONSTRAINT symbol_locks_status_check CHECK (status IN ('held', 'released', 'expired'))
+);
+CREATE INDEX IF NOT EXISTS "idxSymbolLocksOwner"
+  ON project.symbol_locks(project_id, owner_task_id);
+CREATE INDEX IF NOT EXISTS "idxSymbolLocksExpiry"
+  ON project.symbol_locks(status, expires_at);
+
 CREATE TABLE IF NOT EXISTS project.workflow_steps (
   id text PRIMARY KEY,
   template_id text,
@@ -275,6 +306,26 @@ CREATE TABLE IF NOT EXISTS project.task_workflow_selection (
   step_ids jsonb NOT NULL DEFAULT '[]',
   updated_at text NOT NULL
 );
+
+-- FNXC:TaskVerificationRequest 2026-07-30-00:00: chat queues profiles; only executor runs the resolved command.
+CREATE TABLE IF NOT EXISTS project.task_verification_requests (
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  task_id text NOT NULL,
+  request_id text NOT NULL,
+  status text NOT NULL,
+  profile text NOT NULL,
+  command text NOT NULL,
+  scope text NOT NULL,
+  requested_by text NOT NULL,
+  requested_at text NOT NULL,
+  started_at text,
+  completed_at text,
+  result jsonb,
+  rejection_reason text,
+  PRIMARY KEY (project_id, task_id),
+  UNIQUE (project_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_verification_requests_status ON project.task_verification_requests(project_id, status, requested_at);
 
 CREATE TABLE IF NOT EXISTS project.activity_log (
   project_id text NOT NULL,
@@ -972,6 +1023,9 @@ CREATE TABLE IF NOT EXISTS project.mission_features (
   last_validator_status text,
   generated_from_feature_id text,
   generated_from_run_id text,
+  research_run_id text,
+  research_finding_id text,
+  research_source_urls jsonb,
   CONSTRAINT mission_features_slice_id_fkey
     FOREIGN KEY (slice_id) REFERENCES project.slices(id) ON DELETE CASCADE,
   CONSTRAINT mission_features_task_id_fkey
@@ -1012,6 +1066,25 @@ CREATE TABLE IF NOT EXISTS project.plugins (
   created_at text NOT NULL,
   updated_at text NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS central.global_routines (
+  id text PRIMARY KEY,
+  name text NOT NULL UNIQUE,
+  description text,
+  agent_id text NOT NULL DEFAULT '',
+  trigger_type text NOT NULL,
+  trigger_config jsonb NOT NULL,
+  command text,
+  enabled integer NOT NULL DEFAULT 1,
+  last_run_at text,
+  last_run_result jsonb,
+  next_run_at text,
+  run_count integer NOT NULL DEFAULT 0,
+  run_history jsonb NOT NULL DEFAULT '[]',
+  created_at text NOT NULL,
+  updated_at text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_global_routines_next_run_at ON central.global_routines(next_run_at);
 
 CREATE TABLE IF NOT EXISTS project.routines (
   id text PRIMARY KEY,
@@ -1273,6 +1346,7 @@ CREATE TABLE IF NOT EXISTS project.chat_sessions (
   planning_thinking_level text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
+  pinned_at text,
   cli_session_file text,
   in_flight_generation jsonb,
   cli_executor_adapter_id text
@@ -1496,6 +1570,7 @@ CREATE INDEX IF NOT EXISTS "idxTasksUpdatedAt" ON project.tasks(updated_at DESC)
 -- filters on source_parent_task_id on every archive/delete. Without this index
 -- the gate is a full tasks-table scan. Sparse: most rows have NULL parent.
 CREATE INDEX IF NOT EXISTS "idxTasksSourceParentTaskId" ON project.tasks(source_parent_task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS "uqTasksProjectProposalClaimId" ON project.tasks(project_id, proposal_claim_id) WHERE proposal_claim_id IS NOT NULL;
 -- FNXC:TaskStoreReads 2026-06-26-10:00:
 -- Partial index for the hot kanban / board-read query shape
 -- WHERE deleted_at IS NULL AND "column" = ? (every live board hydration).
@@ -1942,3 +2017,4 @@ CREATE INDEX IF NOT EXISTS "idxArchivedTasksCreatedAt"
 -- GIN index on the archive search_vector (VAL-SEARCH-005).
 CREATE INDEX IF NOT EXISTS "idxArchivedTasksSearchVector"
   ON archive.archived_tasks USING gin(search_vector);
+

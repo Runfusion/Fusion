@@ -67,9 +67,29 @@ export function clearWorktrunkBinaryCache(): void {
 }
 
 export function canonicalizePath(path: string): string {
+  /*
+  FNXC:WorktreeLiveness 2026-07-15-11:55:
+  On macOS, /tmp is a symlink to /private/tmp. realpathSync of an existing worktrees
+  root yields /private/tmp/... while resolve() of a not-yet-created child stays under
+  /tmp/... — relative() then looks like a path escape and isInsideConfiguredWorktreesDir
+  falsely reports outside_worktrees_dir (restart.integration resumeOrphaned).
+  When the leaf is missing, realpath the nearest existing ancestor and rejoin the suffix.
+  */
   try {
     return realpathSync(path);
   } catch {
+    let dir = resolve(path);
+    const suffix: string[] = [];
+    while (true) {
+      try {
+        return resolve(realpathSync(dir), ...suffix.reverse());
+      } catch {
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        suffix.push(basename(dir));
+        dir = parent;
+      }
+    }
     return resolve(path);
   }
 }

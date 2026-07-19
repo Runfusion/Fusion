@@ -230,21 +230,21 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-7130",
       expect.stringContaining("[browser-verification] starting browser verification"),
-      "text",
+      "status",
       undefined,
       "reviewer",
     );
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-7130",
       "[browser-verification] agent-browser available — version agent-browser 9.9.9",
-      "text",
+      "status",
       undefined,
       "reviewer",
     );
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-7130",
       "[browser-verification] finished browser verification for task FN-7130: verdict APPROVE",
-      "text",
+      "status",
       undefined,
       "reviewer",
     );
@@ -276,7 +276,7 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(result.success).toBe(true);
     expect(formatAgentBrowserAvailabilityLog({ available: false, reason: "not installed" })).toBe(warning);
     expect(store.logEntry).toHaveBeenCalledWith("FN-7130", warning);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-7130", warning, "text", undefined, "reviewer");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-7130", warning, "status", undefined, "reviewer");
   });
 
   it("keeps flag-absent prompt steps byte-inert for browser logging and skills", async () => {

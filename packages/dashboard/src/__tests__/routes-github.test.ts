@@ -44,11 +44,20 @@ const mockCentralListProjects = vi.fn().mockResolvedValue([]);
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
 const mockCentralClose = vi.fn().mockResolvedValue(undefined);
 const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
-const { mockPerformUpdateCheck, mockClearUpdateCheckCache, mockExecSync, mockExecFile } = vi.hoisted(() => ({
+const {
+  mockPerformUpdateCheck,
+  mockClearUpdateCheckCache,
+  mockExecSync,
+  mockExecFile,
+  mockGetCachedImportTranslation,
+  mockResolveTargetLocale,
+} = vi.hoisted(() => ({
   mockPerformUpdateCheck: vi.fn(),
   mockClearUpdateCheckCache: vi.fn(),
   mockExecSync: vi.fn(),
   mockExecFile: vi.fn(),
+  mockGetCachedImportTranslation: vi.fn(),
+  mockResolveTargetLocale: vi.fn(),
 }));
 
 vi.mock("../update-check.js", async () => {
@@ -57,6 +66,19 @@ vi.mock("../update-check.js", async () => {
     ...actual,
     performUpdateCheck: mockPerformUpdateCheck,
     clearUpdateCheckCache: mockClearUpdateCheckCache,
+  };
+});
+
+vi.mock("../import-translate-service.js", async () => {
+  const actual = await vi.importActual<typeof import("../import-translate-service.js")>(
+    "../import-translate-service.js",
+  );
+  mockGetCachedImportTranslation.mockImplementation(actual.getCachedImportTranslation);
+  mockResolveTargetLocale.mockImplementation(actual.resolveTargetLocale);
+  return {
+    ...actual,
+    getCachedImportTranslation: mockGetCachedImportTranslation,
+    resolveTargetLocale: mockResolveTargetLocale,
   };
 });
 
@@ -189,6 +211,14 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-15:55:
+    FN-8277 parent-scoped uniqueness pre-check requires findRecentTasksBySourceParentTaskId;
+    default empty so subtask create-tasks routes return 201 under mock stores.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+    // FNXC:GitHubImportAttachments 2026-07-15-11:20: import downloads issue screenshots into task attachments.
+    addAttachment: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     getAgentLogCount: vi.fn().mockResolvedValue(0),
     getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
@@ -213,7 +243,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getWorkflowStep: vi.fn(),
     updateWorkflowStep: vi.fn(),
     deleteWorkflowStep: vi.fn(),
-    clearWorkflowRunStepInstances: vi.fn(),
+    clearWorkflowRunStepInstancesAsync: vi.fn().mockResolvedValue(undefined),
     getMissionStore: vi.fn().mockReturnValue({
       listMissions: vi.fn().mockReturnValue([]),
       createMission: vi.fn(),
@@ -560,11 +590,20 @@ describe("POST /github/issues/fetch", () => {
 describe("POST /github/issues/import", () => {
   let store: TaskStore;
   let getIssueSpy: ReturnType<typeof vi.fn>;
+  let getIssueDetailSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    mockGetCachedImportTranslation.mockClear();
+    mockResolveTargetLocale.mockClear();
     mockIsGhAuthenticated.mockReturnValue(true);
     getIssueSpy = vi.fn();
     vi.spyOn(GitHubClient.prototype, "getIssue").mockImplementation(getIssueSpy);
+    /*
+    FNXC:IssueImportAttachments 2026-07-15-13:40:
+    Import scans comments for screenshots, so the comment fetch is stubbed here — unstubbed it would spawn a real `gh` subprocess per import test (slow + network-dependent, against the project's no-slow-tests rule).
+    */
+    getIssueDetailSpy = vi.fn().mockResolvedValue({ comments: [] });
+    vi.spyOn(GitHubClient.prototype, "getIssueDetail").mockImplementation(getIssueDetailSpy);
 
     store = createMockStore({
       createTask: vi.fn().mockResolvedValue({
@@ -626,8 +665,162 @@ describe("POST /github/issues/import", () => {
     });
   });
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-11:22:
+  FN-8115 requires a single project-settings read per single import even though translation and tracking both depend on it. The route test protects the request-scoped sharing invariant rather than the resolver internals.
+  */
+  it("reads project settings once for a single issue import", async () => {
+    getIssueSpy.mockResolvedValueOnce(mockGitHubIssue);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(store.getSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses cached translated prose for an open single issue", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ githubImportAutoTranslate: true });
+    mockResolveTargetLocale.mockReturnValueOnce("en");
+    mockGetCachedImportTranslation.mockResolvedValueOnce({ title: "Translated title", body: "Translated body" });
+    getIssueSpy.mockResolvedValueOnce({ ...mockGitHubIssue, title: "Original title", body: "Original body" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Translated title",
+      description: "Translated body\n\nSource: https://github.com/owner/repo/issues/1",
+    }));
+  });
+
+  /*
+  FNXC:GitHubImportAttachments 2026-07-15-11:20:
+  Route-level proof that the import path itself downloads issue screenshots into task attachments — the executor's `## Attachments` section and triage's vision blocks only fire for attachments that actually exist on the task, so the wiring (not just the helper) is the invariant.
+  */
+  it("downloads issue images into task attachments so the agent can read them", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    })) as unknown as typeof globalThis.fetch;
+
+    getIssueSpy.mockResolvedValueOnce({
+      ...mockGitHubIssue,
+      body: "Broken here:\n\n![shot](https://github.com/user-attachments/assets/abc-123)",
+    });
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(201);
+      expect(store.addAttachment).toHaveBeenCalledWith(
+        "FN-001",
+        "issue-image-1.png",
+        expect.any(Buffer),
+        "image/png",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  /*
+  FNXC:IssueImportAttachments 2026-07-15-13:40:
+  A screenshot posted in a comment is the common case ("here's the repro"), so the comment thread is a first-class image source at the route level, not just in the helper.
+  */
+  it("downloads images posted in issue comments", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    })) as unknown as typeof globalThis.fetch;
+
+    getIssueSpy.mockResolvedValueOnce({ ...mockGitHubIssue, body: "no image here" });
+    getIssueDetailSpy.mockResolvedValueOnce({
+      comments: [
+        { author: "someone", body: "repro: ![shot](https://github.com/user-attachments/assets/from-comment)", createdAt: "", authorIsBot: false },
+      ],
+    });
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(201);
+      expect(store.addAttachment).toHaveBeenCalledWith("FN-001", "issue-image-1.png", expect.any(Buffer), "image/png");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("still imports body images when the comment fetch fails", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    })) as unknown as typeof globalThis.fetch;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    getIssueSpy.mockResolvedValueOnce({
+      ...mockGitHubIssue,
+      body: "![shot](https://github.com/user-attachments/assets/abc-123)",
+    });
+    getIssueDetailSpy.mockRejectedValueOnce(new Error("comments unavailable"));
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(201);
+      expect(store.addAttachment).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("still imports the issue when its image fails to download", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => { throw new Error("network down"); }) as unknown as typeof globalThis.fetch;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    getIssueSpy.mockResolvedValueOnce({
+      ...mockGitHubIssue,
+      body: "![shot](https://github.com/user-attachments/assets/abc-123)",
+    });
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe("FN-001");
+      expect(store.addAttachment).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  /*
+   * FNXC:GithubImportTracking 2026-07-16-10:59: Single-import translation reads settings before
+   * tracking resolution. Use persistent mocks so both reads mirror production's consistent settings.
+   */
   it("marks a single imported issue as tracked when tracking defaults are on", async () => {
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ githubTrackingEnabledByDefault: true });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ githubTrackingEnabledByDefault: true });
     getIssueSpy.mockResolvedValueOnce(mockGitHubIssue);
 
     const res = await REQUEST(buildApp(), "POST", "/api/github/issues/import", JSON.stringify({ owner: "owner", repo: "repo", issueNumber: 1 }), {
@@ -642,7 +835,7 @@ describe("POST /github/issues/import", () => {
   });
 
   it("marks a single imported issue as tracked when import linking is on and new-task defaults are off", async () => {
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       githubTrackingEnabledByDefault: false,
       githubLinkImportedIssuesToTracking: true,
     });
@@ -756,10 +949,10 @@ describe("POST /github/issues/import", () => {
         column: "triage",
         sourceIssue: {
           provider: "github",
-          repository: "owner/repo",
+          repository: "Owner/Repo",
           externalIssueId: "1",
           issueNumber: 1,
-          url: "https://github.com/owner/repo/issues/1",
+          url: "https://github.com/other/repo/issues/99",
         },
       },
     ]);
@@ -815,6 +1008,8 @@ describe("POST /github/issues/batch-import", () => {
 
   beforeEach(() => {
     __resetBatchImportRateLimiter();
+    mockGetCachedImportTranslation.mockClear();
+    mockResolveTargetLocale.mockClear();
 
     fetchSpy = vi.fn();
     globalThis.fetch = fetchSpy as any;
@@ -853,6 +1048,106 @@ describe("POST /github/issues/batch-import", () => {
     labels: [{ name: "bug" }],
   });
 
+  /*
+  FNXC:GitHubImportAttachments 2026-07-15-11:20:
+  Batch import is a second surface for the same requirement — an issue's screenshots must reach the agent regardless of which import button the operator used (see the single-import counterpart above).
+  */
+  it("downloads issue images into task attachments on the batch surface too", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const detailSpy = vi.spyOn(GitHubClient.prototype, "getIssueDetail").mockResolvedValue({ comments: [] });
+    vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...mockGitHubIssue(1),
+        body: "![shot](https://github.com/user-attachments/assets/abc-123)",
+        comments: 0,
+      },
+    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+
+    // The batch route's own fetch spy doubles as the image-download transport here.
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/batch-import", JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1] }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].success).toBe(true);
+    expect(store.addAttachment).toHaveBeenCalledWith(
+      res.body.results[0].taskId,
+      "issue-image-1.png",
+      expect.any(Buffer),
+      "image/png",
+    );
+    // A 50-issue batch must not pay a comment round trip per issue to discover empty threads.
+    expect(detailSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the batch item successful when image attachment audit logging fails", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...mockGitHubIssue(1),
+        body: "![shot](https://github.com/user-attachments/assets/abc-123)",
+        comments: 0,
+      },
+    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    });
+    (store.logEntry as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/batch-import", JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1] }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].success).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Could not log image attachments"));
+  });
+
+  it("fetches comments on the batch surface only when the issue has any", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const detailSpy = vi.spyOn(GitHubClient.prototype, "getIssueDetail").mockResolvedValue({
+      comments: [
+        { author: "someone", body: "![shot](https://github.com/user-attachments/assets/from-comment)", createdAt: "", authorIsBot: false },
+      ],
+    });
+    vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
+      success: true,
+      data: { ...mockGitHubIssue(1), body: "no image here", comments: 2 },
+    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/batch-import", JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1] }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(detailSpy).toHaveBeenCalledTimes(1);
+    expect(store.addAttachment).toHaveBeenCalledWith(
+      res.body.results[0].taskId,
+      "issue-image-1.png",
+      expect.any(Buffer),
+      "image/png",
+    );
+  });
+
   it("imports multiple issues successfully", async () => {
     const throttledSpy = vi.spyOn(GitHubClient.prototype, "fetchThrottled")
       .mockResolvedValueOnce({
@@ -881,6 +1176,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.body.results.every((r: { success: boolean }) => r.success)).toBe(true);
     expect(throttledSpy).toHaveBeenCalledTimes(3);
     expect(store.createTask).toHaveBeenCalledTimes(3);
+    expect(store.getSettings).toHaveBeenCalledTimes(1);
     expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
       sourceIssue: {
         provider: "github",
@@ -908,6 +1204,50 @@ describe("POST /github/issues/batch-import", () => {
         url: "https://github.com/owner/repo/issues/3",
       },
     }));
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-11:22:
+  Batch imports reuse one request-scoped settings object for every item. Cached translations still apply to open issues, while closed issues always retain original prose even when the cache has a hit.
+  */
+  it("preserves open translations and closed original prose in a batch", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ githubImportAutoTranslate: true });
+    mockResolveTargetLocale.mockReturnValueOnce("en").mockReturnValueOnce("en");
+    mockGetCachedImportTranslation.mockResolvedValueOnce({ title: "Translated batch title", body: "Translated batch body" });
+    vi.spyOn(GitHubClient.prototype, "fetchThrottled")
+      .mockResolvedValueOnce({
+        success: true,
+        data: { ...mockGitHubIssue(1, "Original open title"), body: "Original open body", state: "open" },
+      } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>)
+      .mockResolvedValueOnce({
+        success: true,
+        data: { ...mockGitHubIssue(2, "Original closed title"), body: "Original closed body", state: "closed" },
+      } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, 2], delayMs: 1 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.getSettings).toHaveBeenCalledTimes(1);
+    expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      title: "Translated batch title",
+      description: "Translated batch body\n\nSource: https://github.com/owner/repo/issues/1",
+    }));
+    expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      title: "Original closed title",
+      description: "Original closed body\n\nSource: https://github.com/owner/repo/issues/2",
+    }));
+    expect(mockGetCachedImportTranslation).toHaveBeenCalledTimes(2);
+    expect(mockGetCachedImportTranslation).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ state: "closed" }),
+    );
   });
 
   it("marks batch imported issues as tracked when global tracking defaults are on", async () => {
@@ -1041,10 +1381,10 @@ describe("POST /github/issues/batch-import", () => {
         column: "triage",
         sourceIssue: {
           provider: "github",
-          repository: "owner/repo",
+          repository: "Owner/Repo",
           externalIssueId: "1",
           issueNumber: 1,
-          url: "https://github.com/owner/repo/issues/1",
+          url: "https://github.com/other/repo/issues/99",
         },
       },
     ]);
@@ -1299,6 +1639,79 @@ describe("POST /github/issues/batch-import", () => {
       "Imported from GitHub",
       "https://github.com/owner/repo/issues/1"
     );
+  });
+});
+
+describe("POST /github/pulls/import and /github/comments/import", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    mockIsGhAuthenticated.mockReturnValue(true);
+    store = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([]),
+      createTask: vi.fn().mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-FEEDBACK", column: "triage" }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("creates resolve-feedback PR tasks while retaining provenance and deduplication", async () => {
+    vi.spyOn(GitHubClient.prototype, "getPullRequest").mockResolvedValue({
+      number: 9,
+      title: "Feedback PR",
+      body: "PR body",
+      html_url: "https://github.com/owner/repo/pull/9",
+      headBranch: "feature/feedback",
+      baseBranch: "main",
+      state: "open",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/pulls/import", JSON.stringify({ owner: "owner", repo: "repo", prNumber: 9 }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Resolve feedback: PR #9 — Feedback PR",
+      description: expect.stringContaining("Resolve the pull request review feedback and address any failed CI checks."),
+    }));
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining("PR: https://github.com/owner/repo/pull/9\nBranch: feature/feedback → main\n\nPR body"),
+    }));
+  });
+
+  it("creates comment feedback tasks without deduplicating repeated imports", async () => {
+    const payload = { owner: "owner", repo: "repo", number: 9, type: "pull", comment: { author: "reviewer", body: "Please add coverage", createdAt: "2026-07-16T00:00:00Z" } };
+    const first = await REQUEST(buildApp(), "POST", "/api/github/comments/import", JSON.stringify(payload), { "Content-Type": "application/json" });
+    const second = await REQUEST(buildApp(), "POST", "/api/github/comments/import", JSON.stringify(payload), { "Content-Type": "application/json" });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledTimes(2);
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Resolve feedback from @reviewer on #9",
+      description: "Resolve or address this feedback comment.\n\n> reviewer\n> Please add coverage\n\nSource: https://github.com/owner/repo/pull/9",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-FEEDBACK", "Imported PR/issue comment from GitHub", "https://github.com/owner/repo/pull/9");
+  });
+
+  it("requires GitHub authentication and complete comment payloads", async () => {
+    const invalid = await REQUEST(buildApp(), "POST", "/api/github/comments/import", JSON.stringify({ owner: "owner" }), { "Content-Type": "application/json" });
+    expect(invalid.status).toBe(400);
+
+    mockIsGhAuthenticated.mockReturnValue(false);
+    const unauthenticated = await REQUEST(buildApp(), "POST", "/api/github/comments/import", JSON.stringify({
+      owner: "owner", repo: "repo", number: 1, type: "issue", comment: { author: "reviewer", body: "Fix it" },
+    }), { "Content-Type": "application/json" });
+    expect(unauthenticated.status).toBe(401);
   });
 });
 
@@ -1864,8 +2277,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "FN-001",
         "Specification rebuild requested by user"
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-      expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
     } finally {
@@ -1884,8 +2297,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
   });
 
@@ -1900,8 +2313,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
   });
 
   it("allows rebuild for task already in triage", async () => {
@@ -1927,9 +2340,10 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "Specification rebuild requested by user"
       );
       expect(store.moveTask).not.toHaveBeenCalled();
-      expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(res.body.status).toBe("needs-replan");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -1945,9 +2359,103 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+  });
+
+  function selectWorkflow(columns: Array<{ id: string; traits?: Array<{ trait: string }> }>) {
+    const workflowIr = {
+      version: 2,
+      columns: columns.map((column) => ({ name: column.id, traits: [], ...column })),
+      nodes: [],
+      edges: [],
+    };
+    (store as unknown as { getTaskWorkflowSelection: ReturnType<typeof vi.fn> }).getTaskWorkflowSelection = vi.fn()
+      .mockReturnValue({ workflowId: "WF-rebuild-test" });
+    (store as unknown as { getWorkflowDefinition: ReturnType<typeof vi.fn> }).getWorkflowDefinition = vi.fn()
+      .mockResolvedValue({ id: "WF-rebuild-test", ir: workflowIr });
+  }
+
+  it("rebuilds a no-triage/no-todo workflow through legacy triage recovery rehome", async () => {
+    const customTask = { ...FAKE_TASK_DETAIL, column: "publish" as any };
+    const movedTask = { ...customTask, column: "triage" as any };
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-legacy-rehome-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# stale spec\n");
+    selectWorkflow([{ id: "publish" }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(customTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+      expect(res.status).toBe(200);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the updated task when a plan-in-place workflow is already in todo", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as any };
+    const updatedTask = { ...todoTask, status: "needs-replan" as const };
+    selectWorkflow([{ id: "todo" }, { id: "in-review" }]);
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(todoTask)
+      .mockResolvedValueOnce(updatedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(res.body.status).toBe("needs-replan");
+  });
+
+  it("rebuilds a plan-in-place workflow into todo", async () => {
+    const customTask = { ...FAKE_TASK_DETAIL, column: "in-review" as any };
+    const movedTask = { ...customTask, column: "todo" as any };
+    selectWorkflow([{ id: "todo" }, { id: "in-review" }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(customTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+  });
+
+  it("rejects legacy and semantic archived tasks before rebuilding", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-archived-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# retained spec\n");
+    const archivedTask = { ...FAKE_TASK_DETAIL, column: "cold-storage" as any };
+    selectWorkflow([{ id: "cold-storage", traits: [{ trait: "archived" }] }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("not available for archived tasks");
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(true);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("returns 404 when task not found", async () => {
@@ -2418,7 +2926,7 @@ describe("GET /tasks/:id/diff", () => {
 
       const localStore = createMockStore({
         getRootDir: vi.fn().mockReturnValue(root),
-        getRunAuditEvents: vi.fn().mockReturnValue([{ mutationType: "commit:create", target: mergeSha }]),
+        getRunAuditEventsAsync: vi.fn().mockResolvedValue([{ mutationType: "commit:create", target: mergeSha }]),
         getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
       });
       (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2457,7 +2965,7 @@ describe("GET /tasks/:id/diff", () => {
 
       const localStore = createMockStore({
         getRootDir: vi.fn().mockReturnValue(root),
-        getRunAuditEvents: vi.fn().mockReturnValue([]),
+        getRunAuditEventsAsync: vi.fn().mockResolvedValue([]),
         getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([{ commitSha: lineageSha, authoredAt: new Date().toISOString() }]),
       });
       (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2484,7 +2992,7 @@ describe("GET /tasks/:id/diff", () => {
 
   it("returns zero stats when no done-task commit sha can be resolved", async () => {
     const localStore = createMockStore({
-      getRunAuditEvents: vi.fn().mockReturnValue([{ mutationType: "commit:create", target: "HEAD" }]),
+      getRunAuditEventsAsync: vi.fn().mockResolvedValue([{ mutationType: "commit:create", target: "HEAD" }]),
       getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
     });
     (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2560,6 +3068,45 @@ describe("GET /tasks/:id/file-diffs", () => {
   }
 
   describe("done tasks without commit SHA", () => {
+    /*
+     * FNXC:DoneTaskDiffAudit 2026-07-15-18:00:
+     * Done-task diff endpoints must resolve audit commit SHAs through the asynchronous
+     * PostgreSQL-authoritative reader. Cover file-diffs as well as the sibling diff route.
+     */
+    it("returns changed files when the async audit commit SHA is available", async () => {
+      const root = mkdtempSync(join(tmpdir(), "kb-dashboard-file-diffs-audit-"));
+      try {
+        execFileSync("git", ["init", "--initial-branch=main", root], { stdio: "pipe" });
+        execFileSync("git", ["-C", root, "config", "user.email", "kb-tests@example.com"], { stdio: "pipe" });
+        execFileSync("git", ["-C", root, "config", "user.name", "KB Tests"], { stdio: "pipe" });
+        writeFileSync(join(root, "tracked.ts"), "export const value = 1;\n");
+        execFileSync("git", ["-C", root, "add", "tracked.ts"], { stdio: "pipe" });
+        execFileSync("git", ["-C", root, "commit", "-m", "initial"], { stdio: "pipe" });
+        writeFileSync(join(root, "tracked.ts"), "export const value = 2;\n");
+        execFileSync("git", ["-C", root, "commit", "-am", "update"], { stdio: "pipe" });
+        const mergeSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf-8", stdio: "pipe" }).trim();
+
+        store = createMockStore({
+          getRootDir: vi.fn().mockReturnValue(root),
+          getRunAuditEventsAsync: vi.fn().mockResolvedValue([{ mutationType: "commit:create", target: mergeSha }]),
+          getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
+        });
+        (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          ...FAKE_TASK_DETAIL,
+          id: "FN-001",
+          column: "done",
+          mergeDetails: { filesChanged: 1, insertions: 1, deletions: 1 },
+        });
+
+        const res = await GET(buildApp(), "/api/tasks/FN-001/file-diffs");
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.ts" })]));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it("returns empty array instead of scanning repository", async () => {
       const doneTask = {
         ...FAKE_TASK_DETAIL,
@@ -2908,6 +3455,7 @@ describe("PR conflict refresh + reclaim routes", () => {
 
     const reclaimSpy = vi.fn().mockResolvedValue({ outcome: "reclaimed" });
     const engine = {
+      getProjectId: () => "test-project",
       getTaskStore: () => store,
       getSelfHealingManager: () => ({ reclaimPrConflictForTask: reclaimSpy }),
     };
@@ -3086,6 +3634,7 @@ describe("PR conflict refresh + reclaim routes", () => {
     };
     const reclaimSpy = vi.fn().mockResolvedValue({ outcome: "reclaimed" });
     const engine = {
+      getProjectId: () => "test-project",
       getTaskStore: () => store,
       getSelfHealingManager: () => ({ reclaimPrConflictForTask: reclaimSpy }),
     };
@@ -3165,5 +3714,85 @@ describe("PR conflict refresh + reclaim routes", () => {
     expect(res.status).toBe(200);
     expect(store.removePrInfoByNumber).toHaveBeenCalledWith(task.id, 930);
     expect(mergeSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("POST /github/issues/comment", () => {
+  let store: TaskStore;
+  let originalToken: string | undefined;
+
+  beforeEach(() => {
+    store = createMockStore();
+    originalToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    mockIsGhAuthenticated.mockReturnValue(true);
+    vi.spyOn(GitHubClient.prototype, "addIssueComment").mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = originalToken;
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("posts through an authenticated gh client", async () => {
+    const commentSpy = vi.spyOn(GitHubClient.prototype, "addIssueComment").mockResolvedValue(undefined);
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/comment", JSON.stringify({
+      repo: "owner/repo", number: 42, body: "Thanks for the report",
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(commentSpy).toHaveBeenCalledWith("owner", "repo", 42, "Thanks for the report");
+  });
+
+  it("permits a token-only host when gh is unauthenticated", async () => {
+    process.env.GITHUB_TOKEN = "ghp_token";
+    mockIsGhAuthenticated.mockReturnValue(false);
+    const commentSpy = vi.spyOn(GitHubClient.prototype, "addIssueComment").mockResolvedValue(undefined);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/comment", JSON.stringify({
+      repo: "owner/repo", number: 42, body: "Thanks for the report",
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(commentSpy).toHaveBeenCalledWith("owner", "repo", 42, "Thanks for the report");
+  });
+
+  it("rejects when neither gh nor a token is available", async () => {
+    mockIsGhAuthenticated.mockReturnValue(false);
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/comment", JSON.stringify({
+      repo: "owner/repo", number: 42, body: "Thanks for the report",
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(401);
+  });
+
+  it.each([
+    { repo: "owner", number: 42, body: "Comment" },
+    { repo: "owner/repo", number: 0, body: "Comment" },
+    { repo: "owner/repo", number: 42, body: "   " },
+  ])("rejects invalid comment payloads", async (body) => {
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/comment", JSON.stringify(body), {
+      "content-type": "application/json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("maps upstream not-found errors", async () => {
+    vi.spyOn(GitHubClient.prototype, "addIssueComment").mockRejectedValue(new Error("Issue #42 not found"));
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/comment", JSON.stringify({
+      repo: "owner/repo", number: 42, body: "Comment",
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(404);
   });
 });

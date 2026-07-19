@@ -1,8 +1,8 @@
 import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask } from "@fusion/engine";
+import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
+import { createSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import * as dashboard from "@fusion/dashboard";
@@ -152,6 +152,7 @@ async function getBoardCommandContext(projectName?: string): Promise<ProjectCont
     if (!context) {
       throw new Error(`Project ${projectName} not found`);
     }
+    installBaselineArchiveWorktreeDisposer(context.store, {rootDir: context.projectPath, getSettings: () => context.store.getSettings()});
     return context;
   }
 
@@ -160,13 +161,16 @@ async function getBoardCommandContext(projectName?: string): Promise<ProjectCont
     if (!context) {
       throw new Error("No project context");
     }
+    installBaselineArchiveWorktreeDisposer(context.store, {rootDir: context.projectPath, getSettings: () => context.store.getSettings()});
     return context;
   } catch {
     // FNXC:PostgresCutover 2026-07-05-12:00: the cwd fallback must boot through
     // the PostgreSQL startup factory (createLocalStore); a bare `new TaskStore`
     // resolves to the removed SQLite runtime, which throws on first DB access.
     const store = await createLocalStore(process.cwd());
-    return asLocalProjectContext(store);
+    const context = asLocalProjectContext(store);
+    installBaselineArchiveWorktreeDisposer(store, {rootDir: context.projectPath, getSettings: () => store.getSettings()});
+    return context;
   }
 }
 
@@ -1022,6 +1026,11 @@ export async function runTaskMerge(id: string, projectName?: string) {
   console.log(`\n  Merging ${id} with AI...\n`);
 
   try {
+    /*
+    FNXC:GrokCliRouting 2026-07-15-10:17:
+    `fn task merge` is a bare CLI door: ProjectContext only has store/path, not a live ProjectEngine, so no engine.getPluginRunner() is available. Do not invent a full PluginRunner bootstrap here (that belongs to InProcessRuntime / ProjectEngineManager). Omitting pluginRunner is intentional — grok-cli/no-key merge selections surface the dual-remediation error. Engine-backed merge already forwards this.getPluginRunner().
+    */
+
     // FNXC:Workspace 2026-06-21-23:40 (Phase C U1, KTD2):
     // User-triggered `fn task merge`. A workspace-mode task routes through the
     // ENGINE per-repo merge loop `landWorkspaceTask` (each sub-repo lands on its own
@@ -1470,17 +1479,7 @@ export async function runTaskImportGitHubInteractive(
   const context = await resolveBoardContext(projectName, "import", "resolve project");
   const store = context.store;
   try {
-    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: true }));
-
-    // Build a set of already-imported issue URLs
-    const importedUrls = new Map<string, string>();
-    for (const task of existingTasks) {
-      // Match Source URL anywhere in description (more robust than end-of-string anchor)
-      const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
-      if (sourceMatch) {
-        importedUrls.set(sourceMatch[1], task.id);
-      }
-    }
+    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: false }));
 
     let issues: GitHubIssue[];
     try {
@@ -1500,8 +1499,13 @@ export async function runTaskImportGitHubInteractive(
     console.log(`  Found ${issues.length} issues:\n`);
     for (let i = 0; i < issues.length; i++) {
       const issue = issues[i];
-      const alreadyImported = importedUrls.has(issue.html_url);
-      const status = alreadyImported ? ` [Imported as ${importedUrls.get(issue.html_url)}]` : "";
+      const importedTask = existingTasks.find((task) => dashboard.isGitHubIssueAlreadyImported(task, {
+        owner,
+        repo,
+        issueNumber: issue.number,
+        sourceUrl: issue.html_url,
+      }));
+      const status = importedTask ? ` [Imported as ${importedTask.id}]` : "";
       console.log(`  ${i + 1}. #${issue.number} ${issue.title.slice(0, 80)}${issue.title.length > 80 ? "…" : ""}${status}`);
     }
 
@@ -1554,10 +1558,15 @@ export async function runTaskImportGitHubInteractive(
     for (const idx of selectedIndices) {
       const issue = issues[idx];
 
-      // Check if already imported
-      if (importedUrls.has(issue.html_url)) {
-        const existingId = importedUrls.get(issue.html_url)!;
-        console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
+      // Re-evaluate the shared dedup helper against tasks created earlier in this run.
+      const importedTask = existingTasks.find((task) => dashboard.isGitHubIssueAlreadyImported(task, {
+        owner,
+        repo,
+        issueNumber: issue.number,
+        sourceUrl: issue.html_url,
+      }));
+      if (importedTask) {
+        console.log(`  → Skipping #${issue.number}: already imported as ${importedTask.id}`);
         skipped++;
         continue;
       }
@@ -1571,7 +1580,7 @@ export async function runTaskImportGitHubInteractive(
 
       // Create the task
       // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-      const source = buildGitHubIssueSource(owner, repo, issue);
+      const source = dashboard.buildGitHubIssueSource(owner, repo, issue);
       const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
         title: title || undefined,
         description,
@@ -1587,6 +1596,7 @@ export async function runTaskImportGitHubInteractive(
 
       const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
       console.log(`  ✓ Created ${task.id}: ${label}`);
+      existingTasks.push(task);
       created++;
     }
 
@@ -1672,19 +1682,6 @@ async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ e
   return resolvedTracking.enabled ? { enabled: true } : undefined;
 }
 
-function buildGitHubIssueSource(owner: string, repo: string, issue: { number: number; html_url: string }) {
-  return {
-    sourceIssue: {
-      provider: "github" as const,
-      repository: `${owner}/${repo}`,
-      externalIssueId: String(issue.number),
-      issueNumber: issue.number,
-      url: issue.html_url,
-    },
-    sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
-  };
-}
-
 export async function runTaskImportFromGitHub(
   ownerRepo: string,
   options: TaskImportOptions = {},
@@ -1706,23 +1703,13 @@ export async function runTaskImportFromGitHub(
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
   // (loop of creates, no interactivity). Resolution + initial list are
   // retried once; each `createTask` call in the loop is retried
-  // independently — self-correcting on retry via the `importedUrls`
-  // already-imported check, so redoing an earlier iteration after a LATER
+  // independently — self-correcting on retry via the shared helper against
+  // the growing existing-task set, so redoing an earlier iteration after a LATER
   // one's lock error is harmless. Store closed in a `finally`.
   const context = await resolveBoardContext(projectName, "import", "resolve project");
   const store = context.store;
   try {
-    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: true }));
-
-    // Build a set of already-imported issue URLs
-    const importedUrls = new Map<string, string>();
-    for (const task of existingTasks) {
-      // Match Source URL anywhere in description (more robust than end-of-string anchor)
-      const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
-      if (sourceMatch) {
-        importedUrls.set(sourceMatch[1], task.id);
-      }
-    }
+    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: false }));
 
     let issues: GitHubIssue[];
     try {
@@ -1744,10 +1731,15 @@ export async function runTaskImportFromGitHub(
     let skipped = 0;
 
     for (const issue of issues) {
-      // Check if already imported
-      if (importedUrls.has(issue.html_url)) {
-        const existingId = importedUrls.get(issue.html_url)!;
-        console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
+      // Re-evaluate the shared dedup helper against tasks created earlier in this run.
+      const importedTask = existingTasks.find((task) => dashboard.isGitHubIssueAlreadyImported(task, {
+        owner,
+        repo,
+        issueNumber: issue.number,
+        sourceUrl: issue.html_url,
+      }));
+      if (importedTask) {
+        console.log(`  → Skipping #${issue.number}: already imported as ${importedTask.id}`);
         skipped++;
         continue;
       }
@@ -1761,7 +1753,7 @@ export async function runTaskImportFromGitHub(
 
       // Create the task
       // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-      const source = buildGitHubIssueSource(owner, repo, issue);
+      const source = dashboard.buildGitHubIssueSource(owner, repo, issue);
       const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
         title: title || undefined,
         description,
@@ -1777,6 +1769,7 @@ export async function runTaskImportFromGitHub(
 
       const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
       console.log(`  ✓ Created ${task.id}: ${label}`);
+      existingTasks.push(task);
       created++;
     }
 
@@ -2294,12 +2287,18 @@ export async function runTaskPlan(
         throw promptErr;
       }
 
-      // Submit response and get next question or summary
+      // `/validate` is an explicit user command available in every text answer.
+      // The session never auto-finalizes: only this command calls validateSession.
       let result: { type: "question"; data: PlanningQuestion } | { type: "complete"; data: PlanningSummary };
 
       try {
+        const requestedValidation = Object.values(response).some((value) =>
+          typeof value === "string" && value.trim().toLowerCase() === "/validate",
+        );
         showThinking();
-        result = await submitResponse(sessionId, response) as typeof result;
+        result = requestedValidation
+          ? { type: "complete", data: await validateSession(sessionId) }
+          : await submitResponse(sessionId, response) as typeof result;
         clearThinking();
       } catch (err) {
         clearThinking();

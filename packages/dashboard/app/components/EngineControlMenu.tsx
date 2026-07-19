@@ -78,12 +78,12 @@ function getConcurrencyChangeSummary(t: ReturnType<typeof useTranslation>["t"], 
 }
 
 /*
-FNXC:GlobalConcurrencyControls 2026-06-29-10:30:
-FN-7235 keeps the footer current-use marker consistent with FN-7160 Command Center behavior: it shows absolute utilization on a 0..cap scale. Do not subtract the range input floor of 1, because one running agent must render above zero even though the editable slider cannot be set to 0.
+FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
+FN-8007 supersedes FN-7160/FN-7235's 0-based utilization ratio: the current-use dot must share the native range thumb's min-relative coordinates so it lines up with the running-count value. With sliderMin 1, one running agent maps to the visible track start; over-cap use pins to the cap thumb rather than the expanded sliderMax endpoint.
 */
-function getUseMarkerRatio(current: number, max: number) {
-  if (max <= 0) return 0;
-  return clamp(current / max, 0, 1);
+function getUseMarkerRatio(currentRunning: number, capValue: number, sliderMin: number, sliderMax: number) {
+  if (sliderMax <= sliderMin) return 0;
+  return clamp((Math.min(currentRunning, capValue) - sliderMin) / (sliderMax - sliderMin), 0, 1);
 }
 
 function getUseMarkerStyle(ratio: number): CSSProperties {
@@ -407,8 +407,13 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   const globalSliderValue = pendingGlobalConcurrencyValue ?? gc.value;
   const globalSliderMax = Math.max(gc.sliderMax, globalSliderValue);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
-  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, globalSliderMax);
-  const projectUseMarkerRatio = getUseMarkerRatio(projectActive, maxConcurrentSliderMax);
+  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, globalSliderValue, gc.min, globalSliderMax);
+  const projectUseMarkerRatio = getUseMarkerRatio(
+    projectActive,
+    concurrencyValues.maxConcurrent,
+    CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min,
+    maxConcurrentSliderMax,
+  );
 
   return (
     <div className="engine-control-menu" ref={menuRef}>

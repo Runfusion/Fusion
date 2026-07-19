@@ -13,6 +13,22 @@ describe("isTransientMissingTaskJsonError", () => {
     expect(isTransientMissingTaskJsonError(err, task)).toBe(true);
   });
 
+  it("matches Windows worktree paths with backslash separators", () => {
+    const windowsTask = {
+      id: "FN-5624",
+      worktree: "C:\\worktrees\\fn-5624",
+    };
+    const err = "ENOENT: no such file or directory, open 'C:\\worktrees\\fn-5624\\.fusion\\tasks\\FN-5624\\task.json'";
+
+    expect(isTransientMissingTaskJsonError(err, windowsTask)).toBe(true);
+  });
+
+  it("does not treat a sibling worktree with the same prefix as contained", () => {
+    const err = "ENOENT: no such file or directory, open '/tmp/worktrees/fn-5624-copy/.fusion/tasks/FN-5624/task.json'";
+
+    expect(isTransientMissingTaskJsonError(err, task)).toBe(false);
+  });
+
   it("does not match task.json parse failures", () => {
     const err = "Failed to parse task.json at /tmp/worktrees/fn-5624/.fusion/tasks/FN-5624/task.json: Unexpected token";
     expect(isTransientMissingTaskJsonError(err, task)).toBe(false);

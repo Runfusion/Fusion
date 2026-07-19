@@ -874,6 +874,61 @@ describe("createSkillsAdapter - plugin skill merge", () => {
     expect(skill.path).toBe("skills/entity-framework-core/SKILL.md");
   });
 
+  it("round-trips plugin toggles keyed by custom skillFiles paths", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "skills-adapter-custom-toggle-"));
+    const pluginRoot = join(dir, "plugin");
+    const settingsPath = join(dir, ".fusion", "settings.json");
+
+    try {
+      const adapter = createSkillsAdapter({
+        packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+        getSettingsPath: () => settingsPath,
+        getPluginSkills: () => [
+          {
+            pluginId: "fusion-plugin-data",
+            pluginRoot,
+            skill: {
+              name: "ef-core",
+              enabled: true,
+              skillFiles: ["skills/data/ef-core/SKILL.md"],
+            },
+          },
+          {
+            pluginId: "fusion-plugin-data",
+            pluginRoot,
+            skill: {
+              name: "sql-tuning",
+              enabled: false,
+              skillFiles: ["skills/data/sql-tuning/SKILL.md"],
+            },
+          },
+        ],
+      });
+
+      const initial = new Map((await adapter.discoverSkills(dir)).map((skill) => [skill.name, skill]));
+      expect(initial.get("ef-core")!.enabled).toBe(true);
+      expect(initial.get("sql-tuning")!.enabled).toBe(false);
+      expect(initial.get("ef-core")!.id).toBe(computeSkillId("plugin:fusion-plugin-data", "skills/data/ef-core/SKILL.md"));
+
+      await adapter.toggleExecutionSkill(dir, { skillId: initial.get("ef-core")!.id, enabled: false });
+      await adapter.toggleExecutionSkill(dir, { skillId: initial.get("sql-tuning")!.id, enabled: true });
+
+      const rediscovered = new Map((await adapter.discoverSkills(dir)).map((skill) => [skill.name, skill.enabled]));
+      expect(rediscovered.get("ef-core")).toBe(false);
+      expect(rediscovered.get("sql-tuning")).toBe(true);
+
+      const persisted = JSON.parse(await readFile(settingsPath, "utf-8")) as {
+        packages?: Array<{ source: string; skills?: string[] }>;
+      };
+      expect(persisted.packages).toContainEqual({
+        source: "plugin:fusion-plugin-data",
+        skills: ["-data/ef-core/SKILL.md", "+data/sql-tuning/SKILL.md"],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("passes the requesting project root into async plugin-skill discovery", async () => {
     const daemonRoot = "/tmp/daemon-root";
     const projectRoot = "/tmp/managed-project";

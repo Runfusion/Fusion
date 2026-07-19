@@ -21,6 +21,8 @@ import { recordRetry } from "./retry-burned-logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import { isContextLimitError } from "./context-limit-detector.js";
+import { classifyError } from "./transient-error-detector.js";
+import { withRetry } from "./retry-with-backoff.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveValidatorSessionModel } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -39,6 +41,29 @@ import { resolveMcpServersForStore } from "./mcp-resolution.js";
 
 export type ReviewType = "plan" | "code" | "spec";
 export type ReviewVerdict = "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+
+/*
+FNXC:ReviewerProviderErrors 2026-07-15-11:20:
+A reviewer provider failure (rate limit / flaky network) is NOT a review verdict, and must never be laundered into `UNAVAILABLE`.
+
+Root cause this type exists to fix: the reviewer was the only AI lane that never classified provider errors. A 429 became `UNAVAILABLE`, which drove the fallback ladder to re-hit the SAME rate-limited model instantly (when no validator fallback is configured the "fallback" is a same-model strict-prompt rerun), and `fn_review_step` then told the model "code review remains blocking; retry once", so the executor's agent re-called the tool indefinitely. Observed symptom: 14 identical "Reviewer using model: umans/umans-kimi-k2.7" markers with no review text, one per spawned session, hammering an already-limited provider.
+
+`UNAVAILABLE` is reserved for its real meaning: the reviewer RAN and could not produce a parseable verdict. Provider failures throw this instead so they reach the machinery that already exists to handle them — `withRateLimitRetry` backoff, `UsageLimitPauser` global pause, and the executor's bounded transient recovery. See `getDeferredReviewerFatal` in executor.ts for why the escape needs a deferred re-raise.
+*/
+/** Bounded local retry budget for transient network blips inside one review attempt. */
+const REVIEWER_TRANSIENT_MAX_RETRIES = 3;
+
+export class ReviewerProviderError extends Error {
+  constructor(
+    message: string,
+    /** `usage-limit` → global pause; `transient` → bounded recovery retry. Never `permanent`. */
+    public readonly classification: "usage-limit" | "transient",
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "ReviewerProviderError";
+  }
+}
 
 export interface ReviewResult {
   verdict: ReviewVerdict;
@@ -107,6 +132,18 @@ export interface ReviewOptions {
   pluginRunner?: import("./plugin-runner.js").PluginRunner;
   /** Allow this reviewer to fix in-scope findings in the same session before returning its final verdict. */
   allowInlineFixes?: boolean;
+  /*
+  FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+  Spec-gate-only convergence context. The triage Plan Review gate feeds the reviewer its OWN
+  prior REVISE feedback plus the 1-based replan attempt so a re-review VERIFIES its earlier
+  issues were addressed instead of surfacing a fresh, deeper blocking issue every cycle
+  (whack-a-mole/goalpost movement burned all 8 replans on FN-7996/FN-8105/FN-8108). Only
+  injected when reviewType === "spec" and attempt > 1; CODE review and normal PLAN review are
+  unaffected because these fields stay undefined on those paths.
+  */
+  priorSpecReviewFeedback?: string;
+  /** 1-based current Plan Review attempt (= (task.planReviewReplanCount ?? 0) + 1). Spec gate only. */
+  specReviewAttempt?: number;
   /**
    * Fired immediately after the reviewer's `AgentSession` is created. The
    * caller can register the session in a per-task subagent map so that the
@@ -195,8 +232,13 @@ export async function reviewStep(
     && reviewType !== "code"
     && Boolean(options.store && options.taskId);
 
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: spec-gate-only convergence context (see ReviewOptions).
+  const specConvergence: SpecReviewConvergence | undefined =
+    reviewType === "spec"
+      ? { priorFeedback: options.priorSpecReviewFeedback, attempt: options.specReviewAttempt }
+      : undefined;
   let request = buildReviewRequest(
-    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
+    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments, specConvergence,
   );
   if (options.allowInlineFixes === true) {
     /*
@@ -374,6 +416,14 @@ export async function reviewStep(
     };
   };
 
+  /*
+  FNXC:ReviewerModelMarker 2026-07-15-11:20:
+  The "Reviewer using model:" marker is emitted per SESSION CONSTRUCTION, and the dashboard resolves the reviewer's effective model by taking the LATEST matching marker (effective-model-resolution.ts). So the marker only carries information when the model CHANGES; re-emitting an identical marker for every retry of the same model tells operators nothing and is what turned a provider outage into 14 glued repetitions in the Chat tab.
+
+  Dedupe on marker text, not on attempt count: a real fallback to a DIFFERENT model still emits (the model changed, so the dashboard must see it), while same-model retries stay silent. Scoped per reviewStep call so each review still records the model it actually ran on.
+  */
+  let lastEmittedModelMarker: string | undefined;
+
   const createReviewerSession = async (
     overrides?: { forceProvider?: string; forceModelId?: string },
   ): Promise<import("@earendil-works/pi-coding-agent").AgentSession> => {
@@ -457,9 +507,10 @@ export async function reviewStep(
     const reviewerModelDetails = formatModelMarkerDetails(reviewerModelDesc, options.defaultThinkingLevel);
     const reviewerModelMarker = `Reviewer using model: ${reviewerModelDetails}`;
     reviewerLog.log(`${taskId}: reviewer using model ${reviewerModelDetails}`);
-    if (options.store && options.taskId) {
+    if (options.store && options.taskId && reviewerModelMarker !== lastEmittedModelMarker) {
+      lastEmittedModelMarker = reviewerModelMarker;
       await options.store.logEntry(options.taskId, reviewerModelMarker);
-      await options.store.appendAgentLog(options.taskId, reviewerModelMarker, "text", undefined, "reviewer").catch(() => undefined);
+      await options.store.appendAgentLog(options.taskId, reviewerModelMarker, "status", undefined, "reviewer").catch(() => undefined);
     }
 
     activeSessions.add(session);
@@ -485,7 +536,7 @@ export async function reviewStep(
     checkSessionError(session);
   };
 
-  const runAttempt = async (
+  const runAttemptOnce = async (
     attemptRequest: string,
     sessionOptions?: { forceProvider?: string; forceModelId?: string },
   ): Promise<{ verdict: ReviewVerdict; summary: string; review: string }> => {
@@ -527,8 +578,10 @@ export async function reviewStep(
         }
 
         reviewText = "";
+        // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: reuse the single `specConvergence`
+        // computed above so the context-limit retry carries byte-identical spec convergence context.
         let reducedRequest = buildReducedReviewRequest(
-          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
+          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments, specConvergence,
         );
         if (options.allowInlineFixes === true) {
           reducedRequest = appendSameSessionFixPolicy(reducedRequest, reviewType, canWritePromptInline);
@@ -566,6 +619,33 @@ export async function reviewStep(
     const summary = extractSummary(reviewText);
     return { verdict, review: reviewText, summary };
   };
+
+  /*
+  FNXC:ReviewerTransientRetry 2026-07-15-11:20:
+  A flaky network must degrade gracefully, not bounce the task. A dropped socket / gateway blip during a review is a temporary infrastructure condition, so absorb it HERE with exponential backoff + jitter rather than surfacing it as a failed review: a whole-attempt retry gets a clean session and a clean `reviewText` buffer (a half-streamed response would otherwise poison verdict extraction).
+
+  Deliberately NOT a retry-storm: `withRetry` re-throws usage-limit errors immediately without sleeping (rate limits need the global pause, not a local retry that re-hits the limited provider), and re-throws permanent errors immediately (a genuinely broken review must reach the fallback ladder, not spin). Only `classifyError() === "transient"` retries, capped and with jitter so concurrent reviewers do not thunder.
+
+  Backoff is short (2s base) relative to the executor's rate-limit curve (30s base) because a network blip resolves in seconds while a rate limit needs a real cooldown.
+  */
+  const runAttempt = async (
+    attemptRequest: string,
+    sessionOptions?: { forceProvider?: string; forceModelId?: string },
+  ): Promise<{ verdict: ReviewVerdict; summary: string; review: string }> =>
+    withRetry(() => runAttemptOnce(attemptRequest, sessionOptions), {
+      maxRetries: REVIEWER_TRANSIENT_MAX_RETRIES,
+      baseDelayMs: 2_000,
+      maxDelayMs: 30_000,
+      jitter: "full",
+      isRetryable: (err) => classifyError(err instanceof Error ? err.message : String(err)) === "transient",
+      onRetry: (attempt, delayMs, error) => {
+        const message = `${reviewType} review hit a transient network error — retry ${attempt}/${REVIEWER_TRANSIENT_MAX_RETRIES} in ${Math.round(delayMs / 1000)}s: ${error.message}`;
+        reviewerLog.warn(`${taskId}: ${message}`);
+        if (options.store && options.taskId) {
+          void options.store.logEntry(options.taskId, message).catch(() => undefined);
+        }
+      },
+    });
 
   const fallbackReviewRequest = `${request}\n\nIMPORTANT: Respond with exactly one of: APPROVE | REVISE | RETHINK on a line starting with "Verdict:".`;
 
@@ -605,6 +685,24 @@ export async function reviewStep(
   try {
     firstAttempt = await runAttempt(request);
   } catch (err) {
+    /*
+    FNXC:ReviewerProviderErrors 2026-07-15-11:20:
+    Classify BEFORE the fallback ladder. The ladder's premise is "this model produced a bad review, try another prompt/model" — a premise that is false for provider failures and actively harmful for them:
+      - usage-limit: the ladder's same-model strict-prompt rerun (taken whenever no validator fallback is configured) re-hits the exact model that just rate-limited us, with no delay. Escalate instead so `withRateLimitRetry` backs off and `UsageLimitPauser` pauses every lane.
+      - transient: `runAttempt` already spent its bounded backoff budget above, so the network is genuinely down. Escalate to the executor's bounded recovery (requeue with delay) rather than burning the reviewer fallback budget on a dead link.
+    Neither burns `reviewerFallbackRetryCount` — that budget exists to bound BAD REVIEWS, and spending it on an outage would fail tasks that have nothing wrong with them.
+    */
+    const providerErrorMessage = err instanceof Error ? err.message : String(err);
+    const classification = classifyError(providerErrorMessage);
+    if (classification === "usage-limit" || classification === "transient") {
+      const escalationMessage = `${reviewType} review could not reach the model (${classification}) — escalating to the engine retry path: ${providerErrorMessage}`;
+      reviewerLog.warn(`${taskId}: ${escalationMessage}`);
+      if (options.store && options.taskId) {
+        await options.store.logEntry(options.taskId, escalationMessage).catch(() => undefined);
+      }
+      throw new ReviewerProviderError(providerErrorMessage, classification, { cause: err });
+    }
+
     if (hasConfiguredFallback) {
       await logFallbackRetry("reviewer error", `${validatorFallbackProvider}/${validatorFallbackModelId}`);
       if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
@@ -616,6 +714,7 @@ export async function reviewStep(
           category: "reviewerFallback",
           role: "reviewer",
           agentId: options.agentId,
+          cause: err,
         });
       }
       try {
@@ -642,6 +741,7 @@ export async function reviewStep(
         category: "reviewerFallback",
         role: "reviewer",
         agentId: options.agentId,
+        cause: err,
       });
     }
     try {
@@ -746,6 +846,19 @@ function buildReducedTaskPromptSummary(promptContent: string): string {
   return sections.join("\n\n").trim();
 }
 
+/*
+FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+Spec-gate-only convergence context threaded into the review request. `priorFeedback` is the
+reviewer's own most recent Plan Review REVISE text; `attempt` is the 1-based replan attempt.
+Present only for reviewType === "spec"; drives the per-attempt convergence + severity-ratchet
+block injected into the request so the re-review confirms prior issues rather than moving the
+goalposts each cycle.
+*/
+interface SpecReviewConvergence {
+  priorFeedback?: string;
+  attempt?: number;
+}
+
 function buildReducedReviewRequest(
   taskId: string,
   stepNumber: number,
@@ -755,6 +868,7 @@ function buildReducedReviewRequest(
   cwd: string,
   baseline?: string,
   userComments?: TaskComment[],
+  specConvergence?: SpecReviewConvergence,
 ): string {
   /*
   FNXC:AgentSteering 2026-06-30-17:09:
@@ -770,6 +884,7 @@ function buildReducedReviewRequest(
     cwd,
     baseline,
     userComments,
+    specConvergence,
   );
 }
 
@@ -782,6 +897,7 @@ function buildReviewRequest(
   cwd: string,
   baseline?: string,
   userComments?: TaskComment[],
+  specConvergence?: SpecReviewConvergence,
 ): string {
   const parts = [
     `Review request for task ${taskId}, Step ${stepNumber}: ${stepName}`,
@@ -795,6 +911,13 @@ function buildReviewRequest(
   ];
 
   if (reviewType === "spec") {
+    /*
+    FNXC:PlanReviewReplan 2026-07-15-11:15:
+    Spec/Plan Review REVISE loops burn planner+reviewer turns when feedback is vague or
+    when polish is treated as blocking. Prefer fix-and-APPROVE / Suggestions for non-
+    blocking nits; when REVISE is required, list concrete PROMPT.md edits the planner can
+    apply surgically so the next cycle converges.
+    */
     parts.push(
       "## What to review",
       "Evaluate this PROMPT.md specification for completeness and quality.",
@@ -806,7 +929,50 @@ function buildReviewRequest(
       "Read relevant source files to verify the spec references real files, functions, and patterns.",
       "Check that steps have concrete, verifiable outcomes — not vague instructions.",
       "Ensure testing requirements demand real automated tests with assertions.",
+      "",
+      "## Convergence rules (blocking REVISE budget)",
+      "- Prefer APPROVE or APPROVE_WITH_NOTES when the plan is executable; put polish and optional improvements under **Suggestions** only.",
+      "- Issue REVISE only for blocking defects that would cause the implementor to redo work or violate a hard gate (missing Surface Enumeration / Symptom Verification for bug-class tasks, dangling task-document refs, untestable steps, missing mission, user comments ignored, external-integration evidence gaps when required).",
+      "- When you REVISE, list each blocking fix as a concrete edit the planner can apply to this PROMPT.md (section + what to add/change). Do not request a full rewrite unless the approach is fundamentally wrong (RETHINK).",
+      "- If same-session PROMPT.md repair is available and a fix is local, apply it and APPROVE rather than bouncing to another replan cycle.",
     );
+
+    /*
+    FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+    On replan attempt > 1 the reviewer is re-reviewing a spec IT already rejected. Feed it the
+    prior REVISE text and attempt number so it verifies those issues were addressed instead of
+    surfacing a fresh deeper issue each cycle (the whack-a-mole that burned all 8 replans on
+    FN-7996/FN-8105/FN-8108). At attempt >= 3, ratchet severity: gate only on delivery-blocking
+    `critical` issues so a spec that is executable (executor + code review are later gates) does
+    not loop on wording nits.
+    */
+    const specAttempt = specConvergence?.attempt ?? 0;
+    if (specAttempt > 1) {
+      parts.push(
+        "",
+        `## Convergence — Plan Review attempt ${specAttempt}`,
+        `You (the reviewer) already reviewed an earlier version of this spec; the planner has since revised the PROMPT.md above. This is attempt ${specAttempt}.`,
+        "- VERIFY each issue you raised previously was addressed. REVISE only if (a) a PRIOR blocking issue is still unresolved, or (b) this revision introduced a GENUINELY NEW problem.",
+        "- Do NOT introduce a new blocking issue that ALSO applied to the version you previously reviewed — that is your own earlier miss; record it under **Suggestions**, not REVISE.",
+      );
+      const priorFeedback = specConvergence?.priorFeedback?.trim();
+      if (priorFeedback) {
+        parts.push(
+          "",
+          "Your prior Plan Review feedback (confirm each item is resolved):",
+          "```",
+          priorFeedback,
+          "```",
+        );
+      }
+      if (specAttempt >= 3) {
+        parts.push(
+          "",
+          "### Severity ratchet (attempt 3+)",
+          "Gate ONLY on `critical` (delivery-blocking) issues. Downgrade lone `important`/`minor` spec-wording nits to **Suggestions** and APPROVE. Rationale: the executor and downstream code review are later gates; a spec need not be perfect to be executable.",
+        );
+      }
+    }
 
     // Add user comment coverage check for spec reviews
     if (userComments && userComments.length > 0) {

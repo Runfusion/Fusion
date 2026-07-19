@@ -758,6 +758,23 @@ list. The with/without comparison now renders as two labeled groups on a single 
   margin: 0;
 }
 
+/*
+FNXC:Onboarding 2026-07-18-02:30:
+Anchors in the GitHub setup step had layout-only rules, so they rendered the
+user-agent default blue, which ignores the dashboard theme (unreadable link on
+the dark theme's install card). Links must use the themed info token; .btn
+anchors keep their button styling untouched.
+*/
+.onboarding-github-git-prerequisite a,
+.onboarding-github-setup-card a:not(.btn) {
+  color: var(--color-info);
+}
+
+.onboarding-github-git-prerequisite a:hover,
+.onboarding-github-setup-card a:not(.btn):hover {
+  text-decoration: underline;
+}
+
 .onboarding-github-git-prerequisite a {
   align-self: flex-start;
 }

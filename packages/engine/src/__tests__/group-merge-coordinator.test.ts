@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import { TaskStore } from "@fusion/core";
+import { type TaskStore } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import {
   evaluateBranchGroupCompletion,
   evaluateBranchGroupPromotion,
@@ -392,33 +393,32 @@ describe("promoteBranchGroup", () => {
  * `promoteBranchGroup` exercises the actual `listTasksByBranchGroup` membership scan that
  * previously silently dropped an archived-but-unlanded member from `total`.
  */
-describe("promoteBranchGroup with a real TaskStore (FN-7534 archived-member regression)", () => {
-  function makeTmpDir(): string {
-    return mkdtempSync(join(tmpdir(), "fusion-branch-group-archive-"));
-  }
-
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-01:50:
+FN-8258 exercises archived shared-branch members through the PostgreSQL TaskStore, including
+awaited branch-group writes, instead of the removed SQLite constructor path.
+*/
+pgDescribe("promoteBranchGroup with a real TaskStore (FN-7534 archived-member regression)", () => {
   let rootDir: string;
-  let storeRootDir: string;
-  let globalDir: string;
+  let harness: PgTestHarness;
   let store: TaskStore;
 
   beforeEach(async () => {
     rootDir = makeRepo();
-    storeRootDir = makeTmpDir();
-    globalDir = join(storeRootDir, ".fusion-global");
-    store = new TaskStore(storeRootDir, globalDir);
-    await store.init();
+    harness = await createTaskStoreForTest({ prefix: "fusion_branch_group_archive" });
+    store = harness.store;
   });
 
-  afterEach(() => {
-    store.close();
+  afterEach(async () => {
+    await harness?.teardown();
   });
 
   it("returns reason: incomplete when an archived member never landed onto the group branch", async () => {
-    const group = store.createBranchGroup({
+    const group = await store.createBranchGroup({
       sourceType: "planning",
       sourceId: "PS-archived-gate",
       branchName: "fusion/groups/archived-gate",
+      autoMerge: true,
     });
 
     const landedTask = await store.createTask({ description: "landed member" });
@@ -447,7 +447,7 @@ describe("promoteBranchGroup with a real TaskStore (FN-7534 archived-member regr
   });
 
   it("still promotes when the only archived member had already landed before archival", async () => {
-    const group = store.createBranchGroup({
+    const group = await store.createBranchGroup({
       sourceType: "planning",
       sourceId: "PS-archived-landed-gate",
       branchName: "fusion/groups/archived-landed-gate",
@@ -471,6 +471,17 @@ describe("promoteBranchGroup with a real TaskStore (FN-7534 archived-member regr
     await store.moveTask(task.id, "in-progress");
     await store.moveTask(task.id, "done");
     await store.archiveTask(task.id);
+
+    // The completion invariant includes archived members and their persisted landing proof.
+    expect(await store.listTasksByBranchGroup(group.id)).toEqual([
+      expect.objectContaining({
+        id: task.id,
+        mergeDetails: expect.objectContaining({
+          mergeConfirmed: true,
+          mergeTargetBranch: group.branchName,
+        }),
+      }),
+    ]);
 
     const result = await promoteBranchGroup({
       rootDir,

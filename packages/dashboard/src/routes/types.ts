@@ -1,4 +1,4 @@
-import type { Request, Router } from "express";
+import type { Request, RequestHandler, Router } from "express";
 import type { AutomationStore, RoutineStore, TaskStore } from "@fusion/core";
 import type { ServerOptions } from "../server.js";
 import type { RuntimeLogger } from "../runtime-logger.js";
@@ -42,6 +42,8 @@ export type ScopeValue = "global" | "project";
 export interface ApiRoutesContext {
   router: Router;
   store: TaskStore;
+  /** Narrow multipart seam for routes that must accept local binary artifacts. */
+  reportUpload?: { single(fieldName: string): RequestHandler };
   options?: ServerOptions;
   runtimeLogger: RuntimeLogger;
   planningLogger: RuntimeLogger;

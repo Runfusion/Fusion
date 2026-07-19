@@ -128,6 +128,11 @@ describe("HybridExecutor multi-node routing", () => {
       await central.updateProject(projectA.id, { status: "active" });
       await central.updateProject(projectB.id, { status: "initializing" });
 
+      // FNXC:PgMigrationQuarantine 2026-07-18-01:45: central node rows persist across test
+      // instances, so isolate the local-only gate input from a previous test's remote registration.
+      vi.spyOn(central, "listNodes").mockResolvedValueOnce([{ id: "local-only", type: "local" }] as any);
+      vi.spyOn(central, "listProjects").mockResolvedValue([projectA, projectB] as any);
+
       // Gate intentionally OFF: ProjectEngineManager handles local
       // multi-project; running HybridExecutor here duplicates InProcessRuntime
       // creation and adds ~7s to cold start.

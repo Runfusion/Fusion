@@ -12,6 +12,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -26,11 +27,13 @@ import {
   mockUseMobileKeyboard,
   mockTasks,
   mockModels,
+  mockSummary,
 } from "./PlanningModeModal.test-helpers";
 
 const mockAddToast = vi.fn();
 
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: mockAddToast,
     removeToast: vi.fn(),
@@ -56,11 +59,34 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  /*
+  FNXC:PlanningModeSettings 2026-07-18-10:50:
+  Product mounts fetchGlobalSettings for clarification gating. Without this export
+  the suite fails at render (full-suite shard 4). Sync-settle like planning-flow
+  so Start Planning is not blocked by a microtask.
+  */
+  fetchGlobalSettings: vi.fn(() => {
+    const settled = {
+      then(onFulfilled: (settings: Record<string, never>) => unknown) {
+        onFulfilled({});
+        return settled;
+      },
+      catch() {
+        return settled;
+      },
+      finally(onFinally: () => unknown) {
+        onFinally();
+        return settled;
+      },
+    };
+    return settled;
+  }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
@@ -79,6 +105,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   useViewportMode: () => mockUseViewportMode(),
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
@@ -86,10 +114,6 @@ vi.mock("../../hooks/useViewportMode", () => ({
 
 vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: any[]) => mockUseMobileKeyboard(...args),
-}));
-
-vi.mock("../../hooks/useSessionLock", () => ({
-  useSessionLock: () => ({ isLockedByOther: false, takeControl: vi.fn(), isLoading: false }),
 }));
 
 const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
@@ -110,6 +134,7 @@ describe("PlanningModeModal autosize", () => {
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);
@@ -203,12 +228,18 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
+    /*
+    FNXC:PlanningSummaryDescription 2026-07-15-23:15:
+    FN-8031 shows Markdown preview first, so autosize only applies after the Plain toggle reveals the textarea. Measure caps there rather than against a hidden textarea.
+    */
+    await screen.findByText("Recovered summary description from persisted session");
+    fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
     const description = await screen.findByDisplayValue("Recovered summary description from persisted session") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(description.style.height).toBe("640px");
     });
 
-    fireEvent.click(screen.getByText("Expand"));
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
     await waitFor(() => {
       expect(description.style.height).toBe("800px");
     });

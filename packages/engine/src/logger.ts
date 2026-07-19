@@ -18,6 +18,11 @@
 
 export interface Logger {
   log(message: string, ...args: unknown[]): void;
+  /**
+   * Steady-state per-poll chatter. Suppressed unless the subsystem is opted in
+   * via `FUSION_DEBUG` (see `isDebugEnabled`).
+   */
+  debug(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;
 }
@@ -27,6 +32,22 @@ const LOG_LEVEL_MARKER_SUFFIX = "\u0000";
 
 function withSeverityMarker(level: "info" | "warn" | "error", payload: string): string {
   return `${LOG_LEVEL_MARKER_PREFIX}${level}${LOG_LEVEL_MARKER_SUFFIX}${payload}`;
+}
+
+/*
+FNXC:EngineDiagnostics 2026-07-15-12:55:
+Operators read the TUI log pane to see what the engine is *doing*; per-poll steady-state chatter (routine node routing, capacity-deferred hold releases) drowned real events out — a 1000-line buffer held only a few seconds of scheduler polls.
+Such lines move to `debug()`, off by default and opted in per subsystem via `FUSION_DEBUG` (`FUSION_DEBUG=1`/`all` for everything, or a comma-separated prefix list like `FUSION_DEBUG=scheduler,merger`).
+Anything that reports a state *change* or needs operator action stays on `log()`/`warn()`/`error()`.
+*/
+function isDebugEnabled(prefix: string): boolean {
+  const raw = process.env.FUSION_DEBUG?.trim();
+  if (!raw) return false;
+  if (raw === "1" || raw === "true" || raw === "all" || raw === "*") return true;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .includes(prefix);
 }
 
 /**
@@ -40,11 +61,20 @@ function withSeverityMarker(level: "info" | "warn" | "error", payload: string): 
  *          The logger prepends an internal control-character severity marker
  *          so dashboard TUI console-capture can preserve info/warn/error
  *          semantics even when `log()` is transported via `console.error`.
+ *
+ *          `debug()` is gated on `FUSION_DEBUG` and re-reads the env var per
+ *          call so tests and long-lived processes can toggle it without
+ *          re-creating loggers. When enabled it emits under the `info` marker,
+ *          so TUI console-capture needs no new severity to render it.
  */
 export function createLogger(prefix: string): Logger {
   const tag = `[${prefix}]`;
   return {
     log(message: string, ...args: unknown[]) {
+      console.error(withSeverityMarker("info", `${tag} ${message}`), ...args);
+    },
+    debug(message: string, ...args: unknown[]) {
+      if (!isDebugEnabled(prefix)) return;
       console.error(withSeverityMarker("info", `${tag} ${message}`), ...args);
     },
     warn(message: string, ...args: unknown[]) {

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { appendAgentLogBatchImpl, flushAgentLogBufferImpl } from "../task-store/agent-logs.js";
 import { appendAgentLogImpl } from "../task-store/workflow-integrity.js";
+import { getAgentLogCountImpl, getAgentLogsImpl } from "../task-store/remaining-ops-7.js";
+import { dbImpl } from "../task-store/remaining-ops-5.js";
 import { readAgentLogEntries } from "../agent-log-file-store.js";
 
 /**
@@ -71,6 +73,37 @@ function makeBackendStore(fusionDir: string): { store: any; dbTouched: () => boo
   };
   return { store, dbTouched: () => touched };
 }
+
+describe("backend-mode SQLite access guidance", () => {
+  it("directs backend callers to AsyncDataLayer plugin authoring guidance", () => {
+    expect(() => dbImpl({ backendMode: true } as never)).toThrow(/getAsyncLayer\(\).*docs\/PLUGIN_AUTHORING\.md/);
+  });
+});
+
+describe("agent-log read filtering", () => {
+  it("filters before pagination and counts the filtered result", async () => {
+    const dir = tmp();
+    const taskId = "FN-filter";
+    const taskDir = join(dir, "tasks", taskId);
+    const store = {
+      backendMode: true,
+      taskDir: () => taskDir,
+      flushAgentLogBuffer: () => {},
+    } as any;
+    const lines = [
+      { timestamp: "2026-01-01T00:00:00.000Z", taskId, text: "one", type: "text" },
+      { timestamp: "2026-01-01T00:01:00.000Z", taskId, text: "status", type: "status" },
+      { timestamp: "2026-01-01T00:02:00.000Z", taskId, text: "two", type: "text" },
+      { timestamp: "2026-01-01T00:03:00.000Z", taskId, text: "three", type: "text" },
+    ];
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "agent-log.jsonl"), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+
+    await expect(getAgentLogsImpl(store, taskId, { type: "text", limit: 1, offset: 1 })).resolves.toMatchObject([{ text: "two" }]);
+    await expect(getAgentLogCountImpl(store, taskId, { type: "text" })).resolves.toBe(3);
+    await expect(getAgentLogCountImpl(store, taskId)).resolves.toBe(4);
+  });
+});
 
 describe("agent-log buffer in PG backend mode", () => {
   it("flushAgentLogBufferImpl writes JSONL without dereferencing store.db", () => {

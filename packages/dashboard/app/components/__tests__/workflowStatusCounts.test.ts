@@ -255,6 +255,19 @@ describe("computeWorkflowStatusCounts", () => {
     expect(counts.get("design")).toEqual({ todo: 0, inProgress: 2, done: 0, merging: 1 });
   });
 
+  it("counts AI-merge reviewing and landing as merging indicators", () => {
+    const counts = computeWorkflowStatusCounts(
+      [
+        taskWithStatus("FN-reviewing", "review", "reviewing"),
+        taskWithStatus("FN-landing", "review", "landing"),
+      ],
+      boardWorkflows,
+    );
+
+    expect(counts.get("default")).toEqual({ todo: 0, inProgress: 2, done: 0, merging: 2 });
+    expect(counts.get(ALL_WORKFLOWS_BOARD_VIEW_ID)).toEqual({ todo: 0, inProgress: 2, done: 0, merging: 2 });
+  });
+
   it("excludes archived and board-hidden column tasks while stale workflows fall back to default", () => {
     const counts = computeWorkflowStatusCounts(
       [

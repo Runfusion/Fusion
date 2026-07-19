@@ -213,7 +213,7 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       // Get local global settings
       const globalSettingsStore = store.getGlobalSettingsStore();
       const globalSettings = await globalSettingsStore.getSettings();
-      const workflowSettings = store.listWorkflowSettingValuesForProject();
+      const workflowSettings = await store.listWorkflowSettingValuesForProject();
 
       // Build sync payload
       const payloadWithoutChecksum = {
@@ -316,7 +316,7 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
         // Get local settings for diff comparison
         const localProjectSettings = await store.getSettingsByScope();
         const localGlobalSettings = await store.getGlobalSettingsStore().getSettings();
-        const localWorkflowSettings = store.listWorkflowSettingValuesForProject();
+        const localWorkflowSettings = await store.listWorkflowSettingValuesForProject();
 
         // Compute diff: field names that differ between local and remote
         const { global: diffGlobal, project: diffProject, workflowSettings: diffWorkflowSettings } = computeSettingsDiff(
@@ -458,7 +458,7 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
           rs,
           localGlobalSettings as Record<string, unknown>,
           localProjectSettings.project as Record<string, unknown>,
-          store.listWorkflowSettingValuesForProject(),
+          await store.listWorkflowSettingValuesForProject(),
         );
         diffGlobal = diff.global;
         diffProject = diff.project;
@@ -581,12 +581,12 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
         const syncedProviders: string[] = [];
         for (const [providerId, credential] of Object.entries(applied.providerAuth)) {
           if (credential.type === "api_key" && credential.key) {
-            authStorage.set(providerId, { type: "api_key", key: credential.key });
+            await authStorage.set(providerId, { type: "api_key", key: credential.key });
             syncedProviders.push(providerId);
             continue;
           }
           if (credential.type === "oauth" && credential.accessToken && credential.refreshToken && typeof credential.expires === "number") {
-            authStorage.set(providerId, {
+            await authStorage.set(providerId, {
               type: "oauth",
               access: credential.accessToken,
               refresh: credential.refreshToken,

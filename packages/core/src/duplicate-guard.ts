@@ -15,6 +15,10 @@ export interface DeterministicGuardOptions {
   acknowledgedDuplicates?: readonly string[];
   bypass?: boolean;
   logger?: { warn(msg: string, data?: Record<string, unknown>): void };
+  /** Serialize related creates even when their exact-content fingerprints differ. */
+  serializationKey?: string;
+  /** When set, only tasks created by this parent can satisfy the duplicate check. */
+  sourceParentTaskId?: string | null;
 }
 
 export interface DeterministicGuardOutcome {
@@ -35,6 +39,10 @@ function clampWindowMs(windowMs?: number): number {
 
 function noop(): void {}
 
+function matchesParentScope(task: Task, sourceParentTaskId?: string | null): boolean {
+  return !sourceParentTaskId || task.sourceParentTaskId === sourceParentTaskId;
+}
+
 export async function runDeterministicDuplicateGuard(
   store: TaskStore,
   input: { title?: string | null; description: string },
@@ -54,7 +62,9 @@ export async function runDeterministicDuplicateGuard(
         windowMs,
         includeArchived: false,
       });
-      const deterministicConflict = deterministicMatches.find((match) => !acknowledged.has(match.id));
+      const deterministicConflict = deterministicMatches.find((match) =>
+        matchesParentScope(match, opts?.sourceParentTaskId) && !acknowledged.has(match.id),
+      );
       if (deterministicConflict) {
         return { action: "duplicate", fingerprint, existing: deterministicConflict, releaseLock: noop };
       }
@@ -67,8 +77,16 @@ export async function runDeterministicDuplicateGuard(
     return { action: "proceed", fingerprint, releaseLock: noop };
   }
 
-  const lockKey = `${opts.lockScope}:${fingerprint}`;
+  const lockKey = `${opts.lockScope}:${opts.sourceParentTaskId ?? "*"}:${opts.serializationKey ?? fingerprint}`;
   const existingLock = deterministicGuardLocks.get(lockKey);
+  let releaseCalled = false;
+  let resolveGate: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    resolveGate = resolve;
+  });
+  // Install our tail before waiting so three or more callers form a queue
+  // instead of all waking and proceeding when the first holder releases.
+  deterministicGuardLocks.set(lockKey, gate);
   if (existingLock) {
     try {
       await existingLock;
@@ -78,16 +96,9 @@ export async function runDeterministicDuplicateGuard(
         contentFingerprint: fingerprint,
         error: error instanceof Error ? error.message : String(error),
       });
-      deterministicGuardLocks.delete(lockKey);
+      if (deterministicGuardLocks.get(lockKey) === gate) deterministicGuardLocks.delete(lockKey);
     }
   }
-
-  let releaseCalled = false;
-  let resolveGate: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    resolveGate = resolve;
-  });
-  deterministicGuardLocks.set(lockKey, gate);
 
   const releaseLock = () => {
     if (releaseCalled) {
@@ -95,7 +106,7 @@ export async function runDeterministicDuplicateGuard(
     }
     releaseCalled = true;
     resolveGate?.();
-    deterministicGuardLocks.delete(lockKey);
+    if (deterministicGuardLocks.get(lockKey) === gate) deterministicGuardLocks.delete(lockKey);
   };
 
   try {
@@ -103,7 +114,9 @@ export async function runDeterministicDuplicateGuard(
       windowMs,
       includeArchived: false,
     });
-    const deterministicConflict = deterministicMatches.find((match) => !acknowledged.has(match.id));
+    const deterministicConflict = deterministicMatches.find((match) =>
+      matchesParentScope(match, opts.sourceParentTaskId) && !acknowledged.has(match.id),
+    );
     if (deterministicConflict) {
       return { action: "duplicate", fingerprint, existing: deterministicConflict, releaseLock };
     }
@@ -124,6 +137,7 @@ export async function reconcileDeterministicDuplicate(
     createdTask: Task;
     fingerprint: string | null;
     windowMs?: number;
+    sourceParentTaskId?: string | null;
     logger?: { warn(msg: string, data?: Record<string, unknown>): void };
   },
 ): Promise<{ outcome: "kept" | "archived"; canonical: Task }> {
@@ -137,7 +151,11 @@ export async function reconcileDeterministicDuplicate(
       includeArchived: false,
     });
 
-    const olderSibling = siblings.find((sibling) => sibling.id !== args.createdTask.id && sibling.createdAt < args.createdTask.createdAt);
+    const olderSibling = siblings.find((sibling) =>
+      sibling.id !== args.createdTask.id
+      && sibling.createdAt < args.createdTask.createdAt
+      && matchesParentScope(sibling, args.sourceParentTaskId),
+    );
     if (!olderSibling) {
       return { outcome: "kept", canonical: args.createdTask };
     }

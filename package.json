@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.60.0",
+  "version": "0.72.0",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -14,13 +14,13 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "pretest": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs",
-    "pretest:full": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs",
+    "pretest": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-getdatabase.mjs && node scripts/check-pi-versions-pinned.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs",
+    "pretest:full": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-getdatabase.mjs && node scripts/check-pi-versions-pinned.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs",
     "check:line-count": "node scripts/check-file-line-count.mjs",
     "check:changesets": "node scripts/check-changeset-format.mjs",
     "check:quarantine-ledger": "node scripts/check-quarantine-ledger.mjs",
     "check:mock-completeness": "node scripts/check-mock-completeness.mjs",
-    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs && node scripts/check-mock-completeness.mjs && pnpm --filter @fusion/engine test:core && pnpm --filter @fusion/core test:pg-gate && pnpm --filter @runfusion/fusion test:ci-shape",
+    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-getdatabase.mjs && node scripts/check-pi-versions-pinned.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs && node scripts/check-mock-completeness.mjs && pnpm --filter @fusion/engine test:core && pnpm --filter @fusion/core test:pg-gate && pnpm --filter @runfusion/fusion test:ci-shape",
     "smoke:boot": "node scripts/boot-smoke.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
@@ -31,10 +31,12 @@
     "sync:fusion-skill": "node scripts/sync-fusion-skill-tools.mjs",
     "sync:fusion-skill:check": "node scripts/sync-fusion-skill-tools.mjs --check",
     "build": "node scripts/build-workspace.mjs",
+    "build:full": "node scripts/build-workspace.mjs --full",
+    "build:force": "node scripts/build-workspace.mjs --force",
     "build:all": "pnpm -r build",
-    "verify:workspace": "pnpm lint && pnpm test:full && pnpm build",
-    "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",
-    "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
+    "verify:workspace": "pnpm lint && pnpm test:full && pnpm build:full",
+    "build:exe": "pnpm build:full && pnpm --filter @runfusion/fusion build:exe",
+    "build:exe:all": "pnpm build:full && pnpm --filter @runfusion/fusion build:exe:all",
     "test": "node scripts/test-changed.mjs",
     "verify:fast": "node scripts/verify-fast.mjs",
     "test:scripts": "node scripts/run-script-tests.mjs",
@@ -102,11 +104,7 @@
       "esbuild",
       "koffi",
       "protobufjs"
-    ],
-    "overrides": {
-      "@types/node": "^25.5.2",
-      "protobufjs": "^7.5.8"
-    }
+    ]
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",

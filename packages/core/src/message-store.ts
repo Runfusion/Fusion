@@ -33,6 +33,8 @@ export interface MessageStoreEvents {
   "message:read": [message: Message];
   /** Emitted when a message is deleted */
   "message:deleted": [messageId: string];
+  /** Emitted when proposal metadata changes without creating a new message. */
+  "message:updated": [message: Message];
 }
 
 // ── Row Interfaces ───────────────────────────────────────────────────
@@ -323,6 +325,50 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     const row = this.stmtGetById.get(id) as unknown as MessageRow | undefined;
     if (!row) return null;
     return this.rowToMessage(row);
+  }
+
+  /** Atomically acquire a pending proposal's transient creation lease. */
+  async claimProposalForCreation(messageId: string): Promise<{ claimed: boolean; idempotencyKey?: string; claimOwnerToken?: string }> {
+    if (this.asyncLayer) {
+      const result = await asyncMessageStore.claimProposalForCreation(this.asyncLayer.db, messageId);
+      if (result.message) this.emit("message:updated", result.message);
+      return result;
+    }
+    const owner = randomUUID();
+    const now = new Date().toISOString();
+    // FNXC:EphemeralAgentTaskCreation 2026-07-30-16:00: SQLite-compatible stores persist the lease start with its owner, allowing a later operator request to recover a dead creator without changing the stable idempotency key.
+    const changed = this.db!.prepare(`UPDATE messages SET metadata = json_set(metadata, '$.proposalStatus', 'creating', '$.claimOwnerToken', ?, '$.claimStartedAt', ?), updatedAt = ? WHERE id = ? AND json_extract(metadata, '$.kind') = 'task-proposal' AND json_extract(metadata, '$.proposalStatus') = 'pending'`).run(owner, now, now, messageId).changes;
+    if (!changed) return { claimed: false };
+    this.db!.bumpLastModified();
+    const message = await this.getMessage(messageId);
+    if (message) this.emit("message:updated", message);
+    return { claimed: true, idempotencyKey: message?.metadata?.proposalIdempotencyKey as string | undefined, claimOwnerToken: owner };
+  }
+
+  async finalizeProposalCreation(messageId: string, claimOwnerToken: string, createdTaskId: string): Promise<Message | null> {
+    if (this.asyncLayer) {
+      const message = await asyncMessageStore.finalizeProposalCreation(this.asyncLayer.db, messageId, claimOwnerToken, createdTaskId);
+      if (message) this.emit("message:updated", message);
+      return message;
+    }
+    const existing = await this.getMessage(messageId);
+    if (existing?.metadata?.proposalStatus === "created" && existing.metadata.createdTaskId === createdTaskId) return existing;
+    const changed = this.db!.prepare(`UPDATE messages SET metadata = json_set(metadata, '$.proposalStatus', 'created', '$.createdTaskId', ?, '$.claimOwnerToken', null, '$.claimStartedAt', null), updatedAt = ? WHERE id = ? AND json_extract(metadata, '$.proposalStatus') = 'creating' AND json_extract(metadata, '$.claimOwnerToken') = ?`).run(createdTaskId, new Date().toISOString(), messageId, claimOwnerToken).changes;
+    if (!changed) return null;
+    this.db!.bumpLastModified(); const message = await this.getMessage(messageId); if (message) this.emit("message:updated", message); return message;
+  }
+
+  async releaseProposalClaim(messageId: string, claimOwnerToken: string): Promise<Message | null> {
+    if (this.asyncLayer) { const message = await asyncMessageStore.releaseProposalClaim(this.asyncLayer.db, messageId, claimOwnerToken); if (message) this.emit("message:updated", message); return message; }
+    const changed = this.db!.prepare(`UPDATE messages SET metadata = json_set(metadata, '$.proposalStatus', 'pending', '$.claimOwnerToken', null, '$.claimStartedAt', null), updatedAt = ? WHERE id = ? AND json_extract(metadata, '$.proposalStatus') = 'creating' AND json_extract(metadata, '$.claimOwnerToken') = ?`).run(new Date().toISOString(), messageId, claimOwnerToken).changes;
+    if (!changed) return null; this.db!.bumpLastModified(); const message = await this.getMessage(messageId); if (message) this.emit("message:updated", message); return message;
+  }
+
+  async reconcileProposalCreation(messageId: string, resolvedTaskId: string | undefined): Promise<Message | null> {
+    const message = await this.getMessage(messageId);
+    if (!message || message.metadata?.proposalStatus !== "creating") return message;
+    if (resolvedTaskId) return this.finalizeProposalCreation(messageId, message.metadata.claimOwnerToken ?? "", resolvedTaskId);
+    return this.releaseProposalClaim(messageId, message.metadata.claimOwnerToken ?? "");
   }
 
   /**

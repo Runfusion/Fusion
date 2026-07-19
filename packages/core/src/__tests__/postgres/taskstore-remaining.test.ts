@@ -95,6 +95,9 @@ const PG_AVAILABLE =
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 
+/** FNXC:MultiProjectIsolation 2026-07-16-00:05: the project every harness row is owned by. */
+const TEST_PROJECT_ID = "proj_test_u14";
+
 function uniqueDbName(): string {
   return `fusion_u14_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -141,13 +144,35 @@ async function setupCtx(): Promise<TestCtx> {
   await applySchemaBaseline(schemaConnections.migration);
   await schemaConnections.close();
 
+  /*
+  FNXC:MultiProjectIsolation 2026-07-16-00:05:
+  Bind the layer to a project, as production does. createConnectionSetFromUrl sets the
+  `fusion.project_id` GUC per connection when given a projectId, and falls back to
+  `fusion.project_bypass=on` when not; an unbound harness therefore ran with RLS bypassed and
+  wrote blank project_ids that the migration-0006 trigger rewrote to '__legacy_unscoped__', so
+  helpers scoping on `layer.projectId ?? ""` never found the rows they had just written. That is
+  a shape production forbids -- AgentStore.backendProjectId throws on an unbound id -- so the
+  tests, not the product, were wrong.
+  */
   const connections = await createConnectionSetFromUrl(schemaBackend, {
     poolMax: 5,
     connectTimeoutSeconds: 5,
+    projectId: TEST_PROJECT_ID,
   });
-  const layer = createAsyncDataLayer(connections);
+  const layer = createAsyncDataLayer(connections, { projectId: TEST_PROJECT_ID });
 
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
+  /*
+  FNXC:MultiProjectIsolation 2026-07-16-00:05:
+  The admin connection seeds and inspects rows the bound layer then reads, so it must sit in the
+  SAME partition. Without the GUC its writes are blank, the migration-0006 trigger stamps them
+  __legacy_unscoped__, and the bound layer scoping on TEST_PROJECT_ID cannot see its own fixtures.
+  */
+  const adminSql = postgres(testUrl, {
+    max: 2,
+    prepare: false,
+    onnotice: () => {},
+    connection: { "fusion.project_id": TEST_PROJECT_ID },
+  });
   const adminDb = drizzle(adminSql);
   return { dbName, testUrl, layer, adminSql, adminDb };
 }
@@ -313,12 +338,12 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     expect(doc2.content).toBe("v2 content");
 
     // Read back.
-    const read = await getTaskDocument(ctx.layer.db, "KB-DOC-RT", "design");
+    const read = await getTaskDocument(ctx.layer.db, "KB-DOC-RT", "design", TEST_PROJECT_ID);
     expect(read?.revision).toBe(2);
     expect(read?.content).toBe("v2 content");
 
     // List shows the document.
-    const docs = await listTaskDocuments(ctx.layer.db, "KB-DOC-RT");
+    const docs = await listTaskDocuments(ctx.layer.db, "KB-DOC-RT", TEST_PROJECT_ID);
     expect(docs).toHaveLength(1);
   });
 
@@ -344,7 +369,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     expect(read?.title).toBe("round-trip artifact");
     expect(read?.metadata).toEqual({ source: "test" });
 
-    const list = await getArtifacts(ctx.layer.db, "KB-ART-RT");
+    const list = await getArtifacts(ctx.layer.db, "KB-ART-RT", TEST_PROJECT_ID);
     expect(list).toHaveLength(1);
   });
 

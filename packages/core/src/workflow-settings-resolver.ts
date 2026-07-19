@@ -33,12 +33,13 @@ import {
   type WorkflowIrResolverStore,
 } from "./workflow-ir-resolver.js";
 import { resolveEffectiveSettingValues, findOrphanedSettingValues } from "./workflow-settings.js";
-import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+import { BUILTIN_WORKFLOW_SETTINGS, PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID } from "./builtin-workflow-settings.js";
 import type { WorkflowSettingDefinition, WorkflowIr, WorkflowOptionalGroupConfig } from "./workflow-ir-types.js";
 import { PLANNER_OVERSIGHT_LEVELS, DEFAULT_PLANNER_OVERSIGHT_LEVEL, type PlannerOversightLevel } from "./types.js";
 
 export const PLAN_REVIEW_MAX_REVISIONS_SETTING_ID = "planReviewMaxRevisions";
 export const CODE_REVIEW_MAX_REVISIONS_SETTING_ID = "codeReviewMaxRevisions";
+export const PLAN_REVIEW_REPLAN_CAP_SETTING_ID = "planReviewReplanCap";
 export type OptionalReviewRevisionBudget = NonNullable<WorkflowOptionalGroupConfig["maxRevisions"]>;
 
 const REVIEW_REVISION_SETTING_BY_GROUP_ID: Record<string, string | undefined> = {
@@ -258,4 +259,17 @@ export function resolveEffectivePlannerOversightLevel(
     return workflowEffective;
   }
   return DEFAULT_PLANNER_OVERSIGHT_LEVEL;
+}
+
+/*
+ * FNXC:HeartbeatPatrol 2026-07-14-23:36:
+ * Boolean workflow values can arrive from built-in declaration defaults or explicit stored overrides. Normalize the idle-heartbeat patrol flag in one place so engine prompt code preserves default-on compatibility while treating only explicit false as no-patrol.
+ */
+export function resolveEffectivePlannerHeartbeatPatrolEnabled(
+  workflowEffective: Record<string, unknown> | boolean | null | undefined,
+): boolean {
+  const value = typeof workflowEffective === "object" && workflowEffective !== null
+    ? workflowEffective[PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID]
+    : workflowEffective;
+  return value !== false;
 }

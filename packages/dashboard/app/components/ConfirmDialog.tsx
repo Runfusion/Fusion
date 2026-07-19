@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { ConfirmOptions } from "../hooks/useConfirm";
 import { nextFloatingZ } from "./floatingWindowStack";
 import "./ConfirmDialog.css";
+
+const OPENING_GESTURE_SETTLE_MS = 500;
 
 export interface ConfirmDialogProps {
   isOpen: boolean;
@@ -35,11 +37,47 @@ export function ConfirmDialog({
   The confirm dialog (e.g. the "discard changes" prompt when cancelling New Task) MUST sit above the floating modal stack. Floating windows (New Task, pop-outs) live at the shared floating z-band (nextFloatingZ) and are portaled to document.body, so a confirm rendered inline at the page .modal-overlay z (~10000) paints BEHIND them. Portal the confirm to body and claim the TOP of the shared stack each time it opens so it always appears over whatever floating window triggered it.
   */
   const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
-  useEffect(() => {
+  const backdropPressStartedHereRef = useRef(false);
+  const backdropPressStartedAtRef = useRef(0);
+  const openedAtRef = useRef(0);
+  useLayoutEffect(() => {
     if (isOpen) {
+      openedAtRef.current = Date.now();
+      backdropPressStartedHereRef.current = false;
+      backdropPressStartedAtRef.current = 0;
       setOverlayZ(nextFloatingZ());
     }
   }, [isOpen]);
+
+  /*
+  FNXC:Confirm 2026-07-16-10:00:
+  A confirm opened from a task delete must remain visible until an explicit user
+  action. The trigger's trailing click can reach this newly portaled backdrop,
+  so outside-dismiss is valid only after a press that began on the backdrop.
+
+  FNXC:Confirm 2026-07-17-00:15 (FN-8192):
+  Mobile touch activation may emit a delayed touch-to-mouse compatibility burst
+  after the confirm portal mounts. Its synthetic mousedown starts on the
+  backdrop and defeats the press-origin guard, so only accept backdrop dismissal
+  when that press began after the opening gesture settle window. This uses stored
+  timestamps rather than a timer and preserves deliberate post-open dismissal.
+  */
+  const recordBackdropPress = (event: React.SyntheticEvent<HTMLDivElement>) => {
+    const startedOnBackdrop = event.target === event.currentTarget;
+    backdropPressStartedHereRef.current = startedOnBackdrop;
+    backdropPressStartedAtRef.current = startedOnBackdrop ? Date.now() : 0;
+  };
+
+  const dismissFromBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const startedOnBackdrop = backdropPressStartedHereRef.current;
+    const pressStartedAt = backdropPressStartedAtRef.current;
+    backdropPressStartedHereRef.current = false;
+    backdropPressStartedAtRef.current = 0;
+    const wasPostOpenPress = pressStartedAt - openedAtRef.current >= OPENING_GESTURE_SETTLE_MS;
+    if (startedOnBackdrop && wasPostOpenPress && event.target === event.currentTarget) {
+      onCancel();
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -64,7 +102,14 @@ export function ConfirmDialog({
   }
 
   return createPortal(
-    <div className="modal-overlay open confirm-dialog-overlay" onClick={onCancel} style={overlayZ ? { zIndex: overlayZ } : undefined}>
+    <div
+      className="modal-overlay open confirm-dialog-overlay"
+      onPointerDown={recordBackdropPress}
+      onMouseDown={recordBackdropPress}
+      onTouchStart={recordBackdropPress}
+      onClick={dismissFromBackdropClick}
+      style={overlayZ ? { zIndex: overlayZ } : undefined}
+    >
       <div
         className="modal confirm-dialog"
         onClick={(event) => event.stopPropagation()}

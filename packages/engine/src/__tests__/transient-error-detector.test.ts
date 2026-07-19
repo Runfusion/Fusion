@@ -1,16 +1,23 @@
 import { describe, it, expect } from "vitest";
+// FNXC:Reliability-ErrorClassification 2026-07-15-19:15 (FN-8004): the pure predicates moved to
+// the import-free leaf `transient-error-patterns.ts`; this module re-exports them. Importing via
+// BOTH paths here pins the re-export contract so existing callers keep working.
+import { isTransientError as isTransientErrorViaLeaf } from "../transient-error-patterns.js";
 import {
   isTransientError,
   isTransientAuthCredentialError,
   classifyError,
   isSilentTransientError,
+  extractConcurrentSoftDeleteRaceDetails,
   extractMissingModulePath,
+  isConcurrentSoftDeleteRaceError,
   isOperatorActionableAgentError,
   isStaleWorktreeModuleResolutionError,
   isModelAuthTierIncompatibilityError,
   isProviderModelNotFoundError,
   isUnsupportedMessageRoleError,
   isNonContinuableSessionError,
+  isNonPlanDefectPlanReviewFailure,
   TRANSIENT_ERROR_PATTERNS,
 } from "../transient-error-detector.js";
 import { isUsageLimitError } from "../usage-limit-detector.js";
@@ -66,8 +73,8 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("Connection Reset")).toBe(true);
     });
 
-    it("matches 'ECONNREFUSED'", () => {
-      expect(isTransientError("ECONNREFUSED")).toBe(true);
+    it("matches connection reset errno messages", () => {
+      expect(isTransientError("ECONNRESET")).toBe(true);
       expect(isTransientError("Error: ECONNREFUSED")).toBe(true);
     });
 
@@ -174,6 +181,33 @@ describe("Transient Error Detector", () => {
     });
   });
 
+  describe("isNonPlanDefectPlanReviewFailure", () => {
+    it.each([
+      "429 Too Many Requests from the provider",
+      "403 forbidden: model access is not enabled for this account",
+      "Unable to select a usable model after 2 attempts (primary example/model)",
+      "ECONNRESET while contacting reviewer",
+      "WebSocket closed 1006",
+      "request was aborted",
+    ])("keeps provider failure in place: %s", (errorMessage) => {
+      expect(isNonPlanDefectPlanReviewFailure({ errorMessage })).toBe(true);
+    });
+
+    it("keeps raw abort and exception failure values in place", () => {
+      expect(isNonPlanDefectPlanReviewFailure({ failureValue: "exception" })).toBe(true);
+      expect(isNonPlanDefectPlanReviewFailure({ failureValue: "aborted" })).toBe(true);
+    });
+
+    it("never classifies a genuine REVISE verdict as a provider failure", () => {
+      expect(isNonPlanDefectPlanReviewFailure({
+        verdict: "REVISE",
+        errorMessage: "429 Too Many Requests",
+        failureValue: "exception",
+      })).toBe(false);
+      expect(isNonPlanDefectPlanReviewFailure({ errorMessage: "PROMPT.md is missing acceptance criteria" })).toBe(false);
+    });
+  });
+
   describe("classifyError", () => {
     it("classifies usage limit errors as 'usage-limit'", () => {
       expect(classifyError("rate limit exceeded")).toBe("usage-limit");
@@ -243,6 +277,44 @@ describe("Transient Error Detector", () => {
       TRANSIENT_ERROR_PATTERNS.forEach((pattern) => {
         expect(pattern.flags).toContain("i");
       });
+    });
+  });
+
+  describe("isConcurrentSoftDeleteRaceError", () => {
+    const raceMessage = "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be read or mutated";
+
+    it("matches the typed soft-delete move race and extracts audit-safe details", () => {
+      expect(isConcurrentSoftDeleteRaceError(raceMessage)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(`Error: ${raceMessage}`)).toEqual({
+        taskId: "FN-8004",
+        deletedAt: "2026-07-13T10:18:51.000Z",
+      });
+    });
+
+    it("matches canonical TaskDeletedError serialization even when its message changes", () => {
+      const serializedError = "TaskDeletedError: task FN-8004 was deleted";
+      expect(isConcurrentSoftDeleteRaceError(serializedError)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(serializedError)).toEqual({ taskId: "FN-8004", deletedAt: undefined });
+    });
+
+    it("extracts available fields from the JSON form of a serialized TaskDeletedError", () => {
+      const serializedError = '{"name":"TaskDeletedError","taskId":"FN-8004","deletedAt":"2026-07-13T10:18:51.000Z"}';
+      expect(isConcurrentSoftDeleteRaceError(serializedError)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(serializedError)).toEqual({
+        taskId: "FN-8004",
+        deletedAt: "2026-07-13T10:18:51.000Z",
+      });
+    });
+
+    it.each([
+      "invalid api key",
+      "socket hang up",
+      "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be recreated",
+      "",
+      undefined,
+    ])("does not match unrelated or empty input: %s", (errorMessage) => {
+      expect(isConcurrentSoftDeleteRaceError(errorMessage as string)).toBe(false);
+      expect(extractConcurrentSoftDeleteRaceDetails(errorMessage as string)).toBeNull();
     });
   });
 
@@ -520,6 +592,49 @@ describe("Transient Error Detector", () => {
       expect(isSilentTransientError("abort")).toBe(false);
       expect(isSilentTransientError("Aborted")).toBe(false);
       expect(isSilentTransientError("The operation was aborted by user")).toBe(false);
+    });
+  });
+
+  /*
+  FNXC:AcpRuntime 2026-07-15-19:15 (FN-8004):
+  ACP-backed runtimes (Grok, OMP, generic ACP) surface provider-side turn failures as JSON-RPC
+  errors. Treating them as permanent parked a task `failed` over a ~20s blip, and since
+  `status:"failed"` is what suppresses recovery, the work stranded until a human noticed.
+
+  The anchoring is the load-bearing part: the bare JSON-RPC text is "Internal error", which must
+  NEVER match globally or it would disguise real application defects as retryable blips.
+  */
+  describe("ACP provider turn failures (FN-8004)", () => {
+    it("treats ACP turn failures as transient across every runtime prefix", () => {
+      expect(isTransientError("Grok ACP turn failed: Internal error")).toBe(true);
+      expect(isTransientError("OMP ACP turn failed: Internal error")).toBe(true);
+      expect(isTransientError("Grok ACP turn failed: Internal error (acp rpc code -32603, retryable)")).toBe(true);
+    });
+
+    it("treats retryable ACP rpc codes as transient", () => {
+      for (const code of [-32603, -32000, -32001, -32002, -32003]) {
+        expect(isTransientError(`Server error (acp rpc code ${code}, retryable)`)).toBe(true);
+      }
+    });
+
+    it("treats ACP startup and dead-connection diagnostics as transient", () => {
+      expect(isTransientError("Grok ACP failed to start: spawn grok ENOENT")).toBe(true);
+      expect(isTransientError("Grok ACP session has no live connection. The `grok agent stdio` process failed to start."))
+        .toBe(true);
+    });
+
+    it("does NOT match the bare JSON-RPC message or caller-fault codes", () => {
+      expect(isTransientError("Internal error")).toBe(false);
+      expect(isTransientError("Application threw Internal error while saving")).toBe(false);
+      for (const code of [-32600, -32601, -32602]) {
+        expect(isTransientError(`Bad call (acp rpc code ${code})`)).toBe(false);
+      }
+    });
+
+    it("re-exports the identical predicate from the leaf module", () => {
+      // The detector must stay a pure re-export — a divergent copy would let the merge
+      // classifier (which imports the leaf) and the executor drift apart again.
+      expect(isTransientErrorViaLeaf).toBe(isTransientError);
     });
   });
 });

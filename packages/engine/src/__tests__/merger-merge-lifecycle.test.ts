@@ -1897,8 +1897,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return "src/file.ts\n";
       }
 
-      // git diff-tree for trivial whitespace detection - return real changes (non-trivial)
-      if (cmdStr.includes("diff-tree")) {
+      // The conflict helper compares index stages through execFile; return a substantive diff.
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2056,8 +2056,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return hasConflicts ? "src/complex.ts\n" : "";
       }
 
-      // git diff-tree for trivial whitespace detection - return real changes (non-trivial)
-      if (cmdStr.includes("diff-tree")) {
+      // The conflict helper compares index stages through execFile; return a substantive diff.
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2141,7 +2141,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       if (cmdStr.includes("diff --name-only --diff-filter=U")) {
         return hasConflicts ? "packages/core/src/store.ts\n" : "";
       }
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2205,7 +2205,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return Buffer.from("");
       }
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return hasConflicts ? "packages/core/src/store.ts\n" : "";
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2231,7 +2231,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Overlap guard detected 1 recent-main overlap file(s) for smart-prefer-main (warn-only)"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -2263,7 +2263,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return Buffer.from("");
       }
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return hasConflicts ? "packages/core/src/store.ts\n" : "";
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2598,7 +2598,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return "";
       }
 
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const value = 2;\n-const value = 1;";
         throw error;
@@ -2711,7 +2711,7 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
         return "src/always-conflicts.ts\n";
       }
 
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -3038,7 +3038,11 @@ describe("aiMergeTask post-squash audit gate", () => {
       if (cmdStr.includes("diff --name-only --diff-filter=U")) {
         return hasConflicts ? "src/complex.ts\n" : "";
       }
-      if (cmdStr.includes("diff-tree")) {
+      // FNXC:MergeSafety 2026-07-16-08:10: whitespace classification uses `git diff -p -w :2: :3:` via execFile.
+      if (
+        cmdStr.includes("diff-tree")
+        || (cmdStr.includes("git diff") && cmdStr.includes("-w") && cmdStr.includes(":2:"))
+      ) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -3125,7 +3129,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       strategy: "squash",
       squashSha: "mergedcommit123",
     });
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-squash audit clean", "text", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-squash audit clean", "status", undefined, "merger");
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
   });
 
@@ -3157,7 +3161,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       rangeBaseSha: "basehead123",
       rangeHeadSha: "landedcommit002",
     });
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-rebase range audit clean", "text", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-rebase range audit clean", "status", undefined, "merger");
   });
 
   it("degrades to squash fallback when no usable base can be resolved on the rebase route", async () => {
@@ -3200,7 +3204,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-merge audit degraded to single-commit squash fallback"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -3246,7 +3250,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-merge audit degraded to single-commit squash fallback"),
-      "text",
+      "status",
       undefined,
       "merger",
     );
@@ -3336,7 +3340,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-rebase audit overlap cleared by deterministic verification"),
-      "text",
+      "status",
       expect.any(String),
       "merger",
     );

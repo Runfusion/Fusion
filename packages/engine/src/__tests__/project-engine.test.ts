@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   runtimeStart: vi.fn(async () => undefined),
   runtimeStop: vi.fn(async () => undefined),
   runtimeResumeAfterUnpause: vi.fn(async () => undefined),
+  getSelfHealingManager: vi.fn(() => undefined),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
   execFile: vi.fn(),
@@ -81,7 +82,7 @@ vi.mock("../cron-runner.js", () => {
 // dispatch onto runAiMerge (merger-ai.js). project-engine no longer imports
 // aiMergeTask; the merge seam these tests mock/assert is now runAiMerge.
 vi.mock("../merger.js", () => ({
-  sweepStaleAutostashes: vi.fn(async () => undefined),
+  sweepStaleAutostashes: vi.fn(async () => ({ dropped: 0, retained: 0 })),
   VerificationError: class VerificationError extends Error {},
 }));
 
@@ -204,12 +205,14 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
       stop: mocks.runtimeStop,
       resumeAfterUnpause: mocks.runtimeResumeAfterUnpause,
       getTaskStore: () => mocks.currentStore,
+      getPluginRunner: vi.fn(() => undefined),
       getAgentStore: vi.fn(),
       getMessageStore: vi.fn(),
       getRoutineStore: vi.fn(),
       getRoutineRunner: vi.fn(),
       getHeartbeatMonitor: vi.fn(),
       getTriggerScheduler: vi.fn(),
+      getSelfHealingManager: mocks.getSelfHealingManager,
       configurePrMonitoring: mocks.runtimeConfigurePrMonitoring,
     };
   }),
@@ -244,6 +247,7 @@ function createMockStore(initialSettings: Record<string, unknown>) {
       return structuredClone(settings);
     }),
     logEntry: vi.fn(async () => undefined),
+    getAsyncLayer: vi.fn(() => ({ kind: "test-async-layer" })),
     /*
     FNXC:OverlapSelfHealing 2026-06-26-12:00:
     ProjectEngine's broad TaskStore fake is shared by maintenance wiring tests, so it carries clearStaleBlockedBy's overlap-path seam even when individual cases only exercise merge orchestration.
@@ -358,6 +362,8 @@ beforeEach(() => {
   mocks.deliverPostgresMigrationCompleteNotice.mockReset();
   mocks.deliverPostgresMigrationCompleteNotice.mockResolvedValue("no-migration");
   mocks.runtimeResumeAfterUnpause.mockClear();
+  mocks.getSelfHealingManager.mockReset();
+  mocks.getSelfHealingManager.mockReturnValue(undefined);
   mocks.notifierStart.mockClear();
   mocks.notifierStop.mockClear();
   mocks.notifierNotifyGridlock.mockClear();
@@ -400,6 +406,7 @@ describe("ProjectEngine notification ownership wiring", () => {
     const engine = createEngine({ skipNotifier: false, projectId: "proj_for_notifier" });
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.notifierStart).toHaveBeenCalledTimes(1));
 
     expect(NotificationService).toHaveBeenCalledTimes(1);
     expect(OAuthAlertStateStore).toHaveBeenCalledTimes(1);
@@ -439,6 +446,7 @@ describe("ProjectEngine notification ownership wiring", () => {
 
     await engine.start();
     await engine.start();
+    await vi.waitFor(() => expect(mocks.notifierStart).toHaveBeenCalledTimes(1));
 
     // Root cause guard: if ProjectEngine.start is called more than once, it should not
     // wire a second NotificationService/NtfyNotifier pair for the same store.
@@ -491,6 +499,47 @@ describe("ProjectEngine notification ownership wiring", () => {
     expect(mocks.deliverPostgresMigrationCompleteNotice).toHaveBeenCalledOnce();
 
     await engine.stop();
+  });
+});
+
+describe("ProjectEngine planner overseer observation wiring", () => {
+  it("awaits the audit persistence promise through the monitor registered by start()", async () => {
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    let releasePersistence!: () => void;
+    const persistence = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
+    const engineInternals = engine as unknown as {
+      emitOverseerObservationDeduped: (store: unknown, observation: unknown) => Promise<void>;
+    };
+    const emitSpy = vi.spyOn(engineInternals, "emitOverseerObservationDeduped").mockReturnValue(persistence);
+
+    await engine.start();
+    try {
+      const monitor = engine.getPlannerOverseer();
+      expect(monitor).toBeDefined();
+
+      /*
+      FNXC:PlannerOversight 2026-07-17-16:35:
+      ProjectEngine.start() must return the audit-persistence Promise from its
+      monitor callback. Awaiting only a test-local callback can hide dropped
+      PostgreSQL audit writes in the production wiring.
+      */
+      const observed = monitor!.observeTask({ id: "FN-observation", column: "in-progress" } as Task, "autonomous");
+      await vi.waitFor(() => expect(emitSpy).toHaveBeenCalledOnce());
+
+      let settled = false;
+      void observed.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      releasePersistence();
+      await expect(observed).resolves.toEqual(expect.objectContaining({ taskId: "FN-observation" }));
+    } finally {
+      await engine.stop();
+    }
   });
 });
 
@@ -561,6 +610,7 @@ describe("ProjectEngine auto-summarize wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncScheduledEvalBatchAutomation).toHaveBeenCalledTimes(1));
 
     expect(mocks.syncInsightExtractionAutomation).toHaveBeenCalledTimes(1);
     expect(mocks.syncAutoSummarizeAutomation).toHaveBeenCalledTimes(1);
@@ -598,6 +648,7 @@ describe("ProjectEngine auto-summarize wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncAutoSummarizeAutomation).toHaveBeenCalledTimes(1));
     mocks.syncAutoSummarizeAutomation.mockClear();
 
     const previous = { ...baseSettings };
@@ -640,6 +691,7 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1));
 
     const cronRunnerStartOrder = mocks.cronRunnerStart.mock.invocationCallOrder[0];
     expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1);
@@ -656,6 +708,7 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1));
     mocks.syncMemoryDreamsAutomation.mockClear();
 
     const previous = { ...baseSettings };
@@ -678,6 +731,7 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1));
     mocks.syncMemoryDreamsAutomation.mockClear();
 
     const previous = { ...baseSettings };
@@ -699,6 +753,7 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1));
     mocks.syncMemoryDreamsAutomation.mockClear();
 
     const previous = { ...baseSettings };
@@ -721,6 +776,9 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await expect(engine.start()).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Memory dreams automation startup sync failed"),
+    ));
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Memory dreams automation startup sync failed"),
@@ -741,6 +799,7 @@ describe("ProjectEngine memory dreams wiring", () => {
     const engine = createEngine();
 
     await engine.start();
+    await vi.waitFor(() => expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1));
     warnSpy.mockClear();
     mocks.syncMemoryDreamsAutomation.mockRejectedValueOnce(new Error("dream settings sync failed"));
 
@@ -2564,16 +2623,19 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
   it("startup merge sweep skips paused in-review tasks", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
-    mockStore.store.listTasks.mockResolvedValueOnce([
+    const inReviewTasks = [
       { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
       { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
-    ]);
+    ];
+    // Critical stale-status cleanup reads first; deferred startup then evaluates eligibility.
+    mockStore.store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce(inReviewTasks);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
 
     await engine.start();
+    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-ready"));
 
     expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
@@ -2584,7 +2646,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
   it("startup merge sweep enqueues shared-group members when autoMerge is false", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: false });
     mockStore.store.getBranchGroup.mockReturnValue({ id: "BG-5819", status: "open", branchName: "fusion/groups/bg-5819" });
-    mockStore.store.listTasks.mockResolvedValueOnce([
+    const inReviewTasks = [
       {
         id: "FN-shared",
         column: "in-review",
@@ -2594,13 +2656,16 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
         branchContext: { assignmentMode: "shared", groupId: "BG-5819", source: "planning" },
       },
       { id: "FN-plain", column: "in-review", paused: false, mergeRetries: 0, status: null },
-    ]);
+    ];
+    // Critical stale-status cleanup reads first; deferred startup then evaluates eligibility.
+    mockStore.store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce(inReviewTasks);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
 
     await engine.start();
+    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-shared"));
 
     expect(enqueueSpy).toHaveBeenCalledWith("FN-shared");
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-plain");
@@ -2756,6 +2821,141 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
       expect((patch as { engineActiveSinceMs: unknown }).engineActiveSinceMs).toEqual(expect.any(Number));
     }
 
+    await engine.stop();
+  });
+
+  it("reconciles active timing exactly once when both pause sources clear together", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const reconcileEngineDowntimeActiveTiming = vi.fn(async () => ({ shiftedTaskIds: [], downtimeMs: 120_000 }));
+    mocks.getSelfHealingManager.mockReturnValue({ reconcileEngineDowntimeActiveTiming });
+    const engine = createEngine();
+
+    await engine.start();
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: false },
+      {
+        ...baseSettings,
+        autoMerge: true,
+        globalPause: true,
+        enginePaused: true,
+        engineLastActiveAt: "2026-07-15T11:58:00.000Z",
+      },
+    );
+
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenCalledTimes(1);
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenCalledWith({
+      engineLastActiveAtOverride: "2026-07-15T11:58:00.000Z",
+    });
+    await engine.stop();
+  });
+
+  it("waits for active-timing reconciliation before resuming agentic work", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    let resolveReconcile!: () => void;
+    const reconcileEngineDowntimeActiveTiming = vi.fn(() => new Promise<{ shiftedTaskIds: string[]; downtimeMs: number }>((resolve) => {
+      resolveReconcile = () => resolve({ shiftedTaskIds: ["FN-active"], downtimeMs: 120_000 });
+    }));
+    mocks.getSelfHealingManager.mockReturnValue({ reconcileEngineDowntimeActiveTiming });
+    const engine = createEngine();
+    await engine.start();
+
+    const unpause = mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false },
+      { ...baseSettings, autoMerge: true, globalPause: true, engineLastActiveAt: "2026-07-15T11:58:00.000Z" },
+    );
+    await vi.waitFor(() => expect(reconcileEngineDowntimeActiveTiming).toHaveBeenCalledTimes(1));
+    expect(mocks.runtimeResumeAfterUnpause).not.toHaveBeenCalled();
+
+    resolveReconcile();
+    await unpause;
+    expect(mocks.runtimeResumeAfterUnpause).toHaveBeenCalledTimes(1);
+    await engine.stop();
+  });
+
+  it("reconciles once for either individual unpause, but not while another pause remains", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const reconcileEngineDowntimeActiveTiming = vi.fn(async () => ({ shiftedTaskIds: [], downtimeMs: 0 }));
+    mocks.getSelfHealingManager.mockReturnValue({ reconcileEngineDowntimeActiveTiming });
+    const engine = createEngine();
+
+    await engine.start();
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: true },
+      { ...baseSettings, autoMerge: true, globalPause: true, enginePaused: true },
+    );
+    expect(reconcileEngineDowntimeActiveTiming).not.toHaveBeenCalled();
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: false },
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: true, engineLastActiveAt: "engine-only" },
+    );
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: false },
+      { ...baseSettings, autoMerge: true, globalPause: true, enginePaused: false, engineLastActiveAt: "global-only" },
+    );
+
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenCalledTimes(2);
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenNthCalledWith(1, { engineLastActiveAtOverride: "engine-only" });
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenNthCalledWith(2, { engineLastActiveAtOverride: "global-only" });
+    await engine.stop();
+  });
+
+  it("fails soft when timing reconciliation rejects or its manager is unavailable", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const reconcileEngineDowntimeActiveTiming = vi.fn(async () => {
+      throw new Error("timing unavailable");
+    });
+    mocks.getSelfHealingManager.mockReturnValue({ reconcileEngineDowntimeActiveTiming });
+    const warn = vi.spyOn(runtimeLog, "warn").mockImplementation(() => undefined);
+    const engine = createEngine();
+    await engine.start();
+    const resume = vi.fn();
+    Object.defineProperty(engine.getRuntime(), "stuckTaskDetector", { get: () => ({ resume }), configurable: true });
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, enginePaused: false },
+      { ...baseSettings, autoMerge: true, enginePaused: true },
+    );
+    await Promise.resolve();
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to reconcile engine downtime active timing"));
+
+    mocks.getSelfHealingManager.mockReturnValue(undefined);
+    await expect(mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false },
+      { ...baseSettings, autoMerge: true, globalPause: true },
+    )).resolves.toBeUndefined();
+    expect(resume).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+    await engine.stop();
+  });
+
+  it("passes the frozen heartbeat once so paused task time is discounted once", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const startedMs = Date.parse("2026-07-15T11:50:00.000Z");
+    const capturedHeartbeat = "2026-07-15T11:58:00.000Z";
+    let executionStartedAt = new Date(startedMs).toISOString();
+    const reconcileEngineDowntimeActiveTiming = vi.fn(async ({ engineLastActiveAtOverride }: { engineLastActiveAtOverride?: string }) => {
+      const downtimeMs = Date.parse("2026-07-15T12:00:00.000Z") - Date.parse(engineLastActiveAtOverride ?? "");
+      executionStartedAt = new Date(startedMs + downtimeMs).toISOString();
+      return { shiftedTaskIds: ["FN-active"], downtimeMs };
+    });
+    mocks.getSelfHealingManager.mockReturnValue({ reconcileEngineDowntimeActiveTiming });
+    const engine = createEngine();
+    await engine.start();
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false, enginePaused: false, engineLastActiveAt: "2026-07-15T12:00:00.000Z" },
+      { ...baseSettings, autoMerge: true, globalPause: true, enginePaused: true, engineLastActiveAt: capturedHeartbeat },
+    );
+
+    expect(reconcileEngineDowntimeActiveTiming).toHaveBeenCalledTimes(1);
+    expect(executionStartedAt).toBe("2026-07-15T11:52:00.000Z");
     await engine.stop();
   });
 
@@ -2935,6 +3135,7 @@ describe("ProjectEngine swallowed error hardening", () => {
 
     const engine = createEngine();
     await engine.start();
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
 
     mockStore.store.getSettings.mockRejectedValueOnce(new Error("db locked"));
 
@@ -2966,12 +3167,18 @@ describe("ProjectEngine swallowed error hardening", () => {
   it("warns when startup merge sweep fails", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mocks.currentStore = mockStore.store;
-    mockStore.store.listTasks.mockRejectedValueOnce(new Error("connection lost"));
+    // The critical stale-status read precedes the deferred enqueue sweep.
+    mockStore.store.listTasks
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("connection lost"));
 
     const engine = createEngine();
     await engine.start();
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Auto-merge startup enqueue failed: connection lost"),
+    ));
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge startup sweep failed"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge startup enqueue failed: connection lost"));
 
     await engine.stop();
   });
@@ -2982,6 +3189,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     await engine.start();
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
     warnSpy.mockClear();
 
     mockStore.store.listTasks.mockRejectedValueOnce(new Error("sweep db error"));
@@ -2999,6 +3207,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     await engine.start();
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
     warnSpy.mockClear();
 
     mockStore.store.getSettings
@@ -3359,49 +3568,49 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
 });
 
 describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
-  const gate = (task: Partial<Task>, settings: { autoMerge: boolean }, branchGroup: { status: "open" | "finalized" | "abandoned" } | null = null) =>
-    (createEngine() as any).allowInReviewMergeProcessing(task, settings, { getBranchGroup: vi.fn(() => branchGroup) }) as boolean;
+  const gate = (task: Partial<Task>, settings: { autoMerge: boolean }, branchGroup: { status: "open" | "finalized" | "abandoned" } | null = null): Promise<boolean> =>
+    (createEngine() as any).allowInReviewMergeProcessing(task, settings, { getBranchGroup: vi.fn(() => branchGroup) });
 
-  it("lets an explicit per-task autoMerge:true through when the global setting is off", () => {
-    expect(gate({ autoMerge: true }, { autoMerge: false })).toBe(true);
+  it("lets an explicit per-task autoMerge:true through when the global setting is off", async () => {
+    await expect(gate({ autoMerge: true }, { autoMerge: false })).resolves.toBe(true);
   });
 
-  it("blocks tasks without a per-task override when the global setting is off", () => {
-    expect(gate({}, { autoMerge: false })).toBe(false);
-    expect(gate({ autoMerge: false }, { autoMerge: false })).toBe(false);
+  it("blocks tasks without a per-task override when the global setting is off", async () => {
+    await expect(gate({}, { autoMerge: false })).resolves.toBe(false);
+    await expect(gate({ autoMerge: false }, { autoMerge: false })).resolves.toBe(false);
   });
 
-  it("keeps everything flowing when the global setting is on — explicit autoMerge:false is parked manual-required downstream", () => {
-    expect(gate({}, { autoMerge: true })).toBe(true);
-    expect(gate({ autoMerge: false }, { autoMerge: true })).toBe(true);
+  it("keeps everything flowing when the global setting is on — explicit autoMerge:false is parked manual-required downstream", async () => {
+    await expect(gate({}, { autoMerge: true })).resolves.toBe(true);
+    await expect(gate({ autoMerge: false }, { autoMerge: true })).resolves.toBe(true);
   });
 
-  it("still exempts live shared-branch-group member integration when the global setting is off", () => {
-    expect(gate(
+  it("still exempts live shared-branch-group member integration when the global setting is off", async () => {
+    await expect(gate(
       { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
       { autoMerge: false },
       { status: "open" },
-    )).toBe(true);
+    )).resolves.toBe(true);
   });
 
   it.each([
     ["missing", null],
     ["finalized", { status: "finalized" as const }],
     ["abandoned", { status: "abandoned" as const }],
-  ])("blocks shared-branch-group member integration for %s groups when global autoMerge is off", (_label, branchGroup) => {
-    expect(gate(
+  ])("blocks shared-branch-group member integration for %s groups when global autoMerge is off", async (_label, branchGroup) => {
+    await expect(gate(
       { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
       { autoMerge: false },
       branchGroup,
-    )).toBe(false);
+    )).resolves.toBe(false);
   });
 
   it.each([
     ["api", { sourceType: "api" }],
     ["user-created", { sourceType: undefined }],
     ["engine-created", { sourceType: "unknown", sourceMetadata: { fusionBranchContext: { assignmentMode: "shared", groupId: "grp-1", source: "mission" } } }],
-  ])("applies the dissolved-group manual hold regardless of %s provenance", (_label, provenance) => {
-    expect(gate(
+  ])("applies the dissolved-group manual hold regardless of %s provenance", async (_label, provenance) => {
+    await expect(gate(
       {
         ...provenance,
         autoMerge: undefined,
@@ -3409,7 +3618,7 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
       },
       { autoMerge: false },
       null,
-    )).toBe(false);
+    )).resolves.toBe(false);
   });
 });
 
@@ -3450,21 +3659,21 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     const enqueueSpy = vi
       .spyOn(engine, "internalEnqueueMerge")
       .mockImplementation(() => true);
-    const run = (tasks: Task[], settings: { autoMerge: boolean }): number =>
-      engine.enqueueEligibleInReviewTasks(tasks, settings) as number;
+    const run = (tasks: Task[], settings: { autoMerge: boolean }): Promise<number> =>
+      engine.enqueueEligibleInReviewTasks(tasks, settings);
     return { engine, enqueueSpy, run };
   };
 
-  it("enqueues an in-review task with autoMerge:true even when the global setting is off", () => {
+  it("enqueues an in-review task with autoMerge:true even when the global setting is off", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run([inReview("FN-override", { autoMerge: true })], { autoMerge: false });
+    const count = await run([inReview("FN-override", { autoMerge: true })], { autoMerge: false });
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-override");
   });
 
-  it("does not enqueue a sibling task without an override in the same sweep when the global setting is off", () => {
+  it("does not enqueue a sibling task without an override in the same sweep when the global setting is off", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run(
+    const count = await run(
       [inReview("FN-override", { autoMerge: true }), inReview("FN-plain")],
       { autoMerge: false },
     );
@@ -3473,9 +3682,9 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-plain");
   });
 
-  it("still enqueues a task with autoMerge:false when the global setting is on (parked manual-required downstream)", () => {
+  it("still enqueues a task with autoMerge:false when the global setting is on (parked manual-required downstream)", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run([inReview("FN-explicit-false", { autoMerge: false })], { autoMerge: true });
+    const count = await run([inReview("FN-explicit-false", { autoMerge: false })], { autoMerge: true });
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-explicit-false");
   });

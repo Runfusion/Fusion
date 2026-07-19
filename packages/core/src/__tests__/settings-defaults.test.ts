@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveMaxAutoMergeRetries } from "../in-review-stall.js";
+import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../in-review-stall.js";
 import { isExperimentalFeatureEnabled } from "../experimental-features.js";
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey } from "../settings-schema.js";
 import { isWorkflowColumnsEnabled } from "../workflow-columns-settings.js";
 import {
   __resetLegacyCwdMainWarningForTests,
@@ -26,6 +26,20 @@ describe("settings defaults invariants", () => {
 
   it("keeps project worktreesDir unset by default", () => {
     expect(DEFAULT_PROJECT_SETTINGS.worktreesDir).toBeUndefined();
+  });
+
+  it("defaults local network discovery on and keeps its opt-out global-only", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.localNetworkDiscoveryEnabled).toBe(true);
+    expect(GLOBAL_SETTINGS_KEYS).toContain("localNetworkDiscoveryEnabled");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("localNetworkDiscoveryEnabled");
+    expect("localNetworkDiscoveryEnabled" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+    expect(isGlobalOnlySettingsKey("localNetworkDiscoveryEnabled")).toBe(true);
+  });
+
+  it("keeps the embedded PostgreSQL connection cap global and high by default", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.embeddedPostgresMaxConnections).toBe(500);
+    expect(GLOBAL_SETTINGS_KEYS).toContain("embeddedPostgresMaxConnections");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("embeddedPostgresMaxConnections");
   });
 
   it("defaults dashboard keyboard shortcuts globally", () => {
@@ -62,6 +76,27 @@ describe("settings defaults invariants", () => {
     expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: 0 })).toBe(3);
     expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: -1 })).toBe(3);
     expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: Number.NaN })).toBe(3);
+  });
+
+  it("defaults executor escalation off and resolves only complete opt-in targets", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.executorModelEscalationEnabled).toBe(false);
+    expect(PROJECT_SETTINGS_KEYS).toEqual(expect.arrayContaining([
+      "executorModelEscalationEnabled",
+      "executorEscalationProvider",
+      "executorEscalationModelId",
+      "executorEscalationNodeId",
+    ]));
+    expect(resolveExecutorEscalationTarget({
+      executorModelEscalationEnabled: false,
+      executorEscalationProvider: "anthropic",
+      executorEscalationModelId: "claude",
+      executorEscalationNodeId: "node-1",
+    }).enabled).toBe(false);
+    expect(resolveExecutorEscalationTarget({ executorModelEscalationEnabled: true })).toEqual({ enabled: false });
+    expect(resolveExecutorEscalationTarget({ executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic" })).toEqual({ enabled: false });
+    expect(resolveExecutorEscalationTarget({ executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic", executorEscalationModelId: "claude" })).toEqual({ enabled: true, provider: "anthropic", modelId: "claude" });
+    expect(resolveExecutorEscalationTarget({ executorModelEscalationEnabled: true, executorEscalationNodeId: "node-1" })).toEqual({ enabled: true, nodeId: "node-1" });
+    expect(resolveExecutorEscalationTarget({ executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic", executorEscalationModelId: "claude", executorEscalationNodeId: "node-1" })).toEqual({ enabled: true, provider: "anthropic", modelId: "claude", nodeId: "node-1" });
   });
 
   it("resolves worktrunk as disabled when both scopes are unset or empty", () => {
@@ -178,8 +213,8 @@ describe("settings defaults invariants", () => {
   });
 
   describe("taskPopupsBoardListOnly default", () => {
-    it("keeps taskPopupsBoardListOnly explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.taskPopupsBoardListOnly).toBe(false);
+    it("keeps taskPopupsBoardListOnly explicitly true in project defaults", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.taskPopupsBoardListOnly).toBe(true);
       expect("taskPopupsBoardListOnly" in DEFAULT_PROJECT_SETTINGS).toBe(true);
       expect(PROJECT_SETTINGS_KEYS).toContain("taskPopupsBoardListOnly");
     });
@@ -238,6 +273,16 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("skipConfirmationDialogs default", () => {
+    it("defaults critical-action confirmation skipping off and global-scoped only", () => {
+      expect(DEFAULT_GLOBAL_SETTINGS.skipConfirmationDialogs).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).toContain("skipConfirmationDialogs");
+      expect("skipConfirmationDialogs" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("skipConfirmationDialogs");
+      expect(isGlobalOnlySettingsKey("skipConfirmationDialogs")).toBe(true);
+    });
+  });
+
   describe("mergeIntegrationWorktree default", () => {
     it("defaults project settings to reuse-task-worktree", () => {
       expect(DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree).toBe("reuse-task-worktree");
@@ -274,4 +319,17 @@ describe("settings defaults invariants", () => {
       expect(normalizeMergeIntegrationWorktreeMode(null)).toBe("reuse-task-worktree");
     });
   });
+  it("normalizes executor tool-failure retry settings with floor semantics", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.executorToolFailureRetryCount).toBe(DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES);
+    expect(DEFAULT_PROJECT_SETTINGS.executorToolFailureRetryBackoffMs).toBe(DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS);
+    expect(DEFAULT_PROJECT_SETTINGS.executorToolFailureThreshold).toBe(CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD);
+    expect(PROJECT_SETTINGS_KEYS).toEqual(expect.arrayContaining(["executorToolFailureRetryCount", "executorToolFailureRetryBackoffMs", "executorToolFailureThreshold"]));
+    expect(resolveMaxConsecutiveToolFailureRetries({ executorToolFailureRetryCount: 2.7 })).toBe(2);
+    expect(resolveMaxConsecutiveToolFailureRetries({ executorToolFailureRetryCount: -1 })).toBe(2);
+    expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: 2500.9 })).toBe(2500);
+    expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: Infinity })).toBe(2000);
+    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 3.9 })).toBe(3);
+    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 0.5 })).toBe(3);
+  });
+
 });

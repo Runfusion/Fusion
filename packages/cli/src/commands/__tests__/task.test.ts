@@ -97,6 +97,7 @@ vi.mock("@fusion/core", async (importActual) => {
 
 // Mock @fusion/engine
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   aiMergeTask: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
@@ -118,6 +119,15 @@ vi.mock("@fusion/dashboard", () => ({
   GitLabClient: vi.fn(),
   resolveGitlabAuth: vi.fn(() => ({})),
   buildGitLabTaskProvenance: vi.fn(() => ({})),
+  buildGitHubIssueSource: vi.fn((owner: string, repo: string, issue: { number: number; html_url: string }) => ({
+    sourceIssue: { provider: "github", repository: `${owner}/${repo}`, externalIssueId: String(issue.number), issueNumber: issue.number, url: issue.html_url },
+    sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
+  })),
+  isGitHubIssueAlreadyImported: vi.fn((task: any, input: any) =>
+    task.description?.toLowerCase().includes(input.sourceUrl.toLowerCase())
+    || (task.sourceIssue?.provider === "github"
+      && task.sourceIssue.repository?.toLowerCase() === `${input.owner}/${input.repo}`.toLowerCase()
+      && (task.sourceIssue.issueNumber === input.issueNumber || task.sourceIssue.externalIssueId === String(input.issueNumber)))),
   isGitLabAlreadyImported: vi.fn(),
   buildGitLabTaskDescription: vi.fn(),
 }));
@@ -148,13 +158,6 @@ vi.mock("@fusion/core/gh-cli", () => ({
 
 // Mock project-context
 vi.mock("../../project-context.js", () => ({
-  asLocalProjectContext: vi.fn((store: unknown) => ({
-    projectId: process.cwd(),
-    projectPath: process.cwd(),
-    projectName: "current-project",
-    isRegistered: false,
-    store,
-  })),
   resolveProjectPathOnly: vi.fn(async () => process.cwd()),
   resolveProject: vi.fn().mockRejectedValue(new Error("No project context")),
   getStore: vi.fn().mockResolvedValue({}),
@@ -1310,7 +1313,17 @@ describe("project-aware task command behavior", () => {
 
     expect(updateStep).toHaveBeenCalled();
     expect(logEntry).toHaveBeenCalled();
-    expect(runAiMerge).toHaveBeenCalledWith(resolvedStore, "/test", "FN-123", expect.any(Object));
+    // FNXC:GrokCliRouting 2026-07-15-10:17: bare `fn task merge` has no ProjectEngine and does not invent a PluginRunner.
+    expect(runAiMerge).toHaveBeenCalledWith(
+      resolvedStore,
+      "/test",
+      "FN-123",
+      expect.objectContaining({
+        onAgentText: expect.any(Function),
+      }),
+    );
+    const mergeOpts = vi.mocked(runAiMerge).mock.calls.at(-1)?.[3] as { pluginRunner?: unknown } | undefined;
+    expect(mergeOpts?.pluginRunner).toBeUndefined();
     expect(landWorkspaceTask).not.toHaveBeenCalled();
     expect(aiMergeTask).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
@@ -1744,8 +1757,16 @@ describe("runTaskImportGitHubInteractive", () => {
     mockListTasks.mockResolvedValueOnce([
       {
         id: "FN-001",
-        description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
+        description: "Edited description without source URL",
         column: "triage",
+        sourceIssue: {
+          provider: "github",
+          repository: "Owner/Repo",
+          externalIssueId: "1",
+          issueNumber: 1,
+          // FNXC:GithubImport 2026-07-15-00:00: A mismatched URL proves repository/number matching survives casing changes.
+          url: "https://github.com/other/repo/issues/99",
+        },
       },
     ]);
 
@@ -2067,8 +2088,16 @@ describe("runTaskImportFromGitHub", () => {
     mockListTasks.mockResolvedValueOnce([
       {
         id: "FN-001",
-        description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
+        description: "Edited description without source URL",
         column: "triage",
+        sourceIssue: {
+          provider: "github",
+          repository: "Owner/Repo",
+          externalIssueId: "1",
+          issueNumber: 1,
+          // FNXC:GithubImport 2026-07-15-00:00: A mismatched URL proves repository/number matching survives casing changes.
+          url: "https://github.com/other/repo/issues/99",
+        },
       },
     ]);
 
@@ -2605,6 +2634,18 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      /*
+      FNXC:CliTests 2026-07-17-10:57:
+      The exact manual retry reset contract now clears bulk-completion refusal
+      and executor tool-failure retry/escalation state alongside recovery budgets.
+      Keep both retry-status assertions aligned with buildManualRetryResetPatch.
+      */
+      bulkCompletionRefusalAt: null,
+      consecutiveToolFailureRetryCount: 0,
+      executorEscalationAttempted: false,
+      toolFailureDetectorLogCursor: null,
+      toolFailureRetryExhaustedAuditEmitted: false,
+      planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
       taskDoneRetryCount: 0,
@@ -2682,6 +2723,18 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      /*
+      FNXC:CliTests 2026-07-17-10:57:
+      The exact manual retry reset contract now clears bulk-completion refusal
+      and executor tool-failure retry/escalation state alongside recovery budgets.
+      Keep both retry-status assertions aligned with buildManualRetryResetPatch.
+      */
+      bulkCompletionRefusalAt: null,
+      consecutiveToolFailureRetryCount: 0,
+      executorEscalationAttempted: false,
+      toolFailureDetectorLogCursor: null,
+      toolFailureRetryExhaustedAuditEmitted: false,
+      planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
       taskDoneRetryCount: 0,

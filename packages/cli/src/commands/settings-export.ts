@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { TaskStore, createTaskStoreForBackend, exportSettings, generateExportFilename } from "@fusion/core";
-import { resolveProject } from "../project-context.js";
+import { createTaskStoreForBackend, exportSettings, generateExportFilename } from "@fusion/core";
+import { closeProjectStore, resolveProject, type ProjectContext } from "../project-context.js";
 
 /**
  * Run settings export command.
@@ -17,21 +17,33 @@ export async function runSettingsExport(options: {
   projectName?: string;
 } = {}): Promise<void> {
   const scope = options.scope ?? "both";
-  const project = options.projectName ? await resolveProject(options.projectName) : undefined;
-
-  // FNXC:PostgresCutover 2026-07-04: boot the PostgreSQL backend via the startup
-  // factory instead of a legacy SQLite TaskStore whose runtime was removed
-  // (VAL-REMOVAL-005). Falls back to legacy only on FUSION_NO_EMBEDDED_PG=1.
-  const rootDir = project?.projectPath ?? process.cwd();
-  const boot = await createTaskStoreForBackend({ rootDir });
-  let store: TaskStore;
-  if (boot) {
-    store = boot.taskStore;
-  } else {
-    store = new TaskStore(rootDir);
-    await store.init();
+  let project: ProjectContext | undefined;
+  let rootDir = process.cwd();
+  try {
+    project = options.projectName ? await resolveProject(options.projectName) : undefined;
+    rootDir = project?.projectPath ?? rootDir;
+  } finally {
+    /* FNXC:PostgresCliLifecycle 2026-07-14-21:20: Settings export uses a separate backend boot, so a project context opened only to resolve its root must be closed and evicted before export begins, including when later startup or export work fails. */
+    if (project) await closeProjectStore(project);
   }
+
+  // FNXC:PostgresFinalCutover 2026-07-14-17:20: Settings export always uses the
+  // PostgreSQL startup factory; the removed SQLite opt-out has no runtime path.
+  const boot = await createTaskStoreForBackend({ rootDir });
+  const store = boot.taskStore;
   const outputPath = options.output;
+
+  /* FNXC:PostgresCliLifecycle 2026-07-14-19:10: A one-shot settings export must release the startup factory owner before process.exit; store.close alone cannot stop an embedded PostgreSQL cluster. */
+  let backendShutdown: (() => Promise<void>) | undefined = boot.shutdown;
+  const exitWithBackend = async (code: number): Promise<never> => {
+    const shutdown = backendShutdown;
+    backendShutdown = undefined;
+    /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Settings export preserves its success/failure exit code after making an awaited shutdown attempt; teardown rejection is diagnostic, not a second export result. */
+    await shutdown?.().catch((cleanupError) => {
+      console.error(`Cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    });
+    return process.exit(code);
+  };
 
   try {
     const exportData = await exportSettings(store, { scope });
@@ -73,9 +85,9 @@ export async function runSettingsExport(options: {
     }
     console.log();
 
-    process.exit(0);
+    await exitWithBackend(0);
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
-    process.exit(1);
+    await exitWithBackend(1);
   }
 }

@@ -15,11 +15,23 @@
 
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { mkdir, readFile, writeFile, rename, chmod } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, chmod, unlink } from "node:fs/promises";
 import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
-import type { GlobalSettings } from "./types.js";
+import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "./types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "./types.js";
 import { sanitizeCliAgentsSettings } from "./settings-schema.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import { GLOBAL_CONFIGURATION_OWNER_ID, appendGlobalConfigurationRevision, createConfigurationRevision, getGlobalConfigurationRevision, listGlobalConfigurationRevisions } from "./async-configuration-revision-store.js";
+
+/*
+FNXC:ConfigVersioning 2026-07-18-10:30:
+Direct GlobalSettingsStore callers (CLI bootstrap and maintenance commands) do
+not have a TaskStore to inject a project-bound layer. Resolve one central layer
+per settings directory before a write so that path cannot silently bypass the
+immutable global revision partition. Unit-only filesystem tests deliberately
+remain layerless; production always initializes the central PostgreSQL layer.
+*/
+const directGlobalRevisionLayers = new Map<string, Promise<AsyncDataLayer>>();
 
 function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
@@ -134,6 +146,7 @@ export function resolveGlobalDir(dir?: string): string {
 
 export class GlobalSettingsStore {
   private readonly settingsPath: string;
+  private readonly revisionIntentPath: string;
   private readonly dir: string;
 
   /** Write-through cache for settings. Invalidated on every updateSettings() call. */
@@ -147,9 +160,33 @@ export class GlobalSettingsStore {
    * @param dir — Directory to store settings.json. Defaults to `~/.fusion/`.
    *              Accepts a custom path for testing.
    */
-  constructor(dir?: string) {
+  constructor(dir?: string, private readonly asyncLayer?: AsyncDataLayer) {
     this.dir = resolveGlobalDir(dir);
     this.settingsPath = join(this.dir, "settings.json");
+    this.revisionIntentPath = join(this.dir, "settings.json.configuration-revision-intent.json");
+  }
+
+  /** Resolve the central history partition for direct, layerless production callers. */
+  private async getRevisionLayer(): Promise<AsyncDataLayer | undefined> {
+    if (this.asyncLayer) return this.asyncLayer;
+    // Filesystem-focused unit tests construct isolated stores without starting
+    // embedded PostgreSQL. Production must never take this branch.
+    if (process.env.VITEST === "true") return undefined;
+
+    let layer = directGlobalRevisionLayers.get(this.dir);
+    if (!layer) {
+      layer = (async () => {
+        const { CentralCore } = await import("./central-core.js");
+        const central = new CentralCore(this.dir);
+        await central.init();
+        if (!central.asyncLayer) {
+          throw new Error("Global configuration history requires the central PostgreSQL layer");
+        }
+        return central.asyncLayer;
+      })();
+      directGlobalRevisionLayers.set(this.dir, layer);
+    }
+    return layer;
   }
 
   /**
@@ -234,8 +271,15 @@ export class GlobalSettingsStore {
    *
    * @returns The full updated settings after merge.
    */
-  async updateSettings(patch: Partial<GlobalSettings> & Record<string, unknown>): Promise<GlobalSettings> {
+  async updateSettings(
+    patch: Partial<GlobalSettings> & Record<string, unknown>,
+    changedBy: ConfigChangedBy = { kind: "human", id: "local-user" },
+  ): Promise<GlobalSettings> {
     return this.withLock(async () => {
+      // Obtain history before changing the file: a failed central bootstrap is
+      // a failed configuration mutation, never an unversioned successful one.
+      const revisionLayer = await this.getRevisionLayer();
+      await this.reconcileRevisionIntent(revisionLayer);
       const raw = await this.readRawForUpdate();
 
       // Apply null-as-delete semantics: null means "remove this field"
@@ -264,11 +308,72 @@ export class GlobalSettingsStore {
       // This ensures fields that were deleted (by null) get their default value
       const withDefaults = { ...DEFAULT_GLOBAL_SETTINGS, ...merged } as GlobalSettings;
 
-      await mkdir(this.dir, { recursive: true });
-      await this.atomicWrite(withDefaults);
-      // Update the write-through cache
+      const revision = revisionLayer ? createConfigurationRevision({
+        projectId: GLOBAL_CONFIGURATION_OWNER_ID,
+        ownerScope: "global",
+        configKind: "global-settings",
+        configTarget: { scope: "user-global" },
+        before: raw,
+        after: withDefaults,
+        changedBy,
+      }) : null;
+      if (!revision && revisionLayer) {
+        this.cachedSettings = withDefaults;
+        return this.cachedSettings;
+      }
+      if (revision) {
+        await this.writeVersionedSnapshot(revisionLayer!, revision, raw, withDefaults as unknown as Record<string, unknown>);
+      } else {
+        // Isolated filesystem tests do not initialize PostgreSQL; production
+        // always has a layer and therefore never takes this compatibility path.
+        await mkdir(this.dir, { recursive: true });
+        await this.atomicWrite(withDefaults);
+      }
       this.cachedSettings = withDefaults;
       return this.cachedSettings;
+    });
+  }
+
+  /** List central/global revisions newest-first for one structured target. */
+  async listConfigurationRevisions(
+    configKind: ConfigKind = "global-settings",
+    configTarget: ConfigurationTarget = { scope: "user-global" },
+    limit?: number,
+  ): Promise<ConfigurationRevision[]> {
+    const layer = await this.getRevisionLayer();
+    if (!layer) throw new Error("Configuration history requires the PostgreSQL revision store");
+    return listGlobalConfigurationRevisions(layer, configKind, configTarget, limit);
+  }
+
+  /**
+   * Exactly restore a recorded user-global snapshot and record one forward
+   * rollback revision. The filesystem compensation mirrors updateSettings().
+   */
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+    const layer = await this.getRevisionLayer();
+    if (!layer) throw new Error("Configuration rollback requires the PostgreSQL revision store");
+    return this.withLock(async () => {
+      const target = await getGlobalConfigurationRevision(layer, revisionId);
+      if (!target || target.configKind !== "global-settings") {
+        throw new Error(`Global configuration revision ${revisionId} was not found`);
+      }
+      const current = await this.readRawForUpdate();
+      const restored = target.before as Record<string, unknown>;
+      const rollback = createConfigurationRevision({
+        projectId: GLOBAL_CONFIGURATION_OWNER_ID,
+        ownerScope: "global",
+        configKind: "global-settings",
+        configTarget: target.configTarget,
+        before: current,
+        after: restored,
+        changedBy,
+        source: "rollback",
+        rollbackToRevisionId: target.id,
+      });
+      if (!rollback) throw new Error(`Configuration revision ${revisionId} is already restored`);
+      await this.writeVersionedSnapshot(layer, rollback, current, restored);
+      this.cachedSettings = { ...DEFAULT_GLOBAL_SETTINGS, ...restored } as GlobalSettings;
+      return rollback;
     });
   }
 
@@ -289,6 +394,59 @@ export class GlobalSettingsStore {
   }
 
   // ── Private helpers ─────────────────────────────────────────────
+
+  /*
+  FNXC:ConfigVersioning 2026-07-18-19:00:
+  The filesystem and PostgreSQL cannot share one transaction. Persist a durable
+  intent before replacing settings.json so startup can finish the journal write
+  after a crash, rather than leaving an unversioned successful configuration.
+  */
+  private async writeVersionedSnapshot(
+    layer: AsyncDataLayer,
+    revision: ConfigurationRevision,
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): Promise<void> {
+    await mkdir(this.dir, { recursive: true });
+    await this.writeRevisionIntent(revision);
+    try {
+      await this.atomicWrite(after as GlobalSettings);
+      await appendGlobalConfigurationRevision(layer, revision);
+      await unlink(this.revisionIntentPath);
+    } catch (error) {
+      // A caught failure is compensated immediately. A process crash retains
+      // the intent and is reconciled before the next mutation.
+      await this.atomicWrite(before as GlobalSettings).catch(() => undefined);
+      await unlink(this.revisionIntentPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async writeRevisionIntent(revision: ConfigurationRevision): Promise<void> {
+    const temporary = `${this.revisionIntentPath}.tmp`;
+    await writeFile(temporary, JSON.stringify({ revision }), { mode: 0o600 });
+    await rename(temporary, this.revisionIntentPath);
+  }
+
+  private async reconcileRevisionIntent(layer: AsyncDataLayer | undefined): Promise<void> {
+    if (!existsSync(this.revisionIntentPath)) return;
+    if (!layer) throw new Error("Global configuration recovery requires the PostgreSQL revision store");
+    const parsed = JSON.parse(await readFile(this.revisionIntentPath, "utf-8")) as { revision?: ConfigurationRevision };
+    const revision = parsed.revision;
+    if (!revision || revision.projectId !== GLOBAL_CONFIGURATION_OWNER_ID || revision.ownerScope !== "global") {
+      throw new Error("Global configuration revision intent is invalid");
+    }
+    const recorded = await getGlobalConfigurationRevision(layer, revision.id);
+    if (!recorded) {
+      const current = await this.readRawForUpdate();
+      if (JSON.stringify(current) !== JSON.stringify(revision.after)) {
+        await this.atomicWrite(revision.before as GlobalSettings);
+      } else {
+        await appendGlobalConfigurationRevision(layer, revision);
+      }
+    }
+    await unlink(this.revisionIntentPath);
+  }
 
   /**
    * Atomically write settings to disk. Writes to a temp file first,

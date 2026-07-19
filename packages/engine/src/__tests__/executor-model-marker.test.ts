@@ -51,10 +51,13 @@ describe("TaskExecutor model marker logging", () => {
       undefined,
       expect.any(Object),
     );
+    // FNXC:AgentLog-EntryTypes 2026-07-15-11:20: the marker is a complete standalone message,
+    // so it is a `status` row — `text` means "streamed delta fragment" and gets glued to its
+    // neighbours with no separator.
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-7370",
       "Executor using model: mock-provider/mock-model (thinking effort: high)",
-      "text",
+      "status",
       undefined,
       "executor",
     );
