@@ -126,6 +126,12 @@ function buildSharedSingletonConflictClause(pgSchema: string, pgTable: string, c
  * and counter values that are at least as large as the source values. This lets
  * a later project migrate safely even when an earlier project already populated
  * the shared table with a higher sequence floor for the same prefix.
+ *
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-08:40:
+ * sourceRows come from raw SQLite `SELECT *` (PRAGMA camelCase columns:
+ * nextSequence, committedClusterTaskCount). Target counters stay snake_case
+ * from PostgreSQL. Reading snake_case on the source always fell back to 0 and
+ * let a non-dominating target pass verification.
  */
 async function verifySharedSingletonTable(
   db: PostgresJsDatabase<Record<string, never>>,
@@ -155,14 +161,15 @@ async function verifySharedSingletonTable(
       return false;
     }
     const target = result[0];
-    const sourceNext = Number(row.next_sequence ?? 0);
+    // Legacy SQLite schema uses camelCase; never prefer snake_case for source.
+    const sourceNext = Number(row.nextSequence ?? 0);
     const targetNext = Number(target.next_sequence ?? 0);
-    const sourceCount = Number(row.committed_cluster_task_count ?? 0);
+    const sourceCount = Number(row.committedClusterTaskCount ?? 0);
     const targetCount = Number(target.committed_cluster_task_count ?? 0);
     if (targetNext < sourceNext || targetCount < sourceCount) {
       log.warn(
         `Shared singleton ${pgSchema}.${pgTable} prefix ${prefix} does not dominate source: ` +
-        `source=(next_sequence=${sourceNext}, count=${sourceCount}), target=(next_sequence=${targetNext}, count=${targetCount})`,
+        `source=(nextSequence=${sourceNext}, count=${sourceCount}), target=(next_sequence=${targetNext}, count=${targetCount})`,
       );
       return false;
     }
