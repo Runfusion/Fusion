@@ -716,13 +716,19 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
          * TUI's explicit login state immediately and tell remote-dashboard users
          * where the login must happen.
          */
-        if (/not logged in\s*[·•-]?\s*run\s*\/login/i.test(clean)) {
+        const isClaudeLoginRequired = /not logged in\s*[·•-]?\s*run\s*\/login/i.test(clean);
+        const isApiBillingSessionStats =
+          sentCommand &&
+          clean.includes("API Usage Billing") &&
+          clean.includes("Total cost:") &&
+          /Usage:\s*\d+\s+input/i.test(clean);
+        if (isClaudeLoginRequired || isApiBillingSessionStats) {
           settled = true;
           clearTimeout(timeout);
           try { ptyProcess.kill(); } catch {
             // Kill may fail if process already exited - ignore
           }
-          reject(new Error("Claude CLI is not logged in on the Fusion server. Run `claude /login` there, then refresh Usage."));
+          reject(new Error("Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage."));
           return;
         }
 

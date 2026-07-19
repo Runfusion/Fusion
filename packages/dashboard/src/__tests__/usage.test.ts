@@ -1136,7 +1136,66 @@ describe("usage", () => {
 
       expect(claude.status).toBe("error");
       expect(claude.error).toBe(
-        "Claude CLI is not logged in on the Fusion server. Run `claude /login` there, then refresh Usage.",
+        "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
+      );
+      expect(kill).toHaveBeenCalledOnce();
+
+      _resetSleepFn();
+    });
+
+    it("reports the server login requirement when Claude 2.1.x shows API billing session statistics", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+      });
+
+      _setSleepFn(async () => {});
+      nodePtyMocks.available = true;
+      const kill = vi.fn();
+      nodePtyMocks.spawn.mockImplementation(() => {
+        let dataHandler: ((data: string) => void) | undefined;
+        const process = {
+          write: vi.fn((input: string) => {
+            if (input === "/usage\r") {
+              dataHandler?.("Settings Status Config Usage Stats\nSession\nTotal cost: $0.0000\nUsage: 0 input, 0 output");
+            }
+          }),
+          kill,
+          onData: vi.fn((handler: (data: string) => void) => {
+            dataHandler = handler;
+            handler("Claude Code v2.1.215\nSonnet 5 · API Usage Billing\n❯ ? for shortcuts");
+          }),
+          onExit: vi.fn(),
+        };
+        return process;
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 429,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from('{"error":"rate_limited"}'));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      vi.useFakeTimers();
+      const providersPromise = fetchAllProviderUsage();
+      await vi.advanceTimersByTimeAsync(1_500);
+      const providers = await providersPromise;
+      vi.useRealTimers();
+      const claude = providers.find((provider) => provider.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toBe(
+        "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
       );
       expect(kill).toHaveBeenCalledOnce();
 
