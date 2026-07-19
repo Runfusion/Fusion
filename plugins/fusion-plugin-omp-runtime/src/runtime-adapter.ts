@@ -5,6 +5,7 @@ import {
   normalizeOmpCliModel,
 } from "./acp-settings.js";
 import { toAcpMcpServers, type AcpMcpServer } from "./mcp-forwarding.js";
+import { resolveOmpModelSelector } from "./process-manager.js";
 import {
   startFusionToolBridge,
   type FusionToolBridge,
@@ -32,6 +33,11 @@ Grok ACP:
   - Operator MCP servers → session/new.mcpServers (stdio/http/sse)
   - Engine customTools (fn_*) → loopback MCP bridge + fusion-custom-tools server
   - System rules describe available Fusion MCP tools so omp prefers them for board ops
+
+FNXC:OmpAcp 2026-07-18-16:40:
+Resolve bare picker ids (MiniMax-M2.5) to provider-qualified selectors before
+`omp --model … acp` so multi-provider collisions do not land on an unauthenticated
+plan provider and return JSON-RPC Internal error.
 */
 
 export type AcpAdapterFactory = (settings: Record<string, unknown>) => {
@@ -246,7 +252,16 @@ export class OmpRuntimeAdapter implements AgentRuntime {
       systemPrompt: "",
     },
   ): Promise<AgentSessionResult> {
-    const model = normalizeOmpCliModel(options.defaultModelId) ?? "omp/default";
+    const rawModel = normalizeOmpCliModel(options.defaultModelId) ?? "omp/default";
+    /*
+    FNXC:OmpAcp 2026-07-18-16:40:
+    Bare ids from the omp-cli picker can map to multiple upstream providers.
+    Resolve to a unique `provider/id` selector before spawn so authenticated
+    providers (e.g. minimax-code) win over unauthenticated plan aliases.
+    */
+    const model =
+      (await resolveOmpModelSelector(this.binary, modelForCli(rawModel) ?? rawModel))
+      ?? rawModel;
     const turnAccum: TurnAccum = { text: "" };
     const resources: SessionResources = {};
 

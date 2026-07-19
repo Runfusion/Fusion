@@ -6,7 +6,7 @@ const settings = { reportMode: "draft-review" as const, githubTrackingDefaultRep
 function deps(overrides: Partial<ReportPipelineDeps> = {}): ReportPipelineDeps {
   return {
     projectSettings: settings,
-    client: { createIssue: vi.fn().mockResolvedValue({ htmlUrl: "https://github.com/Runfusion/Fusion/issues/42" }), searchIssues: vi.fn().mockResolvedValue([]), addIssueReaction: vi.fn(), commentOnIssue: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/issues/1#issuecomment-1" }), searchDiscussions: vi.fn().mockResolvedValue([]), createDiscussion: vi.fn().mockResolvedValue({ htmlUrl: "https://github.com/Runfusion/Fusion/discussions/42" }), commentOnDiscussion: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/discussions/1#discussioncomment-1" }) },
+    client: { createIssue: vi.fn().mockResolvedValue({ number: 42, htmlUrl: "https://github.com/Runfusion/Fusion/issues/42" }), searchIssues: vi.fn().mockResolvedValue([]), addIssueReaction: vi.fn(), commentOnIssue: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/issues/1#issuecomment-1" }), searchDiscussions: vi.fn().mockResolvedValue([]), createDiscussion: vi.fn().mockResolvedValue({ htmlUrl: "https://github.com/Runfusion/Fusion/discussions/42" }), commentOnDiscussion: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/discussions/1#discussioncomment-1" }) },
     scrubContext: { projectName: "private-project", rootDir: "/Users/alice/private-project" },
     ...overrides,
   };
@@ -30,7 +30,7 @@ describe("report pipeline", () => {
     const result = await runReportPipeline({
       actionType: "bug",
       userPrompt: "report failure",
-      activityTrace: [{ ts: "2026-07-16T00:00:00Z", kind: "error", label: "Jane Doe at /Users/alice/private-project/a.ts emailed alice@example.com with ghp_abcdefghijk1234567890 and sk-abcdefghijklmnopqrstuvwxyz" }],
+      activityTrace: ["Jane Doe at /Users/alice/private-project/a.ts emailed alice@example.com with ghp_abcdefghijk1234567890 and sk-abcdefghijklmnopqrstuvwxyz"],
     }, deps());
     expect(result.kind).toBe("draft-ready");
     if (result.kind === "draft-ready") {
@@ -122,6 +122,43 @@ describe("report pipeline", () => {
     expect(client.createIssue).not.toHaveBeenCalled();
   });
 
+  it("appends an approved screenshot after scrubbing an issue duplicate endorsement", async () => {
+    const imageUrl = "https://raw.githubusercontent.com/Runfusion/Fusion/main/.fusion/report-screenshots/issue.png";
+    const client = {
+      createIssue: vi.fn(),
+      addIssueReaction: vi.fn(),
+      commentOnIssue: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/issues/9#issuecomment-9" }),
+      searchIssues: vi.fn().mockResolvedValue([{ number: 9, title: "dashboard screenshot attachment failed", body: "dashboard screenshot attachment failed", html_url: "https://github.com/Runfusion/Fusion/issues/9", state: "open" }]),
+      uploadReportImage: vi.fn().mockResolvedValue(imageUrl),
+      deleteReportImage: vi.fn(),
+    };
+    const result = await runReportPipeline({ actionType: "bug", userPrompt: "dashboard screenshot attachment failed", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    expect(result).toMatchObject({ kind: "endorsed" });
+    const comment = String(client.commentOnIssue.mock.calls[1][3]);
+    expect(comment).toContain(imageUrl);
+    expect(comment).not.toContain("[REDACTED_PATH]");
+  });
+
+  it("appends an approved screenshot after scrubbing a discussion duplicate endorsement", async () => {
+    const imageUrl = "https://raw.githubusercontent.com/Runfusion/Fusion/main/.fusion/report-screenshots/discussion.png";
+    const client = {
+      createIssue: vi.fn(),
+      addIssueReaction: vi.fn(),
+      commentOnIssue: vi.fn(),
+      searchIssues: vi.fn(),
+      searchDiscussions: vi.fn().mockResolvedValue([{ id: "D_kwDO2", number: 8, title: "report screenshot attachment feedback", body: "report screenshot attachment feedback", url: "https://github.com/Runfusion/Fusion/discussions/8", state: "open" }]),
+      addDiscussionReaction: vi.fn(),
+      commentOnDiscussion: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/discussions/8#discussioncomment-1" }),
+      uploadReportImage: vi.fn().mockResolvedValue(imageUrl),
+      deleteReportImage: vi.fn(),
+    };
+    const result = await runReportPipeline({ actionType: "feedback", userPrompt: "report screenshot attachment feedback", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    expect(result).toMatchObject({ kind: "endorsed" });
+    const comment = String(client.commentOnDiscussion.mock.calls[1][1]);
+    expect(comment).toContain(imageUrl);
+    expect(comment).not.toContain("[REDACTED_PATH]");
+  });
+
   it("preserves reviewed gathered context and session token when filing", async () => {
     const context = deps({ projectSettings: { ...settings, reportMode: "auto-file" } });
     const result = await runReportPipeline({ actionType: "bug", userPrompt: "reviewed prompt" }, context, {
@@ -157,6 +194,36 @@ describe("report pipeline", () => {
     expect(client.commentOnIssue).not.toHaveBeenCalled();
   });
 
+  it("does not upload a screenshot when duplicate verification rejects the endorsement", async () => {
+    const client = {
+      createIssue: vi.fn(), addIssueReaction: vi.fn(), commentOnIssue: vi.fn(),
+      searchIssues: vi.fn().mockResolvedValue([]), uploadReportImage: vi.fn(), deleteReportImage: vi.fn(),
+    };
+    const result = await runReportPipeline(
+      { actionType: "bug", userPrompt: "dashboard failure", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } },
+      deps({ client }), { file: true, endorseIssueNumber: 7 },
+    );
+    expect(result).toMatchObject({ kind: "unavailable", reason: "duplicate_not_verified" });
+    expect(client.uploadReportImage).not.toHaveBeenCalled();
+  });
+
+  it("compensates for a failed screenshot attachment comment after filing text", async () => {
+    const imageUrl = "https://raw.githubusercontent.com/Runfusion/Fusion/main/.fusion/report-screenshots/failed.png";
+    const client = {
+      ...deps().client!,
+      uploadReportImage: vi.fn().mockResolvedValue(imageUrl),
+      deleteReportImage: vi.fn(),
+      commentOnIssue: vi.fn().mockRejectedValue(new Error("comment failed")),
+    };
+    const result = await runReportPipeline(
+      { actionType: "bug", userPrompt: "capture", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } },
+      deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }),
+    );
+    expect(result).toMatchObject({ kind: "filed", screenshotNotAttached: true });
+    expect(client.createIssue).toHaveBeenCalledBefore(client.uploadReportImage);
+    expect(client.deleteReportImage).toHaveBeenCalledWith("Runfusion", "Fusion", imageUrl);
+  });
+
   it("posts one scrubbed duplicate endorsement per report session", async () => {
     const context = deps();
     const report = { userPrompt: "private-project", summary: "dashboard rendering failed", body: "/Users/alice/private-project ghp_abcdefghijk1234567890", context: {}, sessionToken: "session-test" };
@@ -168,4 +235,33 @@ describe("report pipeline", () => {
     expect(context.client!.commentOnIssue).toHaveBeenCalledOnce();
     expect(String((context.client!.commentOnIssue as ReturnType<typeof vi.fn>).mock.calls[0][3])).not.toContain("private-project");
   });
+
+  it("embeds an explicitly reviewed screenshot from the approved repository image host", async () => {
+    const imageUrl = "https://raw.githubusercontent.com/Runfusion/Fusion/main/.fusion/report-screenshots/report.png";
+    const client = { ...deps().client!, uploadReportImage: vi.fn().mockResolvedValue(imageUrl), deleteReportImage: vi.fn() };
+    const result = await runReportPipeline({ actionType: "bug", userPrompt: "capture", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    expect(result).toMatchObject({ kind: "filed" });
+    expect(client.createIssue).toHaveBeenCalledBefore(client.uploadReportImage);
+    expect(client.commentOnIssue).toHaveBeenCalledWith("Runfusion", "Fusion", 42, expect.stringContaining(imageUrl));
+  });
+
+  it.each([
+    "https://images.example.test/report.png",
+    "data:image/png;base64,AAAA",
+    "https://raw.githubusercontent.com/other/repository/main/report.png",
+    "https://raw.githubusercontent.com/Runfusion/Fusion/main/report.png)\nInjected Markdown",
+  ])("files text-only when the host returns an unapproved screenshot URL: %s", async (imageUrl) => {
+    const client = { ...deps().client!, uploadReportImage: vi.fn().mockResolvedValue(imageUrl), deleteReportImage: vi.fn() };
+    const result = await runReportPipeline({ actionType: "bug", userPrompt: "capture", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    expect(result).toMatchObject({ kind: "filed", screenshotNotAttached: true });
+    expect(client.createIssue).toHaveBeenCalledWith(expect.objectContaining({ body: expect.not.stringContaining(imageUrl) }));
+  });
+
+  it("files text when screenshot hosting is unavailable and never uploads an absent auto-file screenshot", async () => {
+    const client = deps().client!;
+    const result = await runReportPipeline({ actionType: "bug", userPrompt: "capture", screenshot: { dataUrl: "data:image/png;base64,AAAA", capturedAt: "2026-07-18T00:00:00Z" } }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    expect(result).toMatchObject({ kind: "filed", screenshotNotAttached: true });
+    expect(client.createIssue).toHaveBeenCalledWith(expect.objectContaining({ body: expect.not.stringContaining("data:image") }));
+  });
+
 });

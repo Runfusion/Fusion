@@ -279,4 +279,89 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
     const instanceC = createFusionAuthStorage();
     expect(await instanceC.getApiKey("anthropic")).not.toBe("refreshed-from-stale-old-token");
   });
+
+  it("single-flights a rotating Anthropic refresh token across auth storage instances", async () => {
+    const now = Date.now();
+    const instanceA = createFusionAuthStorage();
+    await instanceA.set("anthropic-subscription", {
+      type: "oauth",
+      access: "expiring-access",
+      refresh: "single-use-refresh",
+      expires: now + 1_000,
+    });
+
+    // Each agent session constructs its own auth storage instance. Anthropic refresh
+    // tokens rotate, so concurrent refresh requests using the same token cannot both
+    // succeed: the second request observes an already-consumed refresh token.
+    const instanceB = createFusionAuthStorage();
+    let refreshConsumed = false;
+    const fetchMock = vi.fn(async () => {
+      if (refreshConsumed) {
+        return {
+          ok: false,
+          text: async () => JSON.stringify({ error: "invalid_grant" }),
+        };
+      }
+      refreshConsumed = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          access_token: "rotated-access",
+          refresh_token: "next-single-use-refresh",
+          expires_in: 3600,
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const [keyA, keyB] = await Promise.all([
+      instanceA.getApiKey("anthropic"),
+      instanceB.getApiKey("anthropic"),
+    ]);
+
+    expect(keyA).toBe("rotated-access");
+    expect(keyB).toBe("rotated-access");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readAuthFile(homeDir)["anthropic-subscription"]).toMatchObject({
+      type: "oauth",
+      access: "rotated-access",
+      refresh: "next-single-use-refresh",
+    });
+  });
+
+  it("single-flights one rotating token across legacy and subscription Anthropic aliases", async () => {
+    const instanceA = createFusionAuthStorage();
+    await instanceA.set("anthropic", {
+      type: "oauth",
+      access: "legacy-expiring-access",
+      refresh: "shared-alias-refresh",
+      expires: Date.now() + 1_000,
+    });
+    const instanceB = createFusionAuthStorage();
+
+    let refreshConsumed = false;
+    const fetchMock = vi.fn(async () => {
+      if (refreshConsumed) {
+        return { ok: false, text: async () => JSON.stringify({ error: "invalid_grant" }) };
+      }
+      refreshConsumed = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          access_token: "alias-rotated-access",
+          refresh_token: "next-alias-refresh",
+          expires_in: 3600,
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(Promise.all([
+      instanceA.getApiKey("anthropic"),
+      instanceB.getApiKey("anthropic-subscription"),
+    ])).resolves.toEqual(["alias-rotated-access", "alias-rotated-access"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

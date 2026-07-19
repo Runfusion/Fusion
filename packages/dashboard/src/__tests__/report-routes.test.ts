@@ -56,6 +56,23 @@ describe("report routes", () => {
     expect(vi.mocked(runReportPipeline).mock.calls.at(-1)?.[1].roadmapSource).toBeUndefined();
   });
 
+
+const PNG_SCREENSHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlYk8sAAAAASUVORK5CYII=";
+
+beforeEach(() => vi.clearAllMocks());
+
+describe("report routes capture validation", () => {
+  it("accepts a signature-validated screenshot but rejects a data-URL prefix with arbitrary bytes", async () => {
+    vi.mocked(runReportPipeline).mockResolvedValue({ kind: "draft-ready", mode: "draft-review", report: {} } as never);
+    const handlers = setup();
+    await invoke(handlers.get("/report/draft")!, { actionType: "bug", userPrompt: "It crashes", screenshot: { dataUrl: PNG_SCREENSHOT, capturedAt: "2026-07-18T00:00:00Z" } });
+    expect(runReportPipeline).toHaveBeenCalledWith(expect.objectContaining({ screenshot: { dataUrl: PNG_SCREENSHOT, capturedAt: "2026-07-18T00:00:00Z" } }), expect.anything());
+
+    await expect(invoke(handlers.get("/report/draft")!, { actionType: "bug", userPrompt: "It crashes", screenshot: { dataUrl: "data:image/png;base64,QUFBQQ==", capturedAt: "2026-07-18T00:00:00Z" } })).rejects.toThrow("Screenshot is invalid");
+  });
+});
+
+
   describe("Help self-check", () => {
   it.each(["/report/draft", "/report/file"]) ("does not let direct Help %s bypass a confident knowledge answer", async (path) => {
     vi.mocked(queryKnowledgePagesAsync).mockResolvedValue([{ title: "Use settings", summary: "Open settings first." }]);

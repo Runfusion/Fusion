@@ -68,6 +68,23 @@ function enqueueAuthWrite<T>(authPath: string, write: () => Promise<T>): Promise
   return operation;
 }
 
+async function withOAuthRefreshLock<T>(
+  authPath: string,
+  providerId: string,
+  refresh: () => Promise<T>,
+): Promise<T> {
+  const safeProviderId = providerId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  // Use a distinct lock target, not authPath with a custom lockfilePath. proper-lockfile
+  // tracks held locks by target path internally, so two lock domains sharing authPath
+  // would corrupt each other's renewal/release bookkeeping.
+  const release = await lockfile.lock(`${authPath}.${safeProviderId}.refresh`, AUTH_LOCK_OPTIONS);
+  try {
+    return await refresh();
+  } finally {
+    await release();
+  }
+}
+
 class FusionFileAuthStorage implements FusionAuthStorage {
   private data: Record<string, StoredCredential> = {};
   private modelRuntime: ModelRuntime | undefined;
@@ -452,7 +469,8 @@ export async function createFusionModelRegistry(authStorage: FusionAuthStorage, 
 }
 
 export function createFusionAuthStorage(): FusionAuthStorage {
-  const primary = new FusionFileAuthStorage(getFusionAuthPath());
+  const authPath = getFusionAuthPath();
+  const primary = new FusionFileAuthStorage(authPath);
   let supplementalCredentials = readSupplementalCredentials();
   // models.json provider API keys — final fallback after primary auth and supplemental auth.json files
   let modelsJsonApiKeys = readModelsJsonApiKeys();
@@ -538,9 +556,67 @@ export function createFusionAuthStorage(): FusionAuthStorage {
       return existing;
     }
 
-    const refreshPromise = refreshOAuthCredential(storageProvider, credential)
+    /*
+    FNXC:ClaudeOAuth 2026-07-18-16:50:
+    Anthropic refresh tokens rotate on use. The in-memory single-flight map above is
+    scoped to one createFusionAuthStorage() instance, while every agent session creates
+    its own instance and separate Fusion processes share the same auth.json. Refreshing
+    outside the file lock therefore let a burst of sessions submit the same refresh
+    token concurrently: one request rotated it and the losers fell back to another
+    provider with stale auth.
+
+    Hold a provider-specific cross-process refresh lock for the complete
+    read/refresh/write transaction. It deliberately differs from the auth-file write
+    lock so a manual login can persist while the network request is in flight. A waiter
+    re-reads the provider row after acquiring the refresh lock; if another session
+    already rotated it, the fresh credential is returned without a second request.
+    Re-read again before persistence so a concurrent manual login always wins.
+    */
+    // Anthropic's legacy `anthropic` row and separated `anthropic-subscription`
+    // row can refer to the same rotating refresh token, so both aliases must use
+    // one canonical refresh-lock domain.
+    const refreshLockProvider = getOAuthResolutionProviderId(storageProvider);
+    const refreshPromise = withOAuthRefreshLock(authPath, refreshLockProvider, async () => {
+      primary.reload();
+      const selectPersistedRefreshCredential = (): StoredCredential | undefined => {
+        const storedCredential = primary.get(storageProvider) as StoredCredential | undefined;
+        if (refreshLockProvider !== ANTHROPIC_PROVIDER_ID) {
+          return storedCredential;
+        }
+
+        const legacyCredential = primary.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
+        const subscriptionCredential = primary.get(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) as StoredCredential | undefined;
+        return choosePreferredStoredCredential(
+          legacyCredential?.type === "oauth" ? legacyCredential : undefined,
+          subscriptionCredential?.type === "oauth" ? subscriptionCredential : undefined,
+        );
+      };
+      const initialPersistedCredential = selectPersistedRefreshCredential();
+      const refreshCandidate = choosePreferredStoredCredential(initialPersistedCredential, credential) ?? credential;
+
+      if (!shouldRefreshOAuthCredential(refreshCandidate)) {
+        return refreshCandidate;
+      }
+
+      const refreshed = await refreshOAuthCredential(storageProvider, refreshCandidate);
+      if (!refreshed) {
+        return initialPersistedCredential;
+      }
+
+      primary.reload();
+      const latestPersistedCredential = selectPersistedRefreshCredential();
+      const changedWhileRefreshing = initialPersistedCredential
+        ? !isSameOAuthCredentialIdentity(latestPersistedCredential, initialPersistedCredential)
+        : latestPersistedCredential !== undefined;
+      if (changedWhileRefreshing) {
+        return latestPersistedCredential;
+      }
+
+      await primary.set(storageProvider, refreshed);
+      return refreshed;
+    })
       .then((refreshed) => {
-        if (refreshed) {
+        if (refreshed && !shouldRefreshOAuthCredential(refreshed)) {
           oauthRefreshCooldownUntil.delete(storageProvider);
         } else {
           oauthRefreshCooldownUntil.set(storageProvider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);

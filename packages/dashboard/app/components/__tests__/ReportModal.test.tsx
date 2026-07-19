@@ -87,6 +87,20 @@ describe("ReportModal", () => {
     expect(screen.getByLabelText("What would you like to share?")).toBeInTheDocument();
   });
 
+  it("warns when a reviewed screenshot could not be attached", async () => {
+    reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
+    reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1", screenshotNotAttached: true });
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("Review your report");
+    fireEvent.click(screen.getByRole("button", { name: "File report" }));
+
+    expect(await screen.findByText("Report sent without screenshot")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No screenshot pixels were shared");
+  });
+
   it("keeps the original derivation marker when the review prompt is edited", async () => {
     reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", sourcePrompt: "It crashes", body: "## Summary\nIt crashes\n\n## Environment\nCollected context", context: {} } });
     reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1" });

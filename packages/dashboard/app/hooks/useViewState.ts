@@ -3,6 +3,7 @@ import type { ThemeMode } from "@fusion/core";
 import type { ProjectInfo } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getPluginViewId, isPluginViewId, isPluginViewRegistered } from "../plugins/pluginViewRegistry";
+import { recordActivity } from "../utils/report-capture";
 
 export type ViewMode = "overview" | "project";
 /*
@@ -190,6 +191,12 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   useEffect(() => {
     setScopedItem("kb-dashboard-task-view", taskView, currentProject?.id);
   }, [currentProject?.id, taskView]);
+
+  useEffect(() => {
+    // FNXC:ReportPipeline 2026-07-18-12:30: Report traces describe only the
+    // selected view name; never capture URLs, embedded identifiers, or content.
+    if (isBuiltInTaskView(taskView)) recordActivity(taskView);
+  }, [taskView]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
