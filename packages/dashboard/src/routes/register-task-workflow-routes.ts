@@ -4381,16 +4381,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // closed union. A non-legacy custom column id has no legacy transition row,
       // so it correctly resolves to "cannot transition" here.
       /*
-      FNXC:WorkflowColumns 2026-07-19-2b:40 (U12 / R2):
+      FNXC:WorkflowColumns 2026-07-19-02:40 (U12 / R2):
       `VALID_TRANSITIONS` is keyed by the closed legacy enum, so `isColumn(task.column)` was false
       for every workflow-defined column and spec revision was unreachable on a custom board —
       rejected with "Move task to 'todo' or 'in-progress' first", naming columns that workflow may
-      not have. Gate on the workflow instead: a card can be respecified when its own workflow
-      declares the intake column we are about to send it to. Legacy columns keep the legacy table.
+      not have. Custom workflow columns are always eligible: the already-at-intake case returned
+      above, and the workflow itself declares the intake column we send the card to, so there is
+      no legacy table to consult. Legacy columns keep the legacy table.
       */
-      const canTransition = isColumn(task.column)
-        ? VALID_TRANSITIONS[task.column].includes("triage")
-        : task.column !== respecifyTarget;
+      const canTransition =
+        !isColumn(task.column) || VALID_TRANSITIONS[task.column].includes("triage");
       if (!canTransition) {
         throw badRequest(
           `Cannot request spec revision for tasks in '${task.column}' column.`,

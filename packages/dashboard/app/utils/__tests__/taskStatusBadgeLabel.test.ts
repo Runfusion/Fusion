@@ -39,6 +39,13 @@ describe("getTaskStatusBadgeLabel", () => {
     expect(getTaskStatusBadgeLabel("merging-fix", t, "Plan Review")).toBe("Merging fixes…");
   });
 
+  it("keeps every active-merge status over a still-running workflow-step label", () => {
+    // The same stale startedAt-without-completedAt step state can survive into the whole merge pipeline.
+    for (const status of ["merging", "merging-pr", "reviewing", "landing"]) {
+      expect(getTaskStatusBadgeLabel(status, t, "Code Review")).toBe("Merging…");
+    }
+  });
+
   it("lets a running workflow-step label override other statuses", () => {
     expect(getTaskStatusBadgeLabel("planning", t, "Plan Review")).toBe("Plan Review");
     expect(getTaskStatusBadgeLabel("needs-replan", t, "Plan Review")).toBe("Plan Review");
