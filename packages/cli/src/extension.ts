@@ -2000,6 +2000,64 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_workflow_step_resume ──────────────────────────────────────
+
+  /*
+   * FNXC:StepResume 2026-07-24-13:00:
+   * Operator/privileged-only escape hatch for a card stranded in `in-review`
+   * or `in-progress` with a workflow step permanently in `pending` status
+   * (leading real-world cause: the Runfusion/Fusion#1946 dispatched prompt node
+   * verdict callback never received). Transitions the stuck `pending` step to
+   * `failed` so the existing `fn_task_bypass_review` escape hatch can then clear
+   * the merge blocker. Registered ONLY on this pi-extension/CLI operator tool
+   * surface — deliberately NOT wired into executor/reviewer/triage agent tool
+   * lists. Requires a mandatory `reason` and `stepId`; audit-logged via
+   * store.resumeWorkflowStep's run-audit event.
+   */
+  pi.registerTool({
+    name: "fn_workflow_step_resume",
+    label: "fn: Resume Stuck Pending Step",
+    description:
+      "Resume a stuck pending workflow step on an in-review or in-progress Fusion task " +
+      "(operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) " +
+      "is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step " +
+      "stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling " +
+      "the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires " +
+      "a mandatory reason and step ID.",
+    promptSnippet:
+      "Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged)",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+      stepId: Type.String({ description: "Workflow step ID to resume (e.g. 'code-review', 'plan-review')" }),
+      reason: Type.String({ description: "Mandatory justification for resuming the step (audit-logged)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const actor = fnCtx.agentId ?? "cli-operator";
+
+      try {
+        const task = await store.resumeWorkflowStep(params.id, {
+          stepId: params.stepId,
+          reason: params.reason,
+          actor,
+        });
+        return {
+          content: [{ type: "text", text: `Resumed stuck pending workflow step '${params.stepId}' for ${task.id}` }],
+          details: { taskId: task.id, stepId: params.stepId },
+        };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: `ERROR: Failed to resume step '${params.stepId}' for ${params.id}: ${err?.message ?? err}` }],
+          isError: true,
+          details: { taskId: params.id, stepId: params.stepId, error: String(err?.message ?? err) },
+        };
+      }
+    },
+  });
+
   // ── fn_task_duplicate ─────────────────────────────────────────────
 
   pi.registerTool({

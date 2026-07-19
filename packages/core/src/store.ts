@@ -1443,6 +1443,106 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return task;
     });
   }
+
+  /*
+   * FNXC:StepResume 2026-07-24-13:00:
+   * Operator/privileged-only escape hatch for a card that has a workflow step
+   * permanently stuck in  status (leading real-world cause: the
+   * Runfusion/Fusion#1946 dispatched prompt node verdict callback never received).
+   * Transitions the stuck step to  so that the existing
+   *  /  can then clear
+   * the merge blocker. Requires a mandatory  and  and is
+   * audit-logged. NOT exposed to executor/reviewer/triage agent tool surfaces —
+   * see  registration comments for the same rule.
+   */
+  async resumeWorkflowStep(
+    id: string,
+    options: { stepId: string; reason: string; actor: string },
+  ): Promise<Task> {
+    const reason = options.reason?.trim();
+    if (!reason) {
+      throw new Error("resumeWorkflowStep requires a non-empty reason");
+    }
+    const stepId = options.stepId?.trim();
+    if (!stepId) {
+      throw new Error("resumeWorkflowStep requires a non-empty stepId");
+    }
+    const actor = options.actor?.trim() || "operator";
+
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.column !== "in-review" && task.column !== "in-progress") {
+        throw new Error(
+          `resumeWorkflowStep requires task to be in 'in-review' or 'in-progress', got '${task.column}'`,
+        );
+      }
+
+      const results = task.workflowStepResults ?? [];
+      const targetIndex = results.findIndex(
+        (r) => r.workflowStepId === stepId,
+      );
+      if (targetIndex === -1) {
+        throw new Error(
+          `resumeWorkflowStep: step '${stepId}' not found in workflowStepResults for ${id}`,
+        );
+      }
+
+      const target = results[targetIndex];
+      if (target.status !== "pending") {
+        throw new Error(
+          `resumeWorkflowStep: step '${stepId}' is in '${target.status}' status, only pending steps can be resumed`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      const resumed: import("./types.js").WorkflowStepResult = {
+        ...target,
+        status: "failed",
+        completedAt: now,
+        resumedBy: actor,
+        resumedAt: now,
+        resumeReason: reason,
+        resumedFromStatus: "pending",
+      };
+
+      const nextResults = [...results];
+      nextResults[targetIndex] = resumed;
+      task.workflowStepResults = nextResults;
+
+      if (!task.log) {
+        task.log = [];
+      }
+      task.updatedAt = now;
+      task.log.push({
+        timestamp: now,
+        action: `Workflow step resumed: ${target.workflowStepName} (${target.workflowStepId}) by ${actor} — ${reason}. Transitioned from pending to failed.`,
+      });
+
+      await this.recordRunAuditEvent({
+        taskId: task.id,
+        agentId: actor,
+        runId: this.makeSyntheticDeleteRunId(task.id),
+        domain: "database",
+        mutationType: "task:resume-step",
+        target: task.id,
+        metadata: {
+          workflowStepId: target.workflowStepId,
+          workflowStepName: target.workflowStepName,
+          resumedFromStatus: "pending",
+          reason,
+        },
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
   async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph" }, ): Promise<Task> {
     return updateStepImpl(this, id, stepIndex, status, options);
   }
