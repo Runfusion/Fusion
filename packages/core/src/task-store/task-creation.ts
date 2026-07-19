@@ -27,6 +27,7 @@ import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
+import { resolveTaskPrefix } from "../task-store/task-prefix.js";
 
 function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   /*
@@ -194,7 +195,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     const allocator = store.getDistributedTaskIdAllocator();
     const settings = await store.getSettingsFast();
     // FNXC:MissionTaskPrefix 2026-07-14-19:00: backend createTask honors the same per-mission minting hint as createTaskWithDistributedReservation (PR #1930).
-    const prefix = (input.taskPrefix?.trim() || settings.taskPrefix || "KB").trim().toUpperCase();
+    const prefix = resolveTaskPrefix(input.taskPrefix, settings.taskPrefix, "KB");
     const nodeId = await store.resolveLocalNodeIdForTaskAllocation();
     const reservation = await allocator.reserveDistributedTaskId({
       prefix,
