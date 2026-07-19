@@ -132,14 +132,28 @@ function buildSharedSingletonConflictClause(pgSchema: string, pgTable: string, c
  * nextSequence, committedClusterTaskCount). Target counters stay snake_case
  * from PostgreSQL. Reading snake_case on the source always fell back to 0 and
  * let a non-dominating target pass verification.
+ *
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-09:50:
+ * PK is (project_id, prefix). Scope the target lookup by partitionProjectId so
+ * a higher next_sequence on another project's same prefix cannot make result[0]
+ * pass while the migrating project's row is missing or lower. Fail closed when
+ * the partition id is absent — prefix-only lookup is ambiguous under multi-project.
  */
 async function verifySharedSingletonTable(
   db: PostgresJsDatabase<Record<string, never>>,
   pgSchema: string,
   pgTable: string,
   sourceRows: readonly Record<string, unknown>[],
+  partitionProjectId: string | undefined,
 ): Promise<boolean> {
   if (pgTable !== "distributed_task_id_state") return false;
+  if (typeof partitionProjectId !== "string" || partitionProjectId.length === 0) {
+    log.warn(
+      `Shared singleton ${pgSchema}.${pgTable} verification requires partitionProjectId ` +
+      `(composite PK project_id, prefix); refusing prefix-only lookup`,
+    );
+    return false;
+  }
   const schemaQualifiedTable = `${quoteIdent(pgSchema)}.${quoteIdent(pgTable)}`;
   for (const row of sourceRows) {
     const prefix = row.prefix;
@@ -150,14 +164,17 @@ async function verifySharedSingletonTable(
         ${sql.raw(quoteIdent("committed_cluster_task_count"))} AS committed_cluster_task_count,
         ${sql.raw(quoteIdent("updated_at"))} AS updated_at
       FROM ${sql.raw(schemaQualifiedTable)}
-      WHERE ${sql.raw(quoteIdent("prefix"))} = ${prefix}
+      WHERE ${sql.raw(quoteIdent("project_id"))} = ${partitionProjectId}
+        AND ${sql.raw(quoteIdent("prefix"))} = ${prefix}
     `)) as unknown as Array<{
       next_sequence: number | string;
       committed_cluster_task_count: number | string;
       updated_at: string;
     }>;
     if (result.length === 0) {
-      log.warn(`Shared singleton ${pgSchema}.${pgTable} missing prefix ${prefix}`);
+      log.warn(
+        `Shared singleton ${pgSchema}.${pgTable} missing project_id=${partitionProjectId} prefix=${prefix}`,
+      );
       return false;
     }
     const target = result[0];
@@ -168,7 +185,7 @@ async function verifySharedSingletonTable(
     const targetCount = Number(target.committed_cluster_task_count ?? 0);
     if (targetNext < sourceNext || targetCount < sourceCount) {
       log.warn(
-        `Shared singleton ${pgSchema}.${pgTable} prefix ${prefix} does not dominate source: ` +
+        `Shared singleton ${pgSchema}.${pgTable} project_id=${partitionProjectId} prefix=${prefix} does not dominate source: ` +
         `source=(nextSequence=${sourceNext}, count=${sourceCount}), target=(next_sequence=${targetNext}, count=${targetCount})`,
       );
       return false;
@@ -1775,14 +1792,21 @@ async function migrateTable(
       const targetCanonicalRows = await computeTargetCanonicalRows(
         db, plan.pgSchema, plan.pgTable, insertableCols, plan.partitionProjectId,
       );
-      contentOk = verifiesSharedProjectTable
-        ? (isSharedSingletonTable(plan.pgSchema, plan.pgTable)
-          ? await verifySharedSingletonTable(
-              db, plan.pgSchema, plan.pgTable,
-              sqlite.prepare(`SELECT * FROM ${quoteIdent(plan.table)}`).all() as Record<string, unknown>[],
-            )
-          : isCanonicalMultisetSubset(sourceCanonicalRows, targetCanonicalRows))
-        : checksumCanonicalRows(sourceCanonicalRows) === checksumCanonicalRows(targetCanonicalRows);
+      /*
+      FNXC:PostgresMigrationSharedSingleton 2026-07-19-09:50:
+      distributed_task_id_state always uses project-scoped dominance verification
+      (GREATEST merge + composite PK). Other shared project tables keep multiset
+      subset when unbound; partitioned tables keep exact checksums.
+      */
+      contentOk = isSharedSingletonTable(plan.pgSchema, plan.pgTable)
+        ? await verifySharedSingletonTable(
+            db, plan.pgSchema, plan.pgTable,
+            sqlite.prepare(`SELECT * FROM ${quoteIdent(plan.table)}`).all() as Record<string, unknown>[],
+            plan.partitionProjectId,
+          )
+        : verifiesSharedProjectTable
+          ? isCanonicalMultisetSubset(sourceCanonicalRows, targetCanonicalRows)
+          : checksumCanonicalRows(sourceCanonicalRows) === checksumCanonicalRows(targetCanonicalRows);
       if (!contentOk) {
         log.warn(
           `Content checksum mismatch for ${plan.pgSchema}.${plan.pgTable}: ` +
