@@ -154,11 +154,11 @@ export const tasks = projectSchema.table("tasks", {
   is not enough for Gate boot-smoke before health reconciliation runs.
   */
   sessionAdvisorEnabled: integer("session_advisor_enabled"),
-  tokenUsageInputTokens: integer("token_usage_input_tokens"),
-  tokenUsageOutputTokens: integer("token_usage_output_tokens"),
-  tokenUsageCachedTokens: integer("token_usage_cached_tokens"),
-  tokenUsageCacheWriteTokens: integer("token_usage_cache_write_tokens"),
-  tokenUsageTotalTokens: integer("token_usage_total_tokens"),
+  tokenUsageInputTokens: bigint("token_usage_input_tokens", { mode: "number" }),
+  tokenUsageOutputTokens: bigint("token_usage_output_tokens", { mode: "number" }),
+  tokenUsageCachedTokens: bigint("token_usage_cached_tokens", { mode: "number" }),
+  tokenUsageCacheWriteTokens: bigint("token_usage_cache_write_tokens", { mode: "number" }),
+  tokenUsageTotalTokens: bigint("token_usage_total_tokens", { mode: "number" }),
   tokenUsageFirstUsedAt: text("token_usage_first_used_at"),
   tokenUsageLastUsedAt: text("token_usage_last_used_at"),
   tokenUsageModelProvider: text("token_usage_model_provider"),
@@ -171,7 +171,7 @@ export const tasks = projectSchema.table("tasks", {
   updatedAt: text("updated_at").notNull(),
   columnMovedAt: text("column_moved_at"),
   firstExecutionAt: text("first_execution_at"),
-  cumulativeActiveMs: integer("cumulative_active_ms"),
+  cumulativeActiveMs: bigint("cumulative_active_ms", { mode: "number" }),
   /*
   FNXC:PostgresMigrationColumnCoverage 2026-07-14-13:17:
   Keep the task schema aligned with late SQLite lifecycle migrations. JSON lifecycle markers stay jsonb for native backend reads; retired board/question fields remain text so their legacy payloads round-trip byte-for-byte.
@@ -248,7 +248,7 @@ export const tasks = projectSchema.table("tasks", {
   checkoutNodeId: text("checkout_node_id"),
   checkoutRunId: text("checkout_run_id"),
   checkoutLeaseRenewedAt: text("checkout_lease_renewed_at"),
-  checkoutLeaseEpoch: integer("checkout_lease_epoch").default(0),
+  checkoutLeaseEpoch: bigint("checkout_lease_epoch", { mode: "number" }).default(0),
   deletedAt: text("deleted_at"),
   allowResurrection: integer("allow_resurrection").default(0),
   transitionPending: text("transition_pending"),
@@ -1928,11 +1928,11 @@ export const chatTokenUsage = projectSchema.table("chat_token_usage", {
   agentId: text("agent_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
-  inputTokens: integer("input_tokens").notNull(),
-  outputTokens: integer("output_tokens").notNull(),
-  cachedTokens: integer("cached_tokens").notNull(),
-  cacheWriteTokens: integer("cache_write_tokens").notNull(),
-  totalTokens: integer("total_tokens").notNull(),
+  inputTokens: bigint("input_tokens", { mode: "number" }).notNull(),
+  outputTokens: bigint("output_tokens", { mode: "number" }).notNull(),
+  cachedTokens: bigint("cached_tokens", { mode: "number" }).notNull(),
+  cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }).notNull(),
+  totalTokens: bigint("total_tokens", { mode: "number" }).notNull(),
   createdAt: text("created_at").notNull(),
 }, (t) => [
   index("idxChatTokenUsageCreatedAt").on(t.createdAt),

@@ -70,6 +70,131 @@ import { getErrorMessage } from "../error-message.js";
 
 const log = createLogger("sqlite-migrator");
 
+/**
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-05:00:
+ * A small set of project-schema tables intentionally have no project_id and are
+ * shared across all projects in the PostgreSQL cluster. When two legacy SQLite
+ * files use the same primary-key value (e.g. distributed_task_id_state.prefix),
+ * a plain INSERT ... ON CONFLICT DO NOTHING discards the second file's row and
+ * the content-verification subset check fails because the target row differs from
+ * the source. These tables must instead merge conflicting rows using semantics
+ * appropriate to each column. Only distributed_task_id_state is currently known
+ * to need this treatment; any future shared singleton with overlapping keys can
+ * register here.
+ */
+function isSharedSingletonTable(pgSchema: string, pgTable: string): boolean {
+  return pgSchema === PROJECT_SCHEMA && pgTable === "distributed_task_id_state";
+}
+
+/**
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-05:05:
+ * For distributed_task_id_state, the source SQLite files are per-project, but the
+ * PostgreSQL target is a cluster-wide singleton keyed by prefix. The allocator
+ * sequence floor (next_sequence) must be the maximum across all source files so
+ * newly-created task IDs never reuse an already-issued number. The committed-cluster
+ * counter and last-committed-task-id follow the row with the highest sequence.
+ * updated_at is kept as the latest ISO timestamp. This merge is idempotent.
+ */
+function buildSharedSingletonConflictClause(pgSchema: string, pgTable: string, cols: readonly ColumnMapping[]): ReturnType<typeof sql.raw> {
+  if (pgTable === "distributed_task_id_state") {
+    const colSet = new Set(cols.map((c) => c.pgName));
+    const prefix = quoteIdent("prefix");
+    const projectId = quoteIdent("project_id");
+    const tableName = quoteIdent("distributed_task_id_state");
+    const parts: string[] = [];
+    if (colSet.has("next_sequence")) {
+      parts.push(`${quoteIdent("next_sequence")} = GREATEST(${tableName}.${quoteIdent("next_sequence")}, EXCLUDED.${quoteIdent("next_sequence")})`);
+    }
+    if (colSet.has("committed_cluster_task_count")) {
+      parts.push(`${quoteIdent("committed_cluster_task_count")} = GREATEST(${tableName}.${quoteIdent("committed_cluster_task_count")}, EXCLUDED.${quoteIdent("committed_cluster_task_count")})`);
+    }
+    if (colSet.has("last_committed_task_id")) {
+      parts.push(`${quoteIdent("last_committed_task_id")} = CASE WHEN EXCLUDED.${quoteIdent("next_sequence")} > ${tableName}.${quoteIdent("next_sequence")} THEN EXCLUDED.${quoteIdent("last_committed_task_id")} ELSE ${tableName}.${quoteIdent("last_committed_task_id")} END`);
+    }
+    if (colSet.has("updated_at")) {
+      parts.push(`${quoteIdent("updated_at")} = GREATEST(${tableName}.${quoteIdent("updated_at")}, EXCLUDED.${quoteIdent("updated_at")})`);
+    }
+    return sql.raw(`ON CONFLICT (${projectId}, ${prefix}) DO UPDATE SET ${parts.join(", ")}`);
+  }
+  return sql.raw("ON CONFLICT DO NOTHING");
+}
+
+/**
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-05:10:
+ * Verify a shared singleton table by dominance rather than exact row equality.
+ * For each source row, the target must contain a row with the same primary key
+ * and counter values that are at least as large as the source values. This lets
+ * a later project migrate safely even when an earlier project already populated
+ * the shared table with a higher sequence floor for the same prefix.
+ *
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-08:40:
+ * sourceRows come from raw SQLite `SELECT *` (PRAGMA camelCase columns:
+ * nextSequence, committedClusterTaskCount). Target counters stay snake_case
+ * from PostgreSQL. Reading snake_case on the source always fell back to 0 and
+ * let a non-dominating target pass verification.
+ *
+ * FNXC:PostgresMigrationSharedSingleton 2026-07-19-09:50:
+ * PK is (project_id, prefix). Scope the target lookup by partitionProjectId so
+ * a higher next_sequence on another project's same prefix cannot make result[0]
+ * pass while the migrating project's row is missing or lower. Fail closed when
+ * the partition id is absent — prefix-only lookup is ambiguous under multi-project.
+ */
+async function verifySharedSingletonTable(
+  db: PostgresJsDatabase<Record<string, never>>,
+  pgSchema: string,
+  pgTable: string,
+  sourceRows: readonly Record<string, unknown>[],
+  partitionProjectId: string | undefined,
+): Promise<boolean> {
+  if (pgTable !== "distributed_task_id_state") return false;
+  if (typeof partitionProjectId !== "string" || partitionProjectId.length === 0) {
+    log.warn(
+      `Shared singleton ${pgSchema}.${pgTable} verification requires partitionProjectId ` +
+      `(composite PK project_id, prefix); refusing prefix-only lookup`,
+    );
+    return false;
+  }
+  const schemaQualifiedTable = `${quoteIdent(pgSchema)}.${quoteIdent(pgTable)}`;
+  for (const row of sourceRows) {
+    const prefix = row.prefix;
+    if (typeof prefix !== "string") continue;
+    const result = (await db.execute(sql`
+      SELECT
+        ${sql.raw(quoteIdent("next_sequence"))} AS next_sequence,
+        ${sql.raw(quoteIdent("committed_cluster_task_count"))} AS committed_cluster_task_count,
+        ${sql.raw(quoteIdent("updated_at"))} AS updated_at
+      FROM ${sql.raw(schemaQualifiedTable)}
+      WHERE ${sql.raw(quoteIdent("project_id"))} = ${partitionProjectId}
+        AND ${sql.raw(quoteIdent("prefix"))} = ${prefix}
+    `)) as unknown as Array<{
+      next_sequence: number | string;
+      committed_cluster_task_count: number | string;
+      updated_at: string;
+    }>;
+    if (result.length === 0) {
+      log.warn(
+        `Shared singleton ${pgSchema}.${pgTable} missing project_id=${partitionProjectId} prefix=${prefix}`,
+      );
+      return false;
+    }
+    const target = result[0];
+    // Legacy SQLite schema uses camelCase; never prefer snake_case for source.
+    const sourceNext = Number(row.nextSequence ?? 0);
+    const targetNext = Number(target.next_sequence ?? 0);
+    const sourceCount = Number(row.committedClusterTaskCount ?? 0);
+    const targetCount = Number(target.committed_cluster_task_count ?? 0);
+    if (targetNext < sourceNext || targetCount < sourceCount) {
+      log.warn(
+        `Shared singleton ${pgSchema}.${pgTable} project_id=${partitionProjectId} prefix=${prefix} does not dominate source: ` +
+        `source=(nextSequence=${sourceNext}, count=${sourceCount}), target=(next_sequence=${targetNext}, count=${targetCount})`,
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
+
 /** Batch size for streaming row inserts. */
 const INSERT_BATCH_SIZE = 200;
 
@@ -1667,9 +1792,21 @@ async function migrateTable(
       const targetCanonicalRows = await computeTargetCanonicalRows(
         db, plan.pgSchema, plan.pgTable, insertableCols, plan.partitionProjectId,
       );
-      contentOk = verifiesSharedProjectTable
-        ? isCanonicalMultisetSubset(sourceCanonicalRows, targetCanonicalRows)
-        : checksumCanonicalRows(sourceCanonicalRows) === checksumCanonicalRows(targetCanonicalRows);
+      /*
+      FNXC:PostgresMigrationSharedSingleton 2026-07-19-09:50:
+      distributed_task_id_state always uses project-scoped dominance verification
+      (GREATEST merge + composite PK). Other shared project tables keep multiset
+      subset when unbound; partitioned tables keep exact checksums.
+      */
+      contentOk = isSharedSingletonTable(plan.pgSchema, plan.pgTable)
+        ? await verifySharedSingletonTable(
+            db, plan.pgSchema, plan.pgTable,
+            sqlite.prepare(`SELECT * FROM ${quoteIdent(plan.table)}`).all() as Record<string, unknown>[],
+            plan.partitionProjectId,
+          )
+        : verifiesSharedProjectTable
+          ? isCanonicalMultisetSubset(sourceCanonicalRows, targetCanonicalRows)
+          : checksumCanonicalRows(sourceCanonicalRows) === checksumCanonicalRows(targetCanonicalRows);
       if (!contentOk) {
         log.warn(
           `Content checksum mismatch for ${plan.pgSchema}.${plan.pgTable}: ` +
@@ -1824,12 +1961,15 @@ async function insertBatch(
   const replacesCentralSeed =
     plan.pgSchema === CENTRAL_SCHEMA &&
     (plan.pgTable === "central_settings" || plan.pgTable === "global_concurrency");
+  const isSharedSingleton = isSharedSingletonTable(plan.pgSchema, plan.pgTable);
   const conflictClause = replacesCentralSeed
     ? sql.raw(`ON CONFLICT (${quoteIdent("id")}) DO UPDATE SET ${cols
         .filter((column) => column.pgName !== "id")
         .map((column) => `${quoteIdent(column.pgName)} = EXCLUDED.${quoteIdent(column.pgName)}`)
         .join(", ")}`)
-    : sql`ON CONFLICT DO NOTHING`;
+    : isSharedSingleton
+      ? buildSharedSingletonConflictClause(plan.pgSchema, plan.pgTable, cols)
+      : sql`ON CONFLICT DO NOTHING`;
 
   /*
   FNXC:PostgresMigration 2026-07-13-21:05:

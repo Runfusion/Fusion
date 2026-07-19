@@ -32,8 +32,12 @@ import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 /*
 FNXC:GitHubImportTranslate 2026-07-17-23:48:
 Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
+
+FNXC:PostgresBigintCounters 2026-07-19-12:00:
+SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
+Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0025";
+export const SCHEMA_BASELINE_VERSION = "0026";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -116,6 +120,8 @@ export const RESEARCH_FEATURE_PROVENANCE_VERSION = "0023";
 export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
 /** FNXC:SymbolLock 2026-07-30-14:10: upgraded projects need the durable lock table and RLS contract before scheduler admission can use it. */
 export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
+/** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
+export const BIGINT_COUNTERS_VERSION = "0026";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -228,6 +234,7 @@ const IDEATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0022_ideation.sql");
 const RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0023_research_feature_provenance.sql");
 const TASK_VERIFICATION_REQUEST_MIGRATION_PATH = join(MIGRATIONS_DIR, "0024_task_verification_request.sql");
 const SYMBOL_LOCKS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0025_symbol_locks.sql");
+const BIGINT_COUNTERS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0026_bigint_counters.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -322,6 +329,7 @@ export async function applySchemaBaseline(
     const researchFeatureProvenanceAlreadyApplied = applied.includes(RESEARCH_FEATURE_PROVENANCE_VERSION);
     const taskVerificationRequestAlreadyApplied = applied.includes(TASK_VERIFICATION_REQUEST_VERSION);
     const symbolLocksAlreadyApplied = applied.includes(SYMBOL_LOCKS_SCHEMA_VERSION);
+    const bigintCountersAlreadyApplied = applied.includes(BIGINT_COUNTERS_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -720,6 +728,21 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
+    /*
+    FNXC:PostgresBigintCounters 2026-07-18-21:45:
+    Existing embedded-PG clusters that were created before this migration still have
+    integer columns for unbounded token/usage counters, so the SQLite migrator fails on
+    values larger than int4. Apply the column type widening after ownership/parity and
+    record the version so fresh baselines already benefit from the bigint DDL.
+    */
+    if (!bigintCountersAlreadyApplied) {
+      const bigintCountersSql = await readFile(BIGINT_COUNTERS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(bigintCountersSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${BIGINT_COUNTERS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
   });
 }

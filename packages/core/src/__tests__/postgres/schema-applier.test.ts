@@ -66,6 +66,7 @@ import {
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
   SYMBOL_LOCKS_SCHEMA_VERSION,
+  BIGINT_COUNTERS_VERSION,
   TASK_VERIFICATION_REQUEST_VERSION,
 } from "../../postgres/schema-applier.js";
 import { rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -176,6 +177,26 @@ describe("schema-applier: immutable migration identities", () => {
   it("registers durable symbol locks at the next free migration version", () => {
     expect(SYMBOL_LOCKS_SCHEMA_VERSION).toBe("0025");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(SYMBOL_LOCKS_SCHEMA_VERSION));
+  });
+
+  /*
+  FNXC:PostgresBigintCounters 2026-07-19-12:00:
+  0026 widens overflow-prone counters to bigint. Keep identity fixed and at-or-before SCHEMA_BASELINE_VERSION.
+
+  FNXC:PostgresBigintCounters 2026-07-19-08:40:
+  Also assert the authoritative applier registry wires 0026_bigint_counters.sql —
+  constant identity alone does not prove applySchemaBaseline will run the migration.
+  */
+  it("registers bigint counters at migration version 0026", () => {
+    expect(BIGINT_COUNTERS_VERSION).toBe("0026");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(BIGINT_COUNTERS_VERSION));
+    const applierSource = readFileSync(
+      fileURLToPath(new URL("../../postgres/schema-applier.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(applierSource).toContain("0026_bigint_counters.sql");
+    expect(applierSource).toContain("BIGINT_COUNTERS_VERSION");
+    expect(applierSource).toMatch(/applied\.includes\(\s*BIGINT_COUNTERS_VERSION\s*\)/);
   });
 
 });
@@ -1272,6 +1293,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       RESEARCH_FEATURE_PROVENANCE_VERSION,
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
+      BIGINT_COUNTERS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1323,6 +1345,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       RESEARCH_FEATURE_PROVENANCE_VERSION,
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
+      BIGINT_COUNTERS_VERSION,
     ]);
   });
 
@@ -1507,6 +1530,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       RESEARCH_FEATURE_PROVENANCE_VERSION,
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
+      BIGINT_COUNTERS_VERSION,
     ]);
   });
 
@@ -1572,6 +1596,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       RESEARCH_FEATURE_PROVENANCE_VERSION,
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
+      BIGINT_COUNTERS_VERSION,
     ]);
   });
 
@@ -1637,6 +1662,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       RESEARCH_FEATURE_PROVENANCE_VERSION,
       TASK_VERIFICATION_REQUEST_VERSION,
       SYMBOL_LOCKS_SCHEMA_VERSION,
+      BIGINT_COUNTERS_VERSION,
     ]);
   });
 });

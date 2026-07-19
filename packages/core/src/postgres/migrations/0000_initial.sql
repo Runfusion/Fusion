@@ -103,11 +103,11 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   validator_thinking_level text,
   planning_thinking_level text,
   execution_mode text DEFAULT 'standard',
-  token_usage_input_tokens integer,
-  token_usage_output_tokens integer,
-  token_usage_cached_tokens integer,
-  token_usage_cache_write_tokens integer,
-  token_usage_total_tokens integer,
+  token_usage_input_tokens bigint,
+  token_usage_output_tokens bigint,
+  token_usage_cached_tokens bigint,
+  token_usage_cache_write_tokens bigint,
+  token_usage_total_tokens bigint,
   token_usage_first_used_at text,
   token_usage_last_used_at text,
   token_usage_model_provider text,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   updated_at text NOT NULL,
   column_moved_at text,
   first_execution_at text,
-  cumulative_active_ms integer,
+  cumulative_active_ms bigint,
   execution_started_at text,
   execution_completed_at text,
   dependencies jsonb DEFAULT '[]',
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   checkout_node_id text,
   checkout_run_id text,
   checkout_lease_renewed_at text,
-  checkout_lease_epoch integer DEFAULT 0,
+  checkout_lease_epoch bigint DEFAULT 0,
   deleted_at text,
   allow_resurrection integer DEFAULT 0,
   transition_pending text,
@@ -209,15 +209,18 @@ CREATE TABLE IF NOT EXISTS project.config (
 );
 
 CREATE TABLE IF NOT EXISTS project.distributed_task_id_state (
-  prefix text PRIMARY KEY,
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  prefix text NOT NULL,
   next_sequence integer NOT NULL,
   committed_cluster_task_count integer NOT NULL,
   last_committed_task_id text,
-  updated_at text NOT NULL
+  updated_at text NOT NULL,
+  PRIMARY KEY (project_id, prefix)
 );
 
 CREATE TABLE IF NOT EXISTS project.distributed_task_id_reservations (
-  reservation_id text PRIMARY KEY,
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  reservation_id text NOT NULL,
   prefix text NOT NULL,
   node_id text NOT NULL,
   sequence integer NOT NULL,
@@ -229,17 +232,18 @@ CREATE TABLE IF NOT EXISTS project.distributed_task_id_reservations (
   aborted_at text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
+  PRIMARY KEY (project_id, reservation_id),
   CONSTRAINT distributed_task_id_reservations_prefix_fkey
-    FOREIGN KEY (prefix) REFERENCES project.distributed_task_id_state(prefix) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, prefix) REFERENCES project.distributed_task_id_state(project_id, prefix) ON DELETE CASCADE,
   CONSTRAINT distributed_task_id_reservations_status_check
     CHECK (status IN ('reserved', 'committed', 'aborted', 'expired')),
   CONSTRAINT distributed_task_id_reservations_reason_check
     CHECK (reason IS NULL OR reason IN ('abort', 'expired', 'failed-create')),
-  CONSTRAINT distributed_task_id_reservations_prefix_sequence_unique UNIQUE (prefix, sequence),
-  CONSTRAINT distributed_task_id_reservations_prefix_task_id_unique UNIQUE (prefix, task_id)
+  CONSTRAINT distributed_task_id_reservations_prefix_sequence_unique UNIQUE (project_id, prefix, sequence),
+  CONSTRAINT distributed_task_id_reservations_prefix_task_id_unique UNIQUE (project_id, prefix, task_id)
 );
 CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsPrefixStatus"
-  ON project.distributed_task_id_reservations(prefix, status);
+  ON project.distributed_task_id_reservations(project_id, prefix, status);
 CREATE INDEX IF NOT EXISTS "idxDistributedTaskIdReservationsExpiry"
   ON project.distributed_task_id_reservations(status, expires_at);
 
@@ -1391,11 +1395,11 @@ CREATE TABLE IF NOT EXISTS project.chat_token_usage (
   agent_id text,
   model_provider text,
   model_id text,
-  input_tokens integer NOT NULL,
-  output_tokens integer NOT NULL,
-  cached_tokens integer NOT NULL,
-  cache_write_tokens integer NOT NULL,
-  total_tokens integer NOT NULL,
+  input_tokens bigint NOT NULL,
+  output_tokens bigint NOT NULL,
+  cached_tokens bigint NOT NULL,
+  cache_write_tokens bigint NOT NULL,
+  total_tokens bigint NOT NULL,
   created_at text NOT NULL
 );
 
