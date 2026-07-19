@@ -17045,6 +17045,13 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     return "retry";
   }
 
+  /*
+  FNXC:Worktrees 2026-07-19-15:47:
+  Branch-needing task work must be created with `git worktree add` in an isolated checkout. Per the
+  AGENTS.md “Prefer main For Direct Work; Use Worktrees For Branches” standing rule, this.rootDir is
+  never switched with `git checkout` or `git switch` to select a task branch; see the primary-checkout
+  invariant regression test for the executable guard.
+  */
   private async createWorktree(
     branch: string,
     path: string,

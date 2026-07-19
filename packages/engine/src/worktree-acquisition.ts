@@ -326,6 +326,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
   };
 
+  /*
+  FNXC:Worktrees 2026-07-19-15:47:
+  Acquisition delegates branch creation to the isolated-worktree primitive. The project root remains
+  on its current branch; task branch selection must never use a root-checkout `git checkout` or `git switch`.
+  */
   const createWorktreeImpl = createWorktree
     ? createWorktree
     : async (createBranch: string, createPath: string, createTaskId: string, startPoint?: string, allowRename?: boolean) => {
