@@ -47,12 +47,9 @@ export async function initImpl(store: TaskStore): Promise<void> {
     // In backend mode (an AsyncDataLayer was injected), TaskStore skips ALL
     // SQLite construction and the SQLite-specific startup reconciliations
     // (corruption guard, legacy file migration, agent-log file migration,
-    // schema-version re-init, orphaned task-dir reconcile, activity-log
-    // listener wiring that reads from SQLite, etc.). The PostgreSQL schema
-    // baseline is applied by the startup factory before constructing the
-    // store, and the async equivalents of these reconciliations are wired by
-    // the runtime-*-async features. init() in backend mode performs only the
-    // backend-agnostic setup (mkdir, trait-hook registration) above and returns.
+    // schema-version re-init, orphaned task-dir reconcile, etc.). The PostgreSQL
+    // schema baseline is applied by the startup factory before constructing the
+    // store. Backend-safe startup work is performed explicitly in the branch below.
     //
     // When the async layer is ABSENT, the entire block below runs exactly as
     // before — byte-identical to the pre-migration SQLite path.
@@ -81,6 +78,9 @@ export async function initImpl(store: TaskStore): Promise<void> {
       async store API (listTasks/updateTask), so it is PG-safe.
       */
       await adoptLegacyTaskRowsOnOpen(store);
+      // Lifecycle listeners are backend-agnostic: recordActivity() routes their
+      // best-effort writes through the injected PostgreSQL data layer.
+      store.setupActivityLogListeners();
       return;
     }
 
