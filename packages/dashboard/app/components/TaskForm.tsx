@@ -1604,6 +1604,14 @@ export function TaskForm({
               </div>
             )}
             {onReviewLevelChange && (
+              /*
+              FNXC:ReviewLevelPreset 2026-07-19-10:50 (U8 / R6):
+              Review is now a CREATION-TIME preset over the workflow's optional review
+              steps (level -> enabledWorkflowSteps at create), not a runtime signal
+              triage decides. The default (unset) leaves the workflow's own default-on
+              steps in place; an explicit optional-step selection always wins over the
+              level preset (server-side applyReviewLevelPreset).
+              */
               <div className="model-select-row">
                 <label htmlFor="review-level" className="model-select-label">{t("taskForm.reviewLabel", "Review")}</label>
                 <select
@@ -1612,11 +1620,11 @@ export function TaskForm({
                   onChange={(e) => onReviewLevelChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
                   disabled={disabled}
                 >
-                  <option value="">{t("taskForm.reviewDefault", "Default (Auto — triage decides)")}</option>
+                  <option value="">{t("taskForm.reviewDefault", "Default (workflow review steps)")}</option>
                   <option value="0">{t("taskForm.reviewLevel0", "0 — None")}</option>
-                  <option value="1">{t("taskForm.reviewLevel1", "1 — Plan Only")}</option>
-                  <option value="2">{t("taskForm.reviewLevel2", "2 — Plan and Code")}</option>
-                  <option value="3">{t("taskForm.reviewLevel3", "3 — Full")}</option>
+                  <option value="1">{t("taskForm.reviewLevel1", "1 — Code Review")}</option>
+                  <option value="2">{t("taskForm.reviewLevel2", "2 — Plan + Code")}</option>
+                  <option value="3">{t("taskForm.reviewLevel3", "3 — Plan + Browser + Code")}</option>
                 </select>
               </div>
             )}

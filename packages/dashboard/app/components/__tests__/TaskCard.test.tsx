@@ -2390,7 +2390,10 @@ describe("TaskCard", () => {
     expect(Boolean(badge)).toBe(shouldRender);
     if (shouldRender) {
       expect(badge).toHaveTextContent("Reviewing");
-      expect(screen.getByText("planning")).toBeDefined();
+      // FNXC:StatusBadge 2026-07-19-04:30: U12 — the status badge prefers the running
+      // workflow step's IR-declared name ("Plan Review") over the raw engine token
+      // ("planning"); this expectation tracks that intentional cutover behavior.
+      expect(screen.getByText("Plan Review")).toBeDefined();
     }
   });
 

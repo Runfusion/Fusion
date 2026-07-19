@@ -39,7 +39,7 @@ import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
-import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
@@ -300,8 +300,8 @@ const TIME_INDICATOR_COLUMNS = new Set<ColumnId>([
 ]);
 const LIVE_TIME_INDICATOR_POLL_MS = 30_000;
 
-function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
-  return getTaskStatusBadgeLabel(status, t);
+function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string): string {
+  return getTaskStatusBadgeLabel(status, t, workflowStepLabel);
 }
 
 function getDoneCompletionMs(task: Task): number | null {
@@ -3082,7 +3082,7 @@ function TaskCardComponent({
                       ? t("tasks.statusPlanning", "Planning")
                       : visualStatus === "merging-fix"
                         ? t("tasks.statusMergingFix", "Merging fixes…")
-                        : getTaskStatusLabel(visualStatus!, t)}
+                        : getTaskStatusLabel(visualStatus!, t, getRunningWorkflowStepLabel(task))}
           </span>
         )}
         {planReviewRunning && isAgentActive && (
