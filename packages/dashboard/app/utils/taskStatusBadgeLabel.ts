@@ -22,11 +22,28 @@ export function shouldSuppressPlanningStatusBadge({
 export function getTaskStatusBadgeLabel(
   status: string | null | undefined,
   t: TFunction<"app">,
+  /*
+  FNXC:TaskStatusBadge 2026-07-19-2b:55 (U12 / R2 / R11):
+  Workflow-step state wins over the raw status vocabulary. A card whose Plan Review is running
+  reads "Plan Review" — the step's own IR-declared name — instead of the engine token "planning"
+  or "needs-replan". Pass `getRunningWorkflowStepLabel(task)` here; omit it and the legacy status
+  mapping below is unchanged, so every existing caller keeps its behavior.
+  */
+  workflowStepLabel?: string,
 ): string {
-  if (!status) return "";
+  /*
+  FNXC:TaskStatusBadge 2026-07-19-09:40:
+  "merging-fix" must always read "Merging fixes…" even when a workflow-progress item is still
+  marked running (a pre-merge step's startedAt-without-completedAt state can survive into the
+  merge-fix retry). Checking the status before the workflow-step override enforces this for every
+  caller (TaskCard, ListView grouped rows, ListView table rows) instead of relying on per-call-site
+  pre-checks.
+  */
   if (status === "merging-fix") {
     return t("tasks.statusMergingFix", "Merging fixes…");
   }
+  if (workflowStepLabel) return workflowStepLabel;
+  if (!status) return "";
   if (isActiveMergeStatus(status)) {
     return t("tasks.statusMerging", "Merging…");
   }

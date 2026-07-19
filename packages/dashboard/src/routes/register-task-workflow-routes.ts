@@ -45,6 +45,9 @@ import {
   isWorkflowColumnsEnabled,
   resolveWorkflowIrForTask,
   workflowHasColumn,
+  columnHasFlag,
+  columnsWithFlag,
+  resolveReboundTarget,
   resolveColumnFlags,
   TransitionRejectionError,
   getPlannerInterventionTimeline,
@@ -106,6 +109,53 @@ async function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): P
       ?? maybeStore.clearWorkflowRunStepInstances?.(taskId));
   } catch {
     // Legacy stores may not have workflow-run instance persistence; rebuild must still proceed.
+  }
+}
+
+/*
+FNXC:WorkflowColumns 2026-07-19-2b:30 (U12 / R2 / R11):
+IR-derived move targets for the operator lifecycle routes.
+
+Retry / reset / re-engage all moved the card with a hardcoded `"todo"` or `"in-progress"`. On a
+user-authored workflow those ids may not exist at all, so the operator's Retry button either threw
+or silently parked the card in a column the workflow never declared. These resolve the destination
+from the TASK'S OWN workflow by TRAIT — the rebound target is the `hold` column (falling back to
+`intake`), the execution target is the column carrying `wip`.
+
+Both fall back to the legacy literal when the IR cannot be resolved or declares no columns (v1),
+so `builtin:coding` — whose hold column IS `todo` and whose wip column IS `in-progress` — keeps
+byte-identical behavior (KTD-7).
+*/
+async function resolveReboundColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return resolveReboundTarget(ir) ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
+
+/*
+FNXC:WorkflowColumns 2026-07-19-2b:35 (U12 / R2):
+Spec revision rehomes to the workflow's INTAKE column (where specification happens), which is a
+different preference from the rebound target above — rebound prefers `hold`, respecify prefers
+`intake`. `builtin:coding`'s intake column IS `triage`, so the default path is unchanged.
+*/
+async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "intake")[0] ?? "triage";
+  } catch {
+    return "triage";
+  }
+}
+
+async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "countsTowardWip")[0] ?? "in-progress";
+  } catch {
+    return "in-progress";
   }
 }
 
@@ -728,7 +778,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
     }
 
-    const reengagedTask = await scopedStore.moveTask(task.id, "in-progress", { preserveProgress: true });
+    const reengageColumn = await resolveWipColumnForTask(scopedStore, task.id);
+    const reengagedTask = await scopedStore.moveTask(task.id, reengageColumn, { preserveProgress: true });
     await triggerCommentWakeForAssignedAgent(scopedStore, reengagedTask, wake);
     return { task: reengagedTask, reengaged: true };
   }
@@ -1617,8 +1668,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { column, preserveProgress } = req.body;
-      if (!column || !COLUMNS.includes(column as Column)) {
-        throw badRequest(`Invalid column. Must be one of: ${COLUMNS.join(", ")}`);
+      /*
+      FNXC:WorkflowColumns 2026-07-19-2b:15 (U12 / R2 / R11):
+      Validate against the TASK'S WORKFLOW, not the legacy six-id enum. This endpoint rejected
+      every workflow-defined column outright — a board built on a custom workflow could not move a
+      card into its own `Merging` column, the API answered 400 "Must be one of: triage, todo, ...".
+      That is the closed-enum blocker the cutover exists to remove.
+      Resolution failure or a v1 (columnless) IR falls back to the legacy set, so the default
+      workflow and older definitions behave exactly as before.
+      */
+      if (typeof column !== "string" || !column) {
+        throw badRequest("Invalid column. Expected a non-empty column id.");
+      }
+      const moveTargetIr = await resolveWorkflowIrForTask(scopedStore, req.params.id).catch(() => undefined);
+      const declaresColumns = Array.isArray((moveTargetIr as { columns?: unknown[] } | undefined)?.columns);
+      const columnIsValid = moveTargetIr && declaresColumns
+        ? workflowHasColumn(moveTargetIr, column)
+        : COLUMNS.includes(column as Column);
+      if (!columnIsValid) {
+        const allowed = moveTargetIr && declaresColumns
+          ? ((moveTargetIr as unknown as { columns: Array<{ id: string }> }).columns.map((c) => c.id))
+          : [...COLUMNS];
+        throw badRequest(`Invalid column. Must be one of: ${allowed.join(", ")}`);
       }
       if (preserveProgress != null && typeof preserveProgress !== "boolean") {
         throw badRequest("preserveProgress must be a boolean");
@@ -1662,7 +1733,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // already exists, so any prior committed progress survives even
       // though the on-disk worktree directory is freshly allocated.
       let allocateWorktree: ((reservedNames: Set<string>) => string | null) | undefined;
-      if ((column as Column) === "in-progress") {
+      /*
+      FNXC:WorkflowColumns 2026-07-19-2b:20 (U12 / R2):
+      Allocate a worktree when promoting into a WIP column, keyed on the trait rather than the
+      literal `in-progress` id. A custom workflow's execution column carries `wip` under its own
+      name, and without this it landed in-progress with a null worktree.
+      */
+      const targetIsWip = moveTargetIr && declaresColumns
+        ? columnHasFlag(moveTargetIr, column, "countsTowardWip")
+        : column === "in-progress";
+      if (targetIsWip) {
         const existing = await scopedStore.getTask(req.params.id);
         if (existing) {
           const settings = await scopedStore.getSettings();
@@ -2455,6 +2535,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
 
       if (isMissingWorktreeSessionRetry) {
+        /*
+        FNXC:WorkflowColumns 2026-07-19-11:05 (U12 review):
+        Resolve the rebound destination BEFORE logging so the audit entry reports the real
+        trait-derived column instead of a hardcoded "todo", which misleads on custom boards.
+        */
+        const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
         await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
         await scopedStore.updateTask(req.params.id, {
           status: null,
@@ -2465,8 +2551,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
         });
-        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
-        const updated = await scopedStore.moveTask(req.params.id, "todo", { preserveProgress: true });
+        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (unusable worktree session-start recovery → ${reboundColumn}, preserving progress${retryLogSuffix})`);
+        const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true });
         res.json(updated);
         return;
       }
@@ -2479,6 +2565,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           FNXC:WorkflowRetry 2026-06-29-02:18:
           Dashboard retry for an in-review execution failure re-enters the workflow graph from parse/execution, so it must clear persisted foreach step-instance pins. Otherwise a stale pin from the failed run makes the retry hit the same parse pin-mismatch immediately.
           */
+          /*
+          FNXC:WorkflowColumns 2026-07-19-11:05 (U12 review):
+          Resolve the rebound destination BEFORE logging so the audit entry reports the real
+          trait-derived column instead of a hardcoded "todo", which misleads on custom boards.
+          */
+          const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
           await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
           await scopedStore.updateTask(req.params.id, {
             status: null,
@@ -2489,10 +2581,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.logEntry(
             req.params.id,
             isInReviewExecutionStall
-              ? `Retry requested from dashboard (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
-              : `Retry requested from dashboard (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
+              ? `Retry requested from dashboard (stranded in-review execution retry → ${reboundColumn}, preserving progress${retryLogSuffix})`
+              : `Retry requested from dashboard (execution failure in-review → ${reboundColumn}, preserving progress${retryLogSuffix})`,
           );
-          const updated = await scopedStore.moveTask(req.params.id, "todo", { preserveProgress: true });
+          const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true });
           res.json(updated);
           return;
         }
@@ -2565,7 +2657,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (stuck kill budget reset)");
-      const updated = await scopedStore.moveTask(req.params.id, "todo");
+      const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
+      const updated = await scopedStore.moveTask(req.params.id, reboundColumn);
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -2644,7 +2737,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         "Task reset by user — all progress cleared, fresh worktree and branch will be allocated",
       );
 
-      await scopedStore.moveTask(req.params.id, "todo");
+      const resetColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
+      await scopedStore.moveTask(req.params.id, resetColumn);
       await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
       let updated = await scopedStore.getTask(req.params.id);
       if (!updated) {
@@ -3494,7 +3588,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Move to todo and clear status
-      const updated = await scopedStore.moveTask(task.id, "todo");
+      const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
+      const updated = await scopedStore.moveTask(task.id, reboundColumn);
       await scopedStore.updateTask(task.id, {
         status: undefined,
         ...(approvedPlanFingerprint ? { approvedPlanFingerprint } : {}),
@@ -4248,9 +4343,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Get current task state
       const task = await scopedStore.getTask(req.params.id);
 
-      // If task is already in triage, skip the transition check and moveTask.
-      // Just reset for replanning in place.
-      if (task.column === "triage") {
+      /*
+      FNXC:WorkflowColumns 2026-07-19-11:10 (U12 review):
+      The in-place-reset early return must key on the workflow-resolved intake target, not only
+      the literal "triage". On a custom board whose intake column isn't "triage" (e.g. "backlog"),
+      a task already sitting at intake would otherwise fall through to
+      `canTransition = task.column !== respecifyTarget` === false and be rejected — permanently
+      blocking spec revision in exactly the column where respecify belongs. The literal "triage"
+      check is kept alongside so legacy behavior stays byte-identical even if a custom workflow
+      declares a non-intake column literally named "triage".
+      */
+      const respecifyTarget = await resolveIntakeColumnForTask(scopedStore, task.id);
+
+      // If task is already at its workflow's intake column, skip the transition
+      // check and moveTask. Just reset for replanning in place.
+      if (task.column === "triage" || task.column === respecifyTarget) {
         // Log the revision request
         await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
@@ -4273,11 +4380,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
       // closed union. A non-legacy custom column id has no legacy transition row,
       // so it correctly resolves to "cannot transition" here.
-      const canTransition =
-        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
+      /*
+      FNXC:WorkflowColumns 2026-07-19-2b:40 (U12 / R2):
+      `VALID_TRANSITIONS` is keyed by the closed legacy enum, so `isColumn(task.column)` was false
+      for every workflow-defined column and spec revision was unreachable on a custom board —
+      rejected with "Move task to 'todo' or 'in-progress' first", naming columns that workflow may
+      not have. Gate on the workflow instead: a card can be respecified when its own workflow
+      declares the intake column we are about to send it to. Legacy columns keep the legacy table.
+      */
+      const canTransition = isColumn(task.column)
+        ? VALID_TRANSITIONS[task.column].includes("triage")
+        : task.column !== respecifyTarget;
       if (!canTransition) {
         throw badRequest(
-          `Cannot request spec revision for tasks in '${task.column}' column. Move task to 'todo' or 'in-progress' first.`,
+          `Cannot request spec revision for tasks in '${task.column}' column.`,
         );
       }
 
@@ -4285,7 +4401,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
       // Move to triage for replanning
-      const updated = await scopedStore.moveTask(task.id, "triage");
+      const updated = await scopedStore.moveTask(task.id, respecifyTarget);
 
       // Remove the existing spec so replanning starts from the task
       // description and feedback rather than revising stale PROMPT.md content.
@@ -5291,7 +5407,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (lastDoneStep) {
           await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
         }
-        updatedTask = await scopedStore.moveTask(task.id, "in-progress", { preserveProgress: true });
+        const prFeedbackColumn = await resolveWipColumnForTask(scopedStore, task.id);
+        updatedTask = await scopedStore.moveTask(task.id, prFeedbackColumn, { preserveProgress: true });
       }
 
       const hasActiveSession = Boolean(updatedTask.sessionFile);
@@ -5323,7 +5440,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         assigneeUserId: null,
         status: null,
       });
-      const task = await scopedStore.moveTask(req.params.id, "todo");
+      const unassignColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
+      const task = await scopedStore.moveTask(req.params.id, unassignColumn);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
