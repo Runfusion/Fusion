@@ -183,6 +183,26 @@ describe("DevServerLogViewer", () => {
     expect(container).not.toHaveClass("devserver-log-viewer--fullscreen");
   });
 
+  function installScrollGeometry(element: HTMLElement, scrollHeight = 500, clientHeight = 100) {
+    let scrollTop = 0;
+    Object.defineProperties(element, {
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      clientHeight: { configurable: true, get: () => clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    return {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = value; },
+      setScrollHeight(value: number) { scrollHeight = value; },
+    };
+  }
+
   it("auto-scrolls when new entries arrive while running", async () => {
     const { rerender } = renderViewer({
       entries: [createEntry({ id: 1, text: "line 1" })],
@@ -229,5 +249,32 @@ describe("DevServerLogViewer", () => {
     await waitFor(() => {
       expect(scrollTopSetter).toHaveBeenCalled();
     });
+  });
+
+  it("follows in-place stream growth only while pinned, and jump-to-latest re-pins", async () => {
+    const entries = [createEntry({ id: 1, text: "streaming" })];
+    const { rerender } = renderViewer({ entries, isRunning: true, total: 1 });
+    const content = screen.getByTestId("devserver-log-content");
+    const geometry = installScrollGeometry(content);
+
+    geometry.scrollTop = 100;
+    fireEvent.scroll(content);
+    geometry.setScrollHeight(600);
+    entries[0].text = "streaming more";
+    rerender(
+      <DevServerLogViewer entries={entries} loading={false} loadingMore={false} hasMore={false} total={1} onLoadMore={vi.fn()} isRunning />,
+    );
+    await waitFor(() => expect(geometry.scrollTop).toBe(100));
+    expect(screen.getByTestId("devserver-log-jump-button")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("devserver-log-jump-button"));
+    expect(geometry.scrollTop).toBe(600);
+
+    geometry.setScrollHeight(700);
+    entries[0].text = "streaming even more";
+    rerender(
+      <DevServerLogViewer entries={entries} loading={false} loadingMore={false} hasMore={false} total={1} onLoadMore={vi.fn()} isRunning />,
+    );
+    await waitFor(() => expect(geometry.scrollTop).toBe(700));
   });
 });
