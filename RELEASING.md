@@ -74,7 +74,8 @@ Fusion ships on two tracks. Users pick theirs with the `updateChannel` global se
 ### Beta release (from `main`)
 
 ```bash
-pnpm release --channel beta
+pnpm release                  # prompts for the channel; beta is the default answer
+pnpm release --channel beta   # explicit, no prompt
 ```
 
 The script auto-enters changesets pre-mode (`.changeset/pre.json`, tag `beta`) the first time, versions to the next `-beta.N`, publishes with an explicit `--tag beta`, tags `vX.Y.Z-beta.N` (the tag push builds binaries and marks the GitHub Release as a prerelease), and skips the Homebrew tap and X draft. Changeset `.md` files are *preserved* through beta versioning — pre-mode records them in `pre.json` so the eventual stable release aggregates everything.
@@ -88,7 +89,7 @@ The script auto-enters changesets pre-mode (`.changeset/pre.json`, tag `beta`) t
    (First-time bootstrap: `git branch release main && git push -u origin release`.)
 2. Run the stable release there:
    ```bash
-   pnpm release
+   pnpm release --channel stable   # or answer "stable" at the channel prompt
    ```
    The script exits pre-mode, versions to the clean `X.Y.Z` with the aggregated changelog, publishes to `latest`, marks the GitHub Release latest, and bumps the Homebrew tap.
 3. Back-merge `release` into `main` (the script prints the exact commands). This carries the consumed changesets, changelogs, version bump, and pre.json removal back — without it, the next beta double-releases old changesets.
@@ -171,7 +172,9 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 | `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
 | `pnpm release --dry-run` | Preview only — show changesets, proposed version, and Claude-authored X draft preview, then exit before any file/git/npm changes |
 | `pnpm release --channel beta` | Beta release from `main`: pre-mode version `X.Y.Z-beta.N`, npm dist-tag `beta`, GitHub prerelease; no Homebrew/X draft |
-| `pnpm release --channel stable` | Explicit stable (the default): requires the `release` branch, publishes `latest`, marks the GitHub Release latest |
+| `pnpm release --channel stable` | Stable release: requires the `release` branch, publishes `latest`, marks the GitHub Release latest |
+
+Without `--channel`, `pnpm release` prompts for the channel and **defaults to beta** (also the silent default with `--yes` or a non-interactive dry-run). Stable releases are always an explicit choice.
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |

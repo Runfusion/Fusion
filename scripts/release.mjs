@@ -24,9 +24,12 @@
 //   pnpm release --channel beta   # beta release from `main`: enters changesets pre-mode,
 //                                 # versions X.Y.Z-beta.N, publishes npm dist-tag `beta`,
 //                                 # GitHub prerelease; skips Homebrew tap + X draft
-//   pnpm release --channel stable # (default) stable release from the `release` branch:
+//   pnpm release --channel stable # stable release from the `release` branch:
 //                                 # exits pre-mode if present, publishes dist-tag `latest`,
 //                                 # GitHub release marked latest, bumps Homebrew tap
+//
+//   Without --channel, the script prompts for the channel; the default answer
+//   (and the silent default for --yes / non-interactive dry-runs) is BETA.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
@@ -67,7 +70,7 @@ const INTERACTIVE = args.has("--interactive");
  * - `--channel beta` runs on `main`, uses changesets pre-mode (auto `pre enter beta`),
  *   publishes to the npm `beta` dist-tag, tags vX.Y.Z-beta.N, and creates a GitHub
  *   PRERELEASE. Homebrew tap and the X draft are stable-only and skipped.
- * - `--channel stable` (default) runs on the long-lived `release` branch, exits
+ * - `--channel stable` runs on the long-lived `release` branch, exits
  *   pre-mode if `.changeset/pre.json` was merged in from main, publishes to `latest`,
  *   marks the GitHub Release latest, and bumps the Homebrew tap. After a stable
  *   release the operator back-merges `release` into `main` (commands are printed).
@@ -75,11 +78,41 @@ const INTERACTIVE = args.has("--interactive");
  * on `latest` is the one unrecoverable-embarrassing failure of this scheme.
  */
 const channelFlagIndex = argv.indexOf("--channel");
-const CHANNEL = channelFlagIndex !== -1 ? argv[channelFlagIndex + 1] : "stable";
-if (CHANNEL !== "stable" && CHANNEL !== "beta") {
+let CHANNEL = channelFlagIndex !== -1 ? argv[channelFlagIndex + 1] : null;
+if (CHANNEL !== null && CHANNEL !== "stable" && CHANNEL !== "beta") {
   console.error(`✗ Invalid --channel '${CHANNEL ?? ""}'. Valid channels: stable, beta.`);
   process.exit(1);
 }
+
+/*
+ * FNXC:UpdateChannels 2026-07-19-14:30:
+ * Without an explicit --channel, the operator is prompted to pick one, and the
+ * default is BETA: day-to-day releases are betas cut from main, while stable
+ * promotions are deliberate (release branch) and must be chosen explicitly
+ * (answer "stable" or pass --channel stable). The prompt obeys the same gate
+ * as the version prompt (shouldPromptForVersion): non-interactive dry-runs and
+ * --yes runs never read stdin and silently default to beta.
+ */
+if (CHANNEL === null) {
+  if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
+    while (true) {
+      const answer = (await ask("Release channel — beta or stable? [beta]: ")).toLowerCase();
+      if (answer === "" || answer === "beta" || answer === "b") {
+        CHANNEL = "beta";
+        break;
+      }
+      if (answer === "stable" || answer === "s") {
+        CHANNEL = "stable";
+        break;
+      }
+      console.log(`  Not a channel: '${answer}'. Answer 'beta' or 'stable'.`);
+    }
+  } else {
+    CHANNEL = "beta";
+    console.log("No --channel given; defaulting to the beta channel. Pass --channel stable for a stable release.");
+  }
+}
+
 const IS_BETA = CHANNEL === "beta";
 const RELEASE_BRANCH = IS_BETA ? "main" : "release";
 const NPM_DIST_TAG = IS_BETA ? "beta" : "latest";
