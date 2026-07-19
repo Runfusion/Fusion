@@ -431,7 +431,8 @@ function rowToMission(row: MissionRow): Mission {
     interviewState: row.interviewState as InterviewState,
     baseBranch: row.baseBranch ?? undefined,
     branchStrategy,
-    taskPrefix: row.taskPrefix || undefined,
+    // FNXC:MissionTaskPrefix 2026-07-19-13:05: match other nullable text fields (?? not ||) so empty-string rows stay distinguishable if validation ever relaxes (greptile P2 on #2347).
+    taskPrefix: row.taskPrefix ?? undefined,
     autoMerge: row.autoMerge === null ? undefined : Boolean(row.autoMerge),
     autoAdvance: Boolean(row.autoAdvance ?? 0),
     autopilotEnabled: Boolean(row.autopilotEnabled ?? 0),

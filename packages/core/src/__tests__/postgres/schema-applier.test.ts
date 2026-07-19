@@ -908,13 +908,16 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
 
   /*
   FNXC:MissionTaskPrefix 2026-07-19-12:53:
-  A target that already recorded 0000-0025 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930).
+  A target that already recorded 0000–0027 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930 / #2334).
+
+  FNXC:MissionTaskPrefix 2026-07-19-13:05:
+  Delete bookkeeping version 0028 (not 0026) so missionTaskPrefixAlreadyApplied is false and applySchemaBaseline re-runs 0028_mission_task_prefix.sql. 0026 is bigint counters; leaving 0028 recorded would skip the migration and leave the dropped column missing (greptile P1 on #2347).
   */
-  it("upgrades a 0025 database with missions.task_prefix", async () => {
+  it("upgrades a pre-0028 database with missions.task_prefix", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0026';
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0028';
       ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
     `));
 
