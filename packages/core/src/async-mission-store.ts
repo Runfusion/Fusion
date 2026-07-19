@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
 import type {
   Mission,
   Milestone,
@@ -1230,8 +1230,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const feature = await getFeature(this.db, featureId);
     if (!feature) throw new Error(`Feature ${featureId} not found`);
     const current = feature.loopState ?? "idle";
-    const valid: Record<FeatureLoopState, FeatureLoopState[]> = { idle: ["implementing"], implementing: ["validating"], validating: ["needs_fix", "passed", "blocked"], needs_fix: ["implementing"], passed: [], blocked: [] };
-    if (!valid[current].includes(newState)) throw new Error(`Invalid loop state transition from '${current}' to '${newState}'. Allowed transitions from '${current}': ${valid[current].join(", ") || "none"}`);
+    const allowedNextStates = FEATURE_LOOP_TRANSITIONS[current];
+    if (!allowedNextStates.includes(newState)) throw new Error(`Invalid loop state transition from '${current}' to '${newState}'. Allowed transitions from '${current}': ${allowedNextStates.join(", ") || "none"}`);
     if (newState === "implementing" && (feature.implementationAttemptCount ?? 0) >= DEFAULT_IMPLEMENTATION_RETRY_BUDGET) {
       await this.updateFeature(featureId, { loopState: "blocked" });
       throw new Error(`Feature ${featureId} has exhausted its retry budget (${DEFAULT_IMPLEMENTATION_RETRY_BUDGET} attempts). Transitioning to 'blocked' state.`);
