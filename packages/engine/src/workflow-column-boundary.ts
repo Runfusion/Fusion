@@ -80,6 +80,19 @@ export interface WorkflowColumnBoundaryDeps {
   /** KTD-3: persist the per-node-entry IR pin (wired to the task row's
    *  `workflowIrPin*` fields via `createStoreIrPinPersistence` in production). */
   pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;
+  /*
+  FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift-park loop fix, PR #2342):
+  Clear the durable pin the moment drift is DETECTED. The pin that fired the drift
+  guard is by definition stale (its node/column/hash no longer exists in the current
+  IR); leaving it on the row made the park permanent — every requeue re-loaded the
+  same pin, re-fired detectDrift, and re-failed until an operator manually nulled
+  the fields. Clearing at drift-park time makes the park self-correcting: the next
+  ordinary requeue loads no prior pin, re-resolves the CURRENT IR fresh, and
+  proceeds — adopting the changed workflow is exactly the desired outcome.
+  Wired to `createStoreIrPinPersistence().clearPin` in production; absent → the
+  pre-fix posture (pin left in place) for minimal test harnesses.
+  */
+  clearPin?: () => void | Promise<void>;
   /** KTD-3: the pin recorded by a prior (possibly crashed) run, for drift check. */
   priorPin?: WorkflowIrPin;
   /** Optional diagnostics sink; never throws into the run. */
@@ -140,6 +153,7 @@ export function createStoreIrPinPersistence(
 ): {
   pinNodeEntry: (pin: WorkflowIrPin) => Promise<void>;
   loadPriorPin: () => Promise<WorkflowIrPin | undefined>;
+  clearPin: () => Promise<void>;
 } {
   // Last pin known to be on the row (loaded or written) — the change-only gate.
   let lastPin: WorkflowIrPin | undefined;
@@ -174,6 +188,18 @@ export function createStoreIrPinPersistence(
         // drift guard stays inert rather than failing the run on bookkeeping.
         return undefined;
       }
+    },
+    // FNXC:WorkflowIrPin 2026-07-19-21:10: null all three row fields (production
+    // task-update.ts treats null as clear-to-undefined) so a requeued run loads
+    // NO prior pin and re-resolves the current IR instead of re-firing drift.
+    clearPin: async () => {
+      if (typeof store.updateTask !== "function") return; // no-op degradation
+      await store.updateTask(taskId, {
+        workflowIrPin: null,
+        workflowIrPinNodeId: null,
+        workflowIrPinColumnId: null,
+      });
+      lastPin = undefined;
     },
   };
 }
@@ -219,6 +245,16 @@ export function createWorkflowColumnBoundary(
         });
       } catch (err) {
         warn("drift audit emit failed", { error: err instanceof Error ? err.message : String(err) });
+      }
+      // FNXC:WorkflowIrPin 2026-07-19-21:10 (drift-park loop fix): the pin that
+      // fired the guard is stale — clear it NOW so the park self-corrects on the
+      // next requeue (fresh IR resolution) instead of looping forever. Fail-soft:
+      // a failed clear merely re-fires drift next run (the pre-fix behavior),
+      // never fails this run's bookkeeping.
+      try {
+        await deps.clearPin?.();
+      } catch (err) {
+        warn("stale drift pin clear failed", { error: err instanceof Error ? err.message : String(err) });
       }
       return true;
     },

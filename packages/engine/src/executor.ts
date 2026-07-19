@@ -43,6 +43,7 @@ import {
 import {
   MERGE_REGION_KINDS,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
+  WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
 } from "./workflow-graph-executor.js";
@@ -5855,6 +5856,9 @@ export class TaskExecutor {
     return {
       pinNodeEntry: pinPersistence.pinNodeEntry,
       loadPriorPin: pinPersistence.loadPriorPin,
+      // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
+      // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
+      clearPin: pinPersistence.clearPin,
       moveTask: async (toColumn, ctx) => {
         await this.store.moveTask(task.id, toColumn, {
           moveSource: "engine",
@@ -9481,6 +9485,29 @@ export class TaskExecutor {
         const blockedParkHonored = `Workflow graph run ended after an honest blocked park (${live.error}) — honoring park, not requeueing, retrying, or clearing state`;
         executorLog.log(`${task.id}: ${blockedParkHonored}`);
         await this.store.logEntry(task.id, blockedParkHonored, undefined, this.getRunContextFor(task.id));
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      /*
+      FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift park, PR #2342):
+      A graph run that exited on the drift guard carries WORKFLOW_DRIFT_PARK_CONTEXT_KEY
+      and visited no nodes. Before this branch existed the result fell through to the
+      generic terminal sink as a misleading `failedNode: 'unknown'` failure — and,
+      combined with the stale pin (now cleared by detectDrift itself), that made a
+      permanent requeue→drift→fail loop. Park it here with an accurate drift reason
+      instead: preserve worktree/branch/step progress untouched, do NOT re-emit the
+      `task:reconcile-workflow-drift` audit (detectDrift already emitted the ids-only
+      event once), and leave the row recoverable by ordinary requeue — which now
+      succeeds because the cleared pin lets the next run re-resolve the CURRENT IR
+      and adopt the changed workflow.
+      */
+      if (result.context?.[WORKFLOW_DRIFT_PARK_CONTEXT_KEY] === true) {
+        const driftMessage = "Workflow drift park: the workflow definition changed under this run (pinned node/column no longer in the current IR). Stale IR pin cleared — requeue the task to re-resolve the current workflow and continue.";
+        executorLog.warn(`${task.id}: ${driftMessage}`);
+        await this.store.logEntry(task.id, driftMessage, undefined, this.getRunContextFor(task.id));
+        if (live.status == null && live.error == null) {
+          await this.store.updateTask(task.id, { error: driftMessage, status: "failed" }, this.getRunContextFor(task.id));
+        }
         await this.persistTokenUsage(task.id);
         return;
       }

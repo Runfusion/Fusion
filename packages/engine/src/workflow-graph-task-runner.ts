@@ -163,6 +163,9 @@ export interface WorkflowColumnBoundaryHooks {
   emitAudit?: (event: WorkflowColumnBoundaryAuditEvent) => void | Promise<void>;
   pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;
   loadPriorPin?: (taskId: string) => WorkflowIrPin | undefined | Promise<WorkflowIrPin | undefined>;
+  /** KTD-3 drift-park loop fix (PR #2342): null the stale `workflowIrPin*` row
+   *  fields when detectDrift fires so a requeue re-resolves the current IR. */
+  clearPin?: () => void | Promise<void>;
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
 }
 
@@ -265,6 +268,7 @@ export class WorkflowGraphTaskRunner {
         emitAudit: hooks.emitAudit,
         pinNodeEntry: hooks.pinNodeEntry,
         priorPin,
+        clearPin: hooks.clearPin,
         onWarn: hooks.onWarn,
       });
     }
