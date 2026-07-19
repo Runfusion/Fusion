@@ -32,6 +32,10 @@ import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 /*
 FNXC:GitHubImportTranslate 2026-07-17-23:48:
 Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
+
+FNXC:PostgresBigintCounters 2026-07-19-12:00:
+SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
+Per-migration identities above stay fixed; only this latest-version marker moves.
 */
 export const SCHEMA_BASELINE_VERSION = "0026";
 const INITIAL_SCHEMA_VERSION = "0000";
