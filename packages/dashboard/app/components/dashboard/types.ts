@@ -147,6 +147,7 @@ export interface MainContentProps {
   openSettingsWithNav: (section?: SectionId) => void;
   researchReadinessVersion: number;
   evalsEnabled: boolean;
+  ideationEnabled: boolean;
   memoryEnabled: boolean;
   goalsEnabled: boolean;
   handleOpenMission: (missionId: string) => void;

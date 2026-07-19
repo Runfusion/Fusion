@@ -1,0 +1,33 @@
+.compose-chat-panel {
+  background: var(--bg-secondary);
+  border: solid var(--border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.compose-chat-panel__input {
+  min-height: calc(var(--space-xl) * 3);
+  resize: vertical;
+}
+
+.compose-chat-panel__output {
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  min-height: calc(var(--space-xl) * 3);
+  padding: var(--space-sm);
+  white-space: pre-wrap;
+}
+
+.compose-chat-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .compose-chat-panel__actions > .btn {
+    flex: 1 1 auto;
+  }
+}

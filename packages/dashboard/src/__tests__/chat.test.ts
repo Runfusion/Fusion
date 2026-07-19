@@ -76,6 +76,7 @@ vi.mock("@fusion/engine", () => ({
   createResearchTools: vi.fn(() => []),
   resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
   resolveExecutorThinkingLevel: vi.fn(() => undefined),
+  wrapToolsWithActionGate: vi.fn((tools) => tools),
   /*
   FNXC:ChatToolset 2026-07-15-16:35:
   FN-7987 exposed the shared fusion toolset to chat agents, adding these `@fusion/engine` imports to

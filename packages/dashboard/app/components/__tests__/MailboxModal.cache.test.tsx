@@ -50,7 +50,7 @@ describe("MailboxModal cache hydration", () => {
     );
     mockFetchInbox.mockImplementation(() => new Promise(() => {}));
 
-    render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} />);
+    render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} nativeStructureCandidates={[]} onOpenNativeStructure={() => {}} />);
 
     expect(screen.getByTestId("mailbox-item-msg-cache")).toBeInTheDocument();
   });
@@ -62,7 +62,7 @@ describe("MailboxModal cache hydration", () => {
       unreadCount: 1,
     });
 
-    render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} />);
+    render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} nativeStructureCandidates={[]} onOpenNativeStructure={() => {}} />);
 
     await waitFor(() => {
       const cachedRaw = localStorage.getItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`);
@@ -90,7 +90,7 @@ describe("MailboxModal cache hydration", () => {
     }));
     mockFetchInbox.mockResolvedValueOnce({ messages: oversized, total: oversized.length, unreadCount: oversized.length });
 
-    const { rerender } = render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} />);
+    const { rerender } = render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} nativeStructureCandidates={[]} onOpenNativeStructure={() => {}} />);
 
     await waitFor(() => {
       const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`) ?? "{}");
@@ -111,7 +111,7 @@ describe("MailboxModal cache hydration", () => {
       }),
     );
     mockFetchInbox.mockImplementation(() => new Promise(() => {}));
-    rerender(<MailboxModal isOpen onClose={() => {}} projectId="p2" agents={[]} />);
+    rerender(<MailboxModal isOpen onClose={() => {}} projectId="p2" agents={[]} nativeStructureCandidates={[]} onOpenNativeStructure={() => {}} />);
 
     expect(screen.getByTestId("mailbox-item-msg-p2")).toBeInTheDocument();
   });

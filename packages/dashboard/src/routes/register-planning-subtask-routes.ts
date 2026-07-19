@@ -501,27 +501,12 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start", async (req, res) => {
     try {
-      const { initialPlan, planningDepth, customQuestionCount } = req.body;
+      const { initialPlan } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
       }
 
-      if (
-        planningDepth !== undefined
-        && planningDepth !== "small"
-        && planningDepth !== "medium"
-        && planningDepth !== "large"
-      ) {
-        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
-      }
-
-      if (
-        customQuestionCount !== undefined
-        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
-      ) {
-        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
-      }
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
@@ -542,8 +527,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         scopedStore,
         rootDir,
         settings.promptOverrides,
-        planningDepth,
-        customQuestionCount,
         ctx.options?.pluginRunner as SkillPluginRunner,
         runtime,
       );
@@ -649,8 +632,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         initialPlan,
         planningModelProvider,
         planningModelId,
-        planningDepth,
-        customQuestionCount,
         existingSessionId,
         thinkingLevel,
         clarificationEnabled,
@@ -668,21 +649,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("planningModelId must be a string when provided");
       }
 
-      if (
-        planningDepth !== undefined
-        && planningDepth !== "small"
-        && planningDepth !== "medium"
-        && planningDepth !== "large"
-      ) {
-        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
-      }
-
-      if (
-        customQuestionCount !== undefined
-        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
-      ) {
-        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
-      }
 
       if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
         throw badRequest("clarificationEnabled must be a boolean when provided");
@@ -777,8 +743,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const planningOptions = {
         projectId,
         ...runtime,
-        planningDepth,
-        customQuestionCount,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
       };
       const sessionId = validatedThinkingLevel
@@ -914,12 +878,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
+      const questionId = req.body?.questionId;
+      if (questionId !== undefined && typeof questionId !== "string") throw badRequest("questionId must be a string when provided");
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { rewindSession, attachPlanningRuntime } = await import("../planning.js");
       await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       const rewound = await rewindSession(
         sessionId,
+        questionId,
         scopedStore.getRootDir(),
         settings.promptOverrides,
         scopedStore,
@@ -1000,6 +967,21 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Cancel and cleanup a planning session.
    * Body: { sessionId: string }
    */
+  /** The sole HTTP transition that validates a continuously maintained plan. */
+  router.post("/planning/:sessionId/validate", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      const { validateSession } = await import("../planning.js");
+      const summary = await validateSession(sessionId);
+      res.json({ summary, validated: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (err instanceof Error && err.name === "SessionNotFoundError") throw notFound(err.message);
+      rethrowAsApiError(err, "Failed to validate planning session");
+    }
+  });
+
   router.post("/planning/cancel", async (req, res) => {
     try {
       const { sessionId } = req.body;
@@ -1101,6 +1083,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { getSession, getSummary, releaseSession } = await import("../planning.js");
 
       const session = await getSession(sessionId);
+      if (session && !session.validated) throw badRequest("Planning session must be validated before creating tasks");
       let summary = summaryOverride ?? getSummary(sessionId);
       let initialPlan = session?.initialPlan;
 
@@ -1114,8 +1097,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
-        if (persistedSession.status !== "complete") {
-          throw badRequest("Planning session is not complete");
+        const persistedInput = JSON.parse(persistedSession.inputPayload) as { validated?: unknown };
+        if (persistedSession.status !== "complete" || persistedInput.validated !== true) {
+          throw badRequest("Planning session must be validated before creating tasks");
         }
 
         if (!persistedSession.result) {
@@ -1243,6 +1227,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (!session) {
         throw notFound(`Planning session ${sessionId} not found or expired`);
       }
+      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
 
       if (summaryOverride) {
         session.summary = summaryOverride;
@@ -1312,6 +1297,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (!session) {
         throw notFound(`Planning session ${planningSessionId} not found or expired`);
       }
+      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
 
       if (!session.summary) {
         throw badRequest("Planning session is not complete");

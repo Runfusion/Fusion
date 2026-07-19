@@ -14,6 +14,8 @@ function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
 function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
+    getRootDir: vi.fn().mockReturnValue("/project"),
+    searchTasks: vi.fn().mockResolvedValue([]),
     findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
     findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn(),
@@ -366,6 +368,92 @@ describe("createDelegateTaskTool", () => {
     expect(result).toEqual({ task: created, wasDuplicate: false });
     expect(taskStore.createTask).toHaveBeenCalled();
     expect(taskStore.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("reuses one active diagnostic follow-up across different parent tasks", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.searchTasks).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async (parentId) =>
+      tasks.filter((task) => task.sourceParentTaskId === parentId),
+    );
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      await Promise.resolve();
+      const now = new Date().toISOString();
+      const created = {
+        id: `FN-${tasks.length + 1}`,
+        description: input.description,
+        dependencies: [],
+        column: "triage" as const,
+        sourceParentTaskId: input.source?.sourceParentTaskId,
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: now,
+        updatedAt: now,
+      } as Task;
+      tasks.push(created);
+      return created;
+    });
+
+    const [first, replay] = await Promise.all([
+      createAgentTask(taskStore, {
+        description: "Investigate and repair dashboard typecheck failure: app/utils/capture-screenshot.ts imports unresolved `html2canvas`, causing `pnpm verify:fast` to fail.",
+      }, { sourceTaskId: "FN-8343", rootDir: "/worktrees/FN-8343" }),
+      createAgentTask(taskStore, {
+        description: "Restore the missing `html2canvas` dependency declaration/lock entry for dashboard screenshot capture so @fusion/dashboard typecheck passes.",
+      }, { sourceTaskId: "FN-8348", rootDir: "/worktrees/FN-8348" }),
+    ]);
+
+    expect(first.wasDuplicate).toBe(false);
+    expect(replay).toMatchObject({ wasDuplicate: true, task: { id: first.task.id } });
+    expect(tasks).toHaveLength(1);
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({
+        sourceMetadata: expect.objectContaining({
+          crossParentDiagnosticClaimId: expect.stringMatching(/^agent-diagnostic-intent:/),
+        }),
+      }),
+    }), expect.anything());
+  });
+
+  it("does not let a completed diagnostic suppress newly required work", async () => {
+    const completed = {
+      id: "FN-DONE",
+      description: "Fix unresolved `html2canvas` typecheck failure.",
+      dependencies: [],
+      column: "done" as const,
+      sourceParentTaskId: "FN-OLD-PARENT",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    const created = {
+      ...completed,
+      id: "FN-NEW",
+      column: "triage" as const,
+      sourceParentTaskId: "FN-NEW-PARENT",
+    } as Task;
+    vi.mocked(taskStore.searchTasks).mockResolvedValue([completed]);
+    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+
+    const result = await createAgentTask(taskStore, {
+      description: "Restore the missing html2canvas dependency so dashboard typecheck passes.",
+    }, { sourceTaskId: "FN-NEW-PARENT" });
+
+    expect(result).toEqual({ task: created, wasDuplicate: false });
+    expect(taskStore.createTask).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when cross-parent diagnostic lookup is unavailable", async () => {
+    vi.mocked(taskStore.searchTasks).mockRejectedValue(new Error("database unavailable"));
+
+    await expect(createAgentTask(taskStore, {
+      description: "Fix unresolved `html2canvas` typecheck failure.",
+    }, { sourceTaskId: "FN-PARENT" })).rejects.toThrow("Unable to verify cross-parent diagnostic task uniqueness");
+
+    expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
   it("persists option-based parent provenance on the step-session fn_task_create surface", async () => {

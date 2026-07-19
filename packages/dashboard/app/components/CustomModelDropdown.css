@@ -231,9 +231,13 @@ FN-7760 requires the portaled model list to remain the touch-scroll owner on mob
 
 FNXC:ModelDropdown 2026-07-15-00:00:
 FN-8212 refines FN-8193 by removing the scroller's top padding. A sticky provider header anchors at the list top, so top padding exposed scrolling model rows in a seam between the fixed header stack and that header. Bottom token spacing preserves the list's trailing rhythm.
+
+FNXC:ModelDropdown 2026-07-16-00:00:
+FN-8355 requires the portaled list to remain the touch-scroll owner after filtering and a virtual-keyboard visualViewport reposition. Permit this flex child to shrink below its content height; otherwise the fixed search/header stack can leave its overflow clipped by the dropdown instead of scrollable on iOS and Android.
 */
 .model-combobox-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;

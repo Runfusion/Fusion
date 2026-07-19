@@ -26,13 +26,14 @@ import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
+import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
 FNXC:GitHubImportTranslate 2026-07-17-23:48:
 Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0023";
+export const SCHEMA_BASELINE_VERSION = "0025";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -111,6 +112,10 @@ export const CONFIGURATION_REVISIONS_VERSION = "0021";
 export const IDEATION_SCHEMA_VERSION = "0022";
 /** FNXC:ResearchMissionBridge 2026-07-18-12:00: forward migration stores stable research finding provenance on canonical features. */
 export const RESEARCH_FEATURE_PROVENANCE_VERSION = "0023";
+/** FNXC:TaskVerificationRequest 2026-07-30-00:00: upgrades need the project-scoped chat-to-executor verification queue. */
+export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
+/** FNXC:SymbolLock 2026-07-30-14:10: upgraded projects need the durable lock table and RLS contract before scheduler admission can use it. */
+export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -221,6 +226,8 @@ const TASK_PROPOSAL_CLAIM_MIGRATION_PATH = join(MIGRATIONS_DIR, "0020_task_propo
 const CONFIGURATION_REVISIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0021_configuration_revisions.sql");
 const IDEATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0022_ideation.sql");
 const RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0023_research_feature_provenance.sql");
+const TASK_VERIFICATION_REQUEST_MIGRATION_PATH = join(MIGRATIONS_DIR, "0024_task_verification_request.sql");
+const SYMBOL_LOCKS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0025_symbol_locks.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -274,7 +281,7 @@ export async function applySchemaBaseline(
    * cannot both apply a version or race its primary-key marker.
   */
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:schema-applier'))`);
+    await acquireSchemaMutationLocks(tx);
     await ensureBookkeepingTable(tx);
     /*
     FNXC:PostgresSchema 2026-07-16-00:55:
@@ -313,6 +320,8 @@ export async function applySchemaBaseline(
     const configurationRevisionsAlreadyApplied = applied.includes(CONFIGURATION_REVISIONS_VERSION);
     const ideationAlreadyApplied = applied.includes(IDEATION_SCHEMA_VERSION);
     const researchFeatureProvenanceAlreadyApplied = applied.includes(RESEARCH_FEATURE_PROVENANCE_VERSION);
+    const taskVerificationRequestAlreadyApplied = applied.includes(TASK_VERIFICATION_REQUEST_VERSION);
+    const symbolLocksAlreadyApplied = applied.includes(SYMBOL_LOCKS_SCHEMA_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -680,6 +689,25 @@ export async function applySchemaBaseline(
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
+      schemaChanged = true;
+    }
+
+    if (!taskVerificationRequestAlreadyApplied) {
+      const migrationSql = await readFile(TASK_VERIFICATION_REQUEST_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_VERIFICATION_REQUEST_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:SymbolLock 2026-07-30-14:10:
+    Migration files are manually registered. Apply 0025 independently so both
+    fresh and upgraded installations gain forced RLS after 0006 owns its setup.
+    */
+    if (!symbolLocksAlreadyApplied) {
+      const migrationSql = await readFile(SYMBOL_LOCKS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SYMBOL_LOCKS_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

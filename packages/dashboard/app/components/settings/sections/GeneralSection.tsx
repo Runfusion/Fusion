@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type ReportActionType, type WorkflowDefinition } from "@fusion/core";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -299,21 +299,28 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         A privacy-safe draft review remains the project default, while each of
         the four guided report actions can explicitly opt into direct filing.
         Persist overrides as one map so the pipeline resolves them consistently.
+
+        FNXC:SettingsDefaults 2026-07-17-13:55:
+        FN-8335 restores FN-7505 default-value parity for reportMode and reportModeByAction.
+        Keep their translated default and inherit descriptions in SettingsHelpTip rather than inline
+        paragraphs, so every report control exposes the shared accessible help affordance.
         */}
-        {/*
-        FNXC:ReportPipeline 2026-07-18-12:40:
-        FN-8277 report mode is a plain Settings control; bind help to i18n paths that state the
-        draft-review default and the unset per-action override so settings-default-descriptions stays green.
-        */}
-        <label htmlFor="reportMode">{t("settings.general.reportMode", "In-app report mode")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="reportMode">{t("settings.general.reportMode", "In-app report mode")}</label>
+          <SettingsHelpTip settingKey="reportMode">{t("settings.general.reportModeHelp", "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).")}</SettingsHelpTip>
+        </div>
         <select id="reportMode" value={form.reportMode ?? "draft-review"} onChange={(e) => setForm((f) => ({ ...f, reportMode: e.target.value as "draft-review" | "auto-file" }))}>
           <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
           <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
         </select>
-        <p className="form-help">{t("settings.general.reportModeHelp", "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).")}</p>
         {(["bug", "feedback", "idea", "help"] as const).map((action) => (
-          <label key={action} htmlFor={`reportMode-${action}`}>
-            {t(`settings.general.reportModeOverride.${action}`, `${action[0].toUpperCase()}${action.slice(1)} report override`)}
+          <div key={action}>
+            <div className="settings-field-label-row">
+              <label htmlFor={`reportMode-${action}`}>
+                {t(`settings.general.reportModeOverride.${action}`, `${action[0].toUpperCase()}${action.slice(1)} report override`)}
+              </label>
+              <SettingsHelpTip settingKey={`reportModeByAction-${action}`}>{t("settings.general.reportModeByActionHelp", "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.")}</SettingsHelpTip>
+            </div>
             <select id={`reportMode-${action}`} value={form.reportModeByAction?.[action] ?? ""} onChange={(e) => setForm((current) => {
               const reportModeByAction = { ...current.reportModeByAction };
               const selected = e.target.value as "" | "draft-review" | "auto-file";
@@ -325,9 +332,8 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
               <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
               <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
             </select>
-          </label>
+          </div>
         ))}
-        <p className="form-help">{t("settings.general.reportModeByActionHelp", "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.")}</p>
         <SettingsToggleRow
           descriptor={{
             key: "reportRoadmapDedup",
@@ -368,8 +374,8 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       {/*
         FNXC:Navigation 2026-07-17-00:00:
         Render the selected quick actions in persisted order so move controls visibly reorder their rows.
-        The add picker exposes every eligible destination, while each mutation updates the live footer before
-        Settings is saved; More, Terminal/scripts, shell controls, and plugin views remain unavailable here.
+        The add picker exposes only footer-eligible destinations, while each mutation updates the live footer before
+        Settings is saved; More, Ideation, Terminal/scripts, shell controls, and plugin views remain unavailable here.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
@@ -380,13 +386,13 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}>
           {(() => {
             const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
-              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_SELECTABLE_ITEMS[number] => MOBILE_NAV_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_SELECTABLE_ITEMS[number]))
+              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number] => MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number]))
               : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
             const updateItems = (nextItems: string[]) => {
               setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));
               onMobileNavPrimaryItemsChange?.(nextItems);
             };
-            const availableItems = MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !selectedItems.includes(item));
+            const availableItems = MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.filter((item) => !selectedItems.includes(item));
             return <>
               {selectedItems.map((item, selectedIndex) => {
                 const label = t(MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS[item], item);

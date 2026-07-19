@@ -430,6 +430,21 @@ describe("Header", () => {
       expect(screen.queryByTestId("view-overflow-research")).toBeNull();
     });
 
+    it("gates Ideation in the desktop overflow and routes the enabled fallback", () => {
+      const hidden = renderHeader({ onChangeView: noop, experimentalFeatures: { ideationView: false } });
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-ideation")).toBeNull();
+      hidden.unmount();
+
+      const onChangeView = vi.fn();
+      renderHeader({ onChangeView, view: "ideation", experimentalFeatures: { ideationView: true } });
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger).toHaveClass("active");
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByTestId("view-overflow-ideation"));
+      expect(onChangeView).toHaveBeenCalledWith("ideation");
+    });
+
     it("hides evals in the desktop view overflow when evalsView is disabled", () => {
       renderHeader({ onChangeView: noop, experimentalFeatures: { evalsView: false } });
 

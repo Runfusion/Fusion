@@ -857,6 +857,57 @@ describe("CE workflow-step executor integration", () => {
 
   // ── Item 5: FUSION_HEADLESS gating on stepEnv ───────────────────────────────
   describe("executeWorkflowStep FUSION_HEADLESS (U3)", () => {
+    it.each([
+      ["code-review group", { id: "custom-check", name: "Implementation Check", optionalGroupId: "code-review" }],
+      ["browser-verification group", { id: "custom-check", name: "Implementation Check", optionalGroupId: "browser-verification" }],
+      ["review name", { id: "custom-check", name: "Custom Review" }],
+      ["verification name", { id: "custom-check", name: "Custom Verification" }],
+      ["inline-fix metadata", { id: "custom-check", name: "Implementation Check", reviewCanFixInline: true }],
+    ])("makes the approved PROMPT.md contract authoritative for the %s classifier", async (_label, classifier) => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(`
+# Approved contract
+
+Ship FIVE kinds. Do NOT add roadmap-item in this task.
+      `.trim());
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask({ description: "Original request: ship SIX kinds including roadmap-item." }),
+        makeStep({
+          ...classifier,
+          prompt: "Review the implementation against the approved task contract.",
+          gateMode: "gate",
+        }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.last?.systemPrompt).toContain("--- BEGIN APPROVED PROMPT.md ---");
+      expect(cap.last?.systemPrompt).toContain("Ship FIVE kinds. Do NOT add roadmap-item in this task.");
+      expect(cap.last?.systemPrompt).toContain("PROMPT.md is the authoritative current contract");
+      expect(cap.last?.systemPrompt).toContain("Do not enforce superseded requirements from the original Task Description");
+    });
+
+    it("does not restore the historical task description when PROMPT.md is unavailable", async () => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(undefined);
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask({ description: "Original request: ship SIX kinds including roadmap-item." }),
+        makeStep({ name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.last?.systemPrompt).toContain("Approved Task Contract Unavailable");
+      expect(cap.last?.systemPrompt).toContain("Task Description is historical input only and is not a substitute contract");
+      expect(cap.last?.systemPrompt).toContain("Return REVISE with the single reason that the approved contract could not be loaded");
+    });
+
     it("sets FUSION_HEADLESS=1 only when unattended=true; always sets FUSION_WORKFLOW_STEP", async () => {
       const store = createMockStore();
       const { executor } = makeExecutor(store);

@@ -74,6 +74,27 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
     expect((await store.getMessage(msg.id))?.content).toBe("hi user");
   });
 
+  it("round-trips native structure embeds through mailbox metadata", async () => {
+    const { MessageStore } = await import("../../message-store.js");
+    const store = new MessageStore(null, { asyncLayer: h.layer() });
+    const nativeStructures = [
+      { kind: "mission" as const, id: "M-1", label: "Launch roadmap" },
+      { kind: "goal" as const, id: "G-1", projectId: "project-1" },
+    ];
+    const sent = await store.sendMessage({
+      fromId: "agent-a",
+      fromType: "agent",
+      toId: "user-x",
+      toType: "user",
+      content: "Review these structures",
+      type: "agent-to-user",
+      metadata: { nativeStructures },
+    });
+
+    expect(sent.metadata?.nativeStructures).toEqual(nativeStructures);
+    expect((await store.getMessage(sent.id))?.metadata?.nativeStructures).toEqual(nativeStructures);
+  });
+
   /*
   FNXC:PostgresMigrationInbox 2026-07-14-12:10:
   Once-only inbox delivery must use PostgreSQL's primary-key conflict handling as the concurrency authority; parallel callers may share the resulting message, but only one may report inserting it.

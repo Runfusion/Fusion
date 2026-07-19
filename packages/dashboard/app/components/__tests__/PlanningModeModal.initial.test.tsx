@@ -34,6 +34,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -77,6 +78,7 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
@@ -165,6 +167,7 @@ describe("PlanningModeModal", () => {
     // realistically in tests.
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);
@@ -307,9 +310,7 @@ describe("PlanningModeModal", () => {
 
         await waitFor(() => {
           expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from handoff", undefined, undefined, {
-            planningDepth: "medium",
             clarificationEnabled: false,
-            customQuestionCount: undefined,
           }, undefined);
         });
 
@@ -655,9 +656,7 @@ describe("PlanningModeModal", () => {
           planningModelProvider: "anthropic",
           planningModelId: "claude-sonnet-4-5",
         }, {
-          planningDepth: "medium",
           clarificationEnabled: false,
-          customQuestionCount: undefined,
         }, undefined);
       });
     });
@@ -692,40 +691,7 @@ describe("PlanningModeModal", () => {
         expect(disclosureScope.getByText("openai/gpt-4o")).toBeDefined();
       });
       expect(disclosureScope.getByText(/Selects which model runs the planning interview/)).toBeDefined();
-      expect(disclosureScope.getByText(/Plan size sets default interview depth/)).toBeDefined();
-      expect(disclosureScope.getByRole("button", { name: "Small" })).toBeDefined();
-      expect(disclosureScope.getByRole("button", { name: "Medium" }).getAttribute("aria-pressed")).toBe("true");
-      expect(disclosureScope.getByRole("button", { name: "Large" })).toBeDefined();
-      expect(disclosureScope.getByLabelText("Questions")).toBeDefined();
-    });
-
-    it("updates selected depth and sends custom question count", async () => {
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          onTasksCreated={vi.fn()}
-          tasks={mockTasks}
-        />
-      );
-
-      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
-      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
-      fireEvent.click(screen.getByRole("button", { name: "Large" }));
-      fireEvent.change(screen.getByLabelText("Questions"), { target: { value: "7" } });
-      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
-        target: { value: "Build auth system" },
-      });
-      fireEvent.click(screen.getByText("Start Planning"));
-
-      await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
-          planningDepth: "large",
-          clarificationEnabled: false,
-          customQuestionCount: 7,
-        }, undefined);
-      });
+      expect(disclosureScope.getByLabelText("Allow follow-up clarification questions")).toBeDefined();
     });
 
     it("calls startPlanningStreaming without model override when none selected", async () => {
@@ -747,9 +713,7 @@ describe("PlanningModeModal", () => {
 
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
-          planningDepth: "medium",
           clarificationEnabled: false,
-          customQuestionCount: undefined,
         }, undefined);
       });
     });
@@ -804,9 +768,7 @@ describe("PlanningModeModal", () => {
         undefined,
         undefined,
         {
-          planningDepth: "medium",
           clarificationEnabled: false,
-          customQuestionCount: undefined,
         },
         "draft-123",
       );
@@ -891,9 +853,7 @@ describe("PlanningModeModal", () => {
       // Wait for startPlanningStreaming to be called (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
-          planningDepth: "medium",
           clarificationEnabled: false,
-          customQuestionCount: undefined,
         }, undefined);
       }, { timeout: 2000 });
 
@@ -918,9 +878,7 @@ describe("PlanningModeModal", () => {
       // The auto-start should happen with the initial plan (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
-          planningDepth: "medium",
           clarificationEnabled: false,
-          customQuestionCount: undefined,
         }, undefined);
       }, { timeout: 2000 });
     });

@@ -1,0 +1,22 @@
+/* FNXC:NativeStructureEmbed 2026-07-22-10:30: A matching custom drag is visible without leaving an empty drop shell when ordinary compose is idle. */
+.message-composer--native-structure-drag-over {
+  outline: solid var(--border-strong);
+  outline-offset: calc(var(--space-xs) * -1);
+}
+
+.message-composer-structure-list > li {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.message-composer-structure-list .native-structure-preview {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 768px) {
+  .message-composer-structure-list > li {
+    align-items: stretch;
+  }
+}

@@ -12,6 +12,7 @@ export const mockCancelPlanning = vi.fn();
 export const mockStopPlanningGeneration = vi.fn();
 export const mockUpdatePlanningSessionDraft = vi.fn();
 export const mockCreateTaskFromPlanning = vi.fn();
+export const mockValidatePlanningSession = vi.fn();
 export const mockStartPlanningBreakdown = vi.fn();
 export const mockCreateTasksFromPlanning = vi.fn();
 export const mockFetchAiSession = vi.fn();

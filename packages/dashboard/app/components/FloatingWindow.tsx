@@ -476,10 +476,11 @@ export function FloatingWindow({
   FNXC:FloatingWindow 2026-06-22-21:10:
   Rendered via a portal to document.body so the window escapes every ancestor stacking context (board card badges, the List view's sticky sort header + column divider, transformed columns, etc.). Without the portal the panel's z-index battles inside whatever subtree mounted it, letting card dependency/overlap tags and the list divider/sort header paint over the modal. At document.body the 4000+ z-index wins over all page content.
 
-  FNXC:FloatingWindow 2026-07-18-00:00:
-  Hidden windows remain portaled so their child component identity survives a close/reopen cycle.
-  The hidden overlay is display:none and aria-hidden, which removes it from paint, focus, and
-  pointer interaction while the effects above suspend invisible-window side effects.
+  FNXC:FloatingWindow 2026-07-18-14:05:
+  FN-8340 resolves #2114: hidden Quick Chat windows remain portaled and layout-participating so
+  child identity, geometry, and message-list scroll survive minimize/restore. The CSS hidden branch
+  uses visibility (never display:none), while aria-hidden and suspended invisible-window effects
+  keep the retained surface out of focus and interaction.
   */
   return createPortal(
     <div

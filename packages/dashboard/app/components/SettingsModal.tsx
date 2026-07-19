@@ -60,6 +60,7 @@ import { MemorySection } from "./settings/sections/MemorySection";
 import { ResearchProjectSection } from "./settings/sections/ResearchProjectSection";
 import { ProjectMcpSection } from "./settings/sections/ProjectMcpSection";
 import { BackupsSection } from "./settings/sections/BackupsSection";
+import { ConfigurationVersionsSection } from "./settings/sections/ConfigurationVersionsSection";
 import { DatabaseBackupsSection } from "./settings/sections/DatabaseBackupsSection";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { PluginsSection } from "./settings/sections/PluginsSection";
@@ -494,6 +495,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "commands", label: "Commands & Scripts", labelKey: "settings.nav.commands", scope: "project", searchableText: ["test command", "build command", "verification command", "workflow scripts", "commands"] },
   { id: "worktrees", label: "Worktrees", labelKey: "settings.nav.worktrees", scope: "project", searchableText: ["worktree directory", "copy files", "recycle worktrees", "branch naming", "sibling branch rename"] },
   { id: "merge", label: "Merge", labelKey: "settings.nav.merge", scope: "project", searchableText: ["auto merge", "AI merge", "merge strategy", "plan approval", "direct merge", "integration branch", "push after merge"] },
+  /*
+  FNXC:SettingsNavigation 2026-07-18-12:30:
+  FN-8350 makes configuration history a project Settings destination instead of a
+  Command Center card. Register it in the shared section registry so desktop
+  navigation, the mobile picker, and Settings search expose one canonical view.
+  */
+  { id: "config-versions", label: "Configuration Versions", labelKey: "settings.nav.configVersions", scope: "project", searchableText: ["configuration versions", "revision history", "roll back settings", "restore configuration", "config rollback"] },
 
   { id: "__ai_header", label: "AI & Models", labelKey: "settings.nav.aiHeader", scope: undefined, isGroupHeader: true },
   /*
@@ -674,6 +682,12 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   todoView: "Todo List",
   researchView: "Research View",
   evalsView: "Evals View",
+  /*
+  FNXC:SettingsExperimental 2026-08-01-00:00:
+  FN-8352 promotes Ideation to a default-off top-level view. Keep its toggle
+  visible so operators explicitly opt into the sidebar and mobile More surface.
+  */
+  ideationView: "Ideation View",
   qualityPlugin: "Quality Plugin",
   goalsView: "Goals View",
   /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: The AI subtask-breakdown quick-add affordance is exposed only through this default-off experimental flag so missing settings keep every quick-add Subtask button hidden. */
@@ -4040,6 +4054,9 @@ export function SettingsModal({
             projectId={projectId}
           />
         );
+      // FNXC:SettingsNavigation 2026-07-18-12:30: FN-8350 refreshes the Settings form after a rollback so restored values immediately replace the pre-rollback view.
+      case "config-versions":
+        return <ConfigurationVersionsSection projectId={projectId} onSettingsRefresh={() => refreshSettingsForm(false)} />;
       case "agent-permissions":
         return (
           <AgentPermissionsSection

@@ -173,6 +173,82 @@ or bare h2/table inline styles.
   display: contents;
 }
 
+.quality-verification-videos-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.quality-verification-videos-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.quality-verification-videos-card__header h3,
+.quality-verification-video-row__details h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.quality-verification-videos-card__header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.quality-verification-videos-card__count,
+.quality-verification-videos-card__empty,
+.quality-verification-videos-disabled {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.quality-verification-videos-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.quality-verification-video-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.quality-verification-video-row__media {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.quality-verification-video-row__details {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.quality-verification-video-row__details h4 {
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
 /*
 FNXC:Quality 2026-07-16-12:45:
 FN-8131: On mobile, Quality's wide preset and refresh action cluster must give the title its own full-width row and wrap below it instead of shrinking the title to a `Q…` ellipsis or clipping buttons. This mirrors InsightsView FN-7830 while preserving the shared desktop header clamp.
@@ -199,5 +275,16 @@ FN-8131: On mobile, Quality's wide preset and refresh action cluster must give t
     width: 100%;
     max-width: 100%;
     margin-left: 0;
+  }
+
+  .quality-verification-videos-card,
+  .quality-verification-video-row,
+  .quality-verification-video-row__media {
+    max-width: 100%;
+  }
+
+  .quality-verification-video-row__details {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

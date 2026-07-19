@@ -113,6 +113,7 @@ export interface MobileNavBarProps {
     todoView?: boolean;
     researchView?: boolean;
     evalsView?: boolean;
+    ideationView?: boolean;
     goalsView?: boolean;
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
@@ -440,6 +441,7 @@ export function MobileNavBar({
     memory: { icon: <Brain />, labelKey: "nav.memory", fallback: "Memory", moreTestId: "mobile-more-item-memory", isActive: view === "memory", isAvailable: Boolean(experimentalFeatures?.memoryView), navigate: (surface) => surface === "primary" ? onChangeView("memory") : handleMoreAction(() => onChangeView("memory")) },
     research: { icon: <Search />, labelKey: "nav.research", fallback: "Research", moreTestId: "mobile-more-item-research", isActive: view === "research", isAvailable: Boolean(experimentalFeatures?.researchView), navigate: (surface) => surface === "primary" ? onChangeView("research") : handleMoreAction(() => onChangeView("research")) },
     evals: { icon: <Target />, labelKey: "nav.evals", fallback: "Evals", moreTestId: "mobile-more-item-evals", isActive: view === "evals", isAvailable: Boolean(experimentalFeatures?.evalsView), navigate: (surface) => surface === "primary" ? onChangeView("evals") : handleMoreAction(() => onChangeView("evals")) },
+    ideation: { icon: <Lightbulb />, labelKey: "nav.ideation", fallback: "Ideation", moreTestId: "mobile-more-item-ideation", isActive: view === "ideation", isAvailable: Boolean(experimentalFeatures?.ideationView), navigate: (surface) => surface === "primary" ? onChangeView("ideation") : handleMoreAction(() => onChangeView("ideation")) },
     goals: { icon: <Target />, labelKey: "nav.goals", fallback: "Goals", moreTestId: "mobile-more-item-goals", isActive: view === "goalsView", isAvailable: Boolean(experimentalFeatures?.goalsView), navigate: (surface) => surface === "primary" ? onChangeView("goalsView") : handleMoreAction(() => onChangeView("goalsView")) },
     todos: { icon: <CheckSquare />, labelKey: "nav.todos", fallback: "Todos", moreTestId: "mobile-more-item-todos", isActive: view === "todos", isAvailable: todoViewEnabled, navigate: (surface) => surface === "primary" ? onChangeView("todos") : handleMoreAction(() => onChangeView("todos")) },
     "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },

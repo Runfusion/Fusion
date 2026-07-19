@@ -8,6 +8,7 @@
  */
 
 import type { TaskPriority } from "./board.js";
+import type { NativeStructureRef } from "../types.js";
 
 export type ParticipantType = "agent" | "user" | "system";
 
@@ -64,6 +65,13 @@ export interface ProposedTaskMetadata {
   dependencies?: string[];
 }
 
+/**
+ * FNXC:NativeStructureEmbed 2026-07-20-12:00:
+ * Mail persists a compact native-structure reference with an optional attach-time label. The
+ * shared dashboard preview resolves current content lazily so metadata never stores stale cards.
+ */
+export type NativeStructureEmbed = NativeStructureRef & { label?: string };
+
 export interface MessageMetadata extends Record<string, unknown> {
   /** Optional link to the original message when this message is a reply. */
   replyTo?: MessageReplyReference;
@@ -84,6 +92,12 @@ export interface MessageMetadata extends Record<string, unknown> {
   claimOwnerToken?: string;
   /** Durable ISO timestamp used to reclaim a creator that died before task persistence. */
   claimStartedAt?: string;
+  /**
+   * FNXC:NativeStructureEmbed 2026-07-20-12:00:
+   * First-class report/approval attachments. Each reference stays small and the label gives an
+   * unavailable target a human-readable fallback after lazy preview resolution.
+   */
+  nativeStructures?: NativeStructureEmbed[];
 }
 
 /** Message record stored in the system */

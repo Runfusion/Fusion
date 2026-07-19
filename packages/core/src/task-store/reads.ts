@@ -10,7 +10,9 @@ import {TaskStore, storeLog} from "../store.js";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, statSync} from "node:fs";
-import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry} from "../types.js";
+import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus} from "../types.js";
+import * as schema from "../postgres/schema/index.js";
+import { and, eq } from "drizzle-orm";
 import "../builtin-traits.js";
 import {allowsAutoMergeProcessing} from "../task-merge.js";
 import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS} from "../in-review-stall.js";
@@ -1079,3 +1081,13 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     const matches = [...activeMatches, ...archiveMatches];
     return limit >= 0 ? matches.slice(0, limit) : matches;
   }
+
+/* FNXC:TaskVerificationRequest 2026-07-30-00:00: status reads are project-scoped so chat never observes another project's request. */
+export async function getTaskVerificationRequestAsyncImpl(store: TaskStore, taskId: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const layer = store.asyncLayer!;
+  const projectFilter = layer.projectId ? eq(schema.project.taskVerificationRequests.projectId, layer.projectId) : undefined;
+  const rows = await layer.db.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), ...(projectFilter ? [projectFilter] : []))).limit(1);
+  const row = rows[0];
+  return row ? { taskId: row.taskId, requestId: row.requestId, status: row.status as TaskVerificationStatus, profile: row.profile as TaskVerificationRequest["profile"], command: row.command, scope: row.scope as TaskVerificationRequest["scope"], requestedBy: row.requestedBy, requestedAt: row.requestedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}), ...(row.result ? { result: row.result as TaskVerificationResultSummary } : {}), ...(row.rejectionReason ? { rejectionReason: row.rejectionReason } : {}) } : null;
+}

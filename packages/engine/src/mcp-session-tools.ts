@@ -7,6 +7,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ResolvedMcpServerDefinition } from "@fusion/core";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { cancellableSleep, computeBackoff } from "./retry-with-backoff.js";
 
 export interface McpSessionToolset {
   tools: ToolDefinition[];
@@ -15,22 +16,9 @@ export interface McpSessionToolset {
   skipped: Array<{ name: string; reason: string }>;
 }
 
-export class McpSessionBootstrapError extends Error {
-  readonly failures: Array<{ name: string; reason: string }>;
-
-  constructor(failures: Array<{ name: string; reason: string }>) {
-    const sanitized = failures
-      .map(({ name, reason }) => ({ name, reason }))
-      .sort((a, b) => a.name.localeCompare(b.name) || a.reason.localeCompare(b.reason));
-    super(`MCP session bootstrap failed: ${sanitized.map(({ name, reason }) => `server=${name} reason=${reason}`).join("; ")}`);
-    this.name = "McpSessionBootstrapError";
-    this.failures = sanitized;
-  }
-}
-
 export interface McpSessionClient {
-  connect(transport: Transport): Promise<void>;
-  listTools(): Promise<{ tools?: McpToolMetadata[] }>;
+  connect(transport: Transport, options?: { timeout?: number }): Promise<void>;
+  listTools(params?: undefined, options?: { timeout?: number }): Promise<{ tools?: McpToolMetadata[] }>;
   callTool(params: { name: string; arguments?: Record<string, unknown> }, resultSchema?: unknown, options?: { signal?: AbortSignal }): Promise<McpToolCallResult>;
   close(): Promise<void>;
 }
@@ -59,9 +47,18 @@ export interface McpSessionToolsOptions {
   transportFactory?: McpTransportFactory;
   logger?: Pick<Console, "log" | "warn">;
   closeTimeoutMs?: number;
+  /** Maximum fresh-client bootstrap attempts per enabled server. */
+  maxAttempts?: number;
+  /** Base delay for exponential retry backoff. Set to zero in tests. */
+  retryDelayMs?: number;
+  /** Per-attempt deadline for the MCP initialize and tool-list requests. */
+  requestTimeoutMs?: number;
 }
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_DELAY_MS = 250;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 /*
  * FNXC:McpConfig 2026-06-27-13:55:
@@ -112,31 +109,46 @@ export async function connectMcpSessionTools(
         skipped.push({ name: server.name, reason: "aborted" });
         break;
       }
-      const client = (opts.clientFactory ?? defaultClientFactory)(server);
-      // Track the client before transport creation/connect so abort and every
-      // partial-bootstrap failure can close it exactly once.
-      clients.push(client);
-      try {
-        const transport = (opts.transportFactory ?? defaultTransportFactory)(server, { cwd: opts.cwd });
-        await client.connect(transport);
-        if (opts.signal?.aborted || disposed) {
-          throw new DOMException("MCP bootstrap aborted", "AbortError");
+      const maxAttempts = normalizeMaxAttempts(opts.maxAttempts);
+      const requestTimeoutMs = normalizeRequestTimeout(opts.requestTimeoutMs);
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const client = (opts.clientFactory ?? defaultClientFactory)(server);
+        // Every retry gets a fresh client/transport. A failed SDK client may
+        // already be closed or hold partial protocol state and is not reusable.
+        clients.push(client);
+        try {
+          const transport = (opts.transportFactory ?? defaultTransportFactory)(server, { cwd: opts.cwd });
+          await client.connect(transport, { timeout: requestTimeoutMs });
+          if (opts.signal?.aborted || disposed) {
+            throw new DOMException("MCP bootstrap aborted", "AbortError");
+          }
+          const listed = await client.listTools(undefined, { timeout: requestTimeoutMs });
+          if (opts.signal?.aborted || disposed) {
+            throw new DOMException("MCP bootstrap aborted", "AbortError");
+          }
+          connected.push(server.name);
+          const listedTools = listed.tools ?? [];
+          opts.logger?.log?.(`MCP server connected for pi session: name=${server.name} transport=${server.transport} tools=${listedTools.length} attempt=${attempt}/${maxAttempts}`);
+          for (const tool of listedTools) {
+            tools.push(wrapMcpTool(server.name, tool, client, usedToolNames));
+          }
+          break;
+        } catch (error) {
+          const reason = opts.signal?.aborted ? "aborted" : safeErrorReason(error);
+          await closeOnce(client);
+          if (opts.signal?.aborted || attempt === maxAttempts) {
+            skipped.push({ name: server.name, reason });
+            opts.logger?.warn?.(`Skipping MCP server for pi session after retries: name=${server.name} transport=${server.transport} attempts=${attempt}/${maxAttempts} reason=${reason}`);
+            break;
+          }
+          opts.logger?.warn?.(`Retrying MCP server for pi session: name=${server.name} transport=${server.transport} attempt=${attempt + 1}/${maxAttempts} reason=${reason}`);
+          const baseDelayMs = Math.max(0, opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS);
+          const delayMs = computeBackoff(attempt - 1, baseDelayMs, Number.MAX_SAFE_INTEGER);
+          if (!await retryDelay(delayMs, opts.signal)) {
+            skipped.push({ name: server.name, reason: "aborted" });
+            break;
+          }
         }
-        const listed = await client.listTools();
-        if (opts.signal?.aborted || disposed) {
-          throw new DOMException("MCP bootstrap aborted", "AbortError");
-        }
-        connected.push(server.name);
-        const listedTools = listed.tools ?? [];
-        opts.logger?.log?.(`MCP server connected for pi session: name=${server.name} transport=${server.transport} tools=${listedTools.length}`);
-        for (const tool of listedTools) {
-          tools.push(wrapMcpTool(server.name, tool, client, usedToolNames));
-        }
-      } catch (error) {
-        const reason = opts.signal?.aborted ? "aborted" : safeErrorReason(error);
-        skipped.push({ name: server.name, reason });
-        opts.logger?.warn?.(`Skipping MCP server for pi session: name=${server.name} transport=${server.transport} reason=${reason}`);
-        await closeOnce(client);
       }
     }
   } finally {
@@ -147,6 +159,27 @@ export async function connectMcpSessionTools(
   }
 
   return { tools, connected, skipped, dispose: closeAll };
+}
+
+function normalizeMaxAttempts(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_ATTEMPTS;
+  return Math.max(1, Math.floor(value));
+}
+
+function normalizeRequestTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return DEFAULT_REQUEST_TIMEOUT_MS;
+  return Math.floor(value);
+}
+
+async function retryDelay(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (ms === 0) return true;
+  try {
+    await cancellableSleep(ms, signal);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function defaultClientFactory(): McpSessionClient {

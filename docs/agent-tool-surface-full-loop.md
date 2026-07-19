@@ -116,12 +116,12 @@ The following phases are intentionally independently shippable. Follow-up task I
 - **Dependency:** Phase A for lineage data, and the tracked FR-02/FR-37/FR-48 work if those tasks already cover portions of this phase.
 - **Tracking:** FN-8298 — Phase D implementation task; depends on FN-8294 and FN-8297.
 
-### Phase E — Chat-owned verification request/status
+### Phase E — Chat-owned verification request/status — delivered (FN-8296)
 
-- **Scope anchors:** `packages/engine/src/run-verification-tool.ts`, executor task lifecycle/verification persistence, `packages/dashboard/src/chat.ts`, task/Command Center UI, verification tests and docs.
-- **Acceptance:** chat can request and observe verification for a selected executable task, but the command still runs only through the task-owned executor/worktree; project verification concurrency and permission policy remain in force; no raw chat subprocess tool is added.
-- **Dependency:** can ship independently of A–D, but must integrate with Phase D’s admission/locking diagnostics when dispatching a task.
-- **Tracking:** FN-8296 — Phase E implementation task; deliberately independent from Phase A so it can land safely first.
+- **Shipped tools:** `fn_task_request_verification` queues only the server-resolved `verify:fast` or configured `test-command` profile; `fn_task_verification_status` returns the latest bounded persisted result. Neither accepts raw command text.
+- **Execution contract:** the request is project-scoped and CAS-claimed by the in-progress task executor, which reuses its live worktree and `runVerificationCommand`/`withVerificationSlot` bounds. `fn_task_request_verification` is classified as `command_execution`; status is read-only.
+- **Parity:** chat can request/observe the same executor-owned verification outcome. Duplicate in-flight requests retain their original request ID rather than replacing work in progress.
+- **Dependency:** remains independently shippable from A–D; Phase D diagnostics can be added to records later without changing the ownership contract.
 
 ## Follow-up reconciliation record
 

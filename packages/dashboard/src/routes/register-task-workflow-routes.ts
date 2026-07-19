@@ -75,6 +75,7 @@ import {
   type WorkspaceRepoRevertPrBranch,
 } from "@fusion/engine";
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
+import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { computePlanApprovalFingerprint, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
@@ -3236,6 +3237,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+  FNXC:TaskVerificationStatus 2026-07-30-00:00:
+  FN-8296 exposes the executor-owned verification read model through a scoped
+  route. The client polls this record independently because it is not a task-row
+  mutation and should not fabricate a board update just to refresh status.
+  */
+  router.get("/tasks/:id/verification-request", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      res.json(await scopedStore.getTaskVerificationRequestAsync(req.params.id));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to read task verification status");
+    }
+  });
+
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
@@ -3886,6 +3904,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /**
+   * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+   * Native-structure consumers need a single project-scoped read endpoint. Unavailable targets
+   * deliberately return HTTP 200 with a typed payload so chat and mail render a placeholder;
+   * unsupported kinds are malformed requests and remain HTTP 400.
+   */
+  router.get("/native-structures/:kind/:id/preview", async (req, res) => {
+    try {
+      const { kind, id } = req.params;
+      if (kind !== "mission" && kind !== "milestone" && kind !== "research-finding" && kind !== "eval-result" && kind !== "goal") {
+        throw badRequest("kind must be one of: mission, milestone, research-finding, eval-result, goal");
+      }
+      if (!id.trim()) throw badRequest("id must be non-empty");
+      const { store: scopedStore } = await getProjectContext(req);
+      const preview = await resolveNativeStructurePreview(scopedStore, { kind, id });
+      res.json(preview);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
     }
   });
 

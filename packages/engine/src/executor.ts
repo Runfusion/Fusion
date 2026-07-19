@@ -112,7 +112,7 @@ import {
   resolveValidatorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
-import { assertMcpResolutionSucceeded, resolveMcpServersForStore } from "./mcp-resolution.js";
+import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { reviewStep, proseSignalsClearApproval, extractJsonObjectCandidates, ReviewerProviderError, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
@@ -268,7 +268,7 @@ import {
   isResearchToolSurfaceEnabled,
 } from "./tool-availability.js";
 import { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
-import { createRunVerificationTool } from "./run-verification-tool.js";
+import { createRunVerificationTool, runVerificationCommand as runTaskVerificationCommand } from "./run-verification-tool.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { recordRetry } from "./retry-burned-logger.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
@@ -2962,18 +2962,16 @@ export class TaskExecutor {
      * Executor-owned lanes (main execution, retry, workflow model nodes, self-fix, and spawned child sessions) resolve the same trusted MCP server set from the task store immediately before session creation so secret material is never persisted in task state.
      *
      * FNXC:McpConfig 2026-07-12-17:02:
-     * MAIN-008 forbids executor paths from silently consuming a partially
-     * materialized server set. Convert secret-resolution errors into a
-     * content-free bootstrap failure before any runtime can connect with
-     * missing credentials; only server names/counts and a coarse category may
-     * cross this seam.
+     * Secret-resolution failures remain content-free and observable. The
+     * resolver excludes each affected server so it cannot connect with missing
+     * credentials, while healthy MCP servers and task execution continue.
      */
     const resolved = await resolveMcpServersForStore(this.store, { agentId: agentId ?? undefined });
     if (resolved.errors.length > 0) {
       const serverNames = [...new Set(resolved.errors.map((error) => error.serverName))].sort();
       executorLog.warn(`MCP executor resolution failed: servers=${serverNames.join(",")} count=${serverNames.length} reason=secret-materialization`);
     }
-    return assertMcpResolutionSucceeded(resolved);
+    return resolved.servers;
   }
 
   /**
@@ -11654,6 +11652,43 @@ export class TaskExecutor {
         executorLog.log(`${task.id}: fast mode — fn_review_step tool not injected`);
       }
 
+      /*
+      FNXC:TaskVerificationRequest 2026-07-30-00:00:
+      Chat can only enqueue a server-resolved profile. The executor owns the live
+      worktree, so it claims and runs that request here through the existing bounded
+      runner (which acquires withVerificationSlot); no chat-side subprocess exists.
+      */
+      let verificationRequestInFlight = false;
+      const runPendingTaskVerification = async (): Promise<void> => {
+        if (verificationRequestInFlight) return;
+        const pendingVerification = await this.store.getTaskVerificationRequestAsync(task.id);
+        if (pendingVerification?.status !== "requested") return;
+        verificationRequestInFlight = true;
+        try {
+          const claimedVerification = await this.store.claimTaskVerificationRequest(task.id, pendingVerification.requestId);
+          if (!claimedVerification) return;
+          const startedAt = Date.now();
+          try {
+            const verificationResult = await runTaskVerificationCommand({
+              command: claimedVerification.command,
+              cwd: worktreePath,
+              timeoutMs: settings.verificationCommandTimeoutMs ?? 300_000,
+              onHeartbeat: () => stuckDetector?.recordActivity(task.id),
+            });
+            await this.store.finishTaskVerificationRequest(task.id, claimedVerification.requestId, verificationResult.success ? "passed" : "failed", {
+              success: verificationResult.success, exitCode: verificationResult.exitCode,
+              durationMs: Date.now() - startedAt, timedOut: verificationResult.timedOut ?? false,
+              stdoutTail: verificationResult.stdout.slice(-8_000), stderrTail: verificationResult.stderr.slice(-8_000),
+            });
+          } catch (error) {
+            await this.store.finishTaskVerificationRequest(task.id, claimedVerification.requestId, "failed", undefined, error instanceof Error ? error.message.slice(0, 1_000) : "Verification runner failed");
+          }
+        } finally {
+          verificationRequestInFlight = false;
+        }
+      };
+      await runPendingTaskVerification();
+
       const customTools = [
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
         this.createTaskLogTool(task.id),
@@ -12002,6 +12037,17 @@ export class TaskExecutor {
           lastEffectiveColumnAgentId: columnAgentSeam?.agent.id ?? null,
         }, worktreePath);
 
+        /*
+        FNXC:TaskVerificationRequest 2026-07-30-17:40:
+        A chat request can arrive after this executor session starts. Poll while
+        this task retains the live worktree so requested records are claimed by
+        their owner rather than waiting for an unrelated future dispatch.
+        */
+        const verificationRequestTimer = setInterval(() => {
+          void runPendingTaskVerification().catch((error) => {
+            executorLog.warn(`${task.id}: verification request pickup failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }, 1_000);
         let leaseRenewalTimer: ReturnType<typeof setInterval> | undefined;
         if (detail.assignedAgentId && detail.checkedOutBy === detail.assignedAgentId) {
           const leaseEpoch = detail.checkoutLeaseEpoch ?? 0;
@@ -12638,6 +12684,7 @@ export class TaskExecutor {
             }
           }
         } finally {
+          clearInterval(verificationRequestTimer);
           if (leaseRenewalTimer) {
             clearInterval(leaseRenewalTimer);
           }
@@ -16433,13 +16480,14 @@ ${scopeGuard}
       workflowStepMetadata.requireExternalIntegrationEvidence === true;
 
     /*
-     * FNXC:PlanReviewSpecInjection 2026-07-05-17:20:
-     * FN-7561: the Plan Review reviewer runs readonly with cwd=worktree, but the spec artifact lives at the project root under `.fusion/tasks/<id>/PROMPT.md` — OUTSIDE the task worktree. Instructing the agent to "Read PROMPT.md" therefore had it search the worktree, fail to find the file, and emit "no PROMPT.md file was found / task data lives in a DB" prose instead of a parseable verdict. That malformed/hard-failed output fed the unbounded triage↔plan-review replan loop (FN-7525 looped 13+ times overnight; FN-7575 too). Load the spec text from the store (document layer → on-disk PROMPT.md) ONCE and inject it directly into the reviewer prompt so the verdict never depends on the agent locating the file. Read from the store, not fs, so it is correct regardless of worktree vs project-root layout.
+     * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
+     * FN-7561 established that review agents cannot reliably locate the project-root PROMPT.md from a task worktree. Load it once through the store and embed it for every review-type node. FN-8288 extends that invariant beyond Plan Review: approved planning revisions are authoritative, the original task description is historical, and a failed artifact read must stay visible instead of silently restoring superseded scope.
      */
-    const planReviewSpecArtifact = isPlanReviewStep
+    const workflowReviewSpecArtifact = isReviewTypeWorkflowStep
       ? await this.readTaskArtifact(task.id, "PROMPT.md")
       : undefined;
-    const planReviewSpecText = typeof planReviewSpecArtifact === "string" ? planReviewSpecArtifact : "";
+    const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
+    const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
 
     if (isPlanReviewStep && requireExternalIntegrationEvidence) {
       /*
@@ -16500,6 +16548,26 @@ ${scopeGuard}
      * unrelated local commits can make a plan-only gate reject implementation
      * state and loop back to triage after the planner already approved the spec.
      */
+    const approvedContractBlock = !isPlanReviewStep
+      ? workflowReviewSpecText
+        ? `
+
+Approved Task Contract:
+- PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
+- The Task Description is historical input only. Do not enforce superseded requirements from the original Task Description when they conflict with PROMPT.md.
+- Do not request behavior that PROMPT.md explicitly defers, excludes, or forbids. Review the implementation against the approved contract reproduced below.
+- Scope exclusions do not waive security, correctness, or data-integrity defects in the approved implementation.
+
+--- BEGIN APPROVED PROMPT.md ---
+${workflowReviewSpecText}
+--- END APPROVED PROMPT.md ---`
+        : `
+
+Approved Task Contract Unavailable:
+- PROMPT.md could not be loaded for this review. The Task Description is historical input only and is not a substitute contract.
+- Do not infer, reinstate, approve, or reject requirements from the Task Description.
+- Return REVISE with the single reason that the approved contract could not be loaded so the workflow can retry with canonical scope.`
+      : "";
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:
 - Review the task plan artifact (PROMPT.md), reproduced verbatim below, and task metadata only.
@@ -16516,7 +16584,7 @@ ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
 CRITICAL SCOPING RULES — read before doing anything else:
 - Review ONLY the files listed above. Do NOT analyze unmodified files or unrelated parts of the codebase.
 - If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
-- Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.`;
+- Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.${approvedContractBlock}`;
 
     const latestTaskForUserComments = await this.store.getTask(task.id).catch(() => task);
     const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
@@ -18196,17 +18264,44 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       taskId,
     );
 
-    if (shouldGenerateNewName) {
-      const inspection = await inspectBranchConflict({
-        repoDir: this.rootDir,
-        branchName: branch,
-        conflictingWorktreePath: conflictPath,
-        requestingTaskId: taskId,
-        ownerTaskId: taskId,
-        startPoint,
-        integrationRef: await resolveIntegrationBranch(this.rootDir, settings),
-      });
+    /*
+     * FNXC:ExecutorWorktree 2026-07-18-17:20:
+     * Inspect every branch/worktree collision before cleanup, including inactive
+     * same-task bindings. The old inactive path skipped inspection and called
+     * cleanupConflictingWorktree directly, which force-deleted a branch carrying
+     * completed task commits during workflow-node recovery. Liveness determines
+     * whether a sibling checkout is needed; it must never determine whether task
+     * history is disposable.
+     */
+    const inspection = await inspectBranchConflict({
+      repoDir: this.rootDir,
+      branchName: branch,
+      conflictingWorktreePath: conflictPath,
+      requestingTaskId: taskId,
+      ownerTaskId: taskId,
+      startPoint,
+      integrationRef: await resolveIntegrationBranch(this.rootDir, settings),
+    });
 
+    if (inspection.kind === "reclaimable") {
+      await this.store.logEntry(
+        taskId,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
+        inspection.tipSha,
+      );
+      return { path: inspection.livePath, branch };
+    }
+
+    if (inspection.kind === "fully-subsumed") {
+      await this.store.logEntry(
+        taskId,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (0 commits preserved)`,
+        inspection.tipSha,
+      );
+      return { path: inspection.livePath, branch };
+    }
+
+    if (shouldGenerateNewName) {
       if (inspection.kind === "stale" || inspection.kind === "stale-resolved" || inspection.kind === "tip-already-merged") {
         const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
         if (cleanupSuccess) {
@@ -18218,24 +18313,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         // sibling-rename path rather than failing the whole conflict-recovery attempt. This
         // preserves the live task while letting the requesting task proceed with a fresh
         // worktree name.
-      }
-
-      if (inspection.kind === "reclaimable") {
-        await this.store.logEntry(
-          taskId,
-          `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
-          inspection.tipSha,
-        );
-        return { path: inspection.livePath, branch };
-      }
-
-      if (inspection.kind === "fully-subsumed") {
-        await this.store.logEntry(
-          taskId,
-          `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (0 commits preserved)`,
-          inspection.tipSha,
-        );
-        return { path: inspection.livePath, branch };
       }
 
       if (inspection.kind === "live-foreign") {

@@ -16,15 +16,6 @@ const legacyMocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   fetchGlobalConcurrency: vi.fn(),
   updateGlobalConcurrency: vi.fn(),
-  /*
-  FNXC:OrgPortability 2026-07-18-13:05:
-  FN-8284 mounts OrgPortabilityControls inside CommandCenterControls; that card imports
-  withProjectId + api from legacy. Partial mocks must re-export both or every controls
-  suite fails with "No withProjectId export".
-  */
-  api: vi.fn().mockResolvedValue({ revisions: [] }),
-  withProjectId: (path: string, projectId?: string) =>
-    projectId ? `${path}?projectId=${projectId}` : path,
 }));
 
 vi.mock("../../../api/legacy", () => legacyMocks);
@@ -105,6 +96,12 @@ describe("CommandCenterControls concurrency markers", () => {
   afterEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
+  });
+
+  it("keeps organization portability out of Overview controls", () => {
+    renderControls();
+
+    expect(screen.queryByTestId("cc-controls-org-portability")).not.toBeInTheDocument();
   });
 
   it("keeps the Theme card's compact dropdown interactive", () => {

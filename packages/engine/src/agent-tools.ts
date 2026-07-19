@@ -16,7 +16,7 @@ import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
-import { computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
+import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
@@ -975,6 +975,13 @@ export async function createAgentTask(
   const rootDir = options?.rootDir;
   const sourceParentTaskId = (input.source?.sourceParentTaskId ?? options?.sourceTaskId)?.trim().toUpperCase();
   const sourceAgentId = input.source?.sourceAgentId ?? options?.sourceAgentId;
+  const crossParentDiagnosticClaim = options?.bypassDuplicateCheck === true
+    ? null
+    : computeCrossParentDiagnosticClaim({ title: input.title, description: input.description });
+  const crossParentDiagnosticClaimId = crossParentDiagnosticClaim?.id ?? null;
+  const duplicateLockScope = crossParentDiagnosticClaimId
+    ? store.getRootDir?.() ?? rootDir ?? "agent-tools"
+    : rootDir ?? store.getRootDir?.() ?? "agent-tools";
   const effectiveSource = input.source || sourceParentTaskId || sourceAgentId
     ? {
         sourceType: input.source?.sourceType ?? "api" as const,
@@ -987,11 +994,11 @@ export async function createAgentTask(
     title: input.title,
     description: input.description,
   }, {
-    lockScope: rootDir ?? store.getRootDir?.() ?? "agent-tools",
+    lockScope: duplicateLockScope,
     bypass: options?.bypassDuplicateCheck === true,
     acknowledgedDuplicates: options?.acknowledgedDuplicates,
-    serializationKey: sourceParentTaskId ? `parent:${sourceParentTaskId}` : undefined,
-    sourceParentTaskId,
+    serializationKey: crossParentDiagnosticClaimId ?? (sourceParentTaskId ? `parent:${sourceParentTaskId}` : undefined),
+    sourceParentTaskId: crossParentDiagnosticClaimId ? null : sourceParentTaskId,
     logger: log,
   });
 
@@ -1001,6 +1008,35 @@ export async function createAgentTask(
         task: await carryCanonicalTaskRouting(store, guard.existing, input),
         wasDuplicate: true,
       };
+    }
+
+    if (crossParentDiagnosticClaim) {
+      try {
+        const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
+        const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+        const candidates = (await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
+          slim: true,
+          includeArchived: false,
+        }))
+          .filter((candidate) => candidate.column !== "done" && candidate.column !== "archived")
+          .filter((candidate) => Date.parse(candidate.createdAt) >= cutoffMs)
+          .filter((candidate) => !acknowledged.has(candidate.id))
+          .filter((candidate) => computeCrossParentDiagnosticClaimId({
+            title: candidate.title,
+            description: candidate.description,
+          }) === crossParentDiagnosticClaimId)
+          .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+        const canonical = candidates[0];
+        if (canonical) {
+          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+        }
+      } catch (error) {
+        log.warn("Cross-parent diagnostic duplicate pre-check failed; aborting creation", {
+          crossParentDiagnosticClaimId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new Error("Unable to verify cross-parent diagnostic task uniqueness", { cause: error });
+      }
     }
 
     if (sourceParentTaskId && options?.bypassDuplicateCheck !== true) {
@@ -1037,6 +1073,7 @@ export async function createAgentTask(
     const sourceMetadata = {
       ...(effectiveSource?.sourceMetadata ?? {}),
       ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
+      ...(crossParentDiagnosticClaimId ? { crossParentDiagnosticClaimId } : {}),
     };
     const nextSource = effectiveSource
       ? {

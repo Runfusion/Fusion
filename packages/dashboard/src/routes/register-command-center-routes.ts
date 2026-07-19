@@ -517,6 +517,26 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     }
   });
 
+  /*
+  FNXC:TaskVerificationStatus 2026-07-30-00:00:
+  Command Center shares the persisted executor verification outcomes with task
+  detail. Resolve every task through this request-scoped store so results never
+  cross project boundaries.
+  */
+  router.get("/command-center/verification-requests", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const tasks = await store.listTasks({ limit: 50, includeArchived: false, slim: true });
+      const records = (await Promise.all(tasks.map((task) => store.getTaskVerificationRequestAsync(task.id))))
+        .filter((record): record is NonNullable<typeof record> => record !== null)
+        .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+      res.json({ requests: records.slice(0, 10) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to read verification requests");
+    }
+  });
+
   /**
    * GET /api/command-center/live
    * Live Mission-Control snapshot (U6a): active sessions/runs/nodes + current

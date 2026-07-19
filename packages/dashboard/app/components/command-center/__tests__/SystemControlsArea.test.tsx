@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
 import { BUG_URL_MAX_ENCODED } from "../areas/SystemControlsArea";
@@ -14,6 +14,7 @@ const mockFetchSystemLogs = vi.fn();
 const mockFetchNodeSystemStats = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockFetchNodes = vi.fn();
+const subscribeSseMock = vi.fn(() => () => undefined);
 
 vi.mock("../../../api/legacy", () => ({
   fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
@@ -66,7 +67,7 @@ vi.mock("../../../api", () => ({
 }));
 
 vi.mock("../../../sse-bus", () => ({
-  subscribeSse: vi.fn(() => () => undefined),
+  subscribeSse: (...args: unknown[]) => subscribeSseMock(...args),
 }));
 
 vi.mock("../../../hooks/useAppSettings", () => ({
@@ -170,6 +171,7 @@ describe("SystemControlsArea layout integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    subscribeSseMock.mockImplementation(() => () => undefined);
     apiMock.mockImplementation((path: string) => Promise.resolve(emptyOverviewResponse(path)));
     mockFetchSystemInfo.mockResolvedValue(systemInfoFixture());
     mockFetchSystemLogs.mockResolvedValue({
@@ -415,6 +417,81 @@ describe("SystemControlsArea layout integration", () => {
     });
 
     Element.prototype.scrollIntoView = original;
+  });
+
+  function installScrollGeometry(element: HTMLElement, scrollHeight = 500, clientHeight = 100) {
+    let scrollTop = 0;
+    Object.defineProperties(element, {
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      clientHeight: { configurable: true, get: () => clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    return {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = value; },
+      setScrollHeight(value: number) { scrollHeight = value; },
+    };
+  }
+
+  function getStreamEvents(path: string) {
+    const call = [...subscribeSseMock.mock.calls].reverse().find(([url]) => url === path);
+    expect(call).toBeDefined();
+    return (call?.[1] as { events: Record<string, (event: MessageEvent) => void> }).events;
+  }
+
+  it("keeps manually scrolled rebuild output in place while SSE lines grow", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const rebuild = await screen.findByTestId("cc-syscontrol-rebuild-app");
+    fireEvent.click(within(rebuild).getByRole("button", { name: "Rebuild" }));
+    const output = (await screen.findByTestId("cc-system-rebuild-output")).querySelector("pre")!;
+    const geometry = installScrollGeometry(output);
+    const events = getStreamEvents("/api/system/jobs/job-1/stream");
+
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 1, stream: "stdout", text: "first" }) })));
+    geometry.scrollTop = 100;
+    fireEvent.scroll(output);
+    geometry.setScrollHeight(600);
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 2, stream: "stdout", text: "second" }) })));
+
+    expect(geometry.scrollTop).toBe(100);
+
+    geometry.scrollTop = 500;
+    fireEvent.scroll(output);
+    geometry.setScrollHeight(700);
+    await act(async () => events.line(new MessageEvent("message", { data: JSON.stringify({ i: 3, stream: "stdout", text: "third" }) })));
+    expect(geometry.scrollTop).toBe(700);
+  });
+
+  it("keeps manually scrolled live server logs in place while SSE lines grow", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    await screen.findByTestId("cc-system-controls");
+    fireEvent.click(screen.getByTestId("cc-system-logs-toggle"));
+    const output = await screen.findByText("No log entries yet.");
+    const container = output.parentElement!;
+    const geometry = installScrollGeometry(container);
+    const events = getStreamEvents("/api/system/logs/stream");
+
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:00.000Z", level: "info", message: "first" }) })));
+    geometry.scrollTop = 100;
+    fireEvent.scroll(container);
+    geometry.setScrollHeight(600);
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:01.000Z", level: "info", message: "second" }) })));
+
+    expect(geometry.scrollTop).toBe(100);
+
+    geometry.scrollTop = 500;
+    fireEvent.scroll(container);
+    geometry.setScrollHeight(700);
+    await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:02.000Z", level: "info", message: "third" }) })));
+    expect(geometry.scrollTop).toBe(700);
   });
 
   it("hides build-and-link-local when the host is not a source checkout", async () => {

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { draftGoalDescription, getRefineErrorMessage } from "../api";
 import { ViewHeader } from "./ViewHeader";
 import "./GoalsView.css";
+import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
 export interface GoalsViewProps {
   initialGoals?: Goal[];
@@ -546,6 +547,11 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
               id={`goal-card-${goal.id}`}
               className={`card goals-card ${goal.status === "archived" ? "goals-card-archived" : ""} ${highlightedGoalId === goal.id ? "goals-card--anchored" : ""}`.trim()}
               data-testid={`goal-card-${goal.id}`}
+              draggable={isNativeStructureDragEnabled()}
+              onDragStart={(event) => {
+                // FNXC:NativeStructureEmbed 2026-07-22-10:30: Goals emit the shared mail drag payload; touch devices keep scroll and use the composer picker.
+                serializeNativeStructureRef(event.dataTransfer, { kind: "goal", id: goal.id, projectId });
+              }}
             >
               {editGoalId === goal.id ? (
                 <div className="goals-card-main goals-card-edit">

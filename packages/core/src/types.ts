@@ -867,6 +867,60 @@ export function isReviewArtifactGenerationEligible(
 }
 
 /**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Chat and mail share this compact reference contract so their consumers never invent
+ * incompatible structure identifiers. `roadmap-item` remains a deferred future kind until
+ * its plugin exposes a PostgreSQL-safe read adapter and a restored dashboard destination.
+ */
+export interface NativeStructureRef {
+  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal";
+  id: string;
+  projectId?: string;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Dashboard destinations are callback/view-state based rather than HTML routes. Consumers use
+ * this stable descriptor with their navigation callback; it is intentionally not a URL.
+ */
+export interface NativeStructureOpenTarget {
+  view: "missions" | "insights" | "evals" | "goals";
+  id: string;
+  missionId?: string;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A previewable native structure projected by the dashboard read layer.
+ */
+export interface NativeStructurePreviewPayload {
+  available: true;
+  kind: NativeStructureRef["kind"];
+  kindLabel: string;
+  title: string;
+  excerpt: string;
+  openTarget: NativeStructureOpenTarget;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * A native structure whose existing lifecycle state makes it unavailable for preview.
+ */
+export interface NativeStructureUnavailablePayload {
+  available: false;
+  kind: NativeStructureRef["kind"];
+  id: string;
+  reason: "missing" | "soft-deleted";
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Unavailability is a typed result so shared consumers show a safe placeholder instead of
+ * crashing. Eval results have no archive lifecycle and therefore only return `missing`.
+ */
+export type NativeStructurePreviewResult = NativeStructurePreviewPayload | NativeStructureUnavailablePayload;
+
+/**
  * Goal-citation Slice 2 success-signal surfaces where goal IDs are extracted.
  */
 export type GoalCitationSurface = "agent_log" | "task_document";
@@ -2077,6 +2131,36 @@ export type RetrySummary = {
   reviewerFallback: number;
   total: number;
 };
+
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+Chat may request only a server-resolved verification profile. The persisted record
+keeps executor-owned subprocess results observable without exposing raw commands.
+*/
+export type TaskVerificationStatus = "requested" | "running" | "passed" | "failed" | "rejected";
+export type TaskVerificationProfile = "verify:fast" | "test-command";
+export interface TaskVerificationResultSummary {
+  success: boolean;
+  exitCode: number | null;
+  durationMs: number;
+  timedOut: boolean;
+  stdoutTail: string;
+  stderrTail: string;
+}
+export interface TaskVerificationRequest {
+  taskId: string;
+  requestId: string;
+  status: TaskVerificationStatus;
+  profile: TaskVerificationProfile;
+  command: string;
+  scope: "package" | "workspace";
+  requestedBy: string;
+  requestedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  result?: TaskVerificationResultSummary;
+  rejectionReason?: string;
+}
 
 export interface TaskDetail extends Task {
   prompt: string;
@@ -4811,18 +4895,6 @@ export interface ArchivedTaskEntry {
 /** Type of planning question presented to the user */
 export type PlanningQuestionType = "text" | "single_select" | "multi_select" | "confirm";
 
-/** Exact Planning Mode checkpoint prompt shown before a final summary can be displayed. */
-export const PLANNING_DEEPEN_CHECKPOINT_QUESTION = "Would you like to go deeper?";
-
-/** Reserved question id for the server-owned Planning Mode deepening checkpoint. */
-export const PLANNING_DEEPEN_CHECKPOINT_ID = "__planning_deepen_checkpoint__";
-
-/** Reserved checkbox option id that lets the user accept the pending final summary. */
-export const PLANNING_DEEPEN_PROCEED_OPTION_ID = "__planning_deepen_proceed_to_final__";
-
-/** Reserved response key accepted as an explicit proceed signal for the deepening checkpoint. */
-export const PLANNING_DEEPEN_PROCEED_RESPONSE_KEY = "__planning_deepen_proceed__";
-
 /** Isolation mode for project execution */
 export type IsolationMode = "in-process" | "child-process";
 
@@ -5486,18 +5558,7 @@ export interface PlanningQuestion {
   type: PlanningQuestionType;
   question: string;
   description?: string;
-  options?: Array<{ id: string; label: string; description?: string }>;
-  /**
-   * FNXC:PlanningMode 2026-07-16-00:00:
-   * FN-8065 / GitHub #2150 requires the deepening checkpoint to carry a read-only preview
-   * of its withheld pendingSummary. Keeping this optional preserves legacy persisted
-   * currentQuestion rows and leaves ordinary interview questions unchanged.
-   */
-  planPreview?: {
-    title: string;
-    description: string;
-    keyDeliverables: string[];
-  };
+  options?: Array<{ id: string; label: string; description?: string; pros?: string[]; cons?: string[]; isOther?: boolean; customText?: string }>;
 }
 
 /** The final summary generated after planning conversation completes */
@@ -5508,17 +5569,6 @@ export interface PlanningSummary {
   priority?: TaskPriority;
   suggestedDependencies: string[];
   keyDeliverables: string[];
-  /**
-   * FNXC:PlanningMode 2026-07-05-00:00:
-   * The planning AI proposes plan-specific deepening topics (instead of the
-   * fixed, regex-derived generic buckets) so the "Would you like to go
-   * deeper?" checkpoint surfaces suggestions aligned with the user's actual
-   * plan — including angles they had not anticipated. Optional so existing
-   * persisted rows/payloads without it remain valid; the dashboard falls
-   * back to the generic theme candidates when absent or empty
-   * (FN-7616 / issue #1912).
-   */
-  deepeningThemes?: Array<{ id?: string; label: string; description?: string }>;
 }
 
 /** Response from planning endpoints - either a question or the final summary */
@@ -5534,6 +5584,8 @@ export interface PlanningSession {
   history: Array<{ question: PlanningQuestion; response: unknown }>;
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
+  /** User explicitly validated the continuously maintained running plan. */
+  validated?: boolean;
   /**
    * Optional per-session auto-merge override for tasks planned in this session.
    * Not separately persisted; durable form is a branch_groups row keyed by session id.
@@ -6999,6 +7051,7 @@ import type {
   MessageReplyReference,
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
+  NativeStructureEmbed,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -7010,6 +7063,7 @@ export type {
   MessageReplyReference,
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
+  NativeStructureEmbed,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -7034,6 +7088,36 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
 
   if (metadata.wakeRecipient !== undefined && typeof metadata.wakeRecipient !== "boolean") {
     throw new Error("metadata.wakeRecipient must be a boolean");
+  }
+
+  /*
+  FNXC:NativeStructureEmbed 2026-07-20-12:00:
+  Mail accepts only the shared five-kind NativeStructureRef union. Reject unsupported future
+  kinds at the persistence boundary so every stored attachment remains renderable by the shared
+  preview component; labels are optional attach-time fallbacks, not serialized preview snapshots.
+  */
+  if (metadata.nativeStructures !== undefined) {
+    if (!Array.isArray(metadata.nativeStructures)) {
+      throw new Error("metadata.nativeStructures must be an array");
+    }
+    const supportedKinds: NativeStructureRef["kind"][] = ["mission", "milestone", "research-finding", "eval-result", "goal"];
+    for (const embed of metadata.nativeStructures) {
+      if (typeof embed !== "object" || embed === null || Array.isArray(embed)) {
+        throw new Error("metadata.nativeStructures entries must be objects");
+      }
+      if (!supportedKinds.includes(embed.kind)) {
+        throw new Error("metadata.nativeStructures.kind is invalid");
+      }
+      if (typeof embed.id !== "string" || embed.id.trim().length === 0) {
+        throw new Error("metadata.nativeStructures.id must be a non-empty string");
+      }
+      if (embed.projectId !== undefined && (typeof embed.projectId !== "string" || embed.projectId.trim().length === 0)) {
+        throw new Error("metadata.nativeStructures.projectId must be a non-empty string");
+      }
+      if (embed.label !== undefined && typeof embed.label !== "string") {
+        throw new Error("metadata.nativeStructures.label must be a string");
+      }
+    }
   }
 
   const proposalFieldsPresent = metadata.proposalStatus !== undefined || metadata.createdTaskId !== undefined || metadata.proposalIdempotencyKey !== undefined || metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined;

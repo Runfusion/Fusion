@@ -28,6 +28,7 @@ vi.mock("../../api", () => ({
   fetchApprovalDetail: vi.fn(),
   decideApproval: vi.fn(),
   artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
+  fetchNativeStructurePreview: vi.fn(),
 }));
 
 vi.mock("../../hooks/useViewportMode", () => {
@@ -71,6 +72,12 @@ vi.mock("lucide-react", () => ({
   MessageSquare: () => <span data-testid="icon-message">Message</span>,
   User: () => <span data-testid="icon-user">User</span>,
   AlertCircle: () => <span data-testid="icon-alert">Alert</span>,
+  Map: () => <span data-testid="icon-map">Map</span>,
+  Flag: () => <span data-testid="icon-flag">Flag</span>,
+  Lightbulb: () => <span data-testid="icon-lightbulb">Lightbulb</span>,
+  BarChart3: () => <span data-testid="icon-chart">Chart</span>,
+  Target: () => <span data-testid="icon-target">Target</span>,
+  CircleAlert: () => <span data-testid="icon-circle-alert">CircleAlert</span>,
 }));
 
 const mockFetchInbox = vi.mocked(apiModule.fetchInbox);
@@ -167,6 +174,8 @@ const mockUnknownAgentMessage: Message = {
 
 const defaultProps = {
   addToast: vi.fn(),
+  onOpenNativeStructure: vi.fn(),
+  nativeStructureCandidates: [],
 };
 
 /** Build a valid InboxResponse shape — `total` defaults to `messages.length` */

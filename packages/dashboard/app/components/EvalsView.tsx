@@ -7,6 +7,7 @@ import type { SectionId } from "./SettingsModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
 import "./EvalsView.css";
+import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
 interface EvalsViewProps {
   projectId?: string;
@@ -98,7 +99,7 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
         <ul className="evals-results" data-testid="evals-results">
           {results.map((result) => (
             <li key={result.id}>
-              <button className={`evals-result ${result.id === selectedEvalId ? "evals-result--active" : ""}`} type="button" onClick={() => setSelectedEvalId(result.id)}>
+              <button className={`evals-result ${result.id === selectedEvalId ? "evals-result--active" : ""}`} type="button" onClick={() => setSelectedEvalId(result.id)} draggable={isNativeStructureDragEnabled()} onDragStart={(event) => { /* FNXC:NativeStructureEmbed 2026-07-22-10:30: Eval rows use the shared composer payload, while touch devices retain native scrolling. */ serializeNativeStructureRef(event.dataTransfer, { kind: "eval-result", id: result.id, projectId }); }}>
                 <span className="evals-result-title">{result.taskTitle}</span>
                 <span className="evals-result-meta">{result.taskId} · {result.runId} · {result.overallScore ?? t("evals.naPlaceholder", "n/a")}</span>
               </button>

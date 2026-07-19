@@ -6,6 +6,8 @@ FNXC:ProviderIcons 2026-06-28-20:46:
 Standalone GLM model ids such as glm-5.1, glm-4.5-air, and glm-5v-turbo are Z.ai/Zhipu-family models even when the analytics label omits zai/zhipu. Match GLM only at model-id segment boundaries so unrelated words do not hijack the Z.ai provider icon.
 */
 const GLM_MODEL_SEGMENT_PATTERN = /(?:^|[/:_-])glm(?:$|[\d._:-]|-[\da-z])/;
+const OMP_PROVIDER_SEGMENT_PATTERN = /(?:^|[/:_\s-])omp(?:$|[/:_\s-])/;
+const OMP_PROVIDER_NAME_PATTERN = /oh[-\s]my[-\s]pi/;
 
 export function inferProviderIconKey(modelOrProviderName: string): string {
   const normalized = modelOrProviderName.toLowerCase();
@@ -18,6 +20,13 @@ export function inferProviderIconKey(modelOrProviderName: string): string {
   */
   if (normalized.includes("cursor")) {
     return "cursor-cli";
+  }
+  /*
+  FNXC:ProviderIcons 2026-07-18-18:24:
+  FN-8354: omp ACP model ids can contain another vendor model name (for example omp/claude-sonnet-4), but must retain the OMP brand mark on selection and analytics surfaces. Match only an OMP segment or the Oh My Pi name so unrelated strings and untagged model ids keep existing inference/fallback behavior.
+  */
+  if (OMP_PROVIDER_SEGMENT_PATTERN.test(normalized) || OMP_PROVIDER_NAME_PATTERN.test(normalized)) {
+    return "omp-cli";
   }
   if (normalized.includes("claude") || normalized.includes("anthropic")) {
     return "anthropic";

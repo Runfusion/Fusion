@@ -17,6 +17,7 @@
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 import type { PluginPostgresSchemaDefinition } from "../plugin-types.js";
 
 export interface LoadedPluginSchemaContract {
@@ -989,7 +990,7 @@ export async function runLoadedPluginSchemaInitHooks(
     Runtime load and hot reload share the schema-applier advisory lock. Each contract and its complete isolation envelope commit atomically, so concurrent Fusion processes serialize DDL and a rejected reload cannot leave partially-created or temporarily unprotected tables behind.
     */
     await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:schema-applier'))`);
+      await acquireSchemaMutationLocks(tx);
       if (loaded.postgresSchema) {
         const tables = new Set<string>();
         for (const statement of loaded.postgresSchema.statements) {

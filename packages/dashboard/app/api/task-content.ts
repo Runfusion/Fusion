@@ -12,11 +12,23 @@ import type {
   Artifact,
   ArtifactType,
   ArtifactWithTask,
+  NativeStructureRef,
+  NativeStructurePreviewResult,
   AgentLogEntry,
+  TaskVerificationRequest,
 } from "@fusion/core";
 import { appendTokenQuery, withTokenHeader } from "../auth";
 import { api, buildApiUrl } from "./client.js";
 import { withProjectId } from "./health.js";
+
+/**
+ * FNXC:TaskVerificationStatus 2026-07-30-00:00:
+ * Task detail polls this persisted read model because verification state changes do
+ * not mutate the task row and therefore do not emit a task-board SSE update.
+ */
+export function fetchTaskVerificationRequest(taskId: string, projectId?: string): Promise<TaskVerificationRequest | null> {
+  return api<TaskVerificationRequest | null>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/verification-request`, projectId));
+}
 
 export async function uploadAttachment(id: string, file: File, projectId?: string): Promise<TaskAttachment> {
   const formData = new FormData();
@@ -206,6 +218,16 @@ export async function fetchArtifact(id: string, projectId?: string): Promise<Art
   return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId));
 }
 
+/**
+ * FNXC:NativeStructureEmbed 2026-07-18-18:15:
+ * Fetch the shared compact projection for an in-app native structure reference.
+ */
+export async function fetchNativeStructurePreview(ref: NativeStructureRef): Promise<NativeStructurePreviewResult> {
+  return api<NativeStructurePreviewResult>(
+    withProjectId(`/native-structures/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}/preview`, ref.projectId),
+  );
+}
+
 export interface UpdateArtifactInput {
   title?: string;
   description?: string;
@@ -274,4 +296,3 @@ export function deleteTaskDocument(taskId: string, key: string, projectId?: stri
     method: "DELETE",
   });
 }
-

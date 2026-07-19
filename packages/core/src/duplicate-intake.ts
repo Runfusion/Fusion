@@ -78,6 +78,49 @@ export function computeParentIntentClaimId(input: SameAgentDuplicateInput): stri
   return parentId && anchor ? `agent-parent-intent:${parentId}:${anchor}` : null;
 }
 
+const DIAGNOSTIC_ACTION_PATTERN = /\b(?:fix|investigate|repair|resolve|restore)\b/i;
+const DIAGNOSTIC_FAILURE_PATTERN = /\b(?:cannot|can't|error|fail(?:ed|ure|s)?|missing|ts\d{4}|typecheck|unresolved)\b/i;
+const DIAGNOSTIC_OBJECT_PATTERNS = [
+  /\b(?:missing|unresolved)\s+([`'"]?[@a-z0-9][@a-z0-9._/-]*[`'"]?)/gi,
+  /\b(?:cannot|can't)\s+(?:find|resolve)(?:\s+module)?\s+(?:the\s+)?([`'"]?[@a-z0-9][@a-z0-9._/-]*[`'"]?)/gi,
+];
+const IGNORED_DIAGNOSTIC_OBJECTS = new Set(["a", "an", "dependency", "module", "the", "type", "types"]);
+
+function normalizeDiagnosticObject(value: string): string | null {
+  const normalized = value.toLowerCase().replace(/^[`'"]+|[`'".,;:]+$/g, "");
+  if (!normalized || IGNORED_DIAGNOSTIC_OBJECTS.has(normalized)) {
+    return null;
+  }
+  // Only code-shaped objects are safe for global convergence. Generic prose
+  // such as "missing button" must remain scoped to its parent task.
+  return /[0-9@./_-]/.test(normalized) ? normalized : null;
+}
+
+/**
+ * Stable claim for an active diagnostic follow-up that may be discovered by
+ * several unrelated parent tasks. This is intentionally narrower than general
+ * near-duplicate matching: only repair-shaped failures with a code identifier
+ * can converge globally.
+ */
+export function computeCrossParentDiagnosticClaim(input: Pick<SameAgentDuplicateInput, "title" | "description">): { id: string; searchTerm: string } | null {
+  const text = `${input.title ?? ""}\n${input.description}`;
+  if (!DIAGNOSTIC_ACTION_PATTERN.test(text) || !DIAGNOSTIC_FAILURE_PATTERN.test(text)) return null;
+
+  const objects = DIAGNOSTIC_OBJECT_PATTERNS.flatMap((pattern) =>
+    [...text.matchAll(pattern)]
+      .map((match) => normalizeDiagnosticObject(match[1] ?? ""))
+      .filter((value): value is string => value !== null),
+  );
+  const diagnosticObject = [...new Set(objects)].sort()[0];
+  if (!diagnosticObject) return null;
+  const fingerprint = computeContentFingerprint({ title: "agent-diagnostic-intent", description: diagnosticObject });
+  return fingerprint ? { id: `agent-diagnostic-intent:${fingerprint}`, searchTerm: diagnosticObject } : null;
+}
+
+export function computeCrossParentDiagnosticClaimId(input: Pick<SameAgentDuplicateInput, "title" | "description">): string | null {
+  return computeCrossParentDiagnosticClaim(input)?.id ?? null;
+}
+
 /**
  * Find candidate tasks that look like duplicates spawned by the same caller.
  *

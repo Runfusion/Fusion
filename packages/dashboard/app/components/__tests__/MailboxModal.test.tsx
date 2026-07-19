@@ -20,6 +20,7 @@ vi.mock("../../api", () => ({
   fetchConversation: vi.fn(),
   fetchMessage: vi.fn(),
   sendMessage: vi.fn(),
+  fetchNativeStructurePreview: vi.fn(),
 }));
 
 vi.mock("../../hooks/useMobileKeyboard", () => ({
@@ -49,6 +50,12 @@ vi.mock("lucide-react", () => ({
   ChevronRight: () => <span data-testid="icon-chevron-right">ChevronRight</span>,
   ChevronDown: () => <span data-testid="icon-chevron-down">ChevronDown</span>,
   AlertCircle: () => <span data-testid="icon-alert">Alert</span>,
+  Map: () => <span data-testid="icon-map">Map</span>,
+  Flag: () => <span data-testid="icon-flag">Flag</span>,
+  Lightbulb: () => <span data-testid="icon-lightbulb">Lightbulb</span>,
+  BarChart3: () => <span data-testid="icon-chart">Chart</span>,
+  Target: () => <span data-testid="icon-target">Target</span>,
+  CircleAlert: () => <span data-testid="icon-circle-alert">CircleAlert</span>,
 }));
 
 const mockFetchInbox = vi.mocked(apiModule.fetchInbox);
@@ -123,6 +130,8 @@ const defaultProps = {
   isOpen: true,
   onClose: vi.fn(),
   addToast: vi.fn(),
+  onOpenNativeStructure: vi.fn(),
+  nativeStructureCandidates: [],
   agents: mockAgents,
 };
 

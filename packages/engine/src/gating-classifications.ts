@@ -32,6 +32,8 @@ const PROVISIONING_TOOLS = ["fn_agent_create", "fn_agent_delete"] as const;
  */
 export const COMMAND_EXECUTION_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_run_verification",
+  // FNXC:TaskVerificationRequest 2026-07-30-00:00: queuing ultimately executes an executor-owned subprocess.
+  "fn_task_request_verification",
   "fn_acquire_repo_worktree",
 ]);
 
@@ -151,6 +153,8 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_artifact_view",
   "fn_task_list",
   "fn_task_show",
+  // FNXC:TaskVerificationRequest 2026-07-30-00:00: persisted status is an explicit read-only operation.
+  "fn_task_verification_status",
   // FNXC:ToolGovernance 2026-06-27-14:16: Task search is a read-only duplicate-discovery tool; classify it positively so heartbeat/triage calls never rely on the unknown-tool exempt fallback.
   "fn_task_search",
   // FNXC:ToolGovernance 2026-06-27-00:00: `fn_task_get` is a deprecated recognition-only alias. It is no longer registered as a live tool, but historical/in-flight calls must still classify as read-only instead of falling through to unknown-tool handling.
@@ -230,6 +234,7 @@ export const COORDINATION_EXEMPT_TOOLS = [
    */
   "fn_task_list",
   "fn_task_show",
+  "fn_task_verification_status",
   "fn_task_search",
   "fn_task_get",
   "fn_memory_search",

@@ -45,6 +45,7 @@ import { createLogger } from "../logger.js";
 import { TaskStore } from "../store.js";
 import {
   resolveBackend,
+  resolveBackendWithOptions,
   describeBackendForLog,
   type ResolvedBackend,
 } from "./backend-resolver.js";
@@ -136,6 +137,18 @@ export const EMBEDDED_PG_ENV = "FUSION_EMBEDDED_PG";
  */
 export const NO_EMBEDDED_PG_ENV = "FUSION_NO_EMBEDDED_PG";
 
+/** Explicit process-level opt-in for starting Fusion against its test database. */
+export const TEST_MODE_ENV = "FUSION_TEST_MODE";
+/** External PostgreSQL target used only while Fusion test mode is active. */
+export const TEST_DATABASE_URL_ENV = "FUSION_TEST_DATABASE_URL";
+/** Optional direct migration target paired with FUSION_TEST_DATABASE_URL. */
+export const TEST_DATABASE_MIGRATION_URL_ENV = "FUSION_TEST_DATABASE_MIGRATION_URL";
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 /**
  * Return true when the embedded PostgreSQL backend should be used in embedded
  * mode (DATABASE_URL unset).
@@ -160,8 +173,7 @@ export function isEmbeddedPgRequested(env: NodeJS.ProcessEnv = process.env): boo
  * Detect obsolete FUSION_NO_EMBEDDED_PG configuration for diagnostics.
  */
 export function isEmbeddedPgOptedOut(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env[NO_EMBEDDED_PG_ENV] ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  return isTruthyEnvValue(env[NO_EMBEDDED_PG_ENV]);
 }
 
 /**
@@ -443,6 +455,72 @@ async function bootSchemaBackendOnce(
   }
 }
 
+export interface StartupDatabaseOptions {
+  readonly testDatabaseMode: boolean;
+  readonly backend: ResolvedBackend;
+  readonly embeddedDataDir?: string;
+}
+
+/**
+ * Resolve the database target before any schema, registry, or project write.
+ *
+ * Test mode is a storage boundary, not only a model-selection flag. A persisted
+ * global `testMode: true` (or FUSION_TEST_MODE=1) therefore ignores the normal
+ * DATABASE_URL. Operators may provide FUSION_TEST_DATABASE_URL for a dedicated
+ * external database; otherwise Fusion uses a separate embedded cluster under
+ * `<global settings>/embedded-postgres/test`.
+ *
+ * An explicit `backend` or `embeddedDataDir` remains authoritative for focused
+ * tests and programmatic embeddings.
+ */
+export async function resolveStartupDatabaseOptions(
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedDataDir" | "globalSettingsDir"> = {},
+): Promise<StartupDatabaseOptions> {
+  const env = options.env ?? process.env;
+  let globalTestMode = false;
+
+  // Vitest callers without a threaded temp global dir intentionally avoid the
+  // real operator settings file. Production and callers with an explicit dir
+  // can safely read the file-backed bootstrap setting before PostgreSQL opens.
+  const runningVitest = process.env.VITEST === "true";
+  if (options.globalSettingsDir || !runningVitest) {
+    const { GlobalSettingsStore } = await import("../global-settings.js");
+    globalTestMode = (await new GlobalSettingsStore(options.globalSettingsDir).getSettings()).testMode === true;
+  }
+
+  const testDatabaseMode = isTruthyEnvValue(env[TEST_MODE_ENV]) || globalTestMode;
+  if (!testDatabaseMode) {
+    return {
+      testDatabaseMode: false,
+      backend: options.backend ?? resolveBackend(env),
+      ...(options.embeddedDataDir ? { embeddedDataDir: options.embeddedDataDir } : {}),
+    };
+  }
+
+  const backend = options.backend ?? resolveBackendWithOptions({
+    databaseUrl: env[TEST_DATABASE_URL_ENV] ?? null,
+    databaseMigrationUrl: env[TEST_DATABASE_MIGRATION_URL_ENV] ?? null,
+  });
+  if (backend.mode === "external") {
+    return {
+      testDatabaseMode: true,
+      backend,
+      ...(options.embeddedDataDir ? { embeddedDataDir: options.embeddedDataDir } : {}),
+    };
+  }
+
+  let globalDir = options.globalSettingsDir;
+  if (!globalDir) {
+    const { resolveGlobalDir } = await import("../global-settings.js");
+    globalDir = resolveGlobalDir();
+  }
+  return {
+    testDatabaseMode: true,
+    backend,
+    embeddedDataDir: options.embeddedDataDir ?? join(globalDir, "embedded-postgres", "test"),
+  };
+}
+
 /**
  * Open an unscoped PostgreSQL layer for the central project/node registry.
  *
@@ -456,7 +534,12 @@ async function bootSchemaBackendOnce(
 export async function createCentralBackendLayer(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir"> = {},
 ): Promise<CentralBackendLayerResult> {
-  const boot = await bootSchemaBackend(options, true);
+  const databaseOptions = await resolveStartupDatabaseOptions(options);
+  const boot = await bootSchemaBackend({
+    ...options,
+    backend: databaseOptions.backend,
+    ...(databaseOptions.embeddedDataDir ? { embeddedDataDir: databaseOptions.embeddedDataDir } : {}),
+  }, true);
   const {
     backend: resolvedBackend,
     connections,
@@ -486,7 +569,7 @@ export async function createCentralBackendLayer(
       connections.migration,
       CENTRAL_SQLITE_MIGRATION_KEY,
     );
-    if (!centralMigrationComplete && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
+    if (!databaseOptions.testDatabaseMode && !centralMigrationComplete && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
       const report = await migrateSqliteToPostgres(connections.migration, [{
         sqlitePath: legacyCentralPath,
         pgSchema: "central",
@@ -633,7 +716,13 @@ export async function createTaskStoreForBackend(
   options: CreateTaskStoreForBackendOptions,
 ): Promise<BackendBootResult> {
   const env = options.env ?? process.env;
-  const backend = options.backend ?? resolveBackend(env);
+  const databaseOptions = await resolveStartupDatabaseOptions(options);
+  const backend = databaseOptions.backend;
+  const effectiveOptions: CreateTaskStoreForBackendOptions = {
+    ...options,
+    backend,
+    ...(databaseOptions.embeddedDataDir ? { embeddedDataDir: databaseOptions.embeddedDataDir } : {}),
+  };
   const embeddedRequested = options.embeddedPgRequested ?? isEmbeddedPgRequested(env);
 
   /*
@@ -667,7 +756,7 @@ export async function createTaskStoreForBackend(
   let boot: SchemaBackendBootResult;
   try {
     const schemaT0 = Date.now();
-    boot = await bootSchemaBackend(options);
+    boot = await bootSchemaBackend(effectiveOptions);
     log.log(`startup phase backend.schemaBackend: ${Date.now() - schemaT0}ms`);
   } catch (err) {
     const chain = describeErrorChain(err);
@@ -724,7 +813,9 @@ export async function createTaskStoreForBackend(
   is not registered (legacy/unregistered single-project setups stay unbound,
   matching their unfiltered readers).
   */
-  if (rootDir) {
+  // A test database starts clean by definition. Never seed it from the
+  // operator's retained production SQLite files.
+  if (rootDir && !databaseOptions.testDatabaseMode) {
     try {
       const fusionDir = join(rootDir, ".fusion");
       const legacySqlitePath = join(fusionDir, "fusion.db");

@@ -1,0 +1,94 @@
+/*
+FNXC:TaskVerificationStatus 2026-07-30-00:00:
+FN-8296 requires task and Command Center verification state to use the same
+semantic pending/error colors and remain readable at the shared mobile breakpoint.
+*/
+.task-verification-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.task-verification-status__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text);
+}
+
+.task-verification-status__heading svg {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+}
+
+.task-verification-status__state {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.task-verification-status p {
+  margin: 0;
+}
+
+.task-verification-status--requested,
+.task-verification-status--running {
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--border-subtle));
+}
+
+.task-verification-status--requested .task-verification-status__heading,
+.task-verification-status--running .task-verification-status__heading {
+  color: var(--color-warning);
+}
+
+.task-verification-status--failed,
+.task-verification-status--rejected .task-verification-status__heading {
+  color: var(--color-error);
+}
+
+.task-verification-status--passed .task-verification-status__heading {
+  color: var(--color-success);
+}
+
+.task-verification-status__spinner {
+  animation: task-verification-spin var(--duration-slow) linear infinite;
+}
+
+.task-verification-status__output {
+  max-block-size: calc(var(--space-2xl) * 5);
+  margin: 0;
+  overflow: auto;
+  color: var(--color-error);
+  font: inherit;
+  white-space: pre-wrap;
+}
+
+.task-verification-status--compact {
+  margin-bottom: 0;
+}
+
+.task-verification-status--empty {
+  color: var(--text-muted);
+}
+
+@keyframes task-verification-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+  .task-verification-status__heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .task-verification-status__state {
+    margin-inline-start: 0;
+  }
+}

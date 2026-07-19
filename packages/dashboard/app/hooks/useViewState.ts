@@ -10,7 +10,7 @@ export type ViewMode = "overview" | "project";
 FNXC:ViewState 2026-06-22-00:00:
 Workflows, Import Tasks, and Automations are promoted to top-level main-content task views (left-sidebar destinations) instead of modal-only overlays, so they render in the main panel like Command Center.
 */
-export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests" | "workflows" | "import-tasks" | "automations" | "settings" | "task-detail";
+export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "ideation" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests" | "workflows" | "import-tasks" | "automations" | "settings" | "task-detail";
 export type PluginTaskView = `plugin:${string}:${string}`;
 export type TaskView = BuiltInTaskView | PluginTaskView;
 
@@ -24,6 +24,12 @@ const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
   "documents",
   "research",
   "evals",
+  /*
+  FNXC:Navigation 2026-08-01-00:00:
+  FN-8352 promotes Ideation from a Command Center tab to a persisted,
+  default-off experimental top-level view.
+  */
+  "ideation",
   "goalsView",
   /*
   FNXC:ViewState 2026-06-21-09:14:

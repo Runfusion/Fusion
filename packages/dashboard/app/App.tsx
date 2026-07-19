@@ -113,6 +113,7 @@ export {
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
+import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
 import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
 import type { GraphWorkflowSelection } from "./components/GraphWorkflowSwitcherSlot";
@@ -481,6 +482,36 @@ function AppInner() {
     }
   }, [handleChangeTaskView, taskView, pushNav]);
 
+  /*
+  FNXC:NativeStructureEmbed 2026-07-19-19:30:
+  NativeStructurePreview deliberately reports callback/view-state destinations instead of URLs.
+  Listen once at the dashboard root so cards from general, task-bound, floating, and dock chat
+  open their owning view without duplicating navigation logic at any chat render call-site.
+  */
+  useEffect(() => {
+    const openNativeStructure = (event: Event) => {
+      const { payload } = (event as CustomEvent<NativeStructureOpenEventDetail>).detail;
+      if (!payload?.available) return;
+      const target = payload.openTarget;
+      if (target.view === "missions") {
+        // FNXC:NativeStructureEmbed 2026-07-20-01:00: Mission navigation resets stale selection
+        // state. Navigate before setting this preview's target so the destination opens the
+        // referenced mission rather than an unselected Missions view.
+        handleTaskViewChange("missions");
+        setMissionTargetId(target.missionId ?? target.id);
+        return;
+      }
+      if (target.view === "goals") {
+        handleTaskViewChange("goalsView");
+        setGoalAnchorId(target.id);
+        return;
+      }
+      handleTaskViewChange(target.view);
+    };
+    window.addEventListener(NATIVE_STRUCTURE_OPEN_EVENT, openNativeStructure);
+    return () => window.removeEventListener(NATIVE_STRUCTURE_OPEN_EVENT, openNativeStructure);
+  }, [handleTaskViewChange]);
+
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
   const taskSseEnabled = taskView === "board" || taskView === "list";
@@ -801,6 +832,7 @@ function AppInner() {
   const nodesEnabled = experimentalFeatures.nodesView === true;
   const researchEnabled = experimentalFeatures.researchView === true;
   const evalsEnabled = experimentalFeatures.evalsView === true;
+  const ideationEnabled = experimentalFeatures.ideationView === true;
   /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: Missing or false `subtaskBreakdown` settings must hide the AI Subtask quick-add handoff across List, Board, and New Task Modal surfaces; only an explicit true wires the callback. */
   const subtaskBreakdownEnabled = experimentalFeatures.subtaskBreakdown === true;
   /*
@@ -863,13 +895,22 @@ function AppInner() {
     if (taskView === "evals" && !evalsEnabled) {
       handleChangeTaskView("board");
     }
+    /*
+    FNXC:Navigation 2026-08-01-00:00:
+    FN-8352 promotes Ideation to a default-off experimental top-level view.
+    Redirect persisted and deep-linked disabled views to Board so MainContent
+    never leaves users on a blank unavailable surface.
+    */
+    if (taskView === "ideation" && !ideationEnabled) {
+      handleChangeTaskView("board");
+    }
     if (taskView === "goalsView" && !goalsEnabled) {
       handleChangeTaskView("board");
     }
     if (taskView === "todos" && !todosEnabled) {
       handleChangeTaskView("board");
     }
-  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, goalsEnabled, todosEnabled, graphPluginTaskView]);
+  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, ideationEnabled, goalsEnabled, todosEnabled, graphPluginTaskView]);
 
   const {
     availableModels,
@@ -1518,6 +1559,7 @@ function AppInner() {
     openSettingsWithNav,
     researchReadinessVersion,
     evalsEnabled,
+    ideationEnabled,
     memoryEnabled,
     goalsEnabled,
     handleOpenMission,
@@ -1729,6 +1771,7 @@ function AppInner() {
           devServerView: devServerEnabled,
           researchView: researchEnabled,
           evalsView: evalsEnabled,
+          ideationView: ideationEnabled,
           goalsView: goalsEnabled,
           leftSidebarNav: leftSidebarNavEnabled,
           rightDock: rightDockEnabled,
@@ -1763,6 +1806,7 @@ function AppInner() {
               devServerView: devServerEnabled,
               researchView: researchEnabled,
               evalsView: evalsEnabled,
+              ideationView: ideationEnabled,
               goalsView: goalsEnabled,
             }}
             pluginDashboardViews={pluginDashboardViews}
@@ -1850,6 +1894,7 @@ function AppInner() {
           todoView: todosEnabled,
           researchView: researchEnabled,
           evalsView: evalsEnabled,
+          ideationView: ideationEnabled,
           goalsView: goalsEnabled,
         }}
         pluginDashboardViews={pluginDashboardViews}

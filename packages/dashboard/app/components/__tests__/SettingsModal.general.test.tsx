@@ -1347,6 +1347,43 @@ describe("SettingsModal", () => {
       }));
     });
 
+    it("renders report-mode default help across unset, populated, and reset action overrides", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const reportMode = screen.getByLabelText("In-app report mode") as HTMLSelectElement;
+      expect(reportMode).toHaveValue("draft-review");
+      expect(screen.getByTestId("settings-help-reportMode")).toBeInTheDocument();
+      expect(screen.getByText(/Default: draft-review \(operator reviews a draft before filing\)/i).closest(".settings-help-bubble")).toBeTruthy();
+
+      const actionLabels = ["Bug", "Feedback", "Idea", "Help"];
+      const actionSelects = actionLabels.map((action) => screen.getByLabelText(`${action} report override`) as HTMLSelectElement);
+      for (const select of actionSelects) expect(select).toHaveValue("");
+      for (const action of ["bug", "feedback", "idea", "help"]) {
+        expect(screen.getByTestId(`settings-help-reportModeByAction-${action}`)).toBeInTheDocument();
+      }
+      const overrideHelp = screen.getAllByText(/No default — unset actions inherit reportMode/i);
+      expect(overrideHelp).toHaveLength(4);
+      for (const help of overrideHelp) expect(help.closest(".settings-help-bubble")).toBeTruthy();
+
+      fireEvent.change(actionSelects[0], { target: { value: "auto-file" } });
+      expect(actionSelects[0]).toHaveValue("auto-file");
+      expect(screen.getAllByText(/No default — unset actions inherit reportMode/i)).toHaveLength(4);
+
+      fireEvent.change(actionSelects[0], { target: { value: "" } });
+      for (const select of actionSelects) expect(select).toHaveValue("");
+      expect(screen.getAllByText(/No default — unset actions inherit reportMode/i)).toHaveLength(4);
+    });
+
+    it("renders embedded PostgreSQL connection-cap help from the English locale", async () => {
+      renderModal({ initialSection: "backups-global" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveValue(500);
+      expect(screen.getByTestId("settings-help-embeddedPostgresMaxConnections")).toBeInTheDocument();
+      expect(screen.getByText("Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.").closest(".settings-help-bubble")).toBeTruthy();
+    });
+
     it("saves ephemeral agent toggle in project settings payload", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();

@@ -879,8 +879,12 @@ describe("FloatingWindow", () => {
     const hiddenOverlay = screen.getByTestId("floating-window-overlay-hidden-chat");
     const retainedChild = screen.getByTestId("retained-hidden-child");
     const activeTask = screen.getByTestId("floating-window-active-task");
+    const hiddenRule = cssRuleFor(floatingWindowCss, ".floating-window-overlay--hidden");
     expect(hiddenOverlay).toHaveClass("floating-window-overlay--hidden");
     expect(hiddenOverlay).toHaveAttribute("aria-hidden", "true");
+    expect(hiddenRule).toContain("visibility: hidden;");
+    expect(hiddenRule).toContain("pointer-events: none;");
+    expect(hiddenRule).not.toMatch(/display\s*:\s*none/);
     expect(geometryEvents).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(storageKey)).toBeNull();
     fireEvent.pointerDown(document.body);

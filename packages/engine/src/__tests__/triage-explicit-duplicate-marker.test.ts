@@ -88,15 +88,35 @@ describe("triage explicit duplicate marker short-circuit", () => {
     expect(store.deleteTask).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: false, pausedReason: null, status: null }));
   });
-  it("does not short-circuit when the canonical target is missing", async () => {
-    const store = createMockStore({
-      getTask: vi.fn().mockResolvedValue(null),
+  it.each([
+    ["missing", null],
+    ["soft-deleted", createTask({ id: "FN-001", deletedAt: new Date().toISOString() })],
+    ["done", createTask({ id: "FN-001", column: "done" })],
+    ["archived", createTask({ id: "FN-001", column: "archived" })],
+  ])("clears an inactive %s canonical marker instead of pausing for a hidden decision", async (_state, canonical) => {
+    const store = createMockStore({ getTask: vi.fn().mockResolvedValue(canonical) });
+
+    await expect(runExplicitDuplicateMarker(store, createTask(), "DUPLICATE: FN-001\n")).resolves.toBe(true);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-002", {
+      paused: false,
+      pausedReason: null,
+      status: null,
     });
-
-    await expect(runExplicitDuplicateMarker(store, createTask(), "DUPLICATE: FN-999\n")).resolves.toBe(false);
-
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: true }));
     expect(store.deleteTask).not.toHaveBeenCalled();
-    expect(store.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["user pause", createTask({ userPaused: true, paused: true, pausedReason: "manual" })],
+    ["implicit user pause", createTask({ paused: true, pausedReason: null })],
+    ["unrelated pause", createTask({ paused: true, pausedReason: "awaiting-approval" })],
+  ])("preserves a %s while an inactive marker is encountered", async (_label, task) => {
+    const store = createMockStore({ getTask: vi.fn().mockResolvedValue(null) });
+
+    await expect(runExplicitDuplicateMarker(store, task, "DUPLICATE: FN-001\n")).resolves.toBe(true);
+
+    expect(store.updateTask).not.toHaveBeenCalled();
   });
 
   it("does not short-circuit on circular self-reference", async () => {
