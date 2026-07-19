@@ -4,7 +4,7 @@
 // primitives, custom graph prompt/script/gate nodes under a custom workflow
 // selection, builtin/default selection behavior via the legacy seam, fast /
 // standard / undefined executionMode data states, and the executor tool
-// injection surface for fn_review_step vs mandatory fn_task_done.
+// injection surface (fn_review_step is deleted in both modes) vs mandatory fn_task_done.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
@@ -46,6 +46,20 @@ function makeExecutorForTask(liveTask = task()) {
   return { store, executor: new TaskExecutor(store, "/tmp/test") };
 }
 
+/*
+FNXC:EngineTests 2026-07-19-15:05 (U10b):
+Review gates are graph nodes, so one `execute()` opens several agent sessions and the FIRST one is a review
+node (Plan Review), not the implementation session. The tool-injection requirement spans the whole run:
+`fn_task_done` must be present SOMEWHERE (the implementation session must retain the only completion path),
+and `fn_review_step` must appear on NO session in either execution mode. Union the tools across every
+session instead of indexing call 0, which now inspects a review node's readonly toolset.
+*/
+function allSessionToolNames(): string[] {
+  return mockedCreateFnAgent.mock.calls.flatMap(([opts]: any[]) =>
+    ((opts?.customTools ?? []) as any[]).map((tool) => tool?.name),
+  );
+}
+
 function workflowResult() {
   return { allPassed: true, results: [] };
 }
@@ -59,6 +73,12 @@ describe("fast mode workflow/runtime invariants", () => {
   /*
   FNXC:WorkflowSelection 2026-07-14-17:06:
   The executor must pass its asynchronously resolved PostgreSQL workflow selection into the graph runner. Re-reading through the synchronous compatibility method would replace a custom graph with builtin:coding.
+  */
+  /*
+  FNXC:EngineTests 2026-07-19-18:20 (U10b):
+  Graph ownership is unconditional: the entry point is `executeWorkflowGraph` and it returns void
+  because it can no longer decline a task. The requirement under test is unchanged — the async
+  selection the executor resolved is what the runner sees — so only the seam name/return moved.
   */
   it("reuses the asynchronous PostgreSQL workflow selection inside the graph runner", async () => {
     const selected = { workflowId: "WF-async-custom", stepIds: ["review"] };
@@ -81,12 +101,16 @@ describe("fast mode workflow/runtime invariants", () => {
       return { disposition: "completed", outcome: "success", visitedNodeIds: ["start"] };
     });
 
-    await expect((executor as any).maybeExecuteWorkflowGraph(task())).resolves.toBe(true);
+    try {
+      await expect((executor as any).executeWorkflowGraph(task())).resolves.toBeUndefined();
 
-    expect(store.getTaskWorkflowSelectionAsync).toHaveBeenCalledWith("FN-6226");
-    expect(store.getTaskWorkflowSelection).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalledTimes(1);
-    run.mockRestore();
+      expect(store.getTaskWorkflowSelectionAsync).toHaveBeenCalledWith("FN-6226");
+      expect(store.getTaskWorkflowSelection).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      // Prototype spy: restore even on failure so it cannot leak into sibling runner tests.
+      run.mockRestore();
+    }
   });
 
   it("graph executor with a custom workflow skips custom pre-merge prompt/gate nodes in fast mode", async () => {
@@ -639,7 +663,7 @@ describe("fast mode workflow/runtime invariants", () => {
     });
     const { executor } = makeExecutorForTask(liveTask);
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
-    const graph = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graph = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     const recovered = await executor.recoverCompletedTask(liveTask as any);
 
@@ -647,21 +671,35 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(graph).toHaveBeenCalledWith(liveTask);
   });
 
-  it("fails closed when a fast task has explicit optional steps but the store cannot resolve workflow selection", async () => {
+  /*
+  FNXC:EngineTests 2026-07-19-18:20 (U10b):
+  The requirement under test is a store that CANNOT resolve a workflow selection (minimal/older embedded
+  adapters). The shared harness supplies both selection readers, so the reader-less shape is reconstructed
+  explicitly here — otherwise the graph resolves builtin:coding and this branch is never reached.
+  The park is now UNCONDITIONAL: with the legacy execute fallback deleted, the graph is the only executor,
+  so a store that cannot resolve a workflow must park loudly whether or not the task has explicit
+  `enabledWorkflowSteps` — the old "no enabled steps means nothing to gate" carve-out would now silently run
+  nothing. Both step shapes are asserted so the carve-out cannot be reintroduced.
+  */
+  it.each([
+    ["explicit optional steps", ["browser-verification"]],
+    ["no enabled steps", []],
+  ])("fails closed when the store cannot resolve workflow selection (%s)", async (_label, enabledWorkflowSteps) => {
     const liveTask = task({
       id: "FN-7283-MINIMAL-STORE",
       executionMode: "fast",
-      enabledWorkflowSteps: ["browser-verification"],
+      enabledWorkflowSteps,
       worktree: "/tmp/wt",
     });
     const store = createMockStore();
     store.getTask.mockResolvedValue(liveTask);
+    delete (store as any).getTaskWorkflowSelection;
+    delete (store as any).getTaskWorkflowSelectionAsync;
     const executor = new TaskExecutor(store, "/tmp/test") as any;
     const graphFailure = vi.spyOn(executor, "handleGraphFailure").mockResolvedValue(undefined);
 
-    const handled = await executor.maybeExecuteWorkflowGraph(liveTask);
+    await executor.executeWorkflowGraph(liveTask);
 
-    expect(handled).toBe(true);
     expect(graphFailure).toHaveBeenCalledWith(liveTask, expect.objectContaining({
       disposition: "failed",
       outcome: "failure",
@@ -681,7 +719,7 @@ describe("fast mode workflow/runtime invariants", () => {
     });
     const { store, executor } = makeExecutorForTask(liveTask);
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
-    const graph = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graph = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     const recovered = await executor.recoverCompletedTask(liveTask as any);
 
@@ -693,7 +731,13 @@ describe("fast mode workflow/runtime invariants", () => {
     );
   });
 
-  it("keeps fn_task_done mandatory while excluding fn_review_step in fast mode", async () => {
+  /*
+  FNXC:WorkflowReviewGates 2026-07-19-02:40:
+  U10 (R9) tombstone: `fn_review_step` is deleted outright. Neither fast nor standard mode may
+  inject it — review gates are graph nodes, and a second in-session review authority is exactly
+  the duplicate-Plan-Review defect the cutover removes. `fn_task_done` stays mandatory in both.
+  */
+  it("keeps fn_task_done mandatory while never injecting fn_review_step in fast mode", async () => {
     mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
@@ -713,12 +757,11 @@ describe("fast mode workflow/runtime invariants", () => {
 
     await executor.execute(task({ id: "FN-TOOLS", executionMode: "fast" }));
 
-    const tools = mockedCreateFnAgent.mock.calls[0][0].customTools.map((tool: any) => tool.name);
-    expect(tools).toContain("fn_task_done");
-    expect(tools).not.toContain("fn_review_step");
+    expect(allSessionToolNames()).toContain("fn_task_done");
+    expect(allSessionToolNames()).not.toContain("fn_review_step");
   });
 
-  it("includes fn_review_step in standard mode", async () => {
+  it("never injects fn_review_step in standard mode either", async () => {
     mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
@@ -738,34 +781,8 @@ describe("fast mode workflow/runtime invariants", () => {
 
     await executor.execute(task({ id: "FN-TOOLS", executionMode: "standard" }));
 
-    const tools = mockedCreateFnAgent.mock.calls[0][0].customTools.map((tool: any) => tool.name);
-    expect(tools).toContain("fn_review_step");
+    expect(allSessionToolNames()).toContain("fn_task_done");
+    expect(allSessionToolNames()).not.toContain("fn_review_step");
   });
 
-  it("omits legacy fn_review_step in graph-owned standard execution sessions", async () => {
-    mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-        sessionManager: {
-          getLeafId: vi.fn().mockReturnValue("leaf"),
-          branchWithSummary: vi.fn(),
-          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
-        },
-        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
-      },
-      capturedTools: opts.customTools,
-    }));
-    const store = createMockStore();
-    const liveTask = task({ id: "FN-TOOLS", executionMode: "standard" });
-    store.getTask.mockResolvedValue(liveTask);
-    const executor = new TaskExecutor(store, "/tmp/test") as any;
-    executor.graphCompletionInterceptors.set("FN-TOOLS", vi.fn());
-
-    await executor.execute(liveTask);
-
-    const tools = mockedCreateFnAgent.mock.calls[0][0].customTools.map((tool: any) => tool.name);
-    expect(tools).toContain("fn_task_done");
-    expect(tools).not.toContain("fn_review_step");
-  });
 });

@@ -86,7 +86,7 @@ describe("FN-4946 implicit refusal budget handling", () => {
     });
 
     mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-      doneTool = customTools.find((t: any) => t.name === "fn_task_done");
+      doneTool = customTools.find((t: any) => t.name === "fn_task_done") ?? doneTool;
       return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), subscribe: vi.fn(), on: vi.fn(), state: {} } } as any;
     });
 
@@ -118,7 +118,15 @@ describe("FN-4946 implicit refusal budget handling", () => {
 
   it("resets taskDoneRetryCount after later clean completion", async () => {
     const store = createMockStore();
-    let currentTask: any = { ...task(1), id: "FN-4946-B3", steps: [{ name: "Step 1", status: "in-progress" }], executionMode: "fast" };
+    /*
+    FNXC:EngineTests 2026-07-19-16:15 (U10b):
+    The invariant under test is the IMPLEMENTATION session's clean completion: a clean
+    fn_task_done must reach the in-review merge boundary without bumping taskDoneRetryCount.
+    Under graph ownership the optional pre-merge review nodes would run first and this test's
+    session stub (which calls fn_task_done from `prompt`) assumes it IS the implementation
+    session, so the task declares no pre-merge gates.
+    */
+    let currentTask: any = { ...task(1), id: "FN-4946-B3", enabledWorkflowSteps: [], steps: [{ name: "Step 1", status: "in-progress" }], executionMode: "fast" };
     store.getTask.mockImplementation(async () => ({ ...currentTask, steps: currentTask.steps.map((s: any) => ({ ...s })) }));
     store.updateTask.mockImplementation(async (_id: string, patch: any) => {
       currentTask = { ...currentTask, ...patch };
@@ -142,7 +150,21 @@ describe("FN-4946 implicit refusal budget handling", () => {
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(currentTask);
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4946-B3", "in-review");
+    /*
+    FNXC:EngineTests 2026-07-19-16:20 (U10b):
+    The in-review handoff is now the graph's merge boundary, so the move carries the
+    workflow-graph provenance of the node that made it instead of being a bare 2-arg
+    completion-path move.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-4946-B3",
+      "in-review",
+      expect.objectContaining({
+        preserveProgress: true,
+        workflowMoveSource: "workflow-graph",
+        workflowMoveMetadata: expect.objectContaining({ nodeId: "completion-summary" }),
+      }),
+    );
     const retryBumpCalls = store.updateTask.mock.calls.filter(([, patch]: [string, Record<string, unknown>]) => typeof patch.taskDoneRetryCount === "number" && patch.taskDoneRetryCount > 1);
     expect(retryBumpCalls).toHaveLength(0);
   });

@@ -70,6 +70,23 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn(), close: vi.fn(), dispose: vi.fn() }, sessionFile: null } as any);
   });
 
+  /*
+  FNXC:EngineTests 2026-07-19-13:20 (U10b):
+  Contamination recovery reads the LIVE task row, not the literal handed to `execute()`: the graph
+  re-fetches the task before running the implementation node, so `task.worktree` (which decides
+  whether recovery runs inside the worktree — FN-4939) and `task.recoveryRetryCount` (which decides
+  auto-recover vs. escalate) must be persisted state. Seeding the store row is the only way a test
+  can state "this is what the executor will observe"; setting the same fields on the passed literal
+  provably does nothing.
+  */
+  function seedTaskRow(store: ReturnType<typeof createMockStore>, task: any) {
+    (store as any)._setRow(task.id, {
+      worktree: task.worktree ?? null,
+      branch: task.branch ?? null,
+      recoveryRetryCount: task.recoveryRetryCount ?? null,
+    });
+  }
+
   function makeTask(recoveryRetryCount?: number) {
     return {
       id: "FN-4428",
@@ -125,7 +142,9 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test");
-    await executor.execute({ ...makeTask(), id: "FN-4488", branch: "fusion/fn-4488" } as any);
+    const task = { ...makeTask(), id: "FN-4488", branch: "fusion/fn-4488" } as any;
+    seedTaskRow(store, task);
+    await executor.execute(task);
 
     expect(store.moveTask).toHaveBeenCalled();
     const [movedTaskId, movedColumn] = store.moveTask.mock.calls[0] as [string, string];
@@ -152,7 +171,9 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test");
-    await executor.execute(makeTask());
+    const task = makeTask();
+    seedTaskRow(store, task);
+    await executor.execute(task);
 
     // FN-4939: contamination auto-recovery must preserve the worktree because the
     // recovery operates inside it (re-anchors the branch, re-checks it out).
@@ -300,7 +321,9 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
 
     const secondExecutor = new TaskExecutor(secondStore, "/tmp/test");
-    await secondExecutor.execute(makeTask(1));
+    const secondTask = makeTask(1);
+    seedTaskRow(secondStore, secondTask);
+    await secondExecutor.execute(secondTask);
     expect(secondStore.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
   });
 

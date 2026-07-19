@@ -28,7 +28,6 @@ async function setup(overrides: Record<string, unknown> = {}) {
   const store = createMockStore();
   let task: any = createTask(overrides);
   let doneTool: any;
-  let reviewTool: any;
 
   store.getTask.mockImplementation(async () => ({ ...task, steps: task.steps.map((s: any) => ({ ...s })) }));
   store.moveTask.mockImplementation(async (_id: string, column: string) => {
@@ -36,15 +35,14 @@ async function setup(overrides: Record<string, unknown> = {}) {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    doneTool = customTools.find((tool: any) => tool.name === "fn_task_done");
-    reviewTool = customTools.find((tool: any) => tool.name === "fn_review_step");
+    doneTool = customTools.find((tool: any) => tool.name === "fn_task_done") ?? doneTool;
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 
   const executor = new TaskExecutor(store as any, "/repo");
   await executor.execute(createTask() as any);
 
-  return { store, doneTool, reviewTool };
+  return { store, doneTool };
 }
 
 describe("FN-4851 REVISE verdict task-done guard", () => {
@@ -63,33 +61,6 @@ describe("FN-4851 REVISE verdict task-done guard", () => {
       summary: "Needs fixes",
       review: "Please fix issues",
     } as any);
-  });
-
-  it("refuses fn_task_done when a pending step has REVISE verdict", async () => {
-    const { store, reviewTool, doneTool } = await setup();
-
-    await reviewTool.execute("rev", { step: 0, type: "code", step_name: "Step 1", baseline: "abc123" });
-    const result = await doneTool.execute("done", { summary: "Implemented all requested changes." });
-
-    expect(result.details.refusalClass).toBe("pending-code-review-revise");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4851", "todo", { preserveProgress: true });
-  });
-
-  it("escalates to in-review when retry budget is exhausted", async () => {
-    const { store, reviewTool, doneTool } = await setup({ taskDoneRetryCount: 3 });
-
-    await reviewTool.execute("rev", { step: 0, type: "code", step_name: "Step 1", baseline: "abc123" });
-    const result = await doneTool.execute("done", { summary: "Implemented all requested changes." });
-
-    expect(result.details.refusalClass).toBe("pending-code-review-revise");
-    expect(result.details.error).toContain("pending-code-review-revise");
-    // FNXC:WorkflowLifecycle 2026-07-01-20:28: At fn_task_done refusal-budget exhaustion the task is parked
-    // `status: "failed"` IN PLACE (executor.ts fn_task_done refusal exhaustion branch) rather than moved to
-    // in-review — the same workflow-graph failure-in-place model that superseded FN-1284's legacy in-review
-    // escalation. The protected invariant (a pending REVISE at budget exhaustion is terminal, not another
-    // requeue) holds via the failed update and the absence of a further todo requeue.
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4851", "in-review");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4851", expect.objectContaining({ status: "failed" }));
   });
 
   it("ignores REVISE verdict on already done or skipped steps", async () => {

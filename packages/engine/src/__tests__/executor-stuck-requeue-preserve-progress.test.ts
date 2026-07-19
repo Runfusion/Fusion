@@ -15,12 +15,35 @@ import {
 
 const mockedRemoveWorktree = vi.mocked(removeWorktree);
 
+/*
+FNXC:EngineTests 2026-07-19-16:05 (U10b):
+Requirement under test is unchanged: a force-requeue with preserveProgress must never leave the
+board claiming work that the discarded worktree took with it. What changed is WHO owns the step
+list. Under the workflow graph the `parse-steps` node re-materializes `task.steps` from PROMPT.md
+at the start of every run, so the executor's step statuses at abort time are the graph's, not a
+hand-seeded fixture. The fixture prompt therefore has to BE the step source (see
+`createMutableStore`'s `getTaskDocument`), and the assertions read the materialized list.
+*/
+const STEP_PROMPT =
+  "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n### Step 1: Implement\n- [ ] code\n### Step 2: Verify\n- [ ] verify";
+
+/*
+FNXC:EngineTests 2026-07-19-16:05 (U10b):
+The graph drives its own step transitions through the same `updateStep` seam, tagged
+`{ source: "graph" }`. The lost-work reconciliation (`resetStepsIfWorkLost`) writes untagged. Split
+them so "reset exactly the steps whose work was lost" stays measurable now that the graph shares
+the seam — a bare call count would measure the graph, not the reconciliation.
+*/
+function reconciliationStepResets(store: { updateStep: { mock: { calls: unknown[][] } } }): unknown[][] {
+  return store.updateStep.mock.calls.filter((call) => call[3] === undefined);
+}
+
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-7174",
     title: "Preserve stuck progress",
-    description: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n### Step 1: Implement\n- [ ] code",
-    prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n### Step 1: Implement\n- [ ] code",
+    description: STEP_PROMPT,
+    prompt: STEP_PROMPT,
     column: "in-progress",
     dependencies: [],
     steps: [
@@ -70,6 +93,15 @@ function createMutableStore(task: Task, settings: Record<string, unknown> = {}) 
     ...settings,
   });
   store.getTask.mockImplementation(async () => task);
+  /*
+  FNXC:EngineTests 2026-07-19-16:05 (U10b):
+  Point the graph's PROMPT.md artifact read at this fixture's own prompt so the materialized step
+  list is the three steps this file reasons about, instead of the shared harness's single-step
+  default.
+  */
+  store.getTaskDocument.mockImplementation(async (_id: string, key: string) =>
+    key === "PROMPT.md" ? { content: task.prompt } : undefined,
+  );
   store.updateStep.mockImplementation(async (_taskId: string, stepIndex: number, status: Task["steps"][number]["status"]) => {
     task.steps[stepIndex].status = status;
     return task;
@@ -106,7 +138,18 @@ function installSingleSession(resolvePrompt: () => Promise<void> | void = async 
   return { session, startedPromise };
 }
 
-async function runSingleSessionStuckRequeue(task: Task, settings: Record<string, unknown> = {}) {
+/*
+FNXC:EngineTests 2026-07-19-16:05 (U10b):
+`beforeAbort` runs after the agent session exists but before the stuck kill, which is the only
+window where a test can stage state the graph has already written past — the graph's own column
+boundary move and its step-0 in-progress transition both land before the kill. Simulating a
+concurrent recovery or a no-work session by pre-seeding the fixture no longer works.
+*/
+async function runSingleSessionStuckRequeue(
+  task: Task,
+  settings: Record<string, unknown> = {},
+  beforeAbort?: (live: Task) => void,
+) {
   const store = createMutableStore(task, settings);
   let releasePrompt!: () => void;
   const promptRelease = new Promise<void>((resolve) => {
@@ -117,6 +160,7 @@ async function runSingleSessionStuckRequeue(task: Task, settings: Record<string,
 
   const executePromise = executor.execute(task);
   await startedPromise;
+  beforeAbort?.(task);
   executor.markStuckAborted(task.id, true);
   releasePrompt();
   await executePromise;
@@ -161,7 +205,8 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
 
     expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(task.currentStep).toBe(0);
-    expect(store.updateStep).toHaveBeenCalledTimes(2);
+    // Every step the discarded worktree was mid-way through is reset — here the graph's step 0.
+    expect(reconciliationStepResets(store)).toEqual([[task.id, 0, "pending"]]);
     expect(mockedRemoveWorktree).toHaveBeenCalledWith(expect.objectContaining({
       worktreePath: "/tmp/test/.worktrees/fn-7174-worktree",
       taskId: task.id,
@@ -181,7 +226,7 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
 
     expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(task.currentStep).toBe(0);
-    expect(store.updateStep).toHaveBeenCalledTimes(2);
+    expect(reconciliationStepResets(store)).toEqual([[task.id, 0, "pending"]]);
     expect(mockedRemoveWorktree).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true });
   });
@@ -191,9 +236,10 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
     const task = createTask();
     const { store } = await runSingleSessionStuckRequeue(task);
 
-    expect(task.steps.map((step) => step.status)).toEqual(["done", "in-progress", "pending"]);
+    // Committed work is durable: the graph's in-flight step keeps its status and currentStep stands.
+    expect(task.steps.map((step) => step.status)).toEqual(["in-progress", "pending", "pending"]);
     expect(task.currentStep).toBe(2);
-    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(reconciliationStepResets(store)).toEqual([]);
     expect(mockedRemoveWorktree).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true });
   });
@@ -204,43 +250,56 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
 
     expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(task.currentStep).toBe(0);
+    expect(reconciliationStepResets(store)).toEqual([[task.id, 0, "pending"]]);
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", undefined);
   });
 
+  /*
+  FNXC:EngineTests 2026-07-19-16:05 (U10b):
+  A session that recorded no step progress must not be "reconciled" at all — there is nothing to
+  lose, so the requeue writes no step statuses. Post-cutover the all-pending state has to be staged
+  at kill time (the graph marks its first step in-progress before the session starts), so the
+  no-work condition is asserted against the reconciliation's own writes rather than the seam's.
+  */
   it("does nothing for no-work tasks with no completed or in-progress steps", async () => {
-    const task = createTask({
-      steps: [
-        { name: "Step 0", status: "pending" },
-        { name: "Step 1", status: "pending" },
-      ],
-      currentStep: 0,
+    const task = createTask();
+    const { store } = await runSingleSessionStuckRequeue(task, {}, (live) => {
+      for (const step of live.steps) step.status = "pending";
     });
-    const { store } = await runSingleSessionStuckRequeue(task);
 
-    expect(store.updateStep).not.toHaveBeenCalled();
-    expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending"]);
+    expect(reconciliationStepResets(store)).toEqual([]);
+    expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true });
   });
 
-  it("preserves the concurrent-recovery guard without removing worktree or moving to todo", async () => {
-    const task = createTask({ column: "in-review" });
-    const store = createMutableStore(task);
-    let releasePrompt!: () => void;
-    const promptRelease = new Promise<void>((resolve) => {
-      releasePrompt = resolve;
+  /*
+  FNXC:EngineTests 2026-07-19-16:05 (U10b):
+  The guard is the reason this file exists: if a concurrent recovery has already carried the task
+  past in-progress/todo, the stuck requeue must abandon its cleanup rather than destroy the
+  worktree that recovery now depends on and clobber the card back to todo. The graph moves the card
+  itself during the run, so the concurrent recovery is now staged at kill time via `beforeAbort`
+  instead of by seeding `column` before `execute()`.
+
+  FNXC:EngineTests 2026-07-19-16:05 (U10b):
+  "Never moved to todo" is no longer the guard's contract — the graph, as a separate authority,
+  rebounds its own failed run for execution resume (`{ moveSource: "engine", recoveryRehome: true }`)
+  and that move is not destructive. What the guard must suppress is the stuck-requeue's own
+  bare-`{preserveProgress:true}` move plus the cleanup that goes with it: step resets, worktree
+  removal, and the worktree/branch clear.
+  */
+  it("preserves the concurrent-recovery guard without removing worktree or clearing the checkout", async () => {
+    const task = createTask();
+    const { store } = await runSingleSessionStuckRequeue(task, {}, (live) => {
+      live.column = "in-review";
     });
-    const { startedPromise } = installSingleSession(() => promptRelease);
-    const executor = new TaskExecutor(store as any, "/tmp/test", {});
 
-    const executePromise = executor.execute({ ...task, column: "in-progress" });
-    await startedPromise;
-    executor.markStuckAborted(task.id, true);
-    releasePrompt();
-    await executePromise;
-
-    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(reconciliationStepResets(store)).toEqual([]);
     expect(mockedRemoveWorktree).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({
+      worktree: null,
+      branch: null,
+    }));
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true });
     expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo");
   });
 
@@ -250,7 +309,7 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
 
     expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(task.currentStep).toBe(0);
-    expect(store.updateStep).toHaveBeenCalledTimes(2);
+    expect(reconciliationStepResets(store)).toEqual([[task.id, 0, "pending"]]);
     expect(mockedRemoveWorktree).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true });
   });

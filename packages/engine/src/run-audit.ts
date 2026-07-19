@@ -557,6 +557,18 @@ export type DatabaseMutationType =
   | "task:reconcile-stale-agent-assignment"
   /** Metadata: { taskId, canonicalId, canonicalColumn, canonicalDeleted, priorPausedReason } */
   | "task:reconcile-stale-duplicate-decision"
+  /*
+  FNXC:LegacyAdoption 2026-07-19-04:30 (U9b / R10 / KTD-8):
+  Startup legacy-row adoption through the KTD-8 adoption table. Metadata is
+  ids/counts/outcomes-only: { taskId, action, priorStatus, column, backfilledStepCount,
+  reason }, where `reason` is a fixed adoption-table note — never row prose.
+  */
+  | "task:reconcile-legacy-adoption"
+  /**
+   * An UNMAPPABLE legacy status: the row is parked `paused` for a human with its status
+   * deliberately left in place so the operator can see what it carried. Same metadata shape.
+   */
+  | "task:reconcile-legacy-adoption-unmappable"
   /**
    * FNXC:MergeQueue 2026-07-15-10:05:
    * Wedged single-flight merge reclaim. Metadata ids/outcomes-only:

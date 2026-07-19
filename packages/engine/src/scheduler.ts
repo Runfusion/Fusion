@@ -42,7 +42,8 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrForTask } from "@fusion/core";
+import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags } from "@fusion/core";
+import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./task-agent-sync.js";
@@ -2265,9 +2266,61 @@ export class Scheduler {
     try {
       const maxWorktrees = settings.maxWorktrees ?? this.options.maxWorktrees ?? 4;
       const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
-      let reservedWorktreeSlots = tasks.filter((task) => task.column === "in-progress").length;
+      /*
+      FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):
+      Count active WIP reservations by the `wip` trait, not the literal
+      "in-progress" column, so a renamed or multi-`wip` workflow reserves against
+      the right pool. For the default workflow (in-progress is the sole wip column)
+      this is byte-identical to the prior literal count. IRs are resolved once per
+      workflow via the cache; a resolution failure falls back to the legacy literal
+      so the sweep never crashes on a bad IR.
+
+      FNXC:WorkflowScheduling 2026-07-19-12:40 (PR #2335 review):
+      Batched to avoid N sequential DB round-trips per sweep: the per-task
+      selection lookups run concurrently, each DISTINCT workflow's IR is resolved
+      once (wip column-flag map per workflow), and the WIP count itself is a
+      synchronous filter — mirroring the U6 trait→columnIds expansion pattern in
+      workflow-lifecycle-traits. Byte-compat is preserved: a missing/failed
+      selection maps to `builtin:coding` (same IR resolveWorkflowIrForTask would
+      use), and a column absent from the resolved IR (or a failed/non-v2 IR)
+      falls back to the legacy literal "in-progress" check per task.
+      */
+      const wipIrCache = new Map<string, WorkflowIr>();
+      const workflowIdByTaskId = new Map<string, string>();
+      await Promise.all(tasks.map(async (task) => {
+        try {
+          const selection = await this.store.getTaskWorkflowSelectionAsync(task.id);
+          workflowIdByTaskId.set(task.id, selection?.workflowId ?? "builtin:coding");
+        } catch {
+          // Same degradation as resolveWorkflowIrForTask: selection failure → default coding workflow.
+          workflowIdByTaskId.set(task.id, "builtin:coding");
+        }
+      }));
+      // Per distinct workflow: columnId → countsTowardWip flag; null when the IR
+      // failed to resolve or has no v2 columns (forces the literal fallback).
+      const wipFlagsByWorkflowId = new Map<string, Map<string, boolean> | null>();
+      for (const workflowId of new Set(workflowIdByTaskId.values())) {
+        try {
+          const ir = await resolveWorkflowIrById(this.store, workflowId, wipIrCache);
+          const columns = (ir as WorkflowIrV2).columns;
+          wipFlagsByWorkflowId.set(
+            workflowId,
+            columns ? new Map(columns.map((c) => [c.id, resolveColumnFlags(c).countsTowardWip === true])) : null,
+          );
+        } catch {
+          wipFlagsByWorkflowId.set(workflowId, null);
+        }
+      }
+      const isWipColumnTask = (task: Task): boolean => {
+        const flags = wipFlagsByWorkflowId.get(workflowIdByTaskId.get(task.id) ?? "builtin:coding");
+        const wip = flags?.get(task.column);
+        if (wip !== undefined) return wip;
+        return task.column === "in-progress";
+      };
+      const wipTaskIds = tasks.filter(isWipColumnTask).map((task) => task.id);
+      let reservedWorktreeSlots = wipTaskIds.length;
       let reservedConcurrentSlots = reservedWorktreeSlots;
-      const inProgressTaskIds = tasks.filter((task) => task.column === "in-progress").map((task) => task.id);
+      const inProgressTaskIds = wipTaskIds;
       const dispatchPrepByTaskId = new Map<string, {
         baseBranch: string | null;
         dispatchStormCount: number;

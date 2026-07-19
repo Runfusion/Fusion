@@ -1245,18 +1245,37 @@ done
 ### Execution detail
 - **Planning phase**: the planning processor generates an executable plan
 - **Execution phase**: `TaskExecutor` performs implementation, tool calls, tests/build commands
-- **Review phase**: optional `reviewStep()` workflow depending on prompt review level (bypassed in fast mode)
+- **Review phase**: pre-merge review gates run as workflow-graph nodes — the graph's node handlers invoke `reviewStep()` (`reviewer.ts`) and record outcomes into `task.workflowStepResults`. Review level is a creation-time preset that writes the task's enabled workflow steps at create; the runtime does not re-read it, and the legacy in-session `fn_review_step` tool is deleted.
 - **Merge phase**: `aiMergeTask()` handles merge strategy and post-merge workflow steps
 
-> **Fast Mode:** Tasks with `executionMode: "fast"` bypass the `review_step` tool injection and pre-merge workflow steps. Completion blockers (tests, build, typecheck from PROMPT.md) and post-merge workflow steps remain enforced.
+> **Fast Mode:** Tasks with `executionMode: "fast"` skip optional pre-merge workflow-graph gates unless explicitly selected. Completion blockers (tests, build, typecheck from PROMPT.md) and post-merge workflow steps remain enforced.
 
 ### Step status model
 Task steps use statuses: `pending`, `in-progress`, `done`, `skipped`.
 
 ### Workflow steps
 - Defined in project config as `WorkflowStep`
-- **Pre-merge** steps run in executor (`runWorkflowSteps()`) — bypassed in fast mode
+- **Pre-merge** steps run as workflow-graph nodes — bypassed in fast mode unless explicitly selected. The executor's `runWorkflowSteps()` loop is deleted; the graph is the only pre-merge gate runner, and it records outcomes into `task.workflowStepResults`.
 - **Post-merge** steps run in merger (`runPostMergeWorkflowSteps()`)
+
+#### Graph ownership is unconditional (U10b)
+
+There is no legacy execute path. `executeWorkflowGraph()` (formerly `maybeExecuteWorkflowGraph`,
+which returned "did the graph claim this task") returns `void`: every `execute()` is graph-owned,
+`runImplementation()` requires a `graphCompletion` callback, and a TaskStore that cannot resolve a
+workflow selection fails closed loudly rather than falling through to an executor with no gates.
+
+#### `needs-replan` is a graph-owned signal, not legacy residue
+
+`task.status === "needs-replan"` is written by the graph's own `plan-replan` seam (the
+`plan-review --failure--> plan-replan` edge → `requestPreMergeOptionalStepFix`) and by the
+stale-spec / filesystem-validation guards that feed the same loop. It is consumed by triage (todo
+rediscovery, and the surgical-revision seed that edits a rejected `PROMPT.md` instead of rewriting
+it), by hold-release (blocks re-dispatch of a plan the reviewer just rejected), and by
+`task-merge` (auto-merge block). The adoption census in `legacy-adoption.test.ts` deliberately
+requires the literal to still be written in `executor.ts` — it guards the graph's writer. Migrating
+those readers to a purpose-built workflow run-state signal is a deferred post-cutover follow-up
+(a naming/purity change), not un-migrated legacy machinery.
 
 ### Task pause ownership
 - Only explicit user actions pause ordinary tasks: the dashboard/CLI task pause controls and manual `in-progress → todo` moves. System safety pauses remain reserved for explicit approval waits and bounded guardrails such as token-budget, worktrunk-failure, and dispatch-oscillation protection.
@@ -1305,7 +1324,7 @@ Tune sensitivity by adjusting the exported constants in `stalled-review-detector
 
 ### Step inversion: steps as workflow-modelable nodes (`experimentalFeatures.workflowGraphExecutor`)
 
-The columns/traits track moved *board* policy (transitions, capacity, hold, merge orchestration) onto the substrate/policy line. The **step-inversion** track extends the same inversion to *task steps* and to the *task shape itself*, riding the existing `workflowGraphExecutor` flag (orthogonal to `workflowColumns`). With the flag off — and for the default coding workflow always — step policy stays exactly as it is today (the monolithic `execute` seam, PROMPT.md `### Step N:` parsing, in-session `fn_review_step` verdicts, RETHINK git-reset/session-rewind). The default workflow is the byte-identical parity oracle; inversion is opt-in via custom workflows and a built-in stepwise coding workflow.
+The columns/traits track moved *board* policy (transitions, capacity, hold, merge orchestration) onto the substrate/policy line. The **step-inversion** track extends the same inversion to *task steps* and to the *task shape itself*, riding the existing `workflowGraphExecutor` flag (orthogonal to `workflowColumns`). With the flag off — and for the default coding workflow always — step policy stays exactly as it is today (the monolithic `execute` seam, PROMPT.md `### Step N:` parsing, graph-owned review-node verdicts). The default workflow is the byte-identical parity oracle; inversion is opt-in via custom workflows and a built-in stepwise coding workflow.
 
 **One new substrate seam pair.** The substrate gains exactly one new capability, expressed as two methods: `runTaskStep(task, stepIndex)` (run exactly one step inside the task's session and observe its `complete Step N` commit) and `resetStepToBaseline(task, stepIndex, baselineSha, checkpointId?)` (the RETHINK mechanics — git reset + session rewind + `updateStep(...,"pending")`). Both delegate to existing code (extracted from `StepSessionExecutor` and the legacy RETHINK block); neither reimplements step physics or authors commits. The substrate owns *how* a step runs and resets; the graph owns *when*. Baseline/checkpoint state, previously fragile in-memory Maps lost on restart, moves into persisted instance run-state (`workflow_run_step_instances`, schema v108).
 

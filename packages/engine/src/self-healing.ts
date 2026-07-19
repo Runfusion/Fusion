@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -595,19 +595,34 @@ export async function autoRecoverWorktreeSessionStartFailure(
   const attemptLabel = resetRetryBudget
     ? `retry budget reset from ${task.worktreeSessionRetryCount ?? 0}/${MAX_WORKTREE_SESSION_RETRIES}`
     : `attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}`;
+  /*
+  FNXC:WorkflowLifecycleTraits 2026-07-19-06:30 (U6 / KTD-10):
+  Requeue the recovered card to the workflow's TRAIT-derived backlog column (hold →
+  intake → first), not the literal "todo". builtin:coding resolves to `todo` (its
+  hold column) so the log + move stay byte-identical; a custom workflow that renamed
+  or omitted `todo` lands its recovered card in a valid backlog column instead of
+  stranding it. One IR resolution per recovered task (a rare failure path, not a
+  sweep loop) so this stays within the no-per-task-resolution-in-enumeration rule.
+  */
+  let reboundColumn = "todo";
+  try {
+    reboundColumn = resolveReboundTarget(await resolveWorkflowIrForTask(store, task.id)) ?? "todo";
+  } catch {
+    // Keep the legacy literal on any IR-resolution failure.
+  }
   await store.logEntry(
     task.id,
     noProgress
-      ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (${attemptLabel}, failure: ${failureExcerpt})`
+      ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
       : hasMismatchedLiveWorktree && !forceClearWorktreeMetadata
-        ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to todo (${attemptLabel}, failure: ${failureExcerpt})`
-        : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (${attemptLabel}, failure: ${failureExcerpt})`,
+        ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
+        : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
   );
   if (noProgress) {
     // #1411: backward recovery move — recoveryRehome skips order-derived adjacency.
-    await store.moveTask(task.id, "todo", { moveSource: "engine", recoveryRehome: true });
+    await store.moveTask(task.id, reboundColumn, { moveSource: "engine", recoveryRehome: true });
   } else {
-    await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+    await store.moveTask(task.id, reboundColumn, { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
   }
   return { outcome: "requeue-todo", retries: nextCount, classification };
 }
@@ -1351,6 +1366,12 @@ export class SelfHealingManager {
 
     // Each recovery step is isolated — one failure doesn't prevent subsequent steps.
     const steps: Array<{ name: string; fn: () => Promise<unknown> }> = [
+      // FNXC:LegacyAdoption 2026-07-19-04:20 (U9b / KTD-8): adoption runs FIRST. Every step
+      // below reasons about `task.status` and column, so a pre-cutover row must be adopted
+      // into the post-cutover vocabulary before any of them classify it — otherwise a
+      // legacy `planning`/`needs-replan` row is judged by recovery rules that no longer
+      // have a writer for that status.
+      { name: "adopt-legacy-task-rows", fn: () => this.adoptLegacyTaskRows().then(() => undefined) },
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
@@ -6395,6 +6416,91 @@ export class SelfHealingManager {
       return cleared;
     } catch (error) {
       log.error(`reconcileStaleDuplicateDecisionPause failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /*
+  FNXC:LegacyAdoption 2026-07-19-04:20 (U9b / R10 / KTD-8):
+  Startup adoption sweep — the live CONSUMER of the KTD-8 adoption table. U9 landed the
+  table and the census that keeps it complete, but nothing ever called it, so no
+  pre-cutover row was actually adopted: `planning` / `needs-replan` /
+  `plan-review-unavailable` rows kept a legacy status whose writers U3 deleted, and the
+  graph had no owning node to re-enter. That is the "frozen row" this exists to prevent.
+
+  Runs at STARTUP (not steady state): adoption is a once-per-upgrade concern, and
+  `legacyAdoptedAt` makes it idempotent so a restart loop cannot re-clear a status a human
+  re-set or re-park a row an operator un-parked. `planLegacyAdoption` is shared with the
+  store-open reconcile so the two cannot drift.
+
+  User pauses are never disturbed — an operator park outranks adoption.
+
+  FNXC:LegacyAdoption 2026-07-19-09:00 (PR #2335 review):
+  Paginates until the active census is drained instead of scanning only the newest 500
+  rows. `listTasks` orders by (created_at, id), so a capped single fetch would re-read the
+  same newest page on every restart and leave older legacy rows frozen forever — the exact
+  R10 failure this sweep exists to prevent. Offset pagination is stable: adoption patches
+  never change created_at and adopted rows stay in the active list. Each page stays bounded
+  (500) so startup never materializes the whole table at once; `legacyAdoptedAt` keeps the
+  drained sweep idempotent across restarts.
+  */
+  async adoptLegacyTaskRows(): Promise<number> {
+    try {
+      const now = new Date().toISOString();
+      const pageSize = 500;
+      let offset = 0;
+      let adopted = 0;
+
+      for (;;) {
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        for (const task of tasks) {
+          // An operator park is authoritative; adoption must not reach through it.
+          if (task.userPaused === true) continue;
+
+          const plan = planLegacyAdoption(
+            {
+              status: task.status,
+              reviewLevel: task.reviewLevel,
+              enabledWorkflowSteps: task.enabledWorkflowSteps,
+              legacyAdoptedAt: task.legacyAdoptedAt,
+            },
+            now,
+          );
+          if (plan.action === "skip" || !plan.patch) continue;
+
+          try {
+            await this.store.updateTask(task.id, plan.patch);
+            await createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("reconcile-legacy-adoption", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reconcile-legacy-adoption",
+            }).database({
+              type: plan.auditType ?? "task:reconcile-legacy-adoption",
+              target: task.id,
+              // ids/counts/outcomes only — `reason` is a fixed adoption-table note, never row prose.
+              metadata: {
+                taskId: task.id,
+                action: plan.action,
+                priorStatus: task.status ?? null,
+                column: task.column,
+                backfilledStepCount: plan.patch.enabledWorkflowSteps?.length ?? 0,
+                reason: plan.reason,
+              },
+            });
+            adopted += 1;
+          } catch (error) {
+            log.warn(`adoptLegacyTaskRows: failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if (tasks.length < pageSize) break;
+        offset += tasks.length;
+      }
+      if (adopted > 0) log.log(`Legacy adoption sweep adopted ${adopted} pre-cutover row(s)`);
+      return adopted;
+    } catch (error) {
+      log.error(`adoptLegacyTaskRows failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
   }

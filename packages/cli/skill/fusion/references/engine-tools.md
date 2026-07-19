@@ -79,7 +79,6 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 | `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 0-indexed; matches `### Step N:` in PROMPT.md, Step 0 = Preflight), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
 | `fn_task_add_dep` | Add a dependency to current task (confirmation-gated) | `task_id` (string), `confirm?` (boolean) |
 | `fn_task_done` | End the task: `outcome="completed"` (default) marks it complete; `outcome="blocked"` honestly parks it failed (`BLOCKED: <reason>`) with no completion claim, preserving steps/worktree and recording `blockedBy` as dependencies | `summary?` (string), `outcome?` (`completed` \| `blocked`), `blockedBy?` (string[]), `reason?` (string, required when blocked) |
-| `fn_review_step` | Spawn step plan/code reviewer | `step` (number, 0-indexed; matches `### Step N:` in PROMPT.md), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |
 | `fn_spawn_agent` | Spawn child agent in separate worktree | `name` (string), `role` (enum), `task` (string) |
 | `fn_acquire_repo_worktree` | Acquire an isolated git worktree for a sub-repo in a workspace task (workspace mode only) | `repo` (string — must be one of the workspace's configured repos) |
 

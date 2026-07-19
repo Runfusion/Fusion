@@ -80,46 +80,6 @@ describe("executor tool step numbering is 0-based", () => {
     return { tools, store, stepStates };
   }
 
-  it("maps fn_task_update and fn_review_step step directly to task.steps index", async () => {
-    mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" } as any);
-    const { tools, store, stepStates } = await captureTools();
-
-    const preflightDone = await tools.fn_task_update("update-0", { step: 0, status: "done" });
-    expect(preflightDone.content[0].text).toContain("Step 0 (Preflight) → done");
-    expect(store.updateStep).toHaveBeenCalledWith("FN-6607-T", 0, "done");
-    expect(stepStates[0].status).toBe("done");
-
-    const firstStarted = await tools.fn_task_update("update-1", { step: 1, status: "in-progress" });
-    expect(firstStarted.content[0].text).toContain("Step 1 (First) → in-progress");
-    expect(store.updateStep).toHaveBeenCalledWith("FN-6607-T", 1, "in-progress");
-    expect(stepStates[1].status).toBe("in-progress");
-
-    const review = await tools.fn_review_step("review-1", {
-      step: 1,
-      type: "code",
-      step_name: "First",
-      baseline: "abc123",
-    });
-    expect(review.content[0].text).toBe("APPROVE");
-    expect(mockedReviewStep).toHaveBeenCalledWith(
-      expect.any(String),
-      "FN-6607-T",
-      1,
-      "First",
-      "code",
-      expect.any(String),
-      "abc123",
-      expect.any(Object),
-    );
-    expect(store.logEntry).toHaveBeenCalledWith("FN-6607-T", "code review Step 1: APPROVE", "ok");
-    expect(store.updateStep).toHaveBeenCalledWith("FN-6607-T", 1, "done");
-
-    const invalidNegative = await tools.fn_task_update("bad-update-negative", { step: -1, status: "done" });
-    expect(invalidNegative.content[0].text).toContain("0-indexed");
-    const invalidReview = await tools.fn_review_step("bad-review", { step: 3, type: "code", step_name: "Missing", baseline: "abc" });
-    expect(invalidReview.details.error).toBe("invalid_step");
-  });
-
   it("resume recovery reads the same 0-based review log written by fn_review_step", async () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue({
@@ -251,17 +211,42 @@ describe("executor tool step numbering is 0-based", () => {
       column: "in-progress",
       dependencies: [],
       taskDoneRetryCount: 2,
+      /*
+      FNXC:EngineTests 2026-07-19-16:50 (U10b):
+      The invariant under test lives in the IMPLEMENTATION session's no-fn_task_done retry loop:
+      a step blocked on a pending review must skip the retry and park in review. Declaring no
+      pre-merge gates keeps the graph's optional review nodes out of the fixture so the pending
+      review being detected is the one this test seeded in `log`.
+      */
+      enabledWorkflowSteps: [],
+      /*
+      FNXC:EngineTests 2026-07-19-17:05 (U10b):
+      The pending review is seeded against the step the graph is actually executing — its first
+      step — because the graph re-parses PROMPT.md into the step list on entry and starts at the
+      first non-terminal step. "Step 0" remains the discriminator this test exists for: only a
+      0-based writer ever emits it, so a 1-based regression breaks the match.
+      */
       steps: [
-        { name: "Preflight", status: "done" },
-        { name: "First", status: "in-progress" },
+        { name: "Preflight", status: "in-progress" },
+        { name: "First", status: "pending" },
       ],
-      currentStep: 1,
-      log: [{ timestamp: new Date().toISOString(), action: "code review requested for Step 1 (First)" }],
+      currentStep: 0,
+      log: [{ timestamp: new Date().toISOString(), action: "code review requested for Step 0 (Preflight)" }],
       prompt: "# test\n## Steps\n### Step 0: Preflight\n### Step 1: First",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } as any;
     store.getTask.mockResolvedValue(task);
+    /*
+    FNXC:EngineTests 2026-07-19-16:55 (U10b):
+    PROMPT.md is the step source of record: the graph parses it into the task's step list before
+    the implementation session, so the artifact must describe the SAME two steps the fixture
+    seeded. With the harness's default single-step artifact the parse collapses the list to one
+    step and the pending-review step this test is about ceases to exist.
+    */
+    store.getTaskDocument.mockImplementation(async (_taskId: string, key: string) =>
+      key === "PROMPT.md" ? { content: task.prompt } : undefined,
+    );
     mockedCreateFnAgent.mockResolvedValue({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
@@ -278,7 +263,7 @@ describe("executor tool step numbering is 0-based", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-6607-P",
-      expect.stringContaining("Step 1 is blocked on pending review"),
+      expect.stringContaining("Step 0 is blocked on pending review"),
       undefined,
       expect.objectContaining({ agentId: "executor" }),
     );
