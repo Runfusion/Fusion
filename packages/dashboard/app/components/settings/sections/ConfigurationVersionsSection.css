@@ -1,0 +1,56 @@
+/*
+FNXC:SettingsNavigation 2026-07-18-12:30:
+FN-8350 gives configuration history Settings-owned layout rather than retaining
+Command Center card selectors after the dashboard affordance is removed.
+*/
+.configuration-versions-section {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.configuration-versions-section__list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.configuration-versions-section__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-block: var(--space-sm);
+  border-block-end: 1px solid var(--border-subtle);
+}
+
+.configuration-versions-section__item span {
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+}
+
+.configuration-versions-section__item strong {
+  color: var(--text);
+}
+
+.configuration-versions-section__item small {
+  color: var(--text-muted);
+}
+
+.configuration-versions-section__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .configuration-versions-section__item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .configuration-versions-section__item .btn {
+    inline-size: 100%;
+    justify-content: center;
+  }
+}

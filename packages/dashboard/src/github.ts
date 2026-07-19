@@ -748,6 +748,113 @@ export class GitHubClient {
     this.forceMode = tokenOrOptions?.forceMode;
   }
 
+  /**
+   * FNXC:ReportPipeline 2026-07-18-16:30:
+   * An explicitly reviewed report screenshot may be hosted only in the selected
+   * GitHub repository through this client's existing authenticated transport.
+   * A failed or unsupported upload returns undefined so filing remains scrubbed,
+   * text-only; raw data URLs must never leave the report pipeline.
+   */
+  async uploadReportImage(owner: string, repo: string, screenshot: { dataUrl: string; capturedAt: string }): Promise<string | undefined> {
+    const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(screenshot.dataUrl);
+    if (!match) return undefined;
+
+    const extension = match[1] === "jpeg" ? "jpg" : "png";
+    const path = `.fusion/report-screenshots/${crypto.randomUUID()}.${extension}`;
+    const endpoint = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
+    const body = {
+      message: "chore: add user-reviewed Fusion report screenshot",
+      content: match[2],
+    };
+
+    try {
+      if (this.forceMode === "gh-cli") {
+        this.requireGh();
+        return this.uploadReportImageWithGh(endpoint, body);
+      }
+      if (this.forceMode === "token") {
+        this.requireToken();
+        return this.uploadReportImageWithApi(endpoint, body);
+      }
+      if (this.hasGhAuth()) {
+        try {
+          return await this.uploadReportImageWithGh(endpoint, body);
+        } catch {
+          if (!this.token) return undefined;
+        }
+      }
+      return this.token ? await this.uploadReportImageWithApi(endpoint, body) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * FNXC:ReportPipeline 2026-07-18-19:30: Screenshot attachment is a two-step
+   * GitHub operation. Compensate if the post-upload report comment fails so a
+   * sensitive, user-reviewed image is not orphaned outside the report thread.
+   */
+  async deleteReportImage(owner: string, repo: string, url: string): Promise<void> {
+    const prefix = `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/main/`;
+    if (!url.startsWith(prefix)) return;
+    const path = url.slice(prefix.length);
+    if (!path.startsWith(".fusion/report-screenshots/") || path.includes("..")) return;
+    const endpoint = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
+    try {
+      if (this.forceMode === "gh-cli") {
+        this.requireGh();
+        await this.deleteReportImageWithGh(endpoint);
+      } else if (this.forceMode === "token") {
+        this.requireToken();
+        await this.deleteReportImageWithApi(endpoint);
+      } else if (this.hasGhAuth()) {
+        try {
+          await this.deleteReportImageWithGh(endpoint);
+        } catch {
+          if (this.token) await this.deleteReportImageWithApi(endpoint);
+        }
+      } else if (this.token) {
+        await this.deleteReportImageWithApi(endpoint);
+      }
+    } catch {
+      // Best-effort compensation: never let cleanup mask successful text filing.
+    }
+  }
+
+  private async uploadReportImageWithGh(endpoint: string, body: { message: string; content: string }): Promise<string | undefined> {
+    const result = await runGhJsonAsync<{ content?: { download_url?: string | null } }>([
+      "api", "--method", "PUT", endpoint,
+      "-f", `message=${body.message}`,
+      "-f", `content=${body.content}`,
+    ]);
+    return result.content?.download_url ?? undefined;
+  }
+
+  private async uploadReportImageWithApi(endpoint: string, body: { message: string; content: string }): Promise<string | undefined> {
+    const result = await this.fetchThrottled<{ content?: { download_url?: string | null } }>(`${this.baseUrl}/${endpoint}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return result.success ? result.data?.content?.download_url ?? undefined : undefined;
+  }
+
+  private async deleteReportImageWithGh(endpoint: string): Promise<void> {
+    const existing = await runGhJsonAsync<{ sha?: string }>(["api", endpoint]);
+    if (!existing.sha) return;
+    await runGhJsonAsync(["api", "--method", "DELETE", endpoint, "-f", "message=chore: remove unattached Fusion report screenshot", "-f", `sha=${existing.sha}`]);
+  }
+
+  private async deleteReportImageWithApi(endpoint: string): Promise<void> {
+    const existing = await this.fetchThrottled<{ sha?: string }>(`${this.baseUrl}/${endpoint}`);
+    if (!existing.success || !existing.data?.sha) return;
+    await this.fetchThrottled(`${this.baseUrl}/${endpoint}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "chore: remove unattached Fusion report screenshot", sha: existing.data.sha }),
+    });
+  }
+
   private hasGhAuth(): boolean {
     return isGhAvailable() && isGhAuthenticated();
   }

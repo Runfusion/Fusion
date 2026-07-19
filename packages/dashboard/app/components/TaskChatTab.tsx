@@ -627,6 +627,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const sendingRef = useRef(false);
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
+  const isTranscriptAtBottomRef = useRef(true);
   const thinkingDefaultOpen = task.column === "in-progress" || task.column === "in-review";
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef(0);
@@ -704,6 +705,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     anchorFrameRef.current = null;
   }, []);
 
+  const setTranscriptFollowing = useCallback((following: boolean) => {
+    isTranscriptAtBottomRef.current = following;
+    setIsTranscriptAtBottom(following);
+  }, []);
+
   const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
     cancelAnchorTranscriptFrame();
     if (!container.isConnected) return;
@@ -715,11 +721,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
 
     const writeBottom = () => {
       anchorFrameRef.current = null;
-      if (!container.isConnected) return;
+      if (!container.isConnected || !isTranscriptAtBottomRef.current) return;
 
       container.scrollTop = container.scrollHeight;
       previousScrollHeightRef.current = container.scrollHeight;
-      setIsTranscriptAtBottom(true);
+      setTranscriptFollowing(true);
       if (container.scrollHeight === lastScrollHeight) {
         stableFrames += 1;
       } else {
@@ -736,7 +742,31 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     };
 
     writeBottom();
-  }, [cancelAnchorTranscriptFrame]);
+  }, [cancelAnchorTranscriptFrame, setTranscriptFollowing]);
+
+  useEffect(() => {
+    if (!active) return;
+    const container = transcriptRef.current;
+    if (!container) return;
+
+    /*
+    FNXC:TaskDetailChat 2026-07-18-14:09:
+    FN-8339 requires live task output to follow its tail only while the reader remains pinned. Streamed text can grow an existing DOM block without changing the entry count, so observe both layout and DOM growth; the ref is updated synchronously by real scroll events and prevents an in-flight observer or settle frame from yanking a reader back down. TaskPlannerChatTab, WorkflowResultsTab, DevServerLogViewer, and SystemControlsArea have separate transcript ownership and their matching force-follow behavior is deferred to FN-8346 rather than silently changing those surfaces here.
+    */
+    const followTail = () => {
+      if (!isTranscriptAtBottomRef.current) return;
+      container.scrollTop = container.scrollHeight;
+      previousScrollHeightRef.current = container.scrollHeight;
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followTail);
+    resizeObserver?.observe(container);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(followTail);
+    mutationObserver?.observe(container, { childList: true, characterData: true, subtree: true });
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, [active]);
 
   useLayoutEffect(() => () => {
     cancelAnchorTranscriptFrame();
@@ -752,6 +782,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     const receivedInitialItems = previousEntryCountRef.current === 0;
     if (!becameActive && !receivedInitialItems) return;
 
+    setTranscriptFollowing(true);
     anchorTranscriptToBottom(container);
     previousEntryCountRef.current = transcriptItemCount;
     previousScrollHeightRef.current = container.scrollHeight;
@@ -759,7 +790,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     return () => {
       cancelAnchorTranscriptFrame();
     };
-  }, [active, anchorTranscriptToBottom, cancelAnchorTranscriptFrame, transcriptItemCount]);
+  }, [active, anchorTranscriptToBottom, cancelAnchorTranscriptFrame, setTranscriptFollowing, transcriptItemCount]);
 
   useLayoutEffect(() => {
     const container = transcriptRef.current;
@@ -803,28 +834,26 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
       const heightDelta = container.scrollHeight - previousHeight;
       container.scrollTop = previousTop + Math.max(0, heightDelta);
       pendingPrependScrollHeightRef.current = null;
-      setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+      setTranscriptFollowing(isTranscriptNearBottom(container));
     } else if (transcriptItemCount > previousCount) {
-      const shouldFollow = previousCount === 0 || previousScrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
+      const shouldFollow = previousCount === 0 || isTranscriptAtBottomRef.current;
       if (shouldFollow) {
         container.scrollTop = container.scrollHeight;
-        setIsTranscriptAtBottom(true);
+        setTranscriptFollowing(true);
       } else {
-        setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+        setTranscriptFollowing(isTranscriptNearBottom(container));
       }
       if (pendingPrependScrollHeightRef.current !== null) {
         pendingPrependScrollHeightRef.current = container.scrollHeight;
         pendingPrependScrollTopRef.current = container.scrollTop;
       }
-    } else {
-      setIsTranscriptAtBottom(isTranscriptNearBottom(container));
     }
 
     previousEntryCountRef.current = transcriptItemCount;
     previousScrollHeightRef.current = container.scrollHeight;
     previousFirstEntryKeyRef.current = firstEntryKey;
     previousAgentEntryCountRef.current = entries.length;
-  }, [active, entries.length, firstEntryKey, transcriptItemCount]);
+  }, [active, entries.length, firstEntryKey, setTranscriptFollowing, transcriptItemCount]);
 
   const loadPreviousMessages = useCallback(async () => {
     const container = transcriptRef.current;
@@ -843,19 +872,19 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     const container = transcriptRef.current;
     if (!container) return;
     previousScrollHeightRef.current = container.scrollHeight;
-    setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+    setTranscriptFollowing(isTranscriptNearBottom(container));
     if (container.scrollTop <= TOP_LOAD_THRESHOLD) {
       void loadPreviousMessages();
     }
-  }, [loadPreviousMessages]);
+  }, [loadPreviousMessages, setTranscriptFollowing]);
 
   const scrollTranscriptToBottom = useCallback(() => {
     const container = transcriptRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
     previousScrollHeightRef.current = container.scrollHeight;
-    setIsTranscriptAtBottom(true);
-  }, []);
+    setTranscriptFollowing(true);
+  }, [setTranscriptFollowing]);
 
   const handleSubmit = useCallback(async (event?: React.FormEvent) => {
     event?.preventDefault();

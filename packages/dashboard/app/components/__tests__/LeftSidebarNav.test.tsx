@@ -111,6 +111,7 @@ function renderSidebar(overrides: Partial<ComponentProps<typeof LeftSidebarNav>>
       devServerView: true,
       researchView: true,
       evalsView: true,
+      ideationView: true,
       goalsView: true,
     },
     pluginDashboardViews: pluginViews,
@@ -224,6 +225,7 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-workflows",
       "sidebar-nav-insights",
       "sidebar-nav-research",
+      "sidebar-nav-ideation",
       "sidebar-nav-skills",
       "sidebar-nav-memory",
       "sidebar-nav-evals",
@@ -287,6 +289,7 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-workflows",
       "sidebar-nav-insights",
       "sidebar-nav-research",
+      "sidebar-nav-ideation",
       "sidebar-nav-evals",
     ];
     const orderedIndices = orderedTestIds.map((testId) => primaryButtons.indexOf(screen.getByTestId(testId)));
@@ -352,6 +355,7 @@ describe("LeftSidebarNav", () => {
     expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-agents")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-research")).toBeNull();
+    expect(screen.queryByTestId("sidebar-nav-ideation")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-insights")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-skills")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-memory")).toBeNull();
@@ -458,6 +462,7 @@ describe("LeftSidebarNav", () => {
   it.each<[TaskView, string]>([
     ["board", "sidebar-nav-board"],
     ["research", "sidebar-nav-research"],
+    ["ideation", "sidebar-nav-ideation"],
     ["planning", "sidebar-nav-planning"],
     ["plugin:fusion-plugin-primary:primary-view", "sidebar-nav-plugin-fusion-plugin-primary-primary-view"],
     ["plugin:fusion-plugin-overflow:overflow-view", "sidebar-nav-plugin-fusion-plugin-overflow-overflow-view"],

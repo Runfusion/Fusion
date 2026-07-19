@@ -44,6 +44,7 @@ export function scrubReportText(text: string | undefined, context: ReportScrubCo
   // Home-directory usernames and absolute paths are identifying even when the
   // caller cannot provide a fully resolved local root directory.
   return scrubbed
+    .replace(/data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+/gi, "[REDACTED_BINARY]")
     .replace(/(?:~|\/Users|\/home)\/[A-Za-z0-9._-]+(?:\/[\w .@+=,~:/-]*)?/g, "[REDACTED_PATH]")
     .replace(/(?:[A-Za-z]:\\|\\\\[^\\/]+\\[^\\/]+|\/(?:[\w .@+=,~-]+\/)+[\w .@+=,~-]*)/g, "[REDACTED_PATH]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]")
@@ -52,6 +53,13 @@ export function scrubReportText(text: string | undefined, context: ReportScrubCo
 }
 
 function scrubValue(value: unknown, context: ReportScrubContext): unknown {
+  /*
+  FNXC:ReportPipeline 2026-07-18-14:30:
+  Draft bodies are user-editable and therefore untrusted on the file route.
+  Never make a generic data-URL exception here: only the separately validated
+  typed screenshot upload path may preserve binary pixels. Every report string,
+  including a pasted image URL, remains subject to the mandatory text scrub.
+  */
   if (typeof value === "string") return scrubReportText(value, context);
   if (Array.isArray(value)) return value.map((item) => scrubValue(item, context));
   if (value && typeof value === "object") {

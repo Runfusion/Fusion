@@ -29,6 +29,20 @@ function executedSql(execute: ReturnType<typeof vi.fn>): string {
 }
 
 describe("PostgreSQL plugin schema registry", () => {
+  it("acquires the SQLite migration-state lock before the schema DDL lock", async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+
+    await runLoadedPluginSchemaInitHooks(transactionalDb(execute) as never, [{
+      pluginId: "fusion-plugin-roadmap",
+      hook: vi.fn(),
+    }]);
+
+    const statements = executedSql(execute);
+    expect(statements.indexOf("fusion:sqlite-migration-state")).toBeGreaterThanOrEqual(0);
+    expect(statements.indexOf("fusion:sqlite-migration-state"))
+      .toBeLessThan(statements.indexOf("fusion:schema-applier"));
+  });
+
   /*
   FNXC:PluginPostgresSchema 2026-07-14-18:45:
   Every bundled legacy onSchemaInit declaration requires either a named default
@@ -94,7 +108,7 @@ describe("PostgreSQL plugin schema registry", () => {
       postgresSchema: definition,
     }]);
 
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(5);
   });
 
   it("rejects unscoped or privileged third-party DDL", () => {
@@ -146,8 +160,8 @@ describe("PostgreSQL plugin schema registry", () => {
       },
     }]);
 
-    expect(execute).toHaveBeenCalledTimes(3);
-    const envelope = (execute.mock.calls[2]?.[0] as { queryChunks: Array<{ value: string[] }> })
+    expect(execute).toHaveBeenCalledTimes(4);
+    const envelope = (execute.mock.calls[3]?.[0] as { queryChunks: Array<{ value: string[] }> })
       .queryChunks.flatMap((chunk) => chunk.value).join("");
     expect(envelope).toContain('FORCE ROW LEVEL SECURITY');
     expect(envelope).toContain('project."external_fixture_rows"');
@@ -187,7 +201,7 @@ describe("PostgreSQL plugin schema registry", () => {
     expect(committed).toEqual([]);
   });
 
-  it("serializes concurrent contracts with the schema-applier advisory lock", async () => {
+  it("serializes concurrent contracts with the migration-state then schema advisory locks", async () => {
     const events: string[] = [];
     let release: (() => void) | undefined;
     let held = false;
@@ -208,10 +222,12 @@ describe("PostgreSQL plugin schema registry", () => {
             execute: async (query: unknown) => {
               const text = (query as { queryChunks: Array<{ value: string[] }> }).queryChunks
                 .flatMap((chunk) => chunk.value).join("");
-              if (text.includes("pg_advisory_xact_lock")) {
+              if (text.includes("fusion:sqlite-migration-state")) {
                 await acquire();
                 ownsLock = true;
-                events.push("lock");
+                events.push("migration-lock");
+              } else if (text.includes("fusion:schema-applier")) {
+                events.push("schema-lock");
               } else {
                 const table = text.match(/external_fixture_(one|two)/)?.[1] ?? "unknown";
                 events.push(table);
@@ -235,7 +251,10 @@ describe("PostgreSQL plugin schema registry", () => {
     }]);
 
     await Promise.all([contract("one"), contract("two")]);
-    expect(events).toEqual(["lock", "one", "one", "lock", "two", "two"]);
+    expect(events).toEqual([
+      "migration-lock", "schema-lock", "one", "one",
+      "migration-lock", "schema-lock", "two", "two",
+    ]);
   });
 
   it("repairs Roadmap ownership outside legacy foreign keys and restores composite relationships", async () => {

@@ -21,6 +21,11 @@ type LogSeverityFilter = "all" | LogSeverity;
 
 // eslint-disable-next-line no-control-regex -- ANSI escape stripping is required for readable terminal logs.
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
+const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+
+function isNearBottom(container: HTMLElement): boolean {
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
+}
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_PATTERN, "");
@@ -100,6 +105,7 @@ export function DevServerLogViewer({
   const prevRunningRef = useRef(isRunning);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const isUserScrollingRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<LogSeverityFilter>("all");
 
@@ -122,6 +128,11 @@ export function DevServerLogViewer({
 
   const matchCount = filteredEntries.length;
 
+  const setManualScrollState = useCallback((isManualScrolling: boolean) => {
+    isUserScrollingRef.current = isManualScrolling;
+    setIsUserScrolling(isManualScrolling);
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     const container = containerRef.current;
     if (!container) {
@@ -129,8 +140,8 @@ export function DevServerLogViewer({
     }
 
     container.scrollTop = container.scrollHeight;
-    setIsUserScrolling(false);
-  }, []);
+    setManualScrollState(false);
+  }, [setManualScrollState]);
 
   useEffect(() => {
     const previousRunning = prevRunningRef.current;
@@ -151,10 +162,8 @@ export function DevServerLogViewer({
       return;
     }
 
-    const threshold = 50;
-    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - threshold;
-    setIsUserScrolling(!atBottom);
-  }, []);
+    setManualScrollState(!isNearBottom(container));
+  }, [setManualScrollState]);
 
   useEffect(() => {
     if (loading || entries.length === 0) {
@@ -166,6 +175,28 @@ export function DevServerLogViewer({
       scrollToBottom();
     }
   }, [entries, isRunning, isUserScrolling, loading, scrollToBottom]);
+
+  /*
+  FNXC:DevServer 2026-07-18-16:16:
+  FN-8346 extends FN-8339's pinned-bottom invariant to in-place dev-server
+  transcript growth. MutationObserver watches the growing log content rather
+  than the fixed viewport; its synchronous ref guard preserves a manual
+  scroll-up even when streamed text changes without increasing entry count.
+  */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !isRunning || typeof MutationObserver === "undefined") {
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      if (!isUserScrollingRef.current) {
+        scrollToBottom();
+      }
+    });
+    observer.observe(container, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [isRunning, scrollToBottom]);
 
   if (loading && entries.length === 0) {
     return (

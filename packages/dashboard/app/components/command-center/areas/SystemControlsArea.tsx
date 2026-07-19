@@ -77,6 +77,11 @@ export const BUG_URL_MAX_ENCODED = 8000;
 const BUG_URL_TRUNCATION_MARKER = "\n…(truncated)";
 const BUG_URL_BODY_QUERY_PREFIX = "?body=";
 const GITHUB_NEW_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
+const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+
+function isNearBottom(container: HTMLElement): boolean {
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
+}
 
 function buildBugReportIssueUrl(body: string): string {
   const prefix = `${GITHUB_NEW_ISSUE_URL}${BUG_URL_BODY_QUERY_PREFIX}`;
@@ -127,6 +132,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   const [job, setJob] = useState<SystemRebuildJobSnapshot | null>(null);
   const [jobLines, setJobLines] = useState<SystemRebuildJobLine[]>([]);
   const jobOutputRef = useRef<HTMLPreElement | null>(null);
+  const jobFollowingRef = useRef(true);
   const jobSectionRef = useRef<HTMLDivElement | null>(null);
 
   const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
@@ -135,8 +141,27 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   const [logsOpen, setLogsOpen] = useState(false);
   const [logEntries, setLogEntries] = useState<SystemLogEntryDto[]>([]);
   const logOutputRef = useRef<HTMLDivElement | null>(null);
+  const logFollowingRef = useRef(true);
 
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResponse | null>(null);
+
+  /*
+  FNXC:SystemPanel 2026-07-18-16:12:
+  FN-8346 mirrors FN-8339's pinned-bottom contract for independently streamed
+  System Controls tails. A tail may follow growth only while its reader remains
+  within the bottom threshold; an onScroll geometry check synchronously unsnaps
+  it so SSE updates never override a manual scroll-up. Starting a new stream
+  resets its pin, preserving the initial/latest-output anchor.
+  */
+  const updateJobFollowState = useCallback(() => {
+    const output = jobOutputRef.current;
+    if (output) jobFollowingRef.current = isNearBottom(output);
+  }, []);
+
+  const updateLogFollowState = useCallback(() => {
+    const output = logOutputRef.current;
+    if (output) logFollowingRef.current = isNearBottom(output);
+  }, []);
 
   const loadInfo = useCallback(async () => {
     try {
@@ -149,6 +174,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           // Adopting a different (resumed) job — clear stale lines so the new
           // job's stream doesn't render mixed with the previous job's output.
           setJobLines([]);
+          jobFollowingRef.current = true;
           return next.activeRebuild;
         });
       }
@@ -227,8 +253,10 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   }, [job?.id, job?.status, info?.pid, t, toast]);
 
   useEffect(() => {
-    const el = jobOutputRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const output = jobOutputRef.current;
+    if (output && jobFollowingRef.current) {
+      output.scrollTop = output.scrollHeight;
+    }
   }, [jobLines]);
 
   // ── Restart wait loop: server is back when /system/info answers with a new PID ──
@@ -273,6 +301,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   // a reconnect's replay overwrites rather than appends past the cap boundary.
   useEffect(() => {
     if (!logsOpen || !info?.logsSupported) return;
+    logFollowingRef.current = true;
     setLogEntries([]);
     const unsubscribe = subscribeSse("/api/system/logs/stream", {
       events: {
@@ -294,8 +323,10 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   }, [logsOpen, info?.logsSupported]);
 
   useEffect(() => {
-    const el = logOutputRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const output = logOutputRef.current;
+    if (output && logFollowingRef.current) {
+      output.scrollTop = output.scrollHeight;
+    }
   }, [logEntries]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -331,6 +362,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   }, [job?.id, job?.status]);
 
   const adoptJob = useCallback((snapshot: SystemRebuildJobSnapshot) => {
+    jobFollowingRef.current = true;
     setJobLines([]);
     setJob(snapshot);
   }, []);
@@ -877,7 +909,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
               {jobStatusLabel}
             </span>
           </div>
-          <pre ref={jobOutputRef} className="cc-syscontrols-output" aria-live="polite">
+          <pre ref={jobOutputRef} className="cc-syscontrols-output" aria-live="polite" onScroll={updateJobFollowState}>
             {jobLines.map((line) => `${line.stream === "stderr" ? "! " : ""}${line.text}`).join("\n")}
           </pre>
           {job.status === "failed" && job.error ? (
@@ -910,7 +942,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           </p>
         ) : null}
         {logsOpen && info?.logsSupported ? (
-          <div ref={logOutputRef} className="cc-syscontrols-output cc-syscontrols-logs" aria-live="polite">
+          <div ref={logOutputRef} className="cc-syscontrols-output cc-syscontrols-logs" aria-live="polite" onScroll={updateLogFollowState}>
             {logEntries.map((entry, index) => (
               <div key={`${entry.timestamp}-${index}`} className={`cc-syscontrols-log-line cc-syscontrols-log-line--${entry.level}`}>
                 <span className="cc-syscontrols-log-time">{formatLogTimestamp(entry.timestamp)}</span>

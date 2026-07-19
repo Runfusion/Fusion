@@ -22,32 +22,6 @@ export interface ResolvedMcpServersForRuntime {
 }
 
 /**
- * A content-free executor bootstrap failure. The message deliberately contains
- * only server names and a coarse category; raw secret-store errors can contain
- * credential-bearing configuration details.
- */
-export class McpResolutionBootstrapError extends Error {
-  readonly serverNames: string[];
-  readonly reason = "secret-materialization" as const;
-
-  constructor(errors: McpSecretResolutionError[]) {
-    const serverNames = [...new Set(errors.map((error) => error.serverName))].sort();
-    super(`MCP resolution failed: server=${serverNames.join(",")} reason=secret-materialization`);
-    this.name = "McpResolutionBootstrapError";
-    this.serverNames = serverNames;
-  }
-}
-
-export function assertMcpResolutionSucceeded(
-  result: ResolvedMcpServersForRuntime,
-): ResolvedMcpServerDefinition[] {
-  if (result.errors.length > 0) {
-    throw new McpResolutionBootstrapError(result.errors);
-  }
-  return result.servers;
-}
-
-/**
  * FNXC:McpConfig 2026-06-25-21:43:
  * Runtime MCP forwarding uses Fusion's trusted-once-enabled model: enabled effective servers are materialized once at session/probe creation and then forwarded without per-call prompts. Plaintext env/header values exist only in this in-memory return value and callers must log only counts/errors, never server contents.
  */
@@ -62,8 +36,12 @@ export async function resolveMcpServersForRuntime(
     options.secrets,
     options.reader ?? {},
   );
+  const failedServerNames = new Set(materialized.errors.map((error) => error.serverName));
   return {
-    servers: materialized.value ?? [],
+    // Never forward a partially materialized definition: it could connect
+    // without the operator-required credential. Other healthy MCP servers and
+    // the owning agent session remain available.
+    servers: (materialized.value ?? []).filter((server) => !failedServerNames.has(server.name)),
     errors: materialized.errors,
   };
 }

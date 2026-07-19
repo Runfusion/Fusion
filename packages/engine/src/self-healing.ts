@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, flagTriageDuplicate, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -751,6 +751,8 @@ export class SelfHealingManager {
    * because the task leaves the promotable state before returning to it.
    */
   private strandedCompletedFailureProvenanceWarned = new Set<string>();
+  /* FNXC:SymbolLock 2026-07-30-14:20: idle symbol-lock sweeps emit one no-action audit until a stale lock re-arms the diagnostic. */
+  private symbolLockNoActionAudited = false;
   private metaResolvedSkipAuditMemo = new Map<string, string>();
   private metaStalledSkipAuditMemo = new Map<string, string>();
   private preservedQueuedOverlapLogged = new Map<string, string>();
@@ -1363,6 +1365,7 @@ export class SelfHealingManager {
       // FN-5092: must run BEFORE any merger pickup path so the merger queue is
       // not stalled by a leaked `status: "merging"` on an already-done task.
       { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus().then(() => undefined) },
+      { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
       { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge().then(() => undefined) },
       { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo().then(() => undefined) },
@@ -1396,6 +1399,7 @@ export class SelfHealingManager {
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
       { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies().then(() => undefined) },
       { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases().then(() => undefined) },
+      { name: "reconcile-stale-symbol-locks", fn: () => this.reconcileStaleSymbolLocks().then(() => undefined) },
       { name: "reconcile-completed-blocked", fn: () => this.reconcileCompletedBlockedTasks().then(() => undefined) },
       { name: "reconcile-in-review-unmet-dependencies", fn: () => this.reconcileInReviewUnmetDependencies().then(() => undefined) },
       { name: "reconcile-engine-downtime-active-timing", fn: () => this.reconcileEngineDowntimeActiveTiming().then(() => undefined) },
@@ -2513,6 +2517,10 @@ export class SelfHealingManager {
           },
         },
         {
+          name: "reconcile-stale-symbol-locks",
+          fn: () => this.reconcileStaleSymbolLocks(),
+        },
+        {
           name: "reconcile-phantom-committed-reservations",
           fn: async () => {
             /*
@@ -2652,6 +2660,7 @@ export class SelfHealingManager {
           { name: "finalize-noop-review", fn: () => this.finalizeNoOpReviewTasks() },
           { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity() },
           { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus() },
+          { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause() },
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           // FNXC:Workspace 2026-06-22-09:30 (Phase D U1) — workspace-mode reconcilers.
           { name: "reconcile-workspace-partial-lands", fn: () => this.reconcileWorkspacePartialLands() },
@@ -5658,6 +5667,34 @@ export class SelfHealingManager {
     }
   }
 
+  /**
+   * FNXC:SymbolLock 2026-07-30-14:20:
+   * Crash recovery expires only locks whose owner is terminal/missing or whose
+   * lease elapsed. It is intentionally orthogonal to scheduler admission and
+   * never changes a task, worktree, semaphore, or verification state.
+   */
+  async reconcileStaleSymbolLocks(): Promise<number> {
+    const result = await this.store.reconcileStaleSymbolLocks();
+    if (result.reconciled.length > 0) {
+      this.symbolLockNoActionAudited = false;
+      await this.store.recordRunAuditEvent({
+        agentId: "self-healing", runId: "symbol-lock-reconcile", domain: "database",
+        mutationType: "symbol-lock:reconcile-stale", target: "symbol-locks",
+        metadata: { count: result.reconciled.length, symbolKeys: result.reconciled, outcome: "reconciled" },
+      });
+      return result.reconciled.length;
+    }
+    if (!this.symbolLockNoActionAudited) {
+      this.symbolLockNoActionAudited = true;
+      await this.store.recordRunAuditEvent({
+        agentId: "self-healing", runId: "symbol-lock-reconcile", domain: "database",
+        mutationType: "symbol-lock:reconcile-stale-no-action", target: "symbol-locks",
+        metadata: { count: 0, outcome: "no-action" },
+      });
+    }
+    return 0;
+  }
+
   async reconcileDependencyBlockingLeases(): Promise<number> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return 0;
@@ -6299,6 +6336,65 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`reconcileStaleMergerStatus failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * FNXC:NearDuplicateDetection 2026-07-17-20:10:
+   * FN-8356 reconciles only triage-marker duplicate-decision pauses whose canonical is no longer
+   * actionable. Its audit payload is ids/outcomes-only so stale-decision recovery never stores
+   * prompt or decision prose; active canonicals and user-owned pauses remain untouched.
+   */
+  async reconcileStaleDuplicateDecisionPause(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      const candidates = tasks.filter((task) =>
+        task.paused === true
+        && task.userPaused !== true
+        && task.pausedReason === "duplicate-decision-required"
+        && task.sourceMetadata?.duplicateSource === "triage-marker"
+        && typeof task.sourceMetadata?.nearDuplicateOf === "string",
+      );
+
+      let cleared = 0;
+      for (const task of candidates.slice(0, 50)) {
+        try {
+          const canonicalId = task.sourceMetadata!.nearDuplicateOf as string;
+          const canonical = await this.store.getTask(canonicalId).catch(() => null);
+          if (!isNearDuplicateCanonicalInactive(canonical ?? undefined)) continue;
+
+          await this.store.updateTask(task.id, {
+            paused: false,
+            pausedReason: null,
+            status: null,
+            sourceMetadataPatch: { nearDuplicateDismissed: true },
+          });
+          await createRunAuditor(this.store, {
+            runId: generateSyntheticRunId("reconcile-stale-duplicate-decision", task.id),
+            agentId: "self-healing",
+            taskId: task.id,
+            taskLineageId: task.lineageId,
+            phase: "reconcile-stale-duplicate-decision",
+          }).database({
+            type: "task:reconcile-stale-duplicate-decision" as DatabaseMutationType,
+            target: task.id,
+            metadata: {
+              taskId: task.id,
+              canonicalId,
+              canonicalColumn: canonical?.column ?? null,
+              canonicalDeleted: Boolean(canonical?.deletedAt),
+              priorPausedReason: "duplicate-decision-required",
+            },
+          });
+          cleared += 1;
+        } catch (error) {
+          log.warn(`reconcileStaleDuplicateDecisionPause: failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return cleared;
+    } catch (error) {
+      log.error(`reconcileStaleDuplicateDecisionPause failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
   }
@@ -11683,11 +11779,25 @@ export class SelfHealingManager {
           processedMarkers += 1;
 
           const canonicalTask = await this.store.getTask(marker.canonicalId).catch(() => null);
-          if (
-            !canonicalTask ||
-            canonicalTask.deletedAt ||
-            canonicalTask.id.toLowerCase() === task.id.toLowerCase()
-          ) {
+          if (canonicalTask?.id.toLowerCase() === task.id.toLowerCase()) {
+            continue;
+          }
+
+          /*
+          FNXC:NearDuplicateDetection 2026-07-17-20:10:
+          FN-8356 keeps maintenance from re-parking a marker against a missing, deleted, done,
+          or archived canonical. Such a decision has no detail-banner action, so cleanup restores
+          eligible work to planning while preserving explicit, implicit, and unrelated system pauses.
+          */
+          const canClearInactiveMarker = task.userPaused !== true
+            && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
+            && (task.pausedReason == null || task.pausedReason === "duplicate-decision-required");
+          if (!canonicalTask || isNearDuplicateCanonicalInactive(canonicalTask)) {
+            if (canClearInactiveMarker) {
+              rmSync(promptPath, { force: true });
+              await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+              resolved += 1;
+            }
             continue;
           }
 

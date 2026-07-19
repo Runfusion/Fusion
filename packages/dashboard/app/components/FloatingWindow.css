@@ -14,13 +14,15 @@ Click-through overlays cannot implement backdrop clicks in CSS/DOM structure. Ou
 }
 
 /*
-FNXC:FloatingWindow 2026-07-18-00:00:
-Quick Chat closes by hiding its already-mounted portal instead of unmounting ChatView. `display:
-none` removes the desktop window and the ≤768px full-screen sheet from paint and interaction while
-preserving the child DOM and in-memory scroll/session state for an instant reopen.
+FNXC:FloatingWindow 2026-07-18-14:05:
+FN-8340 resolves #2114: Quick Chat minimize must retain its desktop window and ≤768px full-screen
+sheet in the layout tree. `visibility: hidden` removes paint while preserving child geometry and
+message-list scroll state; `pointer-events: none` keeps the already click-through overlay inert.
+Never replace this with `display: none`, which collapses layout and makes reopening visibly reflow.
 */
 .floating-window-overlay--hidden {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /*

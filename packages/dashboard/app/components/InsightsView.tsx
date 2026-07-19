@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ViewHeader } from "./ViewHeader";
+import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
 import { BACKLOG_HEALTH_TITLE_PREFIXES, isBacklogHealthInsight } from "./backlog-health-filter";
@@ -413,7 +414,12 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
               );
 
               return (
-                <li key={insight.id} className={`insight-item${isArchived ? " insight-item--archived" : ""}`} data-insight-id={insight.id}>
+                <li key={insight.id} className={`insight-item${isArchived ? " insight-item--archived" : ""}`} data-insight-id={insight.id}
+                  draggable={isNativeStructureDragEnabled()}
+                  onDragStart={(event) => {
+                    // FNXC:NativeStructureEmbed 2026-07-22-10:30: Persisted insights are resolvable research-finding refs for the mail composer.
+                    serializeNativeStructureRef(event.dataTransfer, { kind: "research-finding", id: insight.id, projectId });
+                  }}>
                   <div className="insight-item-header">
                     <h4 className="insight-item-title">{insight.title}</h4>
                     <div className="insight-item-actions">

@@ -120,7 +120,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -243,6 +243,18 @@ export class TriageProcessor {
    * verdicts. Mirrors `TaskExecutor.activeSubagentSessions`.
    */
   private activeSubagentSessions = new Map<string, Set<AgentSession>>();
+  /**
+   * FNXC:TriageStuckKill 2026-07-18-21:05:
+   * Tasks currently inside `finalizeApprovedTask` (PROMPT hygiene → Plan Review →
+   * column handoff). The main planning session is often already untracked/disposed by
+   * the time Plan Review runs, so without this set a stuck-kill + stale-processing
+   * eviction can drop the card from `processing` and let a concurrent second planner
+   * claim `status:"planning"` while the first finalize still moves triage→todo — the
+   * move does not clear planning statuses, so the scheduler then holds the card as
+   * unplanned until the second planner finishes (FN-1312: 6m+ idle after Plan Review
+   * APPROVE). Finalizing tasks stay in getProcessingTaskIds and are not rediscovered.
+   */
+  private finalizing = new Set<string>();
   /** Tasks aborted due to globalPause (to avoid reporting as errors). */
   private pauseAborted = new Set<string>();
   /** Tasks killed by the stuck task detector (to avoid reporting as errors). */
@@ -642,9 +654,28 @@ export class TriageProcessor {
   /**
    * Return a snapshot of tasks currently being specified by this processor.
    * Used by self-healing maintenance to avoid recovering live sessions.
+   *
+   * FNXC:TriageStuckKill 2026-07-18-21:05:
+   * Include Plan Review subagents and in-flight finalize handoffs so self-healing
+   * and poll rediscovery cannot start a second planner while the first session is
+   * still completing Plan Review → todo after a stuck-kill of the main session.
    */
   getProcessingTaskIds(): Set<string> {
-    return new Set(this.processing);
+    const ids = new Set(this.processing);
+    for (const taskId of this.finalizing) ids.add(taskId);
+    for (const taskId of this.activeSubagentSessions.keys()) {
+      const sessions = this.activeSubagentSessions.get(taskId);
+      if (sessions && sessions.size > 0) ids.add(taskId);
+    }
+    return ids;
+  }
+
+  /** True when this processor still owns live work for `taskId` (main, subagent, or finalize). */
+  private hasLivePlanningWork(taskId: string): boolean {
+    if (this.finalizing.has(taskId)) return true;
+    const subagents = this.activeSubagentSessions.get(taskId);
+    if (subagents && subagents.size > 0) return true;
+    return this.activeSessions.has(taskId) && !this.stuckAborted.has(taskId);
   }
 
   /**
@@ -674,9 +705,15 @@ export class TriageProcessor {
       /*
       FNXC:Triage 2026-07-16-18:29:
       Stale-processing eviction must retain a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). Removing it would drop genuinely active planning from `getProcessingTaskIds()` and let self-healing prematurely finalize it to todo/awaiting-approval, clear planning status, or nudge priority. Hung promises without a session and stuck-aborted/disposed sessions remain evictable.
+
+      FNXC:TriageStuckKill 2026-07-18-21:05:
+      Also retain Plan Review subagents and finalize handoffs after the main session is
+      stuck-killed. Stuck kill often fires near the 30m threshold (same clock as this
+      eviction), so without this guard the card is rediscovered while finalize is still
+      moving triage→todo and a concurrent planner leaves `status:"planning"` on a
+      todo card the scheduler refuses to release (FN-1312).
       */
-      const hasLiveSession = this.activeSessions.has(taskId) && !this.stuckAborted.has(taskId);
-      if (hasLiveSession) continue;
+      if (this.hasLivePlanningWork(taskId)) continue;
 
       planLog.warn(
         `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
@@ -686,18 +723,35 @@ export class TriageProcessor {
       this.processingSince.delete(taskId);
       this.activeSessions.delete(taskId);
       this.stuckAborted.delete(taskId);
+      this.finalizing.delete(taskId);
       evicted.add(taskId);
     }
 
     return evicted;
   }
 
+  /** True when Plan Review already recorded a passed verdict on this task. */
+  private hasPassedPlanReview(task: Pick<Task, "workflowStepResults">): boolean {
+    return task.workflowStepResults?.some(
+      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
+    ) === true;
+  }
+
   /**
    * Recover a triage task whose PROMPT.md was already written but the final
-   * handoff out of `status: "planning"` never completed.
+   * handoff out of planning never completed.
+   *
+   * FNXC:TriageStuckKill 2026-07-18-21:05:
+   * Classic path: status is `planning`. Extended path: status is null after finalize's
+   * early clear ONLY when Plan Review already passed — null alone must not promote an
+   * unapproved draft (a lightly-edited seed can fail the exact seed equality check).
+   * Do not recover `needs-replan` / `plan-review-unavailable`.
    */
   async recoverApprovedTask(task: Task): Promise<boolean> {
-    if (task.column !== "triage" || task.status !== "planning") {
+    const recoverableStatus =
+      task.status === "planning"
+      || (task.status == null && this.hasPassedPlanReview(task));
+    if (task.column !== "triage" || !recoverableStatus) {
       return false;
     }
 
@@ -721,6 +775,12 @@ export class TriageProcessor {
 
     if (!written.trim()) {
       planLog.warn(`${task.id} planning recovery skipped — PROMPT.md missing or empty`);
+      return false;
+    }
+
+    // Bootstrap / refinement seeds are not approved specs — leave them for normal planning.
+    if (isUnplannedSeedPrompt(written, task.id, task.title, task.description)) {
+      planLog.warn(`${task.id} planning recovery skipped — PROMPT.md is still an unplanned seed`);
       return false;
     }
 
@@ -784,12 +844,71 @@ export class TriageProcessor {
     /*
     FNXC:Triage 2026-06-27-00:00:
     A stuck-killed planning session that already wrote a usable PROMPT.md or plan task document must resume in revision mode on the next poll, not re-triage from scratch. Reuse stuckKillCount and maxStuckKills for the triage retry budget so repeated stuck resumes escalate to manual intervention instead of looping forever.
+
+    FNXC:TriageStuckKill 2026-07-18-21:05:
+    Do not invalidate an already-approved plan. Finalize clears `status` to null before Plan
+    Review, so a stuck-kill mid-review used to skip recoverApprovedTask (which required
+    status:"planning") and force needs-replan — even when Plan Review had just APPROVEd and
+    the card was about to move to todo. That left the scheduler holding an "unplanned" todo
+    card until a second planner rewrote PROMPT.md (FN-1312). If Plan Review already passed
+    or a valid draft exists after the early status clear, complete the handoff instead of
+    replan-invalidating.
     */
     const freshTask = await this.store.getTask(task.id).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       planLog.warn(`${task.id}: failed to refresh task during stuck-detector ${context} cleanup: ${msg}`);
       return task;
     });
+
+    /*
+    FNXC:TriageStuckKill 2026-07-18-21:05:
+    If finalize is still running Plan Review after the main session was killed, leave the
+    card alone — the in-flight finalize owns the handoff. Setting needs-replan here races
+    the APPROVE path and strands the card unplanned in todo.
+    */
+    if (this.finalizing.has(task.id) || (this.activeSubagentSessions.get(task.id)?.size ?? 0) > 0) {
+      planLog.log(
+        `${task.id} killed by stuck detector during Plan Review/finalize — deferring requeue to the in-flight handoff (${context})`,
+      );
+      await this.store.updateTask(task.id, {
+        stuckKillCount: (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1,
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        planLog.warn(`${task.id}: failed to increment stuckKillCount during deferred stuck-detector ${context} cleanup: ${msg}`);
+      });
+      return;
+    }
+
+    /*
+    FNXC:TriageStuckKill 2026-07-18-22:30:
+    Finalize can succeed (move to todo + clear status) and clear `finalizing` before the
+    outer stuckAborted catch runs — e.g. dispose of an already-killed main session throws
+    after handoff. Recovery then fails (column is no longer triage) and the draft path
+    would write needs-replan, re-stranding an approved plan (Greptile P1 on PR #2326).
+
+    FNXC:TriageStuckKill 2026-07-18-22:50:
+    Do NOT treat every `todo` card as released. Plan-in-place workflows plan inside `todo`
+    with status:"planning"/"needs-replan"; those must still requeue (CodeRabbit on PR #2326).
+    hasAdvancedPastPlanning covers execution columns and released todo (steps/worktree).
+    Released handoffs with status cleared but no steps yet are also preserved: todo without
+    a planning-stage status means the scheduler can claim the card.
+    */
+    const planningStageStatus =
+      freshTask.status === "planning"
+      || freshTask.status === "needs-replan"
+      || freshTask.status === "plan-review-unavailable";
+    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
+      const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
+      planLog.log(
+        `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}, status=${freshTask.status ?? "null"}) — preserving released state (${context})`,
+      );
+      await this.store.updateTask(task.id, { stuckKillCount: nextStuckKillCount }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        planLog.warn(`${task.id}: failed to increment stuckKillCount after post-handoff stuck-detector ${context} cleanup: ${msg}`);
+      });
+      return;
+    }
 
     const recovered = await this.recoverApprovedTask(freshTask).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -937,7 +1056,7 @@ export class TriageProcessor {
       }
 
       const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
+        (t) => t.column === "triage" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
           // Skip failed specifications until the user explicitly retries them.
@@ -955,7 +1074,7 @@ export class TriageProcessor {
       2. Refinement seeds (`# {title}\n\n{description}`, no id prefix) previously failed the strict bootstrap-stub equality, so a promoted refinement skipped planning entirely; isUnplannedSeedPrompt accepts both seed shapes.
       */
       const eligibleTodoTasksRaw = allTasks.filter(
-        (t) => t.column === "todo" && !this.processing.has(t.id) && !t.paused
+        (t) => t.column === "todo" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           && t.status !== "awaiting-approval"
           && t.status !== "failed"
           && t.status !== "stuck-killed"
@@ -1086,7 +1205,13 @@ export class TriageProcessor {
    * quality gate before execution; triage does not inject a separate review tool.
    */
   async specifyTask(task: Task): Promise<void> {
-    if (this.processing.has(task.id)) return;
+    /*
+    FNXC:TriageStuckKill 2026-07-18-21:05:
+    Refuse a second planner when finalize/Plan Review is still live even if
+    `processing` was cleared by a stuck-kill eviction race. Concurrent claim is
+    what leaves `status:"planning"` on a todo card after Plan Review APPROVE.
+    */
+    if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 
@@ -2742,16 +2867,23 @@ export class TriageProcessor {
       }
 
       const canonicalId = explicitDuplicateMarker.canonicalId;
-      const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
-      if (
-        !canonicalTask ||
-        canonicalTask.deletedAt ||
-        canonicalTask.id.toLowerCase() === task.id.toLowerCase()
-      ) {
+      // A transient lookup failure must still fail open; only a genuine missing row is inactive.
+      const canonicalTask = await this.store.getTask(canonicalId);
+      if (canonicalTask?.id.toLowerCase() === task.id.toLowerCase()) {
         return false;
       }
 
-      planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
+      /*
+      FNXC:NearDuplicateDetection 2026-07-17-20:10:
+      FN-8356 requires missing, deleted, done, and archived duplicate canonicals to flow through
+      marker cleanup instead of being rejected here. The detail banner cannot offer a decision for
+      an inactive canonical, so parking the card would strand its Needs your decision badge.
+      */
+      if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+        planLog.log(`${task.id} explicit duplicate marker targets inactive ${canonicalId}; clearing marker for replanning`);
+      } else {
+        planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
+      }
       await this.finalizeApprovedTask(task, written, settings, options);
       return true;
     } catch (err) {
@@ -2772,6 +2904,30 @@ export class TriageProcessor {
       preservePromptContent?: boolean;
     } = {},
   ): Promise<void> {
+    /*
+    FNXC:TriageStuckKill 2026-07-18-21:05:
+    Mark the card finalizing for the whole Plan Review → column handoff so stuck-kill
+    eviction and poll rediscovery cannot start a concurrent planner (FN-1312).
+    */
+    this.finalizing.add(task.id);
+    try {
+      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options);
+    } finally {
+      this.finalizing.delete(task.id);
+    }
+  }
+
+  private async finalizeApprovedTaskBody(
+    task: Task,
+    writtenInput: string,
+    settings: Settings,
+    options: {
+      isReplan?: boolean;
+      feedback?: string;
+      recoveryLogAction?: string;
+      preservePromptContent?: boolean;
+    } = {},
+  ): Promise<void> {
     let written = writtenInput;
     const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
 
@@ -2782,6 +2938,26 @@ export class TriageProcessor {
      */
     if (explicitDuplicateMarker) {
       const canonicalId = explicitDuplicateMarker.canonicalId;
+      const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
+      const canClearInactiveMarker = task.userPaused !== true
+        && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
+        && (task.pausedReason == null || task.pausedReason === "duplicate-decision-required");
+
+      /*
+      FNXC:NearDuplicateDetection 2026-07-17-20:10:
+      FN-8356 prevents an inactive duplicate canonical from creating a prompt pause. The detail
+      view deliberately hides decisions for missing, deleted, done, or archived canonicals, so
+      remove only the marker and return eligible work to planning instead of stranding its badge;
+      explicit, implicit, and unrelated pauses are preserved.
+      */
+      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
+        if (canClearInactiveMarker) {
+          await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+        }
+        return;
+      }
+
       const resolution = settings.triageDuplicateResolution ?? "prompt";
       if (resolution === "delete") {
         await this.store.recordActivity({
@@ -3205,6 +3381,45 @@ export class TriageProcessor {
     */
     if (task.column !== "todo") {
       await this.store.moveTask(task.id, "todo");
+    }
+
+    /*
+    FNXC:TriageStuckKill 2026-07-18-21:05:
+    Re-assert status:null after the release move. finalize clears status early (before Plan
+    Review); triage→todo does not clear planning statuses; a concurrent stuck-kill requeue
+    or rediscovered planner can stamp status:"planning" between those points. Without this
+    terminal clear the scheduler holds the card as unplanned after Plan Review APPROVE
+    (FN-1312).
+
+    FNXC:TriageStuckKill 2026-07-18-22:30:
+    Only clear planning-stage statuses under the task lock. Do not wipe a concurrent
+    operator/engine write of failed, awaiting-approval, or a genuine later needs-replan
+    that is not the mid-handoff planner race (Greptile P2 on PR #2326). Concurrent
+    `status:"planning"` from a rediscovered second planner is still cleared.
+    */
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, (live) => {
+        if (
+          live.status === "planning"
+          || live.status === "plan-review-unavailable"
+          || live.status == null
+        ) {
+          return { status: null, error: null };
+        }
+        // Leave needs-replan/failed/awaiting-approval and other durable statuses alone.
+        return null;
+      });
+    } else {
+      const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+      if (
+        live
+        && (live.status === "planning" || live.status === "plan-review-unavailable" || live.status == null)
+      ) {
+        await this.store.updateTask(task.id, { status: null, error: null });
+      } else if (!live) {
+        // Minimal test stores often omit getTask; still clear the mid-handoff planning stamp.
+        await this.store.updateTask(task.id, { status: null, error: null });
+      }
     }
 
     if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkflowResultsTab } from "../WorkflowResultsTab";
 import * as api from "../../api";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
@@ -30,6 +30,40 @@ const mockedSelectTaskWorkflow = vi.spyOn(api, "selectTaskWorkflow");
 const mockedSubmitTaskWorkflowInput = vi.spyOn(api, "submitTaskWorkflowInput");
 const mockedApproveTaskWorkflowCli = vi.spyOn(api, "approveTaskWorkflowCli");
 const mockedUseAgentLogs = vi.mocked(useAgentLogs);
+
+function mockWorkflowLiveLogGeometry(container: HTMLDivElement, initialScrollTop = 0) {
+  let scrollTop = initialScrollTop;
+  let scrollHeight = 1000;
+  Object.defineProperties(container, {
+    scrollHeight: { configurable: true, get: () => scrollHeight },
+    clientHeight: { configurable: true, get: () => 200 },
+    scrollTop: {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = Number(value); },
+    },
+  });
+  return {
+    get scrollTop() { return scrollTop; },
+    set scrollTop(value: number) { scrollTop = value; },
+    get scrollHeight() { return scrollHeight; },
+    set scrollHeight(value: number) { scrollHeight = value; },
+  };
+}
+
+function mockWorkflowViewport(isMobile: boolean) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: isMobile ? 375 : 1280 });
+  vi.stubGlobal("matchMedia", vi.fn().mockImplementation((query: string) => ({
+    matches: isMobile && query.includes("max-width: 768px"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })));
+}
 
 describe("WorkflowResultsTab", () => {
   const mockWorkflowSteps: WorkflowStep[] = [
@@ -732,6 +766,116 @@ describe("WorkflowResultsTab", () => {
     const liveLogPanel = screen.getByTestId("workflow-live-log-WS-004");
     expect(within(liveLogPanel).queryByText("Waiting for agent output…")).not.toBeInTheDocument();
     expect(within(liveLogPanel).getByText("Current workflow output")).toBeInTheDocument();
+  });
+
+  describe("FN-8345: live workflow log scroll following", () => {
+    const initialEntries: AgentLogEntry[] = [{
+      timestamp: "2026-03-31T10:03:25Z", taskId: "FN-001", text: "Streaming output", type: "text",
+    }];
+    const appendedEntries: AgentLogEntry[] = [...initialEntries, {
+      timestamp: "2026-03-31T10:03:26Z", taskId: "FN-001", text: "More streaming output", type: "text",
+    }];
+
+    function renderLiveLog(entries: AgentLogEntry[]) {
+      mockedUseAgentLogs.mockReturnValue({ entries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: entries.length, loadingMore: false });
+      return render(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+    }
+
+    it.each([{ name: "desktop", isMobile: false }, { name: "mobile", isMobile: true }])("does not override an unsnapped $name reader during appended streaming growth", ({ isMobile }) => {
+      mockWorkflowViewport(isMobile);
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      geometry.scrollTop = 200;
+      fireEvent.scroll(container);
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(200);
+    });
+
+    it("follows appended streaming growth while pinned at the bottom", () => {
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      fireEvent.scroll(container);
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(1200);
+    });
+
+    it.each([{ name: "desktop", isMobile: false }, { name: "mobile", isMobile: true }])("re-pins and follows later streaming growth on $name", ({ isMobile }) => {
+      mockWorkflowViewport(isMobile);
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      geometry.scrollTop = 200;
+      fireEvent.scroll(container);
+      geometry.scrollTop = 960;
+      fireEvent.scroll(container);
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(1200);
+    });
+
+    it("anchors to the bottom when the live log first becomes scrollable", () => {
+      const proto = HTMLElement.prototype;
+      const originalScrollHeight = Object.getOwnPropertyDescriptor(proto, "scrollHeight");
+      const originalClientHeight = Object.getOwnPropertyDescriptor(proto, "clientHeight");
+      const originalScrollTop = Object.getOwnPropertyDescriptor(proto, "scrollTop");
+      let scrollTop = 0;
+      try {
+        Object.defineProperties(proto, {
+          scrollHeight: { configurable: true, get(this: HTMLElement) { return this.classList.contains("workflow-live-log") ? 1000 : originalScrollHeight?.get?.call(this) ?? 0; } },
+          clientHeight: { configurable: true, get(this: HTMLElement) { return this.classList.contains("workflow-live-log") ? 200 : originalClientHeight?.get?.call(this) ?? 0; } },
+          scrollTop: {
+            configurable: true,
+            get(this: HTMLElement) { return this.classList.contains("workflow-live-log") ? scrollTop : originalScrollTop?.get?.call(this) ?? 0; },
+            set(this: HTMLElement, value: number) {
+              if (this.classList.contains("workflow-live-log")) scrollTop = Number(value);
+              else originalScrollTop?.set?.call(this, value);
+            },
+          },
+        });
+        renderLiveLog(initialEntries);
+        expect(scrollTop).toBe(1000);
+      } finally {
+        if (originalScrollHeight) Object.defineProperty(proto, "scrollHeight", originalScrollHeight);
+        else Reflect.deleteProperty(proto, "scrollHeight");
+        if (originalClientHeight) Object.defineProperty(proto, "clientHeight", originalClientHeight);
+        else Reflect.deleteProperty(proto, "clientHeight");
+        if (originalScrollTop) Object.defineProperty(proto, "scrollTop", originalScrollTop);
+        else Reflect.deleteProperty(proto, "scrollTop");
+      }
+    });
+
+    it("follows in-place streamed text growth through the content ResizeObserver", () => {
+      let resizeCallback: ResizeObserverCallback | undefined;
+      vi.stubGlobal("ResizeObserver", class {
+        observe() {}
+        disconnect() {}
+        constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
+      });
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+      fireEvent.scroll(container);
+      geometry.scrollHeight = 1200;
+      const expandedEntry = [{ ...initialEntries[0], text: "Streaming output that grew in place" }];
+      mockedUseAgentLogs.mockReturnValue({ entries: expandedEntry, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: expandedEntry.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+      act(() => resizeCallback?.([] as ResizeObserverEntry[], {} as ResizeObserver));
+
+      expect(geometry.scrollTop).toBe(1200);
+    });
   });
 
   it("renders advisory findings under Polish notes and keeps failure counts non-blocking", () => {

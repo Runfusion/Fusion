@@ -20,7 +20,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -31,6 +31,7 @@ import {
   isEmbeddedPgOptedOut,
   EMBEDDED_PG_ENV,
   NO_EMBEDDED_PG_ENV,
+  resolveStartupDatabaseOptions,
 } from "../../postgres/startup-factory.js";
 import { resolveBackend } from "../../postgres/backend-resolver.js";
 
@@ -126,6 +127,65 @@ describe("startup-factory: shouldUsePostgresBackend", () => {
 
   it("returns true when embeddedPgRequested override is true (force embedded)", () => {
     expect(shouldUsePostgresBackend({}, { embeddedPgRequested: true })).toBe(true);
+  });
+});
+
+describe("startup-factory: test database selection", () => {
+  let globalSettingsDir: string;
+
+  beforeEach(async () => {
+    globalSettingsDir = await mkdtemp(join(tmpdir(), "startup-test-database-"));
+  });
+
+  afterEach(async () => {
+    await rm(globalSettingsDir, { recursive: true, force: true });
+  });
+
+  it("removes an inherited production target before Vitest modules execute", () => {
+    expect(process.env.DATABASE_URL).toBeUndefined();
+    expect(process.env.DATABASE_MIGRATION_URL).toBeUndefined();
+  });
+
+  it("ignores the production DATABASE_URL when persisted global test mode is enabled", async () => {
+    await writeFile(join(globalSettingsDir, "settings.json"), JSON.stringify({ testMode: true }));
+
+    const resolved = await resolveStartupDatabaseOptions({
+      globalSettingsDir,
+      env: { DATABASE_URL: "postgresql://operator:secret@production.example/fusion" },
+    });
+
+    expect(resolved.testDatabaseMode).toBe(true);
+    expect(resolved.backend.mode).toBe("embedded");
+    expect(resolved.backend.runtimeUrl).toBeNull();
+    expect(resolved.embeddedDataDir).toBe(join(globalSettingsDir, "embedded-postgres", "test"));
+  });
+
+  it("uses only the explicit test URL when test mode targets external PostgreSQL", async () => {
+    const testUrl = "postgresql://localhost:5432/fusion_test";
+    const resolved = await resolveStartupDatabaseOptions({
+      globalSettingsDir,
+      env: {
+        FUSION_TEST_MODE: "1",
+        DATABASE_URL: "postgresql://operator:secret@production.example/fusion",
+        FUSION_TEST_DATABASE_URL: testUrl,
+      },
+    });
+
+    expect(resolved.testDatabaseMode).toBe(true);
+    expect(resolved.backend.runtimeUrl).toBe(testUrl);
+    expect(resolved.backend.migrationUrl).toBe(testUrl);
+  });
+
+  it("keeps the normal production target when test mode is disabled", async () => {
+    const productionUrl = "postgresql://operator:secret@production.example/fusion";
+    const resolved = await resolveStartupDatabaseOptions({
+      globalSettingsDir,
+      env: { DATABASE_URL: productionUrl },
+    });
+
+    expect(resolved.testDatabaseMode).toBe(false);
+    expect(resolved.backend.runtimeUrl).toBe(productionUrl);
+    expect(resolved.embeddedDataDir).toBeUndefined();
   });
 });
 

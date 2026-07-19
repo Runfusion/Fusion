@@ -1,6 +1,6 @@
 import type { Agent } from "@fusion/core";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowUpToLine, Bot, File, Pencil, Send, TriangleAlert } from "lucide-react";
@@ -10,6 +10,9 @@ import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify
 import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
+import { NativeStructurePreview } from "./NativeStructurePreview";
+import { openNativeStructure } from "./nativeStructureNavigation";
+import { nativeStructureChatRefMatcher, parseNativeStructureChatRef, splitNativeStructureChatRefMatch } from "./nativeStructureChatRef";
 
 export interface StandardRoomContext {
   roomName: string;
@@ -305,17 +308,169 @@ export function renderStandardToolCalls(
   );
 }
 
+/**
+ * FNXC:NativeStructureEmbed 2026-07-19-19:30:
+ * ReactMarkdown leaves bare custom-scheme tokens as text, unlike Markdown links. Transform text
+ * at this shared rendering seam so room, task-bound, floating, and dock assistant messages all
+ * gain the same card without teaching individual ChatView hosts how to parse references.
+ */
+function renderNativeStructureChatTokens(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let index = 0;
+  nativeStructureChatRefMatcher.lastIndex = 0;
+  let match = nativeStructureChatRefMatcher.exec(text);
+  while (match) {
+    const { token, trailingPunctuation } = splitNativeStructureChatRefMatch(match);
+    const start = match.index;
+    const structureRef = parseNativeStructureChatRef(token);
+    if (!structureRef) {
+      match = nativeStructureChatRefMatcher.exec(text);
+      continue;
+    }
+    if (start > lastIndex) nodes.push(text.slice(lastIndex, start));
+    nodes.push(<NativeStructurePreview key={`native-structure-${start}-${index}`} ref={structureRef} onOpen={openNativeStructure} />);
+    if (trailingPunctuation) nodes.push(trailingPunctuation);
+    lastIndex = start + match[0].length;
+    index += 1;
+    match = nativeStructureChatRefMatcher.exec(text);
+  }
+  if (lastIndex === 0) return [text];
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-19-21:15:
+ * NativeStructurePreview has a block root. Paragraphs and headings must lift a detected preview
+ * into a sibling instead of nesting it in their phrasing-only content, preserving valid HTML and
+ * heading semantics while retaining prose before and after a token.
+ */
+type NativeStructurePreviewMarker = { readonly structureRef: React.ComponentProps<typeof NativeStructurePreview>["ref"] };
+type NativeStructureMarkdownPart = ReactNode | NativeStructurePreviewMarker;
+
+function isNativeStructurePreviewMarker(part: NativeStructureMarkdownPart): part is NativeStructurePreviewMarker {
+  return typeof part === "object" && part !== null && "structureRef" in part;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-20-00:15:
+ * Markdown phrasing nodes such as `strong` can wrap a bare token or custom link. Split those
+ * wrappers around preview markers before the paragraph/heading renderer lifts each card, rather
+ * than placing the preview's block root inside `<strong>` or another phrasing-only container.
+ */
+function splitMarkdownNodeAtNativeStructurePreviews(node: ReactNode): NativeStructureMarkdownPart[] {
+  if (typeof node === "string") {
+    return renderNativeStructureChatTokens(node).map((part) => (
+      React.isValidElement<React.ComponentProps<typeof NativeStructurePreview>>(part) && part.type === NativeStructurePreview
+        ? { structureRef: part.props.ref }
+        : part
+    ));
+  }
+  if (!React.isValidElement<{ children?: ReactNode; href?: string }>(node)) return [node];
+
+  const linkedRef = node.type === NativeStructureMarkdownAnchor ? parseNativeStructureChatRef(node.props.href ?? "") : null;
+  if (linkedRef) return [{ structureRef: linkedRef }];
+  if (node.type === NativeStructurePreview) return [{ structureRef: (node.props as React.ComponentProps<typeof NativeStructurePreview>).ref }];
+  // Links and code are opaque text islands: preview cards must never become nested interactive content.
+  if (node.type === "a" || node.type === NativeStructureMarkdownAnchor || node.type === NativeStructureMarkdownCode || node.props.children === undefined) return [node];
+
+  const childParts = React.Children.toArray(node.props.children).flatMap(splitMarkdownNodeAtNativeStructurePreviews);
+  if (!childParts.some(isNativeStructurePreviewMarker)) {
+    return [React.cloneElement(node, undefined, childParts as ReactNode[])];
+  }
+
+  const parts: NativeStructureMarkdownPart[] = [];
+  let inlineChildren: ReactNode[] = [];
+  const flushInlineChildren = () => {
+    if (inlineChildren.length > 0) {
+      parts.push(React.cloneElement(node, undefined, inlineChildren));
+      inlineChildren = [];
+    }
+  };
+  for (const childPart of childParts) {
+    if (isNativeStructurePreviewMarker(childPart)) {
+      flushInlineChildren();
+      parts.push(childPart);
+    } else {
+      inlineChildren.push(childPart);
+    }
+  }
+  flushInlineChildren();
+  return parts;
+}
+
+function renderMarkdownBlockWithNativeStructurePreviews(
+  Tag: "p" | "li" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "table",
+  children: ReactNode,
+  props: React.HTMLAttributes<HTMLElement>,
+): ReactNode {
+  const blocks: ReactNode[] = [];
+  let inlineChildren: ReactNode[] = [];
+  let index = 0;
+  const flushInlineChildren = () => {
+    if (inlineChildren.length > 0) {
+      blocks.push(<Tag key={`native-structure-inline-${index}`} {...props}>{linkifyReactChildren(inlineChildren)}</Tag>);
+      inlineChildren = [];
+      index += 1;
+    }
+  };
+  for (const part of React.Children.toArray(children).flatMap(splitMarkdownNodeAtNativeStructurePreviews)) {
+    if (isNativeStructurePreviewMarker(part)) {
+      flushInlineChildren();
+      blocks.push(<NativeStructurePreview key={`native-structure-preview-${index}`} ref={part.structureRef} onOpen={openNativeStructure} />);
+      index += 1;
+    } else {
+      inlineChildren.push(part);
+    }
+  }
+  flushInlineChildren();
+  return blocks.length === 1 ? blocks[0] : <>{blocks}</>;
+}
+
+function NativeStructureMarkdownAnchor({ children, href, ...props }: React.ComponentProps<"a">) {
+  const structureRef = href ? parseNativeStructureChatRef(href) : null;
+  if (structureRef) return <NativeStructurePreview ref={structureRef} onOpen={openNativeStructure} />;
+  return <a href={href} {...props}>{children}</a>;
+}
+
+function NativeStructureMarkdownCode({ children, ...props }: React.ComponentProps<"code">) {
+  const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
+  const linkedChildren = linkifyFilePaths(text);
+  if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") return <code {...props}>{children}</code>;
+  return <code {...props}>{linkedChildren}</code>;
+}
+
 export const standardChatMarkdownComponents: Components = {
-  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
-  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
+  p: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("p", children, props),
+  // FNXC:NativeStructureEmbed 2026-07-20-01:00: List and quote bodies can contain Markdown
+  // phrasing wrappers, so they use the same marker/lifting pass as paragraphs instead of nesting
+  // NativeStructurePreview inside `strong`, `em`, or other phrasing-only elements.
+  li: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("li", children, props),
+  blockquote: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("blockquote", children, props),
+  h1: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h1", children, props),
+  h2: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h2", children, props),
+  h3: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h3", children, props),
+  h4: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h4", children, props),
+  h5: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h5", children, props),
+  h6: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("h6", children, props),
+  // Table descendants are lifted by the table renderer below. A cell itself must stay textual:
+  // HTML tables cannot contain the preview card's block root directly.
+  td: ({ children, ...props }) => <td {...props}>{linkifyReactChildren(children)}</td>,
+  th: ({ children, ...props }) => <th {...props}>{linkifyReactChildren(children)}</th>,
+  /*
+  FNXC:NativeStructureEmbed 2026-07-19-19:30:
+  Markdown links and bare assistant tokens take different ReactMarkdown paths. Only a strict
+  canonical link becomes the shared preview; every other href keeps normal rendering and URL
+  sanitization, including ReactMarkdown's javascript: rejection.
+  */
+  a: NativeStructureMarkdownAnchor,
   pre: ({ children, ...props }) => <pre {...props} className="chat-markdown-pre">{children}</pre>,
-  code: ({ children, ...props }) => {
-    const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
-    const linkedChildren = linkifyFilePaths(text);
-    if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") return <code {...props}>{children}</code>;
-    return <code {...props}>{linkedChildren}</code>;
-  },
-  table: ({ children, ...props }) => <table {...props} className="chat-markdown-table">{children}</table>,
+  code: NativeStructureMarkdownCode,
+  // FNXC:NativeStructureEmbed 2026-07-20-01:00: Lift markers through the full table tree so a
+  // formatted token in a cell never creates invalid `<td><div>` markup. The card becomes a
+  // sibling block; non-reference table content retains its normal table structure.
+  table: ({ children, ...props }) => renderMarkdownBlockWithNativeStructurePreviews("table", children, { ...props, className: "chat-markdown-table" }),
 };
 
 function formatRelativeTime(dateStr: string, t: (key: string, defaultValue: string, opts?: Record<string, unknown>) => string): string {
@@ -334,7 +489,17 @@ function formatRelativeTime(dateStr: string, t: (key: string, defaultValue: stri
 
 export function renderStandardAssistantContent(content: string, forcePlain: boolean): ReactNode {
   if (forcePlain) return <div className="chat-message-content chat-message-content--plain">{content}</div>;
-  return <div className="chat-message-content chat-message-content--markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={standardChatMarkdownComponents}>{content}</ReactMarkdown></div>;
+  return (
+    <div className="chat-message-content chat-message-content--markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={standardChatMarkdownComponents}
+        urlTransform={(href) => parseNativeStructureChatRef(href) ? href : defaultUrlTransform(href)}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export const StandardChatMessageItem = memo(function StandardChatMessageItem({
@@ -413,24 +578,39 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     if (isAssistantMessage) return null;
     const content = message.content;
     const mentionRegex = /@([\w-]+)/g;
+    const tokens = [
+      ...Array.from(content.matchAll(mentionRegex)).map((match) => ({ type: "mention" as const, match })),
+      ...Array.from(content.matchAll(nativeStructureChatRefMatcher)).map((match) => ({ type: "native-structure" as const, match })),
+    ].sort((left, right) => (left.match.index ?? 0) - (right.match.index ?? 0));
     const parts: ReactNode[] = [];
     let lastIndex = 0;
-    let match = mentionRegex.exec(content);
-    while (match) {
-      const [fullMatch, rawName = ""] = match;
-      const start = match.index;
+    /*
+    FNXC:NativeStructureEmbed 2026-07-19-19:30:
+    User bodies are intentionally raw text rather than Markdown. Extend their existing mention
+    tokenizer with the same strict parser used for assistant text and links so native previews
+    work without changing user-message formatting or adding per-surface render forks.
+    */
+    for (const token of tokens) {
+      const [fullMatch, rawName = ""] = token.match;
+      const start = token.match.index ?? 0;
+      if (start < lastIndex) continue;
       if (start > lastIndex) parts.push(content.slice(lastIndex, start));
-      const normalizedName = rawName.replace(/_/g, " ").toLowerCase();
-      const mentionedAgent = mentionAgentsByName.get(normalizedName);
-      if (mentionedAgent) {
-        const isNonMember = Boolean(roomContext && !roomContext.memberIds.has(mentionedAgent.id));
-        const nonMemberLabel = isNonMember ? t("chat.mentionNonMember", "Not a member of {{roomName}}", { roomName: roomContext?.roomName }) : undefined;
-        parts.push(<span key={`${mentionedAgent.id}-${start}`} className={`chat-mention-chip${isNonMember ? " chat-mention-chip--non-member" : ""}`} title={nonMemberLabel} aria-label={nonMemberLabel}>@{mentionedAgent.name.replace(/\s+/g, "_")}</span>);
+      if (token.type === "native-structure") {
+        const { token: referenceToken, trailingPunctuation } = splitNativeStructureChatRefMatch(token.match);
+        const structureRef = parseNativeStructureChatRef(referenceToken);
+        parts.push(structureRef ? <React.Fragment key={`native-structure-user-${start}`}><NativeStructurePreview ref={structureRef} onOpen={openNativeStructure} />{trailingPunctuation}</React.Fragment> : fullMatch);
       } else {
-        parts.push(fullMatch);
+        const normalizedName = rawName.replace(/_/g, " ").toLowerCase();
+        const mentionedAgent = mentionAgentsByName.get(normalizedName);
+        if (mentionedAgent) {
+          const isNonMember = Boolean(roomContext && !roomContext.memberIds.has(mentionedAgent.id));
+          const nonMemberLabel = isNonMember ? t("chat.mentionNonMember", "Not a member of {{roomName}}", { roomName: roomContext?.roomName }) : undefined;
+          parts.push(<span key={`${mentionedAgent.id}-${start}`} className={`chat-mention-chip${isNonMember ? " chat-mention-chip--non-member" : ""}`} title={nonMemberLabel} aria-label={nonMemberLabel}>@{mentionedAgent.name.replace(/\s+/g, "_")}</span>);
+        } else {
+          parts.push(fullMatch);
+        }
       }
       lastIndex = start + fullMatch.length;
-      match = mentionRegex.exec(content);
     }
     if (lastIndex < content.length) parts.push(content.slice(lastIndex));
     return parts.length === 0 ? content : parts;

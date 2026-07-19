@@ -213,6 +213,7 @@ export {
   fetchAgentLogs,
   fetchAgentLogsWithMeta,
   fetchSessionFiles,
+  fetchTaskVerificationRequest,
   fetchTaskComments,
   addTaskComment,
   updateTaskComment,
@@ -224,6 +225,7 @@ export {
   artifactMediaUrl,
   artifactMediaUrlWithToken,
   fetchArtifact,
+  fetchNativeStructurePreview,
   updateArtifact,
   fetchAllDocuments,
   fetchProjectMarkdownFiles,
@@ -2608,14 +2610,12 @@ export type AgentOnboardingStreamEvent =
 export function startPlanning(
   initialPlan: string,
   projectId?: string,
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+
 ): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/start", projectId), {
     method: "POST",
     body: JSON.stringify({
       initialPlan,
-      planningDepth: planningOptions?.planningDepth,
-      customQuestionCount: planningOptions?.customQuestionCount,
     }),
   });
 }
@@ -2641,7 +2641,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number; clarificationEnabled?: boolean },
+  planningOptions?: { clarificationEnabled?: boolean },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -2651,12 +2651,15 @@ export function startPlanningStreaming(
       planningModelProvider: modelOverride?.planningModelProvider,
       planningModelId: modelOverride?.planningModelId,
       thinkingLevel: modelOverride?.thinkingLevel,
-      planningDepth: planningOptions?.planningDepth,
-      customQuestionCount: planningOptions?.customQuestionCount,
       clarificationEnabled: planningOptions?.clarificationEnabled,
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });
+}
+
+/** Explicitly validate the current running planning summary before creating work. */
+export function validatePlanningSession(sessionId: string, projectId?: string): Promise<{ summary: PlanningSummary; validated: boolean }> {
+  return api<{ summary: PlanningSummary; validated: boolean }>(withProjectId(`/planning/${encodeURIComponent(sessionId)}/validate`, projectId), { method: "POST" });
 }
 
 /** Submit a response to the current planning question */
@@ -2675,11 +2678,13 @@ export function respondToPlanning(
 export function rewindPlanningSession(
   sessionId: string,
   projectId?: string,
+  questionId?: string,
 ): Promise<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }> {
   return api<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/back`, projectId),
     {
       method: "POST",
+      ...(questionId ? { body: JSON.stringify({ questionId }) } : {}),
     },
   );
 }

@@ -1,6 +1,6 @@
 import type { ProjectSettings } from "./types.js";
 
-/** The only destinations that may be promoted into the mobile footer. */
+/** Destinations represented by the mobile navigation registry. */
 export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "command-center",
   "tasks",
@@ -25,6 +25,13 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "memory",
   "research",
   "evals",
+  /*
+  FNXC:Navigation 2026-08-01-00:00:
+  FN-8352 makes Ideation a top-level experimental destination, but it remains
+  More-only on mobile. Keep it registered for labels and More rendering while
+  excluding it from the footer-promotion registry below.
+  */
+  "ideation",
   "goals",
   "todos",
   "dev-server",
@@ -57,10 +64,16 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   memory: "nav.memory",
   research: "nav.research",
   evals: "nav.evals",
+  ideation: "nav.ideation",
   goals: "nav.goals",
   todos: "nav.todos",
   "dev-server": "nav.devServer",
 };
+
+/** Destinations that Settings may promote into the mobile footer. */
+export const MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS = MOBILE_NAV_SELECTABLE_ITEMS.filter(
+  (item): item is Exclude<MobileNavSelectableItem, "ideation"> => item !== "ideation",
+);
 
 export const DEFAULT_MOBILE_NAV_PRIMARY_ITEMS: MobileNavSelectableItem[] = [
   "command-center", "tasks", "agents", "missions", "chat", "mailbox",
@@ -81,7 +94,7 @@ the render layer suppresses disabled experimental destinations, and More remains
 */
 export function resolveMobileNavPrimaryItems(settings?: Pick<ProjectSettings, "mobileNavPrimaryItems">): ResolvedMobileNavPrimaryItems {
   const selected = Array.isArray(settings?.mobileNavPrimaryItems) ? settings.mobileNavPrimaryItems : [];
-  const valid = new Set<string>(MOBILE_NAV_SELECTABLE_ITEMS);
+  const valid = new Set<string>(MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS);
   const primaryItems = selected.reduce<MobileNavSelectableItem[]>((items, id) => {
     if (valid.has(id) && !items.includes(id as MobileNavSelectableItem) && items.length < MAX_MOBILE_NAV_PRIMARY_ITEMS) {
       items.push(id as MobileNavSelectableItem);

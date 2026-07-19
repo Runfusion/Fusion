@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Gauge } from "lucide-react";
-import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
+import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics, TaskVerificationRequest } from "@fusion/core";
 import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
 import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
 import { LoadingSpinner } from "../LoadingSpinner";
+import { TaskVerificationStatus } from "../TaskVerificationStatus";
 import { TokensArea } from "./areas/TokensArea";
 import { ToolsArea } from "./areas/ToolsArea";
 import { ActivityArea } from "./areas/ActivityArea";
@@ -21,7 +22,6 @@ import { SystemStatsArea } from "./areas/SystemStatsArea";
 import { SystemControlsArea } from "./areas/SystemControlsArea";
 import { PluginManager } from "../PluginManager";
 import { MissionControlPanel } from "./MissionControlPanel";
-import { IdeationPanel } from "./IdeationPanel";
 import { CommandCenterControls } from "./CommandCenterControls";
 import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
@@ -53,8 +53,7 @@ type SubViewId =
   | "plugins"
   | "nodes"
   | "reliability"
-  | "mission-control"
-  | "ideation";
+  | "mission-control";
 
 interface SubView {
   id: SubViewId;
@@ -99,8 +98,12 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     { id: "plugins", label: t("commandCenter.tabs.plugins", "Plugins") },
     ...(nodesEnabled ? [{ id: "nodes" as const, label: t("commandCenter.tabs.nodes", "Nodes") }] : []),
     { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
+    /*
+    FNXC:Navigation 2026-08-01-00:00:
+    FN-8352 removes Ideation from Command Center because its experimental
+    top-level navigation view is now the single canonical host.
+    */
     { id: "mission-control", label: t("commandCenter.tabs.missionControl", "Mission Control") },
-    { id: "ideation", label: t("commandCenter.tabs.ideation", "Ideation") },
   ];
 }
 
@@ -169,6 +172,17 @@ function OverviewTab({
   const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot | null>(null);
   const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(true);
   const [codebaseMetrics, setCodebaseMetrics] = useState<CodebaseMetrics | null>(null);
+  const [verificationRequests, setVerificationRequests] = useState<TaskVerificationRequest[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void api<{ requests: TaskVerificationRequest[] }>(withProjectId("/command-center/verification-requests", projectId))
+      .then((response) => { if (!cancelled) setVerificationRequests(response.requests); })
+      .catch(() => { if (!cancelled) setVerificationRequests([]); });
+    refresh();
+    const timer = window.setInterval(refresh, OVERVIEW_TOKEN_REFRESH_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,6 +388,25 @@ function OverviewTab({
       <SdlcFunnel range={range} projectId={projectId} />
     </div>
   );
+  /*
+  FNXC:TaskVerificationRequest 2026-07-30-17:40:
+  Verification is operational state, not analytics. Render it in every settled
+  Overview branch so an otherwise new project still exposes executor outcomes.
+  */
+  const verificationSection = verificationRequests.length > 0 ? (
+    <section className="cc-verification-requests card" data-testid="command-center-verification-requests">
+      <div className="cc-overview-chart-header">
+        <h3 className="cc-area-section-title">Task verification</h3>
+        <p>Latest executor-owned verification requests</p>
+      </div>
+      {verificationRequests.map((request) => (
+        <div key={request.requestId} className="cc-verification-requests__item">
+          <span className="cc-verification-requests__task">{request.taskId}</span>
+          <TaskVerificationStatus request={request} compact />
+        </div>
+      ))}
+    </section>
+  ) : null;
 
   if (isInitialLoading) {
     return (
@@ -384,6 +417,7 @@ function OverviewTab({
           <div className="cc-chart-skeleton" />
           <p><LoadingSpinner label={t("commandCenter.loading", "Loading dashboard...")} /></p>
         </div>
+        {verificationSection}
         {throughputSection}
       </div>
     );
@@ -398,6 +432,7 @@ function OverviewTab({
           <AlertCircle size={24} />
           <p>{coreError}</p>
         </div>
+        {verificationSection}
         {throughputSection}
       </div>
     );
@@ -412,6 +447,7 @@ function OverviewTab({
           <Gauge size={28} />
           <p>{t("commandCenter.empty", "No usage data yet. Run some agents to populate the Dashboard.")}</p>
         </div>
+        {verificationSection}
         {throughputSection}
       </div>
     );
@@ -459,6 +495,7 @@ function OverviewTab({
           />
         </div>
       </div>
+      {verificationSection}
       {hasOverviewChartData ? (
         /*
         FNXC:CommandCenter 2026-06-18-00:00:
@@ -672,8 +709,6 @@ export function CommandCenter({
         return <ReliabilityView projectId={projectId} />;
       case "mission-control":
         return <MissionControlPanel projectId={projectId} />;
-      case "ideation":
-        return <IdeationPanel projectId={projectId} />;
       default:
         return <PlaceholderTab tabId={activeTab} />;
     }

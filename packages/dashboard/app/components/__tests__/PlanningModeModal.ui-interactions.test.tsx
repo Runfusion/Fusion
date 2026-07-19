@@ -42,6 +42,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -86,6 +87,7 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
@@ -192,6 +194,7 @@ describe("PlanningModeModal", () => {
     // realistically in tests.
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);

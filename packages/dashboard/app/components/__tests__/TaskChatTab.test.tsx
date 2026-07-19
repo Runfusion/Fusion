@@ -1334,6 +1334,40 @@ describe("TaskChatTab", () => {
     expect(raf.pendingCount).toBe(0);
   });
 
+  it("FN-8339: does not let tail growth override manual scrolling during streamed output", async () => {
+    const raf = mockRequestAnimationFrame();
+    const metrics = mockTranscriptMetrics({ scrollHeight: 800, clientHeight: 240, initialScrollTop: 0 });
+    const streamingEntry = makeEntry({ agent: "executor", text: "streaming output" });
+    mockLogs([streamingEntry]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(800);
+
+    metrics.scrollTop = 180;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    metrics.scrollHeight = 1200;
+    expect(raf.flushNext()).toBe(true);
+    mockLogs([{ ...streamingEntry, text: "streaming output grows in place" }]);
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await waitFor(() => expect(metrics.scrollTop).toBe(180));
+  });
+
+  it("FN-8339: follows in-place streamed growth while the task transcript is pinned", async () => {
+    const metrics = mockTranscriptMetrics({ scrollHeight: 800, clientHeight: 240, initialScrollTop: 0 });
+    const streamingEntry = makeEntry({ agent: "executor", text: "streaming output" });
+    mockLogs([streamingEntry]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(800);
+
+    metrics.scrollHeight = 1200;
+    mockLogs([{ ...streamingEntry, text: "streaming output grows in place" }]);
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await waitFor(() => expect(metrics.scrollTop).toBe(1200));
+  });
+
   it("FN-6337: bounds and cleans up the settle loop", () => {
     const raf = mockRequestAnimationFrame();
     const metrics = mockTranscriptMetrics({ scrollHeight: 500, clientHeight: 240, initialScrollTop: 0 });

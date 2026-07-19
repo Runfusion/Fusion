@@ -216,6 +216,8 @@ function formatModelValue(selection: { provider?: string; modelId?: string } | u
  * Renders live agent log output for a running (pending) workflow step.
  * Filters entries to show only those timestamped on or after the step's startedAt.
  */
+const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+
 function LiveAgentLogOutput({
   entries,
   startedAt,
@@ -228,6 +230,8 @@ function LiveAgentLogOutput({
   t: ReturnType<typeof useTranslation>["t"];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isFollowingRef = useRef(true);
   const startedAtMs = new Date(startedAt).getTime();
 
   // Filter entries to only show those from this step's time window
@@ -236,12 +240,38 @@ function LiveAgentLogOutput({
     return entryMs >= startedAtMs;
   });
 
-  // Auto-scroll to bottom as new entries arrive
-  useEffect(() => {
+  const isNearBottom = useCallback((container: HTMLDivElement) => (
+    container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX
+  ), []);
+
+  const followTail = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !isFollowingRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  const handleScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [stepEntries.length]);
+    isFollowingRef.current = isNearBottom(container);
+  }, [isNearBottom]);
+
+  /*
+  FNXC:WorkflowLiveLog 2026-07-18-16:10:
+  FN-8345 requires live workflow output to follow streamed growth only while the reader remains pinned near the tail. A manual scroll-up disables follow until the reader returns to the bottom; observing the content wrapper also covers streamed text that grows without adding an entry.
+  */
+  useEffect(() => {
+    followTail();
+  }, [followTail, stepEntries]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(followTail);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [followTail, stepEntries.length]);
 
   if (stepEntries.length === 0) {
     return (
@@ -256,46 +286,49 @@ function LiveAgentLogOutput({
       ref={containerRef}
       className="workflow-live-log"
       data-testid={`workflow-live-log-${stepId}`}
+      onScroll={handleScroll}
     >
-      {stepEntries.map((entry, i) => {
-        if (entry.type === "tool") {
+      <div ref={contentRef}>
+        {stepEntries.map((entry, i) => {
+          if (entry.type === "tool") {
+            return (
+              <div key={i} className="workflow-live-log-tool">
+                ⚡ {linkifyFilePaths(entry.text)}
+                {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
+              </div>
+            );
+          }
+          if (entry.type === "tool_result") {
+            return (
+              <div key={i} className="workflow-live-log-tool-result">
+                ✓ {linkifyFilePaths(entry.text)}
+                {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
+              </div>
+            );
+          }
+          if (entry.type === "tool_error") {
+            return (
+              <div key={i} className="workflow-live-log-tool-error">
+                ✗ {linkifyFilePaths(entry.text)}
+                {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
+              </div>
+            );
+          }
+          if (entry.type === "thinking") {
+            return (
+              <div key={i} className="workflow-live-log-thinking">
+                {linkifyFilePaths(entry.text)}
+              </div>
+            );
+          }
+          // Default: text entries
           return (
-            <div key={i} className="workflow-live-log-tool">
-              ⚡ {linkifyFilePaths(entry.text)}
-              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
-            </div>
-          );
-        }
-        if (entry.type === "tool_result") {
-          return (
-            <div key={i} className="workflow-live-log-tool-result">
-              ✓ {linkifyFilePaths(entry.text)}
-              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
-            </div>
-          );
-        }
-        if (entry.type === "tool_error") {
-          return (
-            <div key={i} className="workflow-live-log-tool-error">
-              ✗ {linkifyFilePaths(entry.text)}
-              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
-            </div>
-          );
-        }
-        if (entry.type === "thinking") {
-          return (
-            <div key={i} className="workflow-live-log-thinking">
+            <span key={i} className="workflow-live-log-text">
               {linkifyFilePaths(entry.text)}
-            </div>
+            </span>
           );
-        }
-        // Default: text entries
-        return (
-          <span key={i} className="workflow-live-log-text">
-            {linkifyFilePaths(entry.text)}
-          </span>
-        );
-      })}
+        })}
+      </div>
     </div>
   );
 }

@@ -91,6 +91,7 @@ const plugin: FusionPlugin = definePlugin({
 export default plugin;
 export { probeOmpBinary } from "./probe.js";
 export { discoverOmpProviderModels } from "./provider.js";
+export { discoverOmpModels, resolveOmpModelSelector } from "./process-manager.js";
 export { OmpRuntimeAdapter } from "./runtime-adapter.js";
 export type { OmpBinaryStatus } from "./types.js";
 export {

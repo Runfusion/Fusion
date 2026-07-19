@@ -11,7 +11,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipeline";
-import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
@@ -24,12 +24,13 @@ import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advi
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
 import { TaskFieldsSection } from "./TaskFieldsSection";
+import { TaskVerificationStatus } from "./TaskVerificationStatus";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
@@ -690,6 +691,17 @@ export function TaskDetailContent({
   const [detailLoading, setDetailLoading] = useState(() =>
     !("prompt" in task),
   );
+  const [verificationRequest, setVerificationRequest] = useState<TaskVerificationRequest | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void fetchTaskVerificationRequest(task.id, projectId)
+      .then((request) => { if (!cancelled) setVerificationRequest(request); })
+      .catch(() => { if (!cancelled) setVerificationRequest(null); });
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [task.id, projectId]);
 
   useEffect(() => {
     // If the prop already has a prompt field, it's a full TaskDetail
@@ -4268,6 +4280,7 @@ export function TaskDetailContent({
                   </p>
                 </div>
               )}
+              <TaskVerificationStatus request={verificationRequest} />
               <div className="detail-meta">
                 {/*
                 FNXC:QuickAddActionRow 2026-07-16-16:00:

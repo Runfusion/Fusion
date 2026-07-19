@@ -44,4 +44,12 @@ describe("report scrub", () => {
     expect(scrubReportText(undefined, context)).toBe("");
     expect(scrubReportPayload({ summary: "", context: undefined }, context)).toEqual({ summary: "", context: undefined });
   });
+
+  it("scrubs activity trace text and does not exempt arbitrary data URLs", () => {
+    const screenshot = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=";
+    const result = scrubReportPayload({ context: { activityTrace: ["private-project /Users/alice/work/acme-private ghp_abcdefghijk1234567890"] }, body: `Pasted ${screenshot}` }, context);
+    expect(JSON.stringify(result.context?.activityTrace)).not.toMatch(/\/Users\/alice|ghp_/);
+    expect(result.body).toBe("Pasted [REDACTED_BINARY]");
+  });
+
 });

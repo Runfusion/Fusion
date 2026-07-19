@@ -20,6 +20,14 @@ export default defineConfig({
         replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
       },
       {
+        find: "@fusion/dashboard/app/api/task-content",
+        replacement: fileURLToPath(new URL("../../packages/dashboard/app/api/task-content.ts", import.meta.url)),
+      },
+      {
+        find: "@fusion/dashboard/app/components/ViewHeader",
+        replacement: fileURLToPath(new URL("../../packages/dashboard/app/components/ViewHeader.tsx", import.meta.url)),
+      },
+      {
         find: "@fusion/core",
         replacement: fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       },

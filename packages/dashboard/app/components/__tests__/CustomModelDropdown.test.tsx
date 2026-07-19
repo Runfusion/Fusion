@@ -342,6 +342,7 @@ describe("CustomModelDropdown", () => {
   });
 
   it.each([
+    { width: 1024, height: 800, query: "desktop", expectedMaxHeight: "320px" },
     { width: 390, height: 844, query: "(max-width: 640px)", expectedMaxHeight: "360px" },
     { width: 700, height: 900, query: "(max-width: 768px)", expectedMaxHeight: "420px" },
   ])("keeps the portaled model list touch-scrollable at $query", async ({ width, height, query, expectedMaxHeight }) => {
@@ -403,6 +404,7 @@ describe("CustomModelDropdown", () => {
     expect(portal.style.maxHeight).toBe(expectedMaxHeight);
     expect(list).toBeInstanceOf(HTMLElement);
     expect(within(portal).getAllByRole("option").length).toBeGreaterThan(20);
+    expect(listRule).toContain("min-height: 0;");
     expect(listRule).toContain("overflow-y: auto;");
     expect(listRule).toContain("overflow-x: hidden;");
     expect(listRule).toContain("-webkit-overflow-scrolling: touch;");
@@ -1269,6 +1271,83 @@ describe("CustomModelDropdown", () => {
         },
       };
     };
+
+    it("keeps the filtered mobile list scrollable after visualViewport keyboard repositioning", async () => {
+      const user = userEvent.setup();
+      const css = readFileSync(resolve(__dirname, "../CustomModelDropdown.css"), "utf-8");
+      const listRule = css.match(/\.model-combobox-list\s*\{[^}]*\}/)?.[0] ?? "";
+      const overflowingModels = Array.from({ length: 30 }, (_, index) => ({
+        provider: index % 2 === 0 ? "anthropic" : "openai",
+        id: `mobile-model-${index}`,
+        name: `Mobile Model ${index}`,
+        reasoning: false,
+        contextWindow: 128000,
+      }));
+      const { simulateChange, cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 375,
+        height: 667,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(667);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+      const restore = setupBoundingRectMock({
+        top: 200,
+        left: 20,
+        bottom: 236,
+        width: 335,
+        height: 36,
+        right: 355,
+        x: 20,
+        y: 200,
+      } as DOMRect);
+
+      try {
+        render(<CustomModelDropdown label="Mobile model" value="" onChange={vi.fn()} models={overflowingModels} />);
+        await user.click(screen.getByRole("button", { name: "Mobile model" }));
+
+        const portal = await screen.findByTestId("model-combobox-portal");
+        const list = portal.querySelector<HTMLElement>(".model-combobox-list");
+        expect(list).not.toBeNull();
+        expect(within(list!).getAllByRole("option")).toHaveLength(31);
+
+        await user.type(screen.getByPlaceholderText("Filter models…"), "mobile");
+        expect(within(list!).getAllByRole("option")).toHaveLength(31);
+
+        // Simulate the virtual keyboard shrinking the visual viewport after search.
+        simulateChange({ height: 160, offsetTop: 507 });
+        await waitFor(() => expect(parseFloat(portal.style.maxHeight)).toBe(160));
+
+        // JSDOM does not lay out overflow, so assert the CSS scroll contract and its runtime owner directly.
+        expect(listRule).toContain("min-height: 0;");
+        expect(listRule).toContain("overflow-y: auto;");
+        expect(listRule).toContain("-webkit-overflow-scrolling: touch;");
+        expect(listRule).toContain("touch-action: pan-y;");
+        expect(listRule).not.toContain("min-height: 160");
+        list!.scrollTop = 96;
+        expect(list!.scrollTop).toBe(96);
+
+        // The empty/no-match state retains the same list scroll owner rather than replacing it.
+        await user.clear(screen.getByPlaceholderText("Filter models…"));
+        await user.type(screen.getByPlaceholderText("Filter models…"), "no-matching-mobile-model");
+        expect(portal.querySelector(".model-combobox-no-results")).not.toBeNull();
+        expect(portal.querySelector(".model-combobox-list")).toBe(list);
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
 
     it("uses visualViewport dimensions for positioning when available", async () => {
       const user = userEvent.setup();

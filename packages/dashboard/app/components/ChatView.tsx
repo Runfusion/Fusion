@@ -1320,6 +1320,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     anchorToBottom,
   ]);
 
+  /*
+  FNXC:Chat 2026-07-18-14:09:
+  FN-8339 confirms regular Chat shares the pinned-bottom invariant with task chat and agent logs. `isUserScrollingRef` changes synchronously on a genuine scroll event, so streamed deltas and their settle frames must return without writing while the reader is above the bottom threshold; explicit jump-to-latest resets that ref before anchoring.
+  */
   // Scroll thread container to bottom during streaming only when already pinned.
   useEffect(() => {
     if (!isStreaming || isUserScrollingRef.current) {

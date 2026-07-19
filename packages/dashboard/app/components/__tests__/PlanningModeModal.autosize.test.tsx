@@ -12,6 +12,7 @@ import {
   mockStopPlanningGeneration,
   mockUpdatePlanningSessionDraft,
   mockCreateTaskFromPlanning,
+  mockValidatePlanningSession,
   mockStartPlanningBreakdown,
   mockCreateTasksFromPlanning,
   mockFetchAiSession,
@@ -26,6 +27,7 @@ import {
   mockUseMobileKeyboard,
   mockTasks,
   mockModels,
+  mockSummary,
 } from "./PlanningModeModal.test-helpers";
 
 const mockAddToast = vi.fn();
@@ -57,6 +59,7 @@ vi.mock("../../api", () => ({
   stopPlanningGeneration: (...args: any[]) => mockStopPlanningGeneration(...args),
   updatePlanningSessionDraft: (...args: any[]) => mockUpdatePlanningSessionDraft(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  validatePlanningSession: (...args: any[]) => mockValidatePlanningSession(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
@@ -131,6 +134,7 @@ describe("PlanningModeModal autosize", () => {
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
     mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "New planning session" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
+    mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);

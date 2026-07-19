@@ -2,7 +2,7 @@ import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatc
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
+import { createSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import * as dashboard from "@fusion/dashboard";
@@ -2287,12 +2287,18 @@ export async function runTaskPlan(
         throw promptErr;
       }
 
-      // Submit response and get next question or summary
+      // `/validate` is an explicit user command available in every text answer.
+      // The session never auto-finalizes: only this command calls validateSession.
       let result: { type: "question"; data: PlanningQuestion } | { type: "complete"; data: PlanningSummary };
 
       try {
+        const requestedValidation = Object.values(response).some((value) =>
+          typeof value === "string" && value.trim().toLowerCase() === "/validate",
+        );
         showThinking();
-        result = await submitResponse(sessionId, response) as typeof result;
+        result = requestedValidation
+          ? { type: "complete", data: await validateSession(sessionId) }
+          : await submitResponse(sessionId, response) as typeof result;
         clearThinking();
       } catch (err) {
         clearThinking();

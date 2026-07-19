@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { computeParentIntentClaimId, findSameAgentDuplicates, flagSameAgentDuplicate } from "../duplicate-intake.js";
+import { computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, findSameAgentDuplicates, flagSameAgentDuplicate } from "../duplicate-intake.js";
 import type { TaskStore } from "../store.js";
 
 describe("findSameAgentDuplicates", () => {
@@ -120,6 +120,44 @@ describe("findSameAgentDuplicates", () => {
     expect(claim("Add screenshot upload support")).not.toBe(claim("Add screenshot deletion support"));
     expect(claim("Add GitHub Discussions as a target")).not.toBe(claim("Add GitHub Issues as a target"));
     expect(claim("Add new support")).toMatch(/^agent-parent-intent:FN-8277:[a-f0-9]{64}$/);
+  });
+
+  it("derives one cross-parent claim for the recently repeated diagnostic", () => {
+    const descriptions = [
+      "Investigate and repair dashboard typecheck failure: app/utils/capture-screenshot.ts imports unresolved `html2canvas`, causing `pnpm verify:fast` to fail.",
+      "Fix dashboard typecheck failure: app/utils/capture-screenshot.ts cannot resolve the html2canvas module during pnpm verify:fast.",
+      "Fix dashboard typecheck failure: packages/dashboard/app/utils/capture-screenshot.ts imports unresolved html2canvas. Add or correctly wire the dependency.",
+      "Fix dashboard typecheck missing html2canvas dependency/import in packages/dashboard/app/utils/capture-screenshot.ts (TS2307 observed during pnpm verify:fast).",
+      "Fix dashboard typecheck dependency resolution for app/utils/capture-screenshot.ts: Cannot find module 'html2canvas' during pnpm verify:fast.",
+      "Restore the missing `html2canvas` dependency declaration/lock entry for dashboard screenshot capture so @fusion/dashboard typecheck passes.",
+    ];
+
+    const claims = descriptions.map((description) => computeCrossParentDiagnosticClaimId({ description }));
+
+    expect(new Set(claims).size).toBe(1);
+    expect(claims[0]).toMatch(/^agent-diagnostic-intent:/);
+  });
+
+  it("does not globally claim ordinary work or unrelated work on the same module", () => {
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Add screenshot upload support using html2canvas",
+    })).toBeNull();
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Improve html2canvas capture performance",
+    })).toBeNull();
+  });
+
+  it("keeps diagnostic paths distinct when they share a basename", () => {
+    const first = computeCrossParentDiagnosticClaimId({
+      description: "Fix unresolved packages/alpha/index.ts typecheck failure.",
+    });
+    const second = computeCrossParentDiagnosticClaimId({
+      description: "Fix unresolved packages/beta/index.ts typecheck failure.",
+    });
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).not.toBe(second);
   });
 
   it("does not match sibling with different parent task", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, resolveMobileNavPrimaryItems } from "../mobile-nav-primary-items.js";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems } from "../mobile-nav-primary-items.js";
 
 describe("resolveMobileNavPrimaryItems", () => {
   it("uses the existing six-tab order for unset or empty values", () => {
@@ -12,6 +12,14 @@ describe("resolveMobileNavPrimaryItems", () => {
     expect(resolved.primaryItems).toEqual(["git", "planning", "agents"]);
     expect(resolved.omittedItems).not.toContain("git");
     expect(resolved.omittedItems).toContain("settings");
+  });
+
+  it("keeps Ideation in More when stale settings try to promote it", () => {
+    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["ideation"] });
+
+    expect(MOBILE_NAV_SELECTABLE_ITEMS).toContain("ideation");
+    expect(resolved.primaryItems).not.toContain("ideation");
+    expect(resolved.omittedItems).toContain("ideation");
   });
 
   it("keeps newly eligible settings and documents, drops overflow-only ids, deduplicates, and clamps footer tabs", () => {

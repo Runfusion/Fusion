@@ -1,0 +1,61 @@
+/* FNXC:NativeStructureEmbed 2026-07-16-12:00: Keep the shared chat/mail card compact and token-driven while preserving a reachable consumer-owned open control on narrow screens. */
+.native-structure-preview {
+  align-items: start;
+  background: var(--bg-secondary);
+  border: solid var(--border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-sm);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: var(--space-md);
+}
+
+.native-structure-preview > svg {
+  color: var(--accent);
+}
+
+.native-structure-preview__content {
+  min-width: 0;
+}
+
+.native-structure-preview__label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.native-structure-preview__title,
+.native-structure-preview__excerpt {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.native-structure-preview__excerpt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  margin: var(--space-xs) 0 0;
+}
+
+.native-structure-preview__open {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.native-structure-preview--unavailable {
+  background: color-mix(in srgb, var(--color-error) 10%, var(--bg-secondary));
+}
+
+.native-structure-preview--unavailable > svg {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .native-structure-preview {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .native-structure-preview__open {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

@@ -3,13 +3,14 @@ import type { ThemeMode } from "@fusion/core";
 import type { ProjectInfo } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getPluginViewId, isPluginViewId, isPluginViewRegistered } from "../plugins/pluginViewRegistry";
+import { recordActivity } from "../utils/report-capture";
 
 export type ViewMode = "overview" | "project";
 /*
 FNXC:ViewState 2026-06-22-00:00:
 Workflows, Import Tasks, and Automations are promoted to top-level main-content task views (left-sidebar destinations) instead of modal-only overlays, so they render in the main panel like Command Center.
 */
-export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests" | "workflows" | "import-tasks" | "automations" | "settings" | "task-detail";
+export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "ideation" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests" | "workflows" | "import-tasks" | "automations" | "settings" | "task-detail";
 export type PluginTaskView = `plugin:${string}:${string}`;
 export type TaskView = BuiltInTaskView | PluginTaskView;
 
@@ -23,6 +24,12 @@ const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
   "documents",
   "research",
   "evals",
+  /*
+  FNXC:Navigation 2026-08-01-00:00:
+  FN-8352 promotes Ideation from a Command Center tab to a persisted,
+  default-off experimental top-level view.
+  */
+  "ideation",
   "goalsView",
   /*
   FNXC:ViewState 2026-06-21-09:14:
@@ -190,6 +197,12 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   useEffect(() => {
     setScopedItem("kb-dashboard-task-view", taskView, currentProject?.id);
   }, [currentProject?.id, taskView]);
+
+  useEffect(() => {
+    // FNXC:ReportPipeline 2026-07-18-12:30: Report traces describe only the
+    // selected view name; never capture URLs, embedded identifiers, or content.
+    if (isBuiltInTaskView(taskView)) recordActivity(taskView);
+  }, [taskView]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

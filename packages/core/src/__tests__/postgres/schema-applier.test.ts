@@ -48,6 +48,7 @@ import {
   TASK_PROPOSAL_CLAIM_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
   IDEATION_SCHEMA_VERSION,
+  RESEARCH_FEATURE_PROVENANCE_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -64,6 +65,8 @@ import {
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
+  SYMBOL_LOCKS_SCHEMA_VERSION,
+  TASK_VERIFICATION_REQUEST_VERSION,
 } from "../../postgres/schema-applier.js";
 import { rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -170,6 +173,11 @@ describe("schema-applier: immutable migration identities", () => {
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_PROPOSAL_CLAIM_VERSION));
   });
 
+  it("registers durable symbol locks at the next free migration version", () => {
+    expect(SYMBOL_LOCKS_SCHEMA_VERSION).toBe("0025");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(SYMBOL_LOCKS_SCHEMA_VERSION));
+  });
+
 });
 
 /*
@@ -263,6 +271,79 @@ async function teardownDb(ctx: TestContext | null): Promise<void> {
   } catch {
     // best-effort
   }
+}
+
+/*
+FNXC:SymbolLock 2026-07-30-15:15:
+The baseline declares symbol_locks but cannot attach its ownership trigger before
+0006 defines fusion_assign_project_id. Both a full fresh apply and an upgraded
+installation must therefore prove 0025 leaves the final table forced-RLS with
+its policy and trigger, including actual second-project read/write isolation.
+*/
+async function assertSymbolLocksOwnershipContract(ctx: TestContext): Promise<void> {
+  const catalog = (await ctx.db.execute(sql`
+    SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS forced,
+      EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'project' AND tablename = 'symbol_locks'
+          AND policyname = 'fusion_project_isolation'
+      ) AS policy,
+      EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'project.symbol_locks'::regclass
+          AND tgname = 'fusion_assign_project_id' AND NOT tgisinternal
+      ) AS trigger
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'project' AND c.relname = 'symbol_locks'
+  `)) as unknown as Array<{ rls: boolean; forced: boolean; policy: boolean; trigger: boolean }>;
+  expect(catalog).toEqual([{ rls: true, forced: true, policy: true, trigger: true }]);
+
+  const role = `fusion_symbol_lock_isolation_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
+  await ctx.db.execute(sql.raw(`
+    CREATE ROLE ${role} NOLOGIN;
+    GRANT USAGE ON SCHEMA project TO ${role};
+    GRANT SELECT, INSERT, UPDATE, DELETE ON project.symbol_locks TO ${role};
+  `));
+  try {
+    for (const projectId of ["project-a", "project-b"]) {
+      await ctx.db.transaction(async (tx) => {
+        await tx.execute(sql.raw(`SET LOCAL ROLE ${role}`));
+        await tx.execute(sql`SELECT set_config('fusion.project_id', ${projectId}, true)`);
+        await tx.execute(sql`
+          INSERT INTO project.symbol_locks(
+            symbol_key, owner_task_id, status, acquired_at, renewed_at, expires_at, created_at, updated_at
+          ) VALUES (
+            'pkg/shared.ts#export', ${`FN-${projectId}`}, 'held',
+            '2026-07-30T15:15:00.000Z', '2026-07-30T15:15:00.000Z',
+            '2026-07-30T16:15:00.000Z', '2026-07-30T15:15:00.000Z', '2026-07-30T15:15:00.000Z'
+          )
+        `);
+      });
+    }
+    await ctx.db.transaction(async (tx) => {
+      await tx.execute(sql.raw(`SET LOCAL ROLE ${role}`));
+      await tx.execute(sql`SELECT set_config('fusion.project_id', 'project-b', true)`);
+      const visible = (await tx.execute(sql`
+        SELECT project_id, owner_task_id FROM project.symbol_locks ORDER BY project_id
+      `)) as unknown as Array<{ project_id: string; owner_task_id: string }>;
+      expect(visible).toEqual([{ project_id: "project-b", owner_task_id: "FN-project-b" }]);
+      const stolen = (await tx.execute(sql`
+        UPDATE project.symbol_locks SET owner_task_id = 'stolen'
+        WHERE project_id = 'project-a' RETURNING owner_task_id
+      `)) as unknown as Array<{ owner_task_id: string }>;
+      expect(stolen).toEqual([]);
+    });
+  } finally {
+    await ctx.db.execute(sql.raw(`DROP OWNED BY ${role}; DROP ROLE ${role};`));
+  }
+  const rows = (await ctx.db.execute(sql`
+    SELECT project_id, owner_task_id FROM project.symbol_locks ORDER BY project_id
+  `)) as unknown as Array<{ project_id: string; owner_task_id: string }>;
+  expect(rows).toEqual([
+    { project_id: "project-a", owner_task_id: "FN-project-a" },
+    { project_id: "project-b", owner_task_id: "FN-project-b" },
+  ]);
 }
 
 /**
@@ -538,9 +619,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     // Project: 87 typed core tables + 2 lossless legacy preservation tables
     // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30)
     // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00)
-    // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295).
+    // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295)
+    // + 1 task_verification_requests + 1 durable symbol_locks table (FN-8305).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(93);
+    expect(bySchema.project).toBe(95);
     expect(bySchema.central).toBe(18);
     expect(bySchema.archive).toBe(1);
   });
@@ -691,6 +773,26 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       ORDER BY c.relname
     `)) as unknown as Array<{ table_name: string }>;
     expect(rlsGaps).toEqual([]);
+  });
+
+  it("applies symbol-lock RLS, ownership policy, and trigger after a full fresh sequence", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await assertSymbolLocksOwnershipContract(ctx);
+  });
+
+  it("repairs an upgraded installation missing the 0025 symbol-lock migration", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    // Preserve the 0000 marker while removing the later table/marker: this is
+    // the pre-0025 upgraded-install shape, where replay must not rely on baseline SQL.
+    await ctx.db.execute(sql.raw(`
+      DROP TABLE project.symbol_locks;
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0025';
+    `));
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    expect(await getAppliedMigrations(ctx.db)).toContain(SYMBOL_LOCKS_SCHEMA_VERSION);
+    await assertSymbolLocksOwnershipContract(ctx);
   });
 
   /*
@@ -1083,7 +1185,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       missing relation project.missions.
       */
       CREATE TABLE project.missions (id text PRIMARY KEY);
-      CREATE TABLE project.mission_features (id text PRIMARY KEY);
+      /* slice_id required before 0023 research provenance unique index can attach. */
+      CREATE TABLE project.mission_features (id text PRIMARY KEY, slice_id text);
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1166,6 +1269,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
+      TASK_VERIFICATION_REQUEST_VERSION,
+      SYMBOL_LOCKS_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1214,7 +1320,54 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
+      TASK_VERIFICATION_REQUEST_VERSION,
+      SYMBOL_LOCKS_SCHEMA_VERSION,
     ]);
+  });
+
+  it("queues schema DDL behind an active SQLite migration transaction", async () => {
+    ctx = await setupFreshDb();
+    const migrationSql = postgres(ctx.testUrl, { max: 1, prepare: false, onnotice: () => {} });
+    const schemaSql = postgres(ctx.testUrl, {
+      max: 1,
+      prepare: false,
+      onnotice: () => {},
+      connection: { lock_timeout: 100 },
+    });
+    const schemaDb = drizzle(schemaSql);
+    let releaseMigration!: () => void;
+    let migrationLockAcquired!: () => void;
+    const release = new Promise<void>((resolve) => { releaseMigration = resolve; });
+    const acquired = new Promise<void>((resolve) => { migrationLockAcquired = resolve; });
+    const holder = migrationSql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext('fusion:sqlite-migration-state'))`;
+      migrationLockAcquired();
+      await release;
+    });
+
+    try {
+      await acquired;
+      try {
+        let lockError: unknown;
+        try {
+          await applySchemaBaseline(schemaDb, { pluginHooks: [] });
+        } catch (error) {
+          lockError = error;
+        }
+        expect(lockError).toBeInstanceOf(Error);
+        expect((lockError as Error & { cause?: { code?: string } }).cause?.code).toBe("55P03");
+      } finally {
+        releaseMigration();
+        await holder;
+      }
+      expect((await applySchemaBaseline(schemaDb, { pluginHooks: [] })).applied).toBe(true);
+    } finally {
+      releaseMigration();
+      await holder.catch(() => undefined);
+      await migrationSql.end({ timeout: 5 });
+      await schemaSql.end({ timeout: 5 });
+    }
   });
 
   /*
@@ -1351,6 +1504,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
+      TASK_VERIFICATION_REQUEST_VERSION,
+      SYMBOL_LOCKS_SCHEMA_VERSION,
     ]);
   });
 
@@ -1413,6 +1569,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
+      TASK_VERIFICATION_REQUEST_VERSION,
+      SYMBOL_LOCKS_SCHEMA_VERSION,
     ]);
   });
 
@@ -1475,6 +1634,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
       IDEATION_SCHEMA_VERSION,
+      RESEARCH_FEATURE_PROVENANCE_VERSION,
+      TASK_VERIFICATION_REQUEST_VERSION,
+      SYMBOL_LOCKS_SCHEMA_VERSION,
     ]);
   });
 });

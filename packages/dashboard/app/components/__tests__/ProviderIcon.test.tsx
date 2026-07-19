@@ -74,6 +74,29 @@ describe("ProviderIcon", () => {
     expect(document.querySelector('[data-provider="cursor"] svg:not([data-testid])')).not.toBeInTheDocument();
   });
 
+  it("renders the OMP brand icon, auth label, and tokenized color for omp-cli", () => {
+    render(<ProviderIcon provider="omp-cli" />);
+    const svg = screen.getByTestId("omp-icon");
+    expect(svg).toBeInTheDocument();
+    expect(screen.getByLabelText("Oh My Pi — via omp ACP")).toBeInTheDocument();
+    expect(svg.parentElement).toHaveAttribute("data-provider", "omp-cli");
+    expect(svg.parentElement).toHaveStyle({ color: "var(--provider-omp)" });
+    expect(svg.querySelector("path")).toHaveAttribute("fill", "var(--provider-omp)");
+  });
+
+  it.each(["omp", "oh-my-pi"])("renders the OMP brand icon for the %s alias", (provider) => {
+    render(<ProviderIcon provider={provider} />);
+    const svg = screen.getByTestId("omp-icon");
+    expect(svg.parentElement).toHaveAttribute("data-provider", provider);
+    expect(svg.parentElement).toHaveStyle({ color: "var(--provider-omp)" });
+  });
+
+  it("infers OMP model-provider strings to the OMP brand icon", () => {
+    render(<ProviderIcon provider="omp/claude-sonnet-4" />);
+    expect(screen.getByTestId("omp-icon")).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="omp/claude-sonnet-4"] svg:not([data-testid])')).not.toBeInTheDocument();
+  });
+
   it("renders grok-cli icon reusing the xAI brand mark", () => {
     render(<ProviderIcon provider="grok-cli" />);
     const svg = screen.getByTestId("xai-icon");

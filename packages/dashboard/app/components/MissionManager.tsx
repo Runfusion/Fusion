@@ -109,6 +109,7 @@ import {
 import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-types";
 import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
 const MISSION_SIDEBAR_DEFAULT_WIDTH = 300;
 const MISSION_SIDEBAR_MIN_WIDTH = 220;
@@ -3026,7 +3027,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
                   return (
                   <div key={milestone.id} className="mission-milestone">
-                    <div className="mission-milestone__header" onClick={() => toggleMilestoneExpanded(milestone.id)}>
+                    <div className="mission-milestone__header" draggable={isNativeStructureDragEnabled()} onDragStart={(event) => {
+                      // FNXC:NativeStructureEmbed 2026-07-22-10:30: Milestones use the same transferable ref as missions and mail drops.
+                      serializeNativeStructureRef(event.dataTransfer, { kind: "milestone", id: milestone.id, projectId });
+                    }} onClick={() => toggleMilestoneExpanded(milestone.id)}>
                       <button className="mission-milestone__expand">
                         {expandedMilestones.has(milestone.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </button>
@@ -4438,6 +4442,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         tabIndex={0}
         aria-label={t("missions.openMissionAriaLabel", "Open mission {{title}}", { title: m.title })}
         aria-pressed={isSelected}
+        draggable={isNativeStructureDragEnabled()}
+        onDragStart={(event) => {
+          // FNXC:NativeStructureEmbed 2026-07-22-10:30: Mission cards emit the shared mail payload; coarse pointers rely on the accessible picker.
+          serializeNativeStructureRef(event.dataTransfer, { kind: "mission", id: m.id, projectId });
+        }}
         onClick={() => handleSelectMission(mission)}
         onKeyDown={(event) => {
           if (event.currentTarget !== event.target) return;

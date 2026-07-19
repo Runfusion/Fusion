@@ -34,6 +34,14 @@ export const OMP_ACP_ENV_ALLOWLIST = [
   "GEMINI_API_KEY",
   "XAI_API_KEY",
   "GROK_API_KEY",
+  // FNXC:OmpAcp 2026-07-18-23:50: default omp models often use zai/minimax/kimi keys in env.
+  "ZAI_API_KEY",
+  "Z_AI_API_KEY",
+  "GLM_API_KEY",
+  "MINIMAX_API_KEY",
+  "MINIMAX_GROUP_ID",
+  "KIMI_API_KEY",
+  "MOONSHOT_API_KEY",
 ] as const;
 
 /**

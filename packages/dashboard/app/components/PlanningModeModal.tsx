@@ -7,8 +7,6 @@ import remarkGfm from "remark-gfm";
 import type { Task, PlanningQuestion, PlanningSummary, TaskPriority, ThinkingLevel } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
-  PLANNING_DEEPEN_CHECKPOINT_ID,
-  PLANNING_DEEPEN_PROCEED_OPTION_ID,
   TASK_PRIORITIES,
   THINKING_LEVELS,
   getErrorMessage,
@@ -20,6 +18,7 @@ import {
   rewindPlanningSession,
   retryPlanningSession,
   createTaskFromPlanning,
+  validatePlanningSession,
   connectPlanningStream,
   fetchAiSession,
   fetchAiSessions,
@@ -444,8 +443,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const [planningThinkingLevel, setPlanningThinkingLevel] = useState<ThinkingLevel | "">("");
-  const [planningDepth, setPlanningDepth] = useState<"small" | "medium" | "large">("medium");
-  const [customQuestionCount, setCustomQuestionCount] = useState("");
   const [clarificationEnabled, setClarificationEnabled] = useState(true);
   const [clarificationSettingsLoading, setClarificationSettingsLoading] = useState(true);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
@@ -737,8 +734,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setPlanningModelProvider(undefined);
     setPlanningModelId(undefined);
     setPlanningThinkingLevel("");
-    setPlanningDepth("medium");
-    setCustomQuestionCount("");
     currentSessionIdRef.current = null;
   }, [resetPlanningAutoRetryBudget]);
 
@@ -1138,22 +1133,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           ? { planningModelProvider, planningModelId, thinkingLevel: planningThinkingLevel || undefined }
           : (planningThinkingLevel ? { thinkingLevel: planningThinkingLevel } : undefined);
 
-      const parsedCustomQuestionCount = customQuestionCount.trim()
-        ? Number.parseInt(customQuestionCount, 10)
-        : undefined;
-
       const draftSessionId = draftSessionIdRef.current;
       const { sessionId } = await startPlanningStreaming(
         startedPlan,
         projectId,
         modelOverride,
-        {
-          planningDepth,
-          customQuestionCount: Number.isInteger(parsedCustomQuestionCount)
-            ? parsedCustomQuestionCount
-            : undefined,
-          clarificationEnabled,
-        },
+        { clarificationEnabled },
         draftSessionId ?? undefined,
       );
       draftSessionIdRef.current = null;
@@ -1173,9 +1158,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     clarificationEnabled,
     clarificationSettingsLoading,
     connectToPlanningStream,
-    customQuestionCount,
     initialPlan,
-    planningDepth,
     planningModelId,
     planningModelProvider,
     planningThinkingLevel,
@@ -1906,42 +1889,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     [projectId, resetPlanningAutoRetryBudget, view]
   );
 
-  const handleRefineFurther = useCallback(async () => {
-    if (view.type !== "summary" || refineSummaryInFlightRef.current) {
-      return;
-    }
-
-    const { session, summary } = view;
-    const sessionId = session.sessionId;
-    currentSessionIdRef.current = sessionId;
-
-    refineSummaryInFlightRef.current = true;
-    setIsRefiningSummary(true);
-    setError(null);
-    setIsRetrying(false);
-    resetPlanningAutoRetryBudget();
-    setStreamingOutput("");
-    setView({ type: "loading" });
-    liveGenerationSessionIdRef.current = sessionId;
-
-    connectToPlanningStream(sessionId);
-
-    try {
-      await respondToPlanning(sessionId, { refine: true }, projectId);
-    } catch (err) {
-      const message = getErrorMessage(err) || t("planning.failedRefinePlan", "Failed to refine plan");
-      if (/generation already in progress/i.test(message)) {
-        return;
-      }
-      refineSummaryInFlightRef.current = false;
-      setIsRefiningSummary(false);
-      streamConnectionRef.current?.close();
-      streamConnectionRef.current = null;
-      setError(message);
-      setView({ type: "summary", session, summary: editedSummary ?? summary });
-    }
-  }, [connectToPlanningStream, editedSummary, projectId, resetPlanningAutoRetryBudget, view]);
-
   const handleStopGeneration = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
     if (!sessionId) {
@@ -1978,6 +1925,19 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     await startPlanningRetry(view.session, { auto: false });
   }, [resetPlanningAutoRetryBudget, startPlanningRetry, view]);
 
+  const handleValidatePlan = useCallback(async () => {
+    if (view.type !== "question") return;
+    setError(null);
+    try {
+      const result = await validatePlanningSession(view.session.sessionId, projectId);
+      const summary = normalizePlanningSummary(result.summary);
+      setEditedSummary(summary);
+      setView({ type: "summary", session: { ...view.session, summary }, summary });
+    } catch (err) {
+      setError(getErrorMessage(err) || t("planning.failedValidatePlan", "Failed to validate plan"));
+    }
+  }, [projectId, t, view]);
+
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
     if ((branchMode === "existing" || branchMode === "custom-new") && !branchName.trim()) return;
@@ -1987,6 +1947,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       const completedSessionId = view.session.sessionId;
+      await validatePlanningSession(completedSessionId, projectId);
       const normalizedSummary = editedSummary ? normalizePlanningSummary(editedSummary) : undefined;
       const task = await createTaskFromPlanning(completedSessionId, normalizedSummary, projectId, {
         branchSelection: {
@@ -2021,6 +1982,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       const normalizedSummary = editedSummary ? normalizePlanningSummary(editedSummary) : undefined;
+      await validatePlanningSession(view.session.sessionId, projectId);
       const result = await startPlanningBreakdown(view.session.sessionId, normalizedSummary, projectId);
       const normalizedSubtasks = (Array.isArray(result.subtasks) ? result.subtasks : []).map(normalizeSubtaskItem);
       setView({
@@ -2045,6 +2007,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       const completedSessionId = view.sessionId;
+      await validatePlanningSession(completedSessionId, projectId);
       const result = await createTasksFromPlanning(
         completedSessionId,
         buildCompactPlanningSubtaskDrafts(
@@ -2080,8 +2043,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setPlanningModelProvider(undefined);
       setPlanningModelId(undefined);
       setPlanningThinkingLevel("");
-      setPlanningDepth("medium");
-      setCustomQuestionCount("");
       currentSessionIdRef.current = null;
       setSelectedSessionId(null);
       handleClose();
@@ -2419,50 +2380,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     </div>
                   </div>
 
-                    <div className="planning-advanced-section planning-depth-selector">
+                    <div className="planning-advanced-section">
                       <label className="checkbox-label" htmlFor="planning-clarification-enabled">
                         <input id="planning-clarification-enabled" type="checkbox" checked={clarificationEnabled} disabled={clarificationSettingsLoading} onChange={(event) => setClarificationEnabled(event.target.checked)} />
                         {t("planning.agentClarification", " Allow follow-up clarification questions")}
                       </label>
-                      <p className="planning-advanced-blurb">
-                        {t("planning.depthBlurb", "Plan size sets default interview depth. Questions lets you override with an exact count.")}
-                      </p>
-                      <div className="planning-depth-controls-row">
-                        <div className="planning-depth-chip-group" role="group" aria-label={t("planning.planningDepth", "Planning depth")}>
-                          {(["small", "medium", "large"] as const).map((depthValue) => {
-                            const depthLabels: Record<string, string> = {
-                              small: t("planning.depthSmall", "Small"),
-                              medium: t("planning.depthMedium", "Medium"),
-                              large: t("planning.depthLarge", "Large"),
-                            };
-                            const depthOption = { value: depthValue, label: depthLabels[depthValue] };
-                            return (
-                            <button
-                              key={depthOption.value}
-                              type="button"
-                              className={`planning-depth-chip btn ${planningDepth === depthOption.value ? "btn-primary planning-depth-chip-active" : ""}`}
-                              onClick={() => setPlanningDepth(depthOption.value)}
-                              aria-pressed={planningDepth === depthOption.value}
-                            >
-                              {depthOption.label}
-                            </button>
-                          );})}
-                        </div>
-
-                        <label className="planning-depth-question-count" htmlFor="planning-depth-questions">
-                          <span>{t("planning.questionsLabel", "Questions")}</span>
-                          <input
-                            id="planning-depth-questions"
-                            className="input planning-depth-question-input"
-                            type="number"
-                            min={1}
-                            max={20}
-                            value={customQuestionCount}
-                            onChange={(e) => setCustomQuestionCount(e.target.value)}
-                            placeholder={t("planning.questionsAuto", "Auto")}
-                          />
-                        </label>
-                      </div>
                     </div>
                   </div>
                 </OnboardingDisclosure>
@@ -2571,6 +2493,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 isBackPending={isBackPending}
                 onCopyPlanPrompt={activePlanPrompt.trim() ? handleCopyPlanPrompt : undefined}
               />
+              <button type="button" className="btn" onClick={() => { void handleValidatePlan(); }}>
+                {t("planning.validatePlan", "Validate plan")}
+              </button>
             </div>
           )}
 
@@ -2588,9 +2513,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onBaseBranchChange={setBaseBranch}
               onCreateTask={handleCreateTask}
               onBreakIntoTasks={handleStartBreakdown}
-              onRefine={() => {
-                void handleRefineFurther();
-              }}
               isCreatingTask={isCreatingTask}
               isStartingBreakdown={isStartingBreakdown}
               isRefiningSummary={isRefiningSummary}
@@ -2645,16 +2567,6 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
   const { t } = useTranslation("app");
   const question = normalizeQuestionOptions(rawQuestion);
   const questionOptions = question.options ?? [];
-  const isDeepeningCheckpoint = question.id === PLANNING_DEEPEN_CHECKPOINT_ID;
-  const planPreview = isDeepeningCheckpoint && question.planPreview
-    ? {
-        title: typeof question.planPreview.title === "string" ? question.planPreview.title : "",
-        description: typeof question.planPreview.description === "string" ? question.planPreview.description : "",
-        keyDeliverables: Array.isArray(question.planPreview.keyDeliverables)
-          ? question.planPreview.keyDeliverables.filter((deliverable): deliverable is string => typeof deliverable === "string")
-          : [],
-      }
-    : undefined;
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
   const [commentValue, setCommentValue] = useState("");
@@ -2795,41 +2707,6 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
             <span className="planning-progress-text">{t("planning.questionProgress", "Question {{progress}} of ~3", { progress })}</span>
           </div>
 
-          {/*
-          FNXC:PlanningMode 2026-07-16-00:00:
-          FN-8065 / GitHub #2150 requires the deepening checkpoint to show its persisted
-          pendingSummary preview before users choose whether to refine or proceed. The strict
-          checkpoint-and-payload guard preserves ordinary questions and legacy checkpoint rows.
-          */}
-          {planPreview && (
-            <section className="planning-checkpoint-plan-preview" aria-labelledby="planning-checkpoint-plan-preview-heading">
-              <div className="planning-checkpoint-plan-preview-header">
-                <h4 id="planning-checkpoint-plan-preview-heading">
-                  {t("planning.checkpointPlanPreviewHeading", "Your plan so far")}
-                </h4>
-                <p className="text-muted">
-                  {t("planning.checkpointPlanPreviewDescription", "Review the plan below, then choose to refine further or proceed.")}
-                </p>
-              </div>
-              <h5 className="planning-checkpoint-plan-preview-title">{planPreview.title}</h5>
-              {planPreview.description && (
-                <div className="planning-checkpoint-plan-preview-description markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{planPreview.description}</ReactMarkdown>
-                </div>
-              )}
-              {planPreview.keyDeliverables.length > 0 && (
-                <div className="planning-checkpoint-plan-preview-deliverables">
-                  <h5>{t("planning.keyDeliverables", "Key Deliverables")}</h5>
-                  <ul>
-                    {planPreview.keyDeliverables.map((deliverable, index) => (
-                      <li key={`${deliverable}-${index}`}>{deliverable}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </section>
-          )}
-
           <div className="planning-question-content">
             {/*
             FNXC:PlanningInterview 2026-07-16-00:00:
@@ -2924,7 +2801,6 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                 <div className="planning-checkbox-group">
                   {questionOptions.map((option) => {
                     const selected = Array.isArray(response[question.id]) ? (response[question.id] as string[]) : [];
-                    const isProceedOption = isDeepeningCheckpoint && option.id === PLANNING_DEEPEN_PROCEED_OPTION_ID;
                     return (
                       <label key={option.id} className="planning-option planning-option--checkbox">
                         <input
@@ -2933,14 +2809,8 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                           checked={selected.includes(option.id)}
                           onChange={(e) => {
                             const newSelected = e.target.checked
-                              ? isProceedOption
-                                ? [option.id]
-                                : [...selected.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID), option.id]
+                              ? [...selected, option.id]
                               : selected.filter((id) => id !== option.id);
-                            if (isProceedOption && e.target.checked) {
-                              setIsOtherSelected(false);
-                              setOtherValue("");
-                            }
                             setResponse({ [question.id]: newSelected });
                           }}
                         />
@@ -2961,10 +2831,6 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                       checked={isOtherSelected}
                       onChange={(e) => {
                         setIsOtherSelected(e.target.checked);
-                        if (e.target.checked && isDeepeningCheckpoint) {
-                          const selected = Array.isArray(response[question.id]) ? (response[question.id] as string[]) : [];
-                          setResponse({ [question.id]: selected.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID) });
-                        }
                         if (!e.target.checked) {
                           setOtherValue("");
                         }
@@ -3094,7 +2960,7 @@ interface SummaryViewProps {
   onBaseBranchChange: (branch: string) => void;
   onCreateTask: () => void;
   onBreakIntoTasks: () => void;
-  onRefine: () => void;
+  onRefine?: () => void;
   isCreatingTask: boolean;
   isStartingBreakdown: boolean;
   isRefiningSummary: boolean;
@@ -3340,10 +3206,12 @@ function SummaryView({
       </div>
 
       <div className="planning-actions planning-summary-actions">
-        <button className="btn" onClick={onRefine} disabled={isLoading}>
-          <ArrowLeft size={16} className="icon-mr-4" />
-          {t("planning.refineFurther", "Refine Further")}
-        </button>
+        {onRefine && (
+          <button className="btn" onClick={onRefine} disabled={isLoading}>
+            <ArrowLeft size={16} className="icon-mr-4" />
+            {t("planning.refineFurther", "Refine Further")}
+          </button>
+        )}
         <div className="planning-summary-actions-right">
           <button className="btn" onClick={onCreateTask} disabled={isLoading || hasInvalidBranchSelection}>
             {isCreatingTask ? (

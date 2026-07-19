@@ -38,6 +38,7 @@ import {
   FUSION_RUNTIME_SELF_AWARENESS,
 } from "@fusion/core";
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -81,6 +82,7 @@ import {
   createResearchTools,
   resolveMcpServersForStore,
   resolveExecutorThinkingLevel,
+  wrapToolsWithActionGate,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -358,6 +360,8 @@ export interface ChatFusionToolsetOptions {
   agentId?: string;
   /** True only when the session has both policy gate contexts for its bound agent. */
   missionMutationGated?: boolean;
+  /** Required for command-execution requests; status remains safely readable without it. */
+  actionGateContext?: AgentActionGateContext;
 }
 
 const CHAT_MISSION_READ_TOOL_NAMES = new Set(["fn_mission_list", "fn_mission_show"]);
@@ -452,6 +456,54 @@ room-responder lanes. Workflow, document, artifact, messaging, and task-planner
 tools stay additive at their call sites; unbound chat retains only read-only Mission
 tools because it has no durable action-gate principal.
 */
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+Chat records an allowlisted profile only. It deliberately has no shell runner: the
+executor claims this record on its existing task worktree under the shared slot.
+*/
+function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: AgentActionGateContext): ChatCustomTool[] {
+  const profiles = new Set(["verify:fast", "test-command"]);
+  const request = {
+    name: "fn_task_request_verification", label: "Request Task Verification",
+    description: "Queue an allowlisted verification profile for an in-progress task with a live executor worktree. This only records a request; chat never runs a command.",
+    parameters: { type: "object", properties: { task_id: { type: "string" }, profile: { type: "string", enum: ["verify:fast", "test-command"] } }, required: ["task_id"], additionalProperties: false },
+    execute: async (_id: string, raw: { task_id?: unknown; profile?: unknown }) => {
+      const taskId = typeof raw.task_id === "string" ? raw.task_id.trim() : "";
+      const profile = typeof raw.profile === "string" ? raw.profile : "verify:fast";
+      if (!taskId || !profiles.has(profile)) return { content: [{ type: "text" as const, text: "ERROR: task_id and an allowlisted profile are required; raw commands are not accepted." }], isError: true, details: {} };
+      const task = await taskStore.getTask(taskId);
+      if (!task || task.column !== "in-progress" || !task.worktree || !existsSync(task.worktree)) return { content: [{ type: "text" as const, text: "ERROR: verification requires an in-progress task with a live executor worktree." }], isError: true, details: {} };
+      const settings = await taskStore.getSettings();
+      const command = profile === "verify:fast" ? "pnpm verify:fast" : typeof settings.testCommand === "string" ? settings.testCommand : "";
+      if (!command) return { content: [{ type: "text" as const, text: "ERROR: the selected verification profile is not configured." }], isError: true, details: {} };
+      const created = await taskStore.createTaskVerificationRequest({ taskId, requestId: randomUUID(), profile: profile as "verify:fast" | "test-command", command, scope: "workspace", requestedBy: "chat" });
+      if (created.inFlightRequestId) return { content: [{ type: "text" as const, text: `ERROR: verification request ${created.inFlightRequestId} is already in flight.` }], isError: true, details: created };
+      return { content: [{ type: "text" as const, text: `Queued verification request ${created.request!.requestId} for ${taskId}.` }], details: created.request };
+    },
+  } as ChatCustomTool;
+  const status = {
+    name: "fn_task_verification_status", label: "Get Task Verification Status", description: "Read the latest persisted task verification request and bounded result.",
+    parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"], additionalProperties: false },
+    execute: async (_id: string, raw: { task_id?: unknown }) => {
+      const taskId = typeof raw.task_id === "string" ? raw.task_id.trim() : "";
+      if (!taskId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], isError: true, details: {} };
+      const record = await taskStore.getTaskVerificationRequestAsync(taskId);
+      return { content: [{ type: "text" as const, text: record ? JSON.stringify(record) : `No verification request exists for ${taskId}.` }], details: record ?? {} };
+    },
+  } as ChatCustomTool;
+  /*
+  FNXC:TaskVerificationRequest 2026-07-30-17:40:
+  A chat verification request is command_execution even though this closure only
+  persists a queue row. Apply the engine's action-gate at this server boundary
+  before persistence; sessions without a durable principal may read status but
+  must not enqueue executor-owned subprocess work.
+  */
+  return [
+    ...(actionGateContext ? wrapToolsWithActionGate([request], actionGateContext) as ChatCustomTool[] : []),
+    status,
+  ];
+}
+
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
   const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false } = options;
   const tools: ChatCustomTool[] = [];
@@ -462,6 +514,7 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskListTool(taskStore),
       createTaskShowTool(taskStore),
       createTaskSearchTool(taskStore),
+      ...createTaskVerificationTools(taskStore, options.actionGateContext),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
       /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Promotion is a mission mutation because it creates canonical roadmap work; dashboard chat exposes it only through the same permanent-agent action gate as all hierarchy writes. */
       ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)), 
@@ -1966,6 +2019,7 @@ export class ChatManager {
       rootDir: this.rootDir,
       agentId: input.responder.id,
       missionMutationGated: missionGateContexts.missionMutationGated,
+      actionGateContext: missionGateContexts.actionGateContext,
     });
 
     const resolvedSession = await createResolvedAgentSession({
@@ -2525,6 +2579,7 @@ export class ChatManager {
         rootDir: this.rootDir,
         agentId: agent?.id,
         missionMutationGated: missionGateContexts.missionMutationGated,
+        actionGateContext: missionGateContexts.actionGateContext,
       });
       const customTools = dedupeChatTools([
         createAskQuestionTool(),

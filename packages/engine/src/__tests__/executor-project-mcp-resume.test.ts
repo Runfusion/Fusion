@@ -66,12 +66,10 @@ describe("executor project MCP bootstrap and approval resume invariant", () => {
     expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true);
   });
 
-  it("fails executor bootstrap with a sanitized outcome when secret materialization fails", async () => {
+  it("continues executor bootstrap without a server whose secret materialization fails", async () => {
     const executor = new TaskExecutor(createStore({ secretFailure: true }), "/tmp/project");
 
-    await expect((executor as any).resolveMcpServers("agent-main-007")).rejects.toThrow(
-      /^MCP resolution failed: server=postiz reason=secret-materialization$/,
-    );
+    await expect((executor as any).resolveMcpServers("agent-main-007")).resolves.toEqual([]);
   });
 
   it("defers an approval decision received during unwind and dispatches exactly one resume", async () => {
@@ -113,7 +111,7 @@ describe("executor project MCP bootstrap and approval resume invariant", () => {
 
     const toolset = await connectMcpSessionTools(
       [{ name: "postiz", transport: "stdio", command: "fake" }],
-      { clientFactory: () => client, transportFactory },
+      { clientFactory: () => client, transportFactory, maxAttempts: 1 },
     );
 
     expect(toolset.skipped).toEqual([{ name: "postiz", reason: "TypeError" }]);

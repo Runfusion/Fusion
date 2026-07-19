@@ -13,6 +13,9 @@ describe("inferProviderIconKey", () => {
     ["Cursor", "cursor-cli"],
     ["cursor-agent", "cursor-cli"],
     ["cursor/gpt-5", "cursor-cli"],
+    ["omp-cli/MiniMax-M2.5", "omp-cli"],
+    ["omp/claude-sonnet-4", "omp-cli"],
+    ["Oh My Pi", "omp-cli"],
     ["ollama/llama3", "ollama"],
     ["minimax-text-01", "minimax"],
     ["zhipu-glm-4", "zai"],
@@ -30,6 +33,11 @@ describe("inferProviderIconKey", () => {
     ["copilot-gpt-4", "openai"],
   ])("maps %s to %s", (input, expected) => {
     expect(inferProviderIconKey(input)).toBe(expected);
+  });
+
+  it("does not attribute bare model ids to OMP", () => {
+    expect(inferProviderIconKey("MiniMax-M2.5")).toBe("minimax");
+    expect(inferProviderIconKey("claude-sonnet-4")).not.toBe("omp-cli");
   });
 
   it("returns unknown ids unchanged so ProviderIcon can render its fallback", () => {

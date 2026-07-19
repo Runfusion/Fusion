@@ -2349,6 +2349,26 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
+  it("falls back to Board when persisted Ideation view is feature-disabled", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(taskViewStorageKey(), "ideation");
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: {
+        ...defaultSettings.experimentalFeatures,
+        ideationView: false,
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(document.querySelector(".board")).toBeTruthy());
+    expect(screen.queryByLabelText("Persisted ideation")).not.toBeInTheDocument();
+
+    localStorage.removeItem("kb-dashboard-view-mode");
+    localStorage.removeItem(taskViewStorageKey());
+  });
+
   it("falls back to board when evals view is feature-disabled", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "evals");

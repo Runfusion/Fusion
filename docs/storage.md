@@ -17,6 +17,13 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - Startup/store-open allocator reconciliation bumps each active prefix sequence to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)` so stale allocator rows self-heal before local task creation resumes.
 - Create-class task persistence is intentionally non-destructive: new tasks use plain `INSERT` semantics, while upserts remain update-only. If counters drift and a reserved ID still collides, the create fails and the existing PostgreSQL row / task directory stays intact. A `committed` distributed reservation is valid only with a matching durable task row/directory; failed creates burn the reservation as `aborted` instead of leaving a committed-reservation-without-task phantom.
 
+## Durable symbol locks (FN-8305)
+
+- `project.symbol_locks` is the project-scoped, lease-based admission seam for later mission-lineage scheduling. Its composite `(project_id, symbol_key)` identity permits only one current lock row per normalized symbol in a project; ownership records task ID plus optional mission, feature, lineage, node, and agent IDs.
+- Lock acquire is all-or-nothing over normalized keys. Held unexpired rows owned by another task return their owner as a conflict, while expired/released rows may be reclaimed. Renewal and release are owner-scoped and release is idempotent.
+- The `0000_initial.sql` baseline defines the table and indexes only. The later `0025_symbol_locks.sql` migration enables and forces RLS, creates `fusion_project_isolation`, and attaches `fusion_assign_project_id` after `0006_project_ownership.sql` creates that function/policy machinery. Both fresh full-applier and upgrade paths therefore end with the same project-isolation contract.
+- Startup and Batch 1 self-healing expire locks when their lease elapsed or the owner task is terminal/missing. They never move a task or alter scheduler, worktree, semaphore, or verification state. Run-audit events are `symbol-lock:acquired`, `symbol-lock:acquire-conflict`, `symbol-lock:renewed`, `symbol-lock:released`, `symbol-lock:reconcile-stale`, and deduplicated `symbol-lock:reconcile-stale-no-action`; metadata uses only counts/outcomes and normalized opaque keys.
+
 ## Soft-deleted tasks (FN-5105)
 
 - User-initiated `TaskStore.deleteTask` is a **soft delete**: the task row stays in `tasks` and `deletedAt` is set.

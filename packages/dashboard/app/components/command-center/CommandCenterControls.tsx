@@ -8,7 +8,6 @@ import { useConfirm } from "../../hooks/useConfirm";
 // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Concurrency card adopts the shared global-concurrency hook so it and the footer EngineControlMenu read/write ONE source of truth (no more duplicated fetch/debounce/clobber logic).
 import { useGlobalConcurrency } from "../../hooks/useGlobalConcurrency";
 import { ThemeDropdown } from "../ThemeDropdown";
-import { OrgPortabilityControls } from "./OrgPortabilityControls";
 import type { TaskView } from "../../hooks/useViewState";
 import "./CommandCenterControls.css";
 
@@ -59,8 +58,8 @@ const CONCURRENCY_SETTING_LABEL_KEYS: Record<keyof ConcurrencyValues, { key: str
 FNXC:CommandCenter 2026-06-21-00:00:
 Operator concurrency sliders must allow dragging each scheduler capacity control up to 50 by default while still expanding beyond 50 for already-persisted higher values so FN-6768 truthful readouts remain intact.
 
-FNXC:CommandCenter 2026-06-19-13:45:
-Overview controls keep only global AI engine, Theme, and Concurrency controls. Agent org chart and Heartbeat control belong to the Team tab so team-specific hierarchy and scheduler heartbeat affordances are not duplicated across Command Center sections.
+FNXC:CommandCenter 2026-07-18-18:18:
+FN-8351 keeps Overview controls limited to global AI engine, Theme, and Concurrency controls. Org chart, heartbeat control, and organization portability now belong to the Team tab so team operations are not duplicated across Command Center sections.
 */
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -389,7 +388,6 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
           />
         </section>
 
-        <OrgPortabilityControls projectId={projectId} onSettingsRefresh={refresh} />
 
         <section className="card cc-controls-card cc-controls-card--concurrency" data-testid="cc-controls-concurrency">
           <div className="cc-controls-card-header">

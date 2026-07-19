@@ -19,6 +19,7 @@
  */
 
 import { sql } from "drizzle-orm";
+import { acquireSqliteMigrationStateLock } from "./advisory-locks.js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 /** The Drizzle instance type startup-factory uses for its `connections.migration`. */
@@ -63,6 +64,7 @@ export async function rekeyFallbackProjectPartition(
   if (!fallbackProjectId || fallbackProjectId === registeredProjectId) return false;
 
   return db.transaction(async (tx) => {
+    await acquireSqliteMigrationStateLock(tx);
     const tables = (await tx.execute(sql`
       SELECT table_name
       FROM information_schema.columns
@@ -197,7 +199,10 @@ export async function stampMigratedProjectRows(
   FNXC:ProjectMigrationStamping 2026-07-14-21:55:
   Partition stamping is one atomic promotion. If any table cannot be re-keyed, roll back every earlier update so startup never exposes a partially migrated project identity.
   */
-  return db.transaction((tx) => stampMigratedProjectRowsWithinTransaction(tx, projectId, rootDir));
+  return db.transaction(async (tx) => {
+    await acquireSqliteMigrationStateLock(tx);
+    return stampMigratedProjectRowsWithinTransaction(tx, projectId, rootDir);
+  });
 }
 
 async function stampMigratedProjectRowsWithinTransaction(

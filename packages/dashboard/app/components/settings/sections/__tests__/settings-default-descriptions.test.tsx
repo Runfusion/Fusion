@@ -164,9 +164,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryBackupDir: "backups.directoryForMemoryBackupsRelativeToProjectRoot",
   memoryBackupScope: "backups.memoryBackupScopeHint",
   /*
-  FNXC:EmbeddedPostgres 2026-07-18-12:40:
-  feat(postgres) surfaces embeddedPostgresMaxConnections in DatabaseBackupsSection advanced
-  disclosure; map the existing help string so the DEFAULT_SETTINGS inventory stays complete.
+  FNXC:SettingsDefaults 2026-07-17-13:55:
+  FN-8335 restores FN-7505 default-value parity for the surfaced embeddedPostgresMaxConnections
+  control. The English locale description is the canonical rendered SettingsHelpTip copy and states Default: 500.
   */
   embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
@@ -263,10 +263,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   githubImportAutoTranslate: "general.autoTranslateImportedIssuesHelp",
   importTranslateTargetLocale: "general.translationTargetLanguageHelp",
   /*
-  FNXC:ReportPipeline 2026-07-18-12:40:
-  FN-8277 surfaces reportMode + per-action overrides in GeneralSection; map them here so
-  DEFAULT_SETTINGS bookkeeping requires a default-stating description (draft-review project default;
-  reportModeByAction is unset until an action opts in).
+  FNXC:SettingsDefaults 2026-07-17-13:55:
+  FN-8335 restores FN-7505 default-value parity for the surfaced reportMode and reportModeByAction
+  controls. reportMode states the draft-review default; undefined per-action overrides state that unset actions inherit it.
   */
   reportMode: "general.reportModeHelp",
   reportModeByAction: "general.reportModeByActionHelp",

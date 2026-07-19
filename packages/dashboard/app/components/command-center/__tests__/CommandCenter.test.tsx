@@ -1039,8 +1039,9 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
     const tablist = screen.getByRole("tablist");
     const tabs = within(tablist).getAllByRole("tab");
-    // Overview, Tokens, Tools, Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control, Ideation.
-    expect(tabs.length).toBe(17);
+    // Overview, Tokens, Tools, Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control.
+    expect(tabs.length).toBe(16);
+    expect(screen.queryByTestId("command-center-tab-ideation")).toBeNull();
     expect(screen.queryByTestId("command-center-tab-nodes")).toBeNull();
     // roving tabindex: exactly one tab is focusable.
     const focusable = tabs.filter((tab) => tab.getAttribute("tabindex") === "0");
@@ -1294,7 +1295,7 @@ describe("CommandCenter shell", () => {
     const overviewTab = screen.getByTestId("command-center-tab-overview");
     overviewTab.focus();
     fireEvent.keyDown(overviewTab, { key: "ArrowLeft" });
-    const last = screen.getByTestId("command-center-tab-ideation");
+    const last = screen.getByTestId("command-center-tab-mission-control");
     expect(last.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(last);
   });

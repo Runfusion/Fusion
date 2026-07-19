@@ -18,7 +18,7 @@ import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePr
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { type TaskRow } from "./persistence.js";
 import { BranchGroupRow, MergeRequestRow, PrEntityRow, PrThreadStateRow, WorkflowWorkItemRow } from "./row-types.js";
-import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
+import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
 import { validateNodeOverrideChange } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
@@ -1265,6 +1265,53 @@ export async function getMutationsForRunImpl(store: TaskStore, runId: string): P
     }
     // Sort by timestamp ascending
     return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+The queue is intentionally one record per project/task. Creation refuses an in-flight
+record and both claim/terminal writes compare request_id so executor races stay safe.
+*/
+function verificationScope(store: TaskStore) {
+  const projectId = store.asyncLayer?.projectId;
+  return projectId ? eq(schema.project.taskVerificationRequests.projectId, projectId) : undefined;
+}
+function verificationRowToRecord(row: typeof schema.project.taskVerificationRequests.$inferSelect): TaskVerificationRequest {
+  return {
+    taskId: row.taskId, requestId: row.requestId, status: row.status as TaskVerificationStatus,
+    profile: row.profile as TaskVerificationRequest["profile"], command: row.command,
+    scope: row.scope as TaskVerificationRequest["scope"], requestedBy: row.requestedBy,
+    requestedAt: row.requestedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+    ...(row.completedAt ? { completedAt: row.completedAt } : {}),
+    ...(row.result ? { result: row.result as TaskVerificationResultSummary } : {}),
+    ...(row.rejectionReason ? { rejectionReason: row.rejectionReason } : {}),
+  };
+}
+export async function createTaskVerificationRequestImpl(store: TaskStore, input: Omit<TaskVerificationRequest, "status" | "requestedAt"> & { requestedAt?: string }): Promise<{ request?: TaskVerificationRequest; inFlightRequestId?: string }> {
+  if (!store.backendMode) throw new Error("Task verification requests require PostgreSQL persistence");
+  const layer = store.asyncLayer!;
+  return layer.db.transaction(async (tx) => {
+    const where = verificationScope(store);
+    const rows = await tx.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, input.taskId), ...(where ? [where] : []))).limit(1);
+    const existing = rows[0];
+    if (existing && (existing.status === "requested" || existing.status === "running")) return { inFlightRequestId: existing.requestId };
+    const requestedAt = input.requestedAt ?? new Date().toISOString();
+    const values = { ...input, status: "requested" as const, requestedAt, startedAt: null, completedAt: null, result: null, rejectionReason: null, projectId: layer.projectId ?? "__legacy_unscoped__" };
+    await tx.insert(schema.project.taskVerificationRequests).values(values).onConflictDoUpdate({ target: [schema.project.taskVerificationRequests.projectId, schema.project.taskVerificationRequests.taskId], set: values });
+    return { request: verificationRowToRecord(values) };
+  });
+}
+export async function claimTaskVerificationRequestImpl(store: TaskStore, taskId: string, requestId: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const startedAt = new Date().toISOString(); const where = verificationScope(store);
+  const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests).set({ status: "running", startedAt }).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), eq(schema.project.taskVerificationRequests.requestId, requestId), eq(schema.project.taskVerificationRequests.status, "requested"), ...(where ? [where] : []))).returning();
+  return rows[0] ? verificationRowToRecord(rows[0]) : null;
+}
+export async function finishTaskVerificationRequestImpl(store: TaskStore, taskId: string, requestId: string, status: Extract<TaskVerificationStatus, "passed" | "failed" | "rejected">, result?: TaskVerificationResultSummary, rejectionReason?: string): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const where = verificationScope(store);
+  const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests).set({ status, completedAt: new Date().toISOString(), result: result ?? null, rejectionReason: rejectionReason ?? null }).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), eq(schema.project.taskVerificationRequests.requestId, requestId), eq(schema.project.taskVerificationRequests.status, "running"), ...(where ? [where] : []))).returning();
+  return rows[0] ? verificationRowToRecord(rows[0]) : null;
 }
 
 export function normalizeMergeRequestStateImpl(store: TaskStore, value: string): MergeRequestState {

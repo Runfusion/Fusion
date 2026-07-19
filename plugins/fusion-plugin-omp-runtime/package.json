@@ -25,7 +25,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },

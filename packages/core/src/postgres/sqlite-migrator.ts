@@ -59,6 +59,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { applySchemaBaseline } from "./schema-applier.js";
+import { acquireSqliteMigrationStateLock } from "./advisory-locks.js";
 import {
   PROJECT_SCHEMA,
   CENTRAL_SCHEMA,
@@ -423,7 +424,7 @@ export async function migrateSqliteToPostgres(
     });
     if (options.dryRun !== true) {
       await migrationDb.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:sqlite-migration-state'))`);
+        await acquireSqliteMigrationStateLock(tx);
         await ensureMigrationStateTable(tx);
         await tx.execute(sql`
           INSERT INTO public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
@@ -462,7 +463,7 @@ async function migrateSqliteToPostgresOnSession(
    * copied task as proof that the whole migration finished.
   */
   if (!dryRun) {
-    await migrationDb.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:sqlite-migration-state'))`);
+    await acquireSqliteMigrationStateLock(migrationDb);
     await ensureMigrationStateTable(migrationDb);
     /*
      * FNXC:PostgresMigrationSession 2026-07-14-00:14:
@@ -892,6 +893,7 @@ async function migrateLegacyProjectPluginRowsOnSession(
   projectPath: string,
 ): Promise<void> {
   if (!sqliteTableExists(sqlitePath, "plugins")) return;
+  await acquireSqliteMigrationStateLock(db);
   const canonicalProjectPath = resolve(projectPath);
   const migrationKey = `project-plugins:${canonicalProjectPath}`;
   await ensureMigrationStateTable(db);

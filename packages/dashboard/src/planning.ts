@@ -25,10 +25,6 @@ import type {
 import {
   DASHBOARD_USER_ID,
   DEFAULT_TASK_PRIORITY,
-  PLANNING_DEEPEN_CHECKPOINT_ID,
-  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
-  PLANNING_DEEPEN_PROCEED_OPTION_ID,
-  PLANNING_DEEPEN_PROCEED_RESPONSE_KEY,
   TASK_PRIORITIES,
   THINKING_LEVELS,
   resolvePrompt,
@@ -77,8 +73,6 @@ type PlanningSessionOptions = {
   clarificationEnabled?: boolean;
   /** Runtime-only mailbox dependency; never serialize this store. */
   messageStore?: MessageStore;
-  planningDepth?: PlanningDepth;
-  customQuestionCount?: number;
   pluginRunner?: SkillPluginRunner;
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,56 +223,15 @@ async function ensureNtfyHelpersReady(): Promise<void> {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /** Planning system prompt for the AI agent */
-export const PLANNING_SYSTEM_PROMPT = `You are a planning assistant for the fn task board system.
+export const PLANNING_SYSTEM_PROMPT = `You are a planning assistant for the fn task board system. First analyze the codebase and active board with the available read tools, fn_task_list, and fn_task_show. Turn a raw idea into an incrementally maintained plan.
 
-Your job: help users transform vague, high-level ideas into well-defined, actionable tasks.
+Ask exactly one next, high-impact question on every turn. Use every prior answer as context, avoid repeated questions, and never decide that the interview is complete or emit a terminal/complete response. The user alone validates the plan.
 
-## Conversation Flow
-1. User provides a high-level plan (e.g., "Build a user auth system")
-2. You ask clarifying questions to understand scope, requirements, and constraints
-3. You present UI-friendly selection options when appropriate
-4. Once you have enough information, generate a structured summary
+Respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["...]},{"id":"other","label":"...","isOther":true}]}}.
 
-## Question Types to Use
-- "text": Open-ended follow-up questions for detailed input
-- "single_select": When user must choose one option (e.g., tech stack preference)
-- "multi_select": When multiple options can apply (e.g., features to include)
-- "confirm": Yes/No questions for quick decisions
+Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
-## Guidelines
-- Ask 3-7 questions depending on complexity
-- Start broad, then narrow down specifics
-- Suggest sensible defaults based on project context
-- Keep questions focused and actionable
-- When asking about file scope, reference actual project structure
 
-## Summary Generation
-When ready to complete, generate:
-- A concise but descriptive title (max 80 chars)
-- A detailed description with context gathered
-- Size estimate (S/M/L) based on scope
-- Any suggested dependencies on existing tasks
-- Key deliverables as a checklist
-- Optional "deepeningThemes": before completing, think ahead about THIS specific plan (its title, description, and deliverables) and propose 2-5 concrete, plan-aligned topics the user could explore in more depth — including angles they may not have anticipated. Each theme is an object with "label" and "description" string fields. Themes must be specific to this plan, not generic boilerplate (do not just restate "scope", "testing", "edge cases" as bare labels — tie them to this plan's actual concerns). Omit the field entirely if nothing meaningful stands out.
-
-## Board tools
-- fn_task_list — list active tasks
-- fn_task_show — read a task's full details and PROMPT.md
-Use these to avoid duplicating an existing in-flight plan and to anchor your questions against current backlog context.
-
-## Response Format
-Always respond with valid JSON in one of these formats:
-
-For questions:
-{\n  "type": "question",\n  "data": {\n    "id": "unique-id",\n    "type": "text|single_select|multi_select|confirm",\n    "question": "The question text",\n    "description": "Helpful context",\n    "options": [{"id": "opt1", "label": "Option 1", "description": "Details"}]\n  }\n}
-
-For completion:
-{\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"],\n    "deepeningThemes": [{"label": "Plan-specific topic", "description": "Why this is worth exploring further for this plan"}]\n  }\n}`;
-
-/*
-FNXC:PlanningMode 2026-07-05-00:00:
-The completion payload's optional deepeningThemes field lets the planning AI "think ahead" and propose topics tailored to the specific plan, instead of the checkpoint always offering the same fixed generic buckets (FN-7616 / issue #1912). See buildDeepeningCheckpointOptions for the AI-first / generic-fallback precedence.
-*/
 
 /** Placeholder title for draft sessions before the user starts planning. */
 export const DRAFT_PLACEHOLDER_TITLE = "New planning session";
@@ -306,7 +259,7 @@ export interface DraftInputPayload {
   modelId?: string;
   thinkingLevel?: ThinkingLevel;
   summarizedFor?: string;
-  pendingSummary?: PlanningSummary;
+  validated?: boolean;
 }
 
 /** Session TTL in milliseconds (7 days) */
@@ -333,32 +286,6 @@ export const GENERATION_LOOP_REPEAT_LIMIT = 8;
 const PLANNING_STUCK_ERROR_MESSAGE = "AI generation appears stuck with no new output. You can retry or start a new session.";
 const PLANNING_LOOP_ERROR_MESSAGE = "AI generation appears stuck repeating the same output. You can retry or start a new session.";
 const PLANNING_USER_STOP_ERROR_MESSAGE = "Generation stopped by user. You can retry or start a new session.";
-
-export type PlanningDepth = "small" | "medium" | "large";
-
-const PLANNING_DEPTH_PROMPT_SUFFIX: Record<PlanningDepth, string> = {
-  small:
-    "Ask exactly 1-2 focused questions. Prioritize speed and getting to a summary quickly. Skip optional clarification.",
-  medium:
-    "Ask 3-5 well-rounded questions. Balance breadth and depth. This is the default behavior.",
-  large:
-    "Ask 5-8 thorough questions. Deeply explore scope, edge cases, dependencies, and implementation details. Be comprehensive.",
-};
-
-export function buildDepthPromptSuffix(
-  depth?: PlanningDepth,
-  customQuestionCount?: number,
-): string {
-  if (Number.isInteger(customQuestionCount) && (customQuestionCount ?? 0) > 0) {
-    return `Ask exactly ${customQuestionCount} questions. Adjust depth and breadth to fit within that count.`;
-  }
-
-  if (!depth) {
-    return "";
-  }
-
-  return PLANNING_DEPTH_PROMPT_SUFFIX[depth];
-}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -404,9 +331,11 @@ interface Session {
   lastMailboxNotifiedQuestionKey?: string;
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
+  /** Question currently being edited; history is preserved rather than truncated. */
+  editingQuestionId?: string;
   summary?: PlanningSummary;
-  /** Pending AI-completed summary held behind the mandatory user deepening checkpoint. */
-  pendingSummary?: PlanningSummary;
+  /** User-controlled finalization state. */
+  validated: boolean;
   /** Last terminal error for retry UX */
   error?: string;
   /** AI agent session for real-time interaction */
@@ -510,8 +439,6 @@ export function normalizePlanningSummaryPayload(
     ? summary.description.trim()
     : fallback?.description?.trim() || title;
 
-  const deepeningThemes = normalizeDeepeningThemes(summary.deepeningThemes);
-
   return {
     title,
     description,
@@ -521,208 +448,7 @@ export function normalizePlanningSummaryPayload(
     priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
     suggestedDependencies: normalizeStringArray(summary.suggestedDependencies),
     keyDeliverables: normalizeStringArray(summary.keyDeliverables),
-    ...(deepeningThemes ? { deepeningThemes } : {}),
   };
-}
-
-/** Max deepeningThemes entries kept per summary; bounds checkpoint size. */
-const MAX_DEEPENING_THEMES = 6;
-
-/*
-FNXC:PlanningMode 2026-07-05-00:10:
-AI-proposed deepeningThemes are untrusted runtime data (same discipline as the rest of this normalizer). Keep only object entries with a non-empty trimmed label; trim description when present; drop anything malformed (non-object, missing/blank label, non-array value entirely) without ever letting an unchecked shape reach a live stream. Cap at MAX_DEEPENING_THEMES and omit the field entirely (not []) when nothing valid remains, so callers can treat "field absent" as "AI supplied none" and fall back to the generic regex themes (FN-7616 / issue #1912).
-*/
-function normalizeDeepeningThemes(value: unknown): Array<{ id?: string; label: string; description?: string }> | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const seenLabels = new Set<string>();
-  const normalized: Array<{ id?: string; label: string; description?: string }> = [];
-  for (const item of value) {
-    if (normalized.length >= MAX_DEEPENING_THEMES) {
-      break;
-    }
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      continue;
-    }
-    const record = item as Record<string, unknown>;
-    const label = typeof record.label === "string" ? record.label.trim() : "";
-    if (!label) {
-      continue;
-    }
-    const dedupeKey = label.toLowerCase();
-    if (seenLabels.has(dedupeKey)) {
-      continue;
-    }
-    seenLabels.add(dedupeKey);
-    const description = typeof record.description === "string" && record.description.trim().length > 0
-      ? record.description.trim()
-      : undefined;
-    normalized.push({ label, ...(description ? { description } : {}) });
-  }
-
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-export interface PlanningDeepeningDecision {
-  proceed: boolean;
-  selectedThemeIds: string[];
-  selectedThemeLabels: string[];
-  customTopic?: string;
-}
-
-const CHECKPOINT_THEME_CANDIDATES: Array<{ id: string; label: string; description: string; patterns: RegExp[] }> = [
-  { id: "scope", label: "Scope and non-goals", description: "Clarify boundaries, trade-offs, and what should stay out of this task.", patterns: [/\bscope\b/i, /non[- ]?goal/i, /boundary/i, /trade[- ]?off/i] },
-  { id: "edge-cases", label: "Edge cases and data states", description: "Explore empty, duplicate, malformed, missing, or unusual states before implementation.", patterns: [/edge case/i, /empty/i, /undefined/i, /duplicate/i, /malformed/i, /data state/i] },
-  { id: "ux", label: "UX and interaction details", description: "Tighten user-facing copy, responsive behavior, accessibility, and interaction flow.", patterns: [/\bux\b/i, /user/i, /mobile/i, /responsive/i, /accessibility/i, /keyboard/i, /button/i] },
-  { id: "dependencies", label: "Dependencies and integrations", description: "Identify prerequisite tasks, third-party systems, and integration constraints.", patterns: [/dependenc/i, /integration/i, /api\b/i, /external/i, /provider/i, /service/i] },
-  { id: "testing", label: "Testing and verification", description: "Deepen acceptance criteria, regression coverage, and validation commands.", patterns: [/test/i, /verify/i, /validation/i, /acceptance/i, /regression/i] },
-  { id: "rollout", label: "Rollout and operations", description: "Discuss migration, release, observability, documentation, or support considerations.", patterns: [/rollout/i, /migration/i, /release/i, /observability/i, /docs?\b/i, /operator/i] },
-];
-
-const FALLBACK_CHECKPOINT_THEME_OPTIONS = ["scope", "edge-cases", "ux", "testing"];
-
-function slugifyCheckpointTheme(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "topic";
-}
-
-function collectCheckpointThemeText(
-  history: Array<{ question: PlanningQuestion; response: unknown }>,
-  summary: PlanningSummary,
-): string {
-  return [
-    summary.title,
-    summary.description,
-    summary.keyDeliverables.join("\n"),
-    summary.suggestedDependencies.join("\n"),
-    ...history.flatMap((entry) => [
-      entry.question.question,
-      entry.question.description ?? "",
-      JSON.stringify(entry.response),
-    ]),
-  ].join("\n");
-}
-
-const PROCEED_OPTION: NonNullable<PlanningQuestion["options"]>[number] = {
-  id: PLANNING_DEEPEN_PROCEED_OPTION_ID,
-  label: "Proceed to final plan",
-  description: "The plan is detailed enough; show the final editable summary.",
-};
-
-/*
-FNXC:PlanningMode 2026-07-05-00:15:
-Prefer the planning AI's own deepeningThemes (plan-specific, sometimes-unanticipated topics) over the fixed regex-derived candidates below. The generic CHECKPOINT_THEME_CANDIDATES/FALLBACK_CHECKPOINT_THEME_OPTIONS path remains the safety net for when the AI supplies no themes (FN-7616 / issue #1912).
-*/
-export function buildDeepeningCheckpointOptions(
-  history: Array<{ question: PlanningQuestion; response: unknown }>,
-  summary: PlanningSummary,
-): PlanningQuestion["options"] {
-  if (summary.deepeningThemes && summary.deepeningThemes.length > 0) {
-    const seenIds = new Set<string>([PROCEED_OPTION.id]);
-    const aiOptions = summary.deepeningThemes.flatMap((theme) => {
-      const label = theme.label.trim();
-      if (!label || label === PROCEED_OPTION.label) {
-        return [];
-      }
-      const id = `theme-${slugifyCheckpointTheme(label)}`;
-      if (seenIds.has(id)) {
-        return [];
-      }
-      seenIds.add(id);
-      return [{ id, label, ...(theme.description ? { description: theme.description } : {}) }];
-    });
-
-    if (aiOptions.length > 0) {
-      return [PROCEED_OPTION, ...aiOptions];
-    }
-  }
-
-  const text = collectCheckpointThemeText(history, summary);
-  const matched = CHECKPOINT_THEME_CANDIDATES.filter((candidate) =>
-    candidate.patterns.some((pattern) => pattern.test(text)),
-  );
-  const selected = matched.length > 0
-    ? matched
-    : CHECKPOINT_THEME_CANDIDATES.filter((candidate) => FALLBACK_CHECKPOINT_THEME_OPTIONS.includes(candidate.id));
-
-  const seen = new Set<string>();
-  const options = selected.flatMap((candidate) => {
-    const id = `theme-${slugifyCheckpointTheme(candidate.id)}`;
-    if (seen.has(id) || candidate.label === "Proceed to final plan") {
-      return [];
-    }
-    seen.add(id);
-    return [{ id, label: candidate.label, description: candidate.description }];
-  });
-
-  return [
-    PROCEED_OPTION,
-    ...options,
-  ];
-}
-
-/*
-FNXC:PlanningMode 2026-07-02-00:00:
-Planning Mode final summaries are user-gated, not AI-gated. Every AI completion becomes the exact “Would you like to go deeper?” checkpoint with a persisted pending summary; users may loop on selected themes/custom topics indefinitely, or explicitly proceed to reveal the final summary actions.
-
-FNXC:PlanningMode 2026-07-05-00:20:
-buildDeepeningCheckpointOptions prefers the AI's plan-specific deepeningThemes when the completion payload supplied any; it falls back to the generic regex-derived CHECKPOINT_THEME_CANDIDATES only when the AI supplied none (FN-7616 / issue #1912). The reserved proceed option is always first and deterministic in both branches.
-
-FNXC:PlanningMode 2026-07-16-00:00:
-FN-8065 / GitHub #2150 places the withheld pendingSummary preview directly on the persisted checkpoint question. That makes the same read-only plan available through fresh SSE, restored sessions, retry recovery, and the missed-SSE poll watchdog without adding another transport path.
-*/
-export function buildDeepeningCheckpointQuestion(
-  history: Array<{ question: PlanningQuestion; response: unknown }>,
-  summary: PlanningSummary,
-): PlanningQuestion {
-  const planPreview = {
-    title: typeof summary.title === "string" ? summary.title : "",
-    description: typeof summary.description === "string" ? summary.description : "",
-    keyDeliverables: normalizeStringArray(summary.keyDeliverables),
-  };
-
-  return {
-    id: PLANNING_DEEPEN_CHECKPOINT_ID,
-    type: "multi_select",
-    question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
-    description: "Select any areas you want to explore further, write an unlisted topic, or proceed to the final plan.",
-    options: buildDeepeningCheckpointOptions(history, summary),
-    planPreview,
-  };
-}
-
-export function classifyDeepeningCheckpointResponse(
-  question: PlanningQuestion,
-  responses: Record<string, unknown>,
-): PlanningDeepeningDecision {
-  const rawSelected = responses[question.id];
-  const selectedIds = Array.isArray(rawSelected)
-    ? rawSelected.filter((id): id is string => typeof id === "string")
-    : [];
-  const customTopic = typeof responses._other === "string" && responses._other.trim().length > 0
-    ? responses._other.trim()
-    : undefined;
-  const proceed = responses[PLANNING_DEEPEN_PROCEED_RESPONSE_KEY] === true
-    || selectedIds.includes(PLANNING_DEEPEN_PROCEED_OPTION_ID);
-  const themeIds = selectedIds.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID);
-  const selectedThemeLabels = themeIds.map((id) => question.options?.find((option) => option.id === id)?.label || id);
-
-  return {
-    proceed,
-    selectedThemeIds: themeIds,
-    selectedThemeLabels,
-    ...(customTopic ? { customTopic } : {}),
-  };
-}
-
-function isDeepeningCheckpointQuestion(question: PlanningQuestion | undefined): boolean {
-  return question?.id === PLANNING_DEEPEN_CHECKPOINT_ID
-    && question.question === PLANNING_DEEPEN_CHECKPOINT_QUESTION;
 }
 
 function safeParseJson<T>(
@@ -808,7 +534,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.draftModelId ? { modelId: session.draftModelId } : {}),
       ...(session.draftThinkingLevel ? { thinkingLevel: session.draftThinkingLevel } : {}),
       ...(session.draftSummarizedFor ? { summarizedFor: session.draftSummarizedFor } : {}),
-      ...(session.pendingSummary ? { pendingSummary: session.pendingSummary } : {}),
+      validated: session.validated,
       ...(typeof session.clarificationEnabled === "boolean"
         ? { clarificationEnabled: session.clarificationEnabled }
         : {}),
@@ -917,10 +643,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
         { title: row.title, description: row.title },
       )
     : undefined;
-  const persistedPendingSummary = payload.pendingSummary
-    ? normalizePlanningSummaryPayload(payload.pendingSummary, { title: row.title, description: row.title })
-    : undefined;
-  const skippedMandatoryInterview = history.length === 0 && Boolean(persistedSummary || persistedPendingSummary);
+  const skippedMandatoryInterview = false;
   const currentQuestion = skippedMandatoryInterview
     ? buildMandatoryFirstPlanningQuestion()
     : row.status === "awaiting_input" && row.currentQuestion
@@ -949,8 +672,8 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     history,
     currentQuestion,
     lastNotifiedQuestionKey: currentQuestion ? `${row.id}:${currentQuestion.id}` : undefined,
-    summary: skippedMandatoryInterview ? undefined : persistedSummary,
-    pendingSummary: skippedMandatoryInterview ? undefined : persistedPendingSummary,
+    summary: persistedSummary ?? buildRunningSummary(payload.initialPlan ?? row.title, history),
+    validated: payload.validated === true,
     thinkingOutput: row.thinkingOutput,
     lastGeneratedThinking: row.thinkingOutput || "",
     error: row.error ?? undefined,
@@ -975,7 +698,7 @@ export async function rehydrateFromStore(store: AiSessionStore): Promise<number>
     try {
       const session = buildSessionFromRow(row);
       sessions.set(session.id, session);
-      if (session.currentQuestion && session.history.length === 0 && (row.result || safeParseJson<DraftInputPayload>(row.inputPayload, {}).pendingSummary)) {
+      if (session.currentQuestion && session.history.length === 0 && row.result) {
         /* FNXC:PlanningMode 2026-07-18-11:36: Rehydration repairs legacy no-history summaries into the mandatory interview question so reconnects cannot revive a skipped interview. */
         persistSession(session, "awaiting_input");
       }
@@ -1227,11 +950,9 @@ export async function createSession(
   store?: TaskStore,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
-  planningDepth?: PlanningDepth,
-  customQuestionCount?: number,
   pluginRunner?: SkillPluginRunner,
   options?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled">,
-): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
+): Promise<{ sessionId: string; firstQuestion: PlanningQuestion; summary: PlanningSummary; validated: boolean }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
@@ -1256,6 +977,8 @@ export async function createSession(
     initialPlan,
     title: initialPlan.slice(0, 120),
     history: [],
+    summary: buildRunningSummary(initialPlan, []),
+    validated: false,
     thinkingOutput: "",
     lastGeneratedThinking: "",
     createdAt: new Date(),
@@ -1273,8 +996,7 @@ export async function createSession(
 
   // Resolve the effective system prompt (override or default)
   const baseSystemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
-  const depthPromptSuffix = buildDepthPromptSuffix(planningDepth, customQuestionCount);
-  const systemPrompt = depthPromptSuffix ? `${baseSystemPrompt}\n\n${depthPromptSuffix}` : baseSystemPrompt;
+  const systemPrompt = baseSystemPrompt;
 
   // Create AI agent and get the first question
   // Only await engineReady if createFnAgent hasn't been set externally (e.g., via __setCreateFnAgent)
@@ -1331,7 +1053,8 @@ export async function createSession(
   await persistSession(session, "awaiting_input");
   void maybeNotifyPlanningAwaitingInput(session, firstQuestion, true);
 
-  return { sessionId, firstQuestion };
+  session.summary = buildRunningSummary(initialPlan, session.history);
+  return { sessionId, firstQuestion, summary: session.summary, validated: false };
 }
 
 /**
@@ -1466,7 +1189,7 @@ async function getFirstQuestionFromAgent(
   }
 
   if (parsed.type === "question") {
-    return parsed;
+    return { type: "question", data: normalizePlanningQuestion(parsed.data, session.initialPlan) };
   }
 
   /*
@@ -1478,13 +1201,13 @@ async function getFirstQuestionFromAgent(
   return requestMandatoryFirstPlanningQuestion(session);
 }
 
-function buildMandatoryFirstPlanningQuestion(): PlanningQuestion {
-  return {
+function buildMandatoryFirstPlanningQuestion(userInput = ""): PlanningQuestion {
+  const fallback = planningFallbackCopy(userInput);
+  return normalizePlanningQuestion({
     id: "mandatory-planning-clarification",
-    type: "text",
-    question: "What outcome or constraint is most important for this plan?",
-    description: "Answer this first question so the plan can reflect your priorities.",
-  };
+    type: "single_select",
+    question: fallback.question,
+  }, userInput);
 }
 
 async function requestMandatoryFirstPlanningQuestion(
@@ -1508,7 +1231,9 @@ async function requestMandatoryFirstPlanningQuestion(
           .join("")
         : "";
     const retryResponse = parseAgentResponse(retryText);
-    if (retryResponse.type === "question") return retryResponse;
+    if (retryResponse.type === "question") {
+      return { type: "question", data: normalizePlanningQuestion(retryResponse.data, session.initialPlan) };
+    }
   } catch (error) {
     diagnostics.warn("Agent did not supply the mandatory first planning question", {
       sessionId: session.id,
@@ -1516,69 +1241,7 @@ async function requestMandatoryFirstPlanningQuestion(
       operation: "mandatory-first-question",
     });
   }
-  return { type: "question", data: buildMandatoryFirstPlanningQuestion() };
-}
-
-/**
- * FNXC:AgentClarification 2026-07-16-13:00:
- * Disabled clarification must never leave a proactive question parked. One
- * bounded follow-up requests the protocol's complete payload, then hands it
- * to the existing deepening checkpoint; malformed/question follow-ups fail
- * visibly instead of creating a prompt loop.
- */
-async function continueToSummaryAfterSuppressedQuestion(
-  session: Session,
-  abortSignal?: AbortSignal,
-): Promise<PlanningQuestion> {
-  if (!session.agent) throw new InvalidSessionStateError("Planning session has no AI agent");
-  await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
-    'Clarification is disabled. Return ONLY the final {"type":"complete","data":...} JSON summary; do not ask another question.',
-    { signal: abortSignal },
-  );
-  const followUp = (session.agent.session.state.messages as AgentMessage[])
-    .filter((message) => message.role === "assistant")
-    .pop();
-  let followUpText = typeof followUp?.content === "string"
-    ? followUp.content
-    : Array.isArray(followUp?.content)
-      ? followUp.content
-        .filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string")
-        .map((block) => block.text)
-        .join("")
-      : "";
-  let complete: PlanningResponse | undefined;
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
-    try {
-      complete = parseAgentResponse(followUpText);
-      break;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt === MAX_PARSE_RETRIES) break;
-      await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
-        'Your previous response was incomplete or invalid. Return ONLY a complete valid JSON object: {"type":"complete","data":{...}}. No markdown or explanation.',
-        { signal: abortSignal },
-      );
-      const retry = (session.agent.session.state.messages as AgentMessage[])
-        .filter((message) => message.role === "assistant")
-        .pop();
-      followUpText = typeof retry?.content === "string"
-        ? retry.content
-        : Array.isArray(retry?.content)
-          ? retry.content
-            .filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string")
-            .map((block) => block.text)
-            .join("")
-          : "";
-    }
-  }
-  if (!complete || complete.type !== "complete") {
-    throw new Error(buildRetryableParseErrorMessage(lastError ?? new Error("Clarification-disabled follow-up did not produce a summary")));
-  }
-  return setPendingSummaryCheckpoint(session, normalizePlanningSummaryPayload(complete.data, {
-    title: session.title || session.initialPlan,
-    description: session.initialPlan,
-  }));
+  return { type: "question", data: buildMandatoryFirstPlanningQuestion(session.initialPlan) };
 }
 
 export async function createDraftSession(
@@ -1622,6 +1285,8 @@ export async function createDraftSession(
     // applies the request override/global default before generation begins.
     clarificationEnabled: undefined,
     history: [],
+    summary: buildRunningSummary(initialPlan, []),
+    validated: false,
     thinkingOutput: "",
     lastGeneratedThinking: "",
     createdAt: new Date(),
@@ -1811,7 +1476,7 @@ export async function startExistingSession(
   persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
-    initializeAgent(session, rootDir, store, modelProvider, modelId, session.draftThinkingLevel, promptOverrides, undefined, undefined, pluginRunner).catch((err) => {
+    initializeAgent(session, rootDir, store, modelProvider, modelId, session.draftThinkingLevel, promptOverrides, pluginRunner).catch((err) => {
       diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
       persistSession(session, "error", err.message || "Failed to initialize AI agent");
       planningStreamManager.broadcast(sessionId, {
@@ -1879,6 +1544,8 @@ export async function createSessionWithAgent(
     clarificationEnabled: options?.clarificationEnabled === true,
     messageStore: options?.messageStore,
     history: [],
+    summary: buildRunningSummary(initialPlan, []),
+    validated: false,
     thinkingOutput: "",
     lastGeneratedThinking: "",
     createdAt: new Date(),
@@ -1899,8 +1566,6 @@ export async function createSessionWithAgent(
       modelId,
       thinkingLevel,
       promptOverrides,
-      options?.planningDepth,
-      options?.customQuestionCount,
       options?.pluginRunner,
     ).catch((err) => {
       diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
@@ -1926,8 +1591,6 @@ async function initializeAgent(
   modelId?: string,
   thinkingLevel?: ThinkingLevel,
   promptOverrides?: PromptOverrideMap,
-  planningDepth?: PlanningDepth,
-  customQuestionCount?: number,
   pluginRunner?: SkillPluginRunner,
 ): Promise<void> {
   try {
@@ -1944,8 +1607,6 @@ async function initializeAgent(
         modelId,
         thinkingLevel,
         promptOverrides,
-        planningDepth,
-        customQuestionCount,
         pluginRunner,
       );
 
@@ -2001,8 +1662,6 @@ async function createPlanningAgent(
   modelId?: string,
   thinkingLevel?: ThinkingLevel,
   promptOverrides?: PromptOverrideMap,
-  planningDepth?: PlanningDepth,
-  customQuestionCount?: number,
   pluginRunner?: SkillPluginRunner,
 ): Promise<AgentResult> {
   // Ensure engine is loaded before using createFnAgent
@@ -2010,8 +1669,7 @@ async function createPlanningAgent(
 
   // Resolve the effective system prompt (override or default)
   const baseSystemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
-  const depthPromptSuffix = buildDepthPromptSuffix(planningDepth, customQuestionCount);
-  const systemPrompt = depthPromptSuffix ? `${baseSystemPrompt}\n\n${depthPromptSuffix}` : baseSystemPrompt;
+  const systemPrompt = baseSystemPrompt;
 
   const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
 
@@ -2110,7 +1768,7 @@ async function ensureSessionAgent(
     );
   }
 
-  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, session.draftThinkingLevel, promptOverrides, undefined, undefined, session.pluginRunner);
+  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, session.draftThinkingLevel, promptOverrides, session.pluginRunner);
 
   if (historyForReplay.length === 0) {
     return;
@@ -2342,55 +2000,94 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   }
 }
 
-function finalizePendingSummary(session: Session): PlanningSummary {
-  const summary = normalizePlanningSummaryPayload(session.pendingSummary ?? session.summary, {
-    title: session.title || session.initialPlan,
-    description: session.initialPlan,
-  });
-  session.summary = summary;
-  session.pendingSummary = undefined;
+/**
+ * FNXC:PlanningMode 2026-07-18-16:00:
+ * Planning is an infinite, user-gated interview. A running plan is derived after every
+ * turn and only validateSession may mark it final; model completion payloads are coerced
+ * into another question rather than terminating the session.
+ */
+function buildRunningSummary(initialPlan: string, history: PlanningHistoryEntry[]): PlanningSummary {
+  const answers = history.map((entry) => `${entry.question.question}: ${JSON.stringify(entry.response)}`);
+  return normalizePlanningSummaryPayload({
+    title: initialPlan.slice(0, 80) || "Untitled planning task",
+    description: [initialPlan, ...answers].filter(Boolean).join("\n\n"),
+    suggestedSize: "M",
+    suggestedDependencies: [],
+    keyDeliverables: history.map((entry) => entry.question.question),
+  }, { title: initialPlan, description: initialPlan });
+}
+
+function planningFallbackCopy(input: string): { question: string; option: (n: number) => string; pro: string; con: string; other: string } {
+  if (/[一-龯]/.test(input)) {
+    const traditional = /[繁體臺灣與為這個]/.test(input);
+    return traditional
+      ? { question: "下一步最需要釐清的細節或限制是什麼？", option: (n) => `替代方案 ${n}`, pro: "提供明確的前進方向", con: "可能限制後續選擇", other: "其他（自行填寫）" }
+      : { question: "接下来最需要细化的细节或限制是什么？", option: (n) => `替代方案 ${n}`, pro: "提供清晰的推进方向", con: "可能限制后续选择", other: "其他（自行填写）" };
+  }
+  if (/[가-힣]/.test(input)) return { question: "다음으로 구체화할 가장 중요한 세부 사항이나 제약은 무엇인가요?", option: (n) => `대안 ${n}`, pro: "명확한 진행 방향을 제공합니다", con: "후속 선택을 제한할 수 있습니다", other: "기타(직접 입력)" };
+  if (/\b(le|la|les|une|fonctionnalité)\b/i.test(input)) return { question: "Quel est le prochain détail ou contrainte le plus important à préciser ?", option: (n) => `Alternative ${n}`, pro: "Donne une direction claire", con: "Peut limiter les choix ultérieurs", other: "Autre (écrivez votre réponse)" };
+  if (/\b(el|la|los|una|función|característica|español(?:es)?)\b/i.test(input)) return { question: "¿Cuál es el siguiente detalle o restricción más importante que debemos precisar?", option: (n) => `Alternativa ${n}`, pro: "Ofrece una dirección clara", con: "Puede limitar decisiones posteriores", other: "Otro (escribe tu respuesta)" };
+  return { question: "What is the next most important detail or constraint to refine?", option: (n) => `Option ${n}`, pro: "Provides a clear path forward", con: "May constrain later choices", other: "Other (write your own)" };
+}
+
+/** Normalizes untrusted model output so select questions always meet the public option contract. */
+export function normalizePlanningQuestion(input: unknown, userInput = ""): PlanningQuestion {
+  const source = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const fallback = planningFallbackCopy(userInput);
+  // Every Planning question needs alternatives and an Other steer, so a model's legacy
+  // text question is upgraded to a select question instead of losing that escape hatch.
+  const type = source.type === "multi_select" || source.type === "single_select" ? source.type : "single_select";
+  const question = typeof source.question === "string" && source.question.trim() ? source.question.trim() : fallback.question;
+  const normalized: PlanningQuestion = { id: typeof source.id === "string" && source.id.trim() ? source.id : randomUUID(), type, question,
+    ...(typeof source.description === "string" && source.description.trim() ? { description: source.description.trim() } : {}) };
+  const raw = Array.isArray(source.options) ? source.options : [];
+  const alternatives = raw.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !(item as Record<string, unknown>).isOther)
+    .slice(0, 2).map((item, index) => ({
+      id: typeof item.id === "string" && item.id.trim() ? item.id : `option-${index + 1}`,
+      label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : fallback.option(index + 1),
+      ...(typeof item.description === "string" && item.description.trim() ? { description: item.description.trim() } : {}),
+      pros: Array.isArray(item.pros) && item.pros.some((v) => typeof v === "string" && v.trim()) ? item.pros.filter((v): v is string => typeof v === "string" && Boolean(v.trim())).map((v) => v.trim()) : [fallback.pro],
+      cons: Array.isArray(item.cons) && item.cons.some((v) => typeof v === "string" && v.trim()) ? item.cons.filter((v): v is string => typeof v === "string" && Boolean(v.trim())).map((v) => v.trim()) : [fallback.con],
+    }));
+  while (alternatives.length < 2) {
+    const n = alternatives.length + 1;
+    alternatives.push({ id: `option-${n}`, label: fallback.option(n), pros: [fallback.pro], cons: [fallback.con] });
+  }
+  normalized.options = [...alternatives, { id: "other", label: fallback.other, isOther: true }];
+  return normalized;
+}
+
+function coerceQuestionResponse(response: PlanningResponse, session: Session): PlanningQuestion {
+  if (response.type === "question") return normalizePlanningQuestion(response.data, session.initialPlan);
+  return normalizePlanningQuestion({ id: randomUUID(), type: "single_select", question: planningFallbackCopy(session.initialPlan).question }, session.initialPlan);
+}
+
+export async function validateSession(sessionId: string): Promise<PlanningSummary> {
+  const session = await getSession(sessionId);
+  if (!session) throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+
+  // FNXC:PlanningMode 2026-07-18-16:00: Validation is the terminal user action.
+  // Cancel a concurrent turn and clear its question so it cannot race the completed row
+  // back to awaiting_input after the user has finalized the running plan.
+  const activeGeneration = activeGenerations.get(session.id);
+  if (activeGeneration) {
+    activeGeneration.abortReason = "user-stop";
+    clearTimeout(activeGeneration.timer);
+    activeGeneration.abortTeardown();
+    activeGeneration.abortController.abort();
+    activeGenerations.delete(session.id);
+  }
+
+  session.summary = buildRunningSummary(session.initialPlan, session.history);
   session.currentQuestion = undefined;
+  session.editingQuestionId = undefined;
+  session.validated = true;
   session.error = undefined;
   session.updatedAt = new Date();
-  persistSession(session, "complete");
-  planningStreamManager.broadcast(session.id, {
-    type: "summary",
-    data: summary,
-  });
+  await persistSession(session, "complete");
+  planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
   planningStreamManager.broadcast(session.id, { type: "complete" });
-  return summary;
-}
-
-function setPendingSummaryCheckpoint(session: Session, summary: PlanningSummary): PlanningQuestion {
-  const checkpoint = buildDeepeningCheckpointQuestion(session.history, summary);
-  session.pendingSummary = summary;
-  session.summary = undefined;
-  session.currentQuestion = checkpoint;
-  session.error = undefined;
-  session.lastGeneratedThinking = session.thinkingOutput;
-  session.updatedAt = new Date();
-  persistSession(session, "awaiting_input");
-  void maybeNotifyPlanningAwaitingInput(session, checkpoint);
-  planningStreamManager.broadcast(session.id, {
-    type: "question",
-    data: checkpoint,
-  });
-  return checkpoint;
-}
-
-function formatDeepeningRequestForAgent(decision: PlanningDeepeningDecision, pendingSummary: PlanningSummary): string {
-  const requestedTopics = [
-    ...decision.selectedThemeLabels,
-    ...(decision.customTopic ? [decision.customTopic] : []),
-  ];
-  return [
-    "The user chose to go deeper before accepting the final planning summary.",
-    "Continue the planning interview and explore these specific topics in more detail before producing another completion summary:",
-    requestedTopics.map((topic) => `- ${topic}`).join("\n"),
-    "Do not skip directly to the final summary unless the additional details are addressed; when you next complete, return the normal JSON complete payload.",
-    "Pending summary that was withheld from the user:",
-    JSON.stringify(pendingSummary),
-  ].join("\n\n");
+  return session.summary;
 }
 
 async function continueAgentConversation(session: Session, message: string): Promise<void> {
@@ -2543,42 +2240,26 @@ async function continueAgentConversation(session: Session, message: string): Pro
     }
 
       if (parsed.type === "question") {
-        session.currentQuestion = parsed.data;
-        session.summary = undefined;
-        session.pendingSummary = undefined;
+        session.currentQuestion = coerceQuestionResponse(parsed, session);
+        session.summary = buildRunningSummary(session.initialPlan, session.history);
         session.error = undefined;
         session.lastGeneratedThinking = session.thinkingOutput;
         session.updatedAt = new Date();
-        if (!session.clarificationEnabled && session.history.length > 0) {
-          try {
-            await continueToSummaryAfterSuppressedQuestion(session, abortSignal);
-          } catch (error) {
-            setSessionError(session, error instanceof Error ? error.message : String(error));
-          }
-          return;
-        }
+        // Persist after deriving the plan: reloads must see the running summary on every turn.
         persistSession(session, "awaiting_input");
-        void maybeNotifyPlanningAwaitingInput(session, parsed.data, true);
-        planningStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
-      } else if (parsed.type === "complete") {
-        if (session.history.length === 0) {
-          const mandatoryQuestion = await requestMandatoryFirstPlanningQuestion(session, abortSignal);
-          session.currentQuestion = mandatoryQuestion.data;
-          session.summary = undefined;
-          session.pendingSummary = undefined;
-          session.error = undefined;
-          session.lastGeneratedThinking = session.thinkingOutput;
-          session.updatedAt = new Date();
-          persistSession(session, "awaiting_input");
-          void maybeNotifyPlanningAwaitingInput(session, mandatoryQuestion.data, true);
-          planningStreamManager.broadcast(session.id, { type: "question", data: mandatoryQuestion.data });
-          return;
-        }
-        const summary = normalizePlanningSummaryPayload(parsed.data, {
-          title: session.title || session.initialPlan,
-          description: session.initialPlan,
-        });
-        setPendingSummaryCheckpoint(session, summary);
+        void maybeNotifyPlanningAwaitingInput(session, session.currentQuestion, true);
+        planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+        planningStreamManager.broadcast(session.id, { type: "question", data: session.currentQuestion });
+      } else {
+        // A generic engine completion is never terminal in Planning Mode.
+        session.currentQuestion = coerceQuestionResponse(parsed, session);
+        session.summary = buildRunningSummary(session.initialPlan, session.history);
+        session.error = undefined;
+        session.lastGeneratedThinking = session.thinkingOutput;
+        session.updatedAt = new Date();
+        persistSession(session, "awaiting_input");
+        planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+        planningStreamManager.broadcast(session.id, { type: "question", data: session.currentQuestion });
       }
     });
   } catch (err) {
@@ -2859,6 +2540,15 @@ currentQuestion is cleared once an answer is accepted, so a duplicate re-submit 
 in-flight generation is detected against the last history entry (the turn being generated)
 instead of the now-cleared currentQuestion.
 */
+function captureOtherCustomText(question: PlanningQuestion, responses: Record<string, unknown>): PlanningQuestion {
+  const customText = typeof responses._other === "string" ? responses._other.trim() : "";
+  if (!customText || !question.options?.some((option) => option.isOther)) return question;
+  return {
+    ...question,
+    options: question.options.map((option) => option.isOther ? { ...option, customText } : option),
+  };
+}
+
 function didSubmitSameAnswer(
   session: Session,
   responses: Record<string, unknown>,
@@ -2880,6 +2570,10 @@ export async function submitResponse(
   const session = await getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  }
+
+  if (session.validated) {
+    throw new InvalidSessionStateError("Planning session has already been validated");
   }
 
   // Stash store/rootDir on the session so subsequent ensureSessionAgent calls
@@ -2916,14 +2610,13 @@ export async function submitResponse(
     }
 
     session.error = undefined;
-    session.pendingSummary = undefined;
     persistSession(session, "generating");
 
     await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
     const refineMessage = formatRefineRequestForAgent(session.summary);
     await continueAgentConversation(session, refineMessage);
   } else {
-    const currentQuestion = session.currentQuestion;
+    const currentQuestion = captureOtherCustomText(session.currentQuestion, responses);
     const historyEntry = {
       question: currentQuestion,
       response: responses,
@@ -2935,50 +2628,41 @@ export async function submitResponse(
     FNXC:DashboardSessionPersistence 2026-06-14-09:09:
     Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
     */
-    session.history.push(historyEntry);
+    const editIndex = session.editingQuestionId
+      ? session.history.findIndex((entry) => entry.question.id === session.editingQuestionId)
+      : -1;
+    const isEditingPriorAnswer = editIndex >= 0;
+    if (isEditingPriorAnswer) {
+      session.history[editIndex] = historyEntry;
+      session.editingQuestionId = undefined;
+      // Existing agent context contains the old answer; rebuild it from the preserved history.
+      disposeSessionAgentForRetry(session);
+    } else {
+      session.history.push(historyEntry);
+    }
     answeredQuestion = currentQuestion;
 
-    if (isDeepeningCheckpointQuestion(currentQuestion)) {
-      const pendingSummary = session.pendingSummary;
-      if (!pendingSummary) {
-        throw new InvalidSessionStateError("Planning checkpoint is missing its pending summary");
-      }
-      const decision = classifyDeepeningCheckpointResponse(currentQuestion, responses);
-      if (decision.proceed) {
-        finalizePendingSummary(session);
-      } else {
-        const hasDeepeningTopic = decision.selectedThemeLabels.length > 0 || Boolean(decision.customTopic);
-        if (!hasDeepeningTopic) {
-          session.history.pop();
-          throw new InvalidSessionStateError("Select a topic to explore or proceed to the final plan");
-        }
-        session.pendingSummary = undefined;
-        // FNXC:PlanningRetry 2026-07-14-00:00: answer accepted — the checkpoint is no longer awaiting input.
-        session.currentQuestion = undefined;
-        persistSession(session, "generating");
-        if (!session.agent) {
-          await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
-        }
-        await continueAgentConversation(session, formatDeepeningRequestForAgent(decision, pendingSummary));
-      }
-    } else {
-      // FNXC:PlanningRetry 2026-07-14-00:00: answer accepted — clear before generating so SSE catch-up cannot re-emit the answered question.
-      session.currentQuestion = undefined;
-      persistSession(session, "generating");
-
-      if (!session.agent) {
-        await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
-      }
-
-      const message = formatResponseForAgent(currentQuestion, responses);
-      await continueAgentConversation(session, message);
+    // Answered questions always lead to another question; no answer can validate or complete.
+    session.currentQuestion = undefined;
+    persistSession(session, "generating");
+    if (!session.agent) {
+      // An edited older answer must be replayed in its original position with every
+      // later answer retained; only a newly appended answer is sent after replay.
+      await ensureSessionAgent(
+        session,
+        rootDir,
+        isEditingPriorAnswer ? session.history : session.history.slice(0, -1),
+        promptOverrides,
+        store,
+      );
     }
+    const message = isEditingPriorAnswer
+      ? "An earlier answer was edited. Use the complete preserved interview context above, re-derive the running plan, and ask exactly one new high-impact next question."
+      : formatResponseForAgent(currentQuestion, responses);
+    await continueAgentConversation(session, message);
   }
 
   // Return the current state (will be updated via SSE)
-  if (session.summary) {
-    return { type: "complete", data: session.summary };
-  }
   if (session.currentQuestion) {
     return { type: "question", data: session.currentQuestion };
   }
@@ -3010,6 +2694,10 @@ export async function retrySession(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
+  if (session.validated) {
+    throw new InvalidSessionStateError("Planning session has already been validated");
+  }
+
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
@@ -3027,7 +2715,6 @@ export async function retrySession(
 
   session.error = undefined;
   session.summary = undefined;
-  session.pendingSummary = undefined;
   /*
   FNXC:PlanningRetry 2026-07-14-00:00:
   A retry regenerates the last turn, so no question is awaiting input. Clearing here also
@@ -3063,6 +2750,7 @@ export interface PlanningRewindResult {
 
 export async function rewindSession(
   sessionId: string,
+  questionId?: string,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
@@ -3072,6 +2760,10 @@ export async function rewindSession(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
+  if (session.validated) {
+    throw new InvalidSessionStateError("Planning session has already been validated");
+  }
+
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
@@ -3079,16 +2771,21 @@ export async function rewindSession(
     throw new InvalidSessionStateError("Planning session has no previous question to rewind to");
   }
 
-  const rewindEntry = session.history.pop();
-  if (!rewindEntry) {
-    throw new InvalidSessionStateError("Planning session has no previous question to rewind to");
+  const rewindIndex = questionId
+    ? session.history.findIndex((entry) => entry.question.id === questionId)
+    : session.history.length - 1;
+  if (rewindIndex < 0) {
+    throw new InvalidSessionStateError("Planning question to edit was not found");
   }
+  const rewindEntry = session.history[rewindIndex]!;
+  if (!questionId) session.history.pop();
 
   disposeSessionAgentForRetry(session);
 
   session.currentQuestion = rewindEntry.question;
-  session.summary = undefined;
-  session.pendingSummary = undefined;
+  session.editingQuestionId = questionId ? questionId : undefined;
+  // Keep the plan available while the user edits; it is re-derived after submit.
+  session.summary = buildRunningSummary(session.initialPlan, session.history);
   session.error = undefined;
   session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
   session.thinkingOutput = "";

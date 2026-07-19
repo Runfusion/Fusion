@@ -3676,9 +3676,271 @@ describe("specified triage recovery", () => {
       noCommitsExpected: true,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    // FNXC:TriageStuckKill 2026-07-18-21:05: terminal status clear after release move (FN-1312).
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       "Auto-recovered specified task stuck in planning — moved to todo",
+    );
+  });
+
+  /*
+  FNXC:TriageStuckKill 2026-07-18-22:30:
+  Null status alone is not proof of an approved plan (Greptile P1). Only recover null-status
+  triage cards when Plan Review already recorded a passed verdict.
+  */
+  it("recovers a null-status triage task only when Plan Review already passed", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Recovered triage task",
+      column: "triage",
+      status: null,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "passed",
+          verdict: "APPROVE",
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as any);
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
+  it("does not recover a null-status triage draft that never passed Plan Review", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Unapproved draft after early status clear",
+      column: "triage",
+      status: null,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does not recover needs-replan cards (those require a real replan, not handoff recovery)", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Rejected plan under revision",
+      column: "triage",
+      status: "needs-replan",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("defers stuck-abort requeue while Plan Review finalize is still in flight", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        maxStuckKills: 6,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        description: "mid finalize",
+        column: "triage",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      }),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    (processor as any).finalizing.add("FN-001");
+
+    await (processor as any).handleStuckAbortRequeue(
+      {
+        id: "FN-001",
+        description: "mid finalize",
+        column: "triage",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      },
+      "catch",
+    );
+
+    // Must not force needs-replan while the in-flight finalize owns the handoff.
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "needs-replan" }),
+    );
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:TriageStuckKill 2026-07-18-22:30:
+  After a successful release, outer stuckAborted cleanup must not re-apply needs-replan
+  (Greptile P1 post-handoff race on PR #2326).
+  */
+  it("does not write needs-replan when stuck-abort cleanup runs after handoff to todo", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        maxStuckKills: 6,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        description: "already released",
+        column: "todo",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [{ name: "step-1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      }),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+
+    await (processor as any).handleStuckAbortRequeue(
+      {
+        id: "FN-001",
+        description: "already released",
+        column: "todo",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [{ name: "step-1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      },
+      "catch",
+    );
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "needs-replan" }),
+    );
+  });
+
+  /*
+  FNXC:TriageStuckKill 2026-07-18-22:50:
+  Plan-in-place workflows plan inside todo with status:"planning". Stuck-abort must requeue
+  those cards, not treat every todo row as a completed handoff (CodeRabbit on PR #2326).
+  */
+  it("requeues plan-in-place todo cards still in planning status after stuck-abort", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Task: FN-001\n\n**Size:** M\n\n## Mission\n\nDraft still being planned in todo\n",
+    );
+
+    const planningTodo = {
+      id: "FN-001",
+      description: "plan-in-place mid plan",
+      column: "todo" as const,
+      status: "planning" as const,
+      stuckKillCount: 0,
+      dependencies: [] as string[],
+      steps: [] as Array<{ name: string; status: string }>,
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    };
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        maxStuckKills: 6,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue(planningTodo),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    await (processor as any).handleStuckAbortRequeue(planningTodo, "catch");
+
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "needs-replan", stuckKillCount: 1 }),
     );
   });
 
@@ -7116,6 +7378,60 @@ describe("evictStaleProcessing", () => {
     expect(evicted).toEqual(new Set(["FN-001"]));
     expect(processor.getProcessingTaskIds().has("FN-001")).toBe(false);
     expect(processor.getProcessingTaskIds().has("FN-002")).toBe(true);
+  });
+
+  /*
+  FNXC:TriageStuckKill 2026-07-18-21:05:
+  FN-1312: after stuck-kill of the main triage session, Plan Review still runs as a
+  subagent and finalize is mid-handoff. Eviction at the 30m threshold must not drop
+  those cards or self-healing/poll will start a concurrent planner.
+  */
+  it("retains stuck-aborted tasks that still have a live Plan Review subagent", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-1312");
+    (processor as any).processingSince.set("FN-1312", Date.now());
+    (processor as any).stuckAborted.add("FN-1312");
+    (processor as any).activeSubagentSessions.set("FN-1312", new Set([{ dispose: vi.fn() }]));
+
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set());
+    expect(processor.getProcessingTaskIds().has("FN-1312")).toBe(true);
+  });
+
+  it("retains stuck-aborted tasks currently inside finalizeApprovedTask", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-1312");
+    (processor as any).processingSince.set("FN-1312", Date.now());
+    (processor as any).stuckAborted.add("FN-1312");
+    (processor as any).finalizing.add("FN-1312");
+
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set());
+    expect(processor.getProcessingTaskIds().has("FN-1312")).toBe(true);
+  });
+
+  it("includes finalizing and subagent tasks in getProcessingTaskIds even when not in processing", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    (processor as any).finalizing.add("FN-finalizing");
+    (processor as any).activeSubagentSessions.set("FN-subagent", new Set([{ dispose: vi.fn() }]));
+
+    const ids = processor.getProcessingTaskIds();
+    expect(ids.has("FN-finalizing")).toBe(true);
+    expect(ids.has("FN-subagent")).toBe(true);
   });
 });
 

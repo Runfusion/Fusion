@@ -4,17 +4,45 @@ import type { TaskDetail } from "@fusion/core";
 import { MainContent } from "../MainContent";
 import type { MainContentProps } from "../types";
 
-const { fetchTaskDetailMock } = vi.hoisted(() => ({
+const { fetchTaskDetailMock, fetchMissionMock, fetchMissionsMock, fetchInsightsMock, listEvalsMock } = vi.hoisted(() => ({
   fetchTaskDetailMock: vi.fn(),
+  fetchMissionMock: vi.fn(async () => ({
+    id: "mission-1",
+    milestones: [{ id: "milestone-1", title: "Milestone candidate" }],
+  })),
+  fetchMissionsMock: vi.fn(async () => [{ id: "mission-1", title: "Mission candidate" }]),
+  fetchInsightsMock: vi.fn(async () => ({
+    insights: [{ id: "insight-1", title: "Research candidate" }],
+    count: 1,
+  })),
+  listEvalsMock: vi.fn(async () => ({
+    results: [{ id: "eval-1", taskId: "FN-1", taskSnapshot: { title: "Evaluation candidate" } }],
+    count: 1,
+  })),
 }));
 
 vi.mock("../../../api", () => ({
   fetchTaskDetail: fetchTaskDetailMock,
+  fetchMission: fetchMissionMock,
+  fetchMissions: fetchMissionsMock,
+  fetchInsights: fetchInsightsMock,
+  listEvals: listEvalsMock,
 }));
 
 vi.mock("../../MailboxView", () => ({
-  MailboxView: ({ onOpenTask }: { onOpenTask?: (taskId: string) => void }) => (
-    <button type="button" onClick={() => onOpenTask?.("FN-7935")}>Open mailbox artifact task</button>
+  MailboxView: ({
+    onOpenTask,
+    nativeStructureCandidates = [],
+  }: {
+    onOpenTask?: (taskId: string) => void;
+    nativeStructureCandidates?: Array<{ label: string }>;
+  }) => (
+    <>
+      <button type="button" onClick={() => onOpenTask?.("FN-7935")}>Open mailbox artifact task</button>
+      <output aria-label="Native structure candidate labels">
+        {nativeStructureCandidates.map((candidate) => candidate.label).join(", ")}
+      </output>
+    </>
   ),
 }));
 
@@ -79,5 +107,17 @@ describe("MainContent mailbox artifact View task routing", () => {
     await waitFor(() => expect(popOutTaskDetail).toHaveBeenCalledWith(fetchedTask));
     expect(fetchTaskDetailMock).toHaveBeenCalledWith("FN-7935", "project-1");
     expect(openDetailTask).not.toHaveBeenCalled();
+  });
+
+  it("supplies project-scoped native structure candidates to the mailbox picker", async () => {
+    render(<MainContent {...mainContentProps()} />);
+
+    await waitFor(() => expect(screen.getByLabelText("Native structure candidate labels")).toHaveTextContent(
+      "Mission candidate, Milestone candidate, Research candidate, Evaluation candidate",
+    ));
+    expect(fetchMissionsMock).toHaveBeenCalledWith("project-1");
+    expect(fetchMissionMock).toHaveBeenCalledWith("mission-1", "project-1");
+    expect(fetchInsightsMock).toHaveBeenCalledWith({ limit: 100 }, "project-1");
+    expect(listEvalsMock).toHaveBeenCalledWith({ limit: 100 }, "project-1");
   });
 });

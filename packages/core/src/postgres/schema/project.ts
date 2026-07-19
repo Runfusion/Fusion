@@ -521,6 +521,35 @@ export const distributedTaskIdReservations = projectSchema.table("distributed_ta
   index("idxDistributedTaskIdReservationsExpiry").on(t.status, t.expiresAt),
 ]);
 
+// ── Durable symbol locks ─────────────────────────────────────────────
+/*
+FNXC:SymbolLock 2026-07-30-14:10:
+Mission-lineage admission needs one project-scoped row per canonical symbol.
+A composite primary key retains released/expired ownership history while the
+atomic store seam may reclaim those rows as held without cross-project conflict.
+*/
+export const symbolLocks = projectSchema.table("symbol_locks", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  symbolKey: text("symbol_key").notNull(),
+  ownerTaskId: text("owner_task_id").notNull(),
+  missionId: text("mission_id"),
+  featureId: text("feature_id"),
+  lineageId: text("lineage_id"),
+  nodeId: text("node_id"),
+  agentId: text("agent_id"),
+  status: text("status").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  renewedAt: text("renewed_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.symbolKey] }),
+  check("symbol_locks_status_check", sql`${t.status} IN ('held', 'released', 'expired')`),
+  index("idxSymbolLocksOwner").on(t.projectId, t.ownerTaskId),
+  index("idxSymbolLocksExpiry").on(t.status, t.expiresAt),
+]);
+
 // ── Workflow step definitions ────────────────────────────────────────
 export const workflowSteps = projectSchema.table("workflow_steps", {
   id: text("id").primaryKey(),
@@ -561,6 +590,31 @@ export const taskWorkflowSelection = projectSchema.table("task_workflow_selectio
   stepIds: jsonb("step_ids").notNull().default([]),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [primaryKey({ columns: [t.projectId, t.taskId] })]);
+
+/*
+FNXC:TaskVerificationRequest 2026-07-30-00:00:
+One latest request per project/task gives chat an observable queue while CAS writes
+prevent stale executor completions from overwriting a later request.
+*/
+export const taskVerificationRequests = projectSchema.table("task_verification_requests", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  requestId: text("request_id").notNull(),
+  status: text("status").notNull(),
+  profile: text("profile").notNull(),
+  command: text("command").notNull(),
+  scope: text("scope").notNull(),
+  requestedBy: text("requested_by").notNull(),
+  requestedAt: text("requested_at").notNull(),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  result: jsonb("result"),
+  rejectionReason: text("rejection_reason"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId] }),
+  unique("task_verification_requests_project_request_id_unique").on(t.projectId, t.requestId),
+  index("idx_task_verification_requests_status").on(t.projectId, t.status, t.requestedAt),
+]);
 
 // ── Activity log ─────────────────────────────────────────────────────
 export const activityLog = projectSchema.table("activity_log", {

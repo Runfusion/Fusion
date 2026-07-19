@@ -1612,19 +1612,6 @@
         "confirmTitle": "Import organization bundle?",
         "confirmMessage": "This applies the previewed configuration to this project.",
         "confirmApply": "Import bundle"
-      },
-      "versions": {
-        "title": "Configuration versions",
-        "description": "Restore any recorded project configuration version.",
-        "loading": "Loading versions…",
-        "loadError": "Unable to load configuration versions",
-        "rollbackError": "Unable to roll back configuration",
-        "empty": "No configuration versions yet.",
-        "rollback": "Roll back",
-        "rollingBack": "Rolling back…",
-        "confirmTitle": "Roll back configuration?",
-        "confirmMessage": "Restore this version? The rollback is recorded as a new version.",
-        "confirmRollback": "Roll back"
       }
     },
     "ecosystem": {
@@ -4645,7 +4632,6 @@
     "plain": "Plain",
     "planningComplete": "Planning Complete!",
     "planningCompleteSubheading": "Review and refine your task before creating it.",
-    "planningDepth": "Planning depth",
     "planningModel": "Planning Model",
     "planningModelBlurb": "Selects which model runs the planning interview and writes the final draft.",
     "planningSessions": "Planning sessions",
@@ -6340,7 +6326,8 @@
         "project": "Specific to this project"
       },
       "globalMcp": "MCP Servers · Global",
-      "mcp": "MCP Servers · Project"
+      "mcp": "MCP Servers · Project",
+      "configVersions": "Configuration Versions"
     },
     "nodeRouting": {
       "blockExecution": "Block execution",
@@ -6832,6 +6819,19 @@
       "embeddedConnectionCap": "Embedded PostgreSQL connection cap",
       "embeddedConnectionCapError": "Enter a value between 32 and 2,000.",
       "advanced": "Advanced database settings"
+    },
+    "configVersions": {
+      "title": "Configuration versions",
+      "description": "Restore any recorded project configuration version.",
+      "loading": "Loading versions…",
+      "loadError": "Unable to load configuration versions",
+      "rollbackError": "Unable to roll back configuration",
+      "empty": "No configuration versions yet.",
+      "rollback": "Roll back",
+      "rollingBack": "Rolling back…",
+      "confirmTitle": "Roll back configuration?",
+      "confirmMessage": "Restore this version? The rollback is recorded as a new version.",
+      "confirmRollback": "Roll back"
     }
   },
   "setup": {

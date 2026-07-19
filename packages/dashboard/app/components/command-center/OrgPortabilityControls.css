@@ -1,9 +1,9 @@
 /*
 FNXC:CommandCenterConfig 2026-07-18-12:00:
-The portability and history cards remain in the existing control grid on desktop
-and collapse to one column at the Command Center mobile breakpoint. Shared
-buttons retain the established token-based touch target instead of adding a
-parallel control variant.
+The portability card remains in the existing control grid on desktop and
+collapses to one column at the Command Center mobile breakpoint. Shared buttons
+retain the established token-based touch target instead of adding a parallel
+control variant.
 */
 .cc-portability-card {
   display: flex;
@@ -11,9 +11,6 @@ parallel control variant.
   gap: var(--space-sm);
 }
 
-.cc-portability-card--versions {
-  grid-column: 1 / -1;
-}
 
 .cc-portability-actions {
   display: flex;
@@ -31,38 +28,6 @@ parallel control variant.
   resize: vertical;
 }
 
-.cc-portability-version-list {
-  display: grid;
-  gap: var(--space-sm);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.cc-portability-version {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding-block: var(--space-sm);
-  border-block-end: 1px solid var(--border-subtle);
-}
-
-.cc-portability-version span {
-  display: grid;
-  gap: var(--space-xs);
-  min-inline-size: 0;
-}
-
-.cc-portability-version strong {
-  color: var(--text);
-  font-size: 0.8125rem;
-}
-
-.cc-portability-version small {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-}
 
 @media (max-width: 768px) {
   .cc-portability-actions {
@@ -74,8 +39,4 @@ parallel control variant.
     justify-content: center;
   }
 
-  .cc-portability-version {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }

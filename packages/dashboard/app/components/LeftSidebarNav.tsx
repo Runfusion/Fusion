@@ -40,6 +40,7 @@ export interface LeftSidebarExperimentalFeatures {
   devServerView?: boolean;
   researchView?: boolean;
   evalsView?: boolean;
+  ideationView?: boolean;
   goalsView?: boolean;
 }
 
@@ -279,11 +280,11 @@ export function LeftSidebarNav({
 
   /*
   FNXC:Navigation 2026-06-22-12:00:
-  Single explicit sidebar order (top to bottom): board, list, graph, agents, chat, mailbox, planning, missions, goals, compound, automation, import, workflows, insight, research, command-center, documents (Artifacts), skills, memory, evals, then any remaining plugin views in their sorted order.
+  Single explicit sidebar order (top to bottom): board, list, graph, agents, chat, mailbox, planning, missions, goals, compound, automation, import, workflows, insight, research, ideation, command-center, documents (Artifacts), skills, memory, evals, then any remaining plugin views in their sorted order.
 
   Dev Server is intentionally absent: it moved to the right dock. Secrets and Todos remain omitted (they live in the right dock / mobile More-sheet / Header overflow).
 
-  Flag gates preserved verbatim from the prior layout: agents (showAgentsTab), goals (goalsView), insight (insights), research (researchView), skills (showSkillsTab), memory (memoryView), evals (evalsView). graph and compound are skipped when their plugin view is absent.
+  Flag gates preserved verbatim from the prior layout: agents (showAgentsTab), goals (goalsView), insight (insights), research (researchView), ideation (ideationView), skills (showSkillsTab), memory (memoryView), evals (evalsView). graph and compound are skipped when their plugin view is absent.
 
   FNXC:Navigation 2026-06-22-18:50:
   Roadmaps is no longer a dashboard navigation destination. Keep filtering it out even if a persisted plugin dashboard-view row is present, while preserving other plugin views in their sorted fallback section.
@@ -442,6 +443,9 @@ export function LeftSidebarNav({
       : []),
     ...(experimentalFeatures?.researchView
       ? [{ id: "research", label: t("header.researchView", "Research"), view: "research" as TaskView, isActive: view === "research", icon: Search, testId: "sidebar-nav-research", onSelect: () => onChangeView("research") }]
+      : []),
+    ...(experimentalFeatures?.ideationView
+      ? [{ id: "ideation", label: t("nav.ideation", "Ideation"), view: "ideation" as TaskView, isActive: view === "ideation", icon: Lightbulb, testId: "sidebar-nav-ideation", onSelect: () => onChangeView("ideation") }]
       : []),
     ...(experimentalFeatures?.evalsView
       ? [{ id: "evals", label: t("header.evalsView", "Evals"), view: "evals" as TaskView, isActive: view === "evals", icon: Target, testId: "sidebar-nav-evals", onSelect: () => onChangeView("evals") }]

@@ -1,17 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { Download, RotateCcw, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import { Download, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, withProjectId } from "../../api/legacy";
 import { useConfirm } from "../../hooks/useConfirm";
 import "./OrgPortabilityControls.css";
-
-interface ConfigurationRevision {
-  id: string;
-  configKind: string;
-  createdAt: string;
-  source: "mutation" | "rollback";
-  changedBy?: { kind?: string; id?: string };
-}
 
 interface OrgPortabilityControlsProps {
   projectId?: string;
@@ -43,24 +35,6 @@ export function OrgPortabilityControls({ projectId, onSettingsRefresh }: OrgPort
   const [preview, setPreview] = useState<unknown>(null);
   const [previewedBundle, setPreviewedBundle] = useState<Record<string, unknown> | null>(null);
   const bundleVersion = useRef(0);
-  const [revisions, setRevisions] = useState<ConfigurationRevision[] | null>(null);
-  const [revisionsError, setRevisionsError] = useState<string | null>(null);
-  const [rollbackId, setRollbackId] = useState<string | null>(null);
-
-  const revisionPath = withProjectId("/config/revisions", projectId);
-  const loadRevisions = async () => {
-    try {
-      setRevisionsError(null);
-      const response = await api<{ revisions?: ConfigurationRevision[] }>(revisionPath);
-      setRevisions(Array.isArray(response.revisions) ? response.revisions : []);
-    } catch (error) {
-      setRevisions(null);
-      setRevisionsError(error instanceof Error ? error.message : t("commandCenter.portability.versions.loadError", "Unable to load configuration versions"));
-    }
-  };
-
-  useEffect(() => { void loadRevisions(); }, [projectId]);
-
   const exportOrg = async () => {
     setExportState("working");
     try {
@@ -116,31 +90,10 @@ export function OrgPortabilityControls({ projectId, onSettingsRefresh }: OrgPort
     try {
       await api(withProjectId("/org/import", projectId), { method: "POST", body: JSON.stringify({ bundle: previewedBundle, dryRun: false }) });
       await onSettingsRefresh();
-      await loadRevisions();
       setImportState("success");
     } catch (error) {
       setImportError(error instanceof Error ? error.message : t("commandCenter.portability.import.error", "Unable to import bundle"));
       setImportState("error");
-    }
-  };
-
-  const rollback = async (revision: ConfigurationRevision) => {
-    const approved = await confirm({
-      title: t("commandCenter.portability.versions.confirmTitle", "Roll back configuration?"),
-      message: t("commandCenter.portability.versions.confirmMessage", "Restore this version? The rollback is recorded as a new version."),
-      confirmLabel: t("commandCenter.portability.versions.confirmRollback", "Roll back"),
-      cancelLabel: t("actions.cancel", "Cancel"),
-    });
-    if (!approved) return;
-    setRollbackId(revision.id);
-    try {
-      await api(withProjectId(`/config/revisions/${encodeURIComponent(revision.id)}/rollback`, projectId), { method: "POST" });
-      await onSettingsRefresh();
-      await loadRevisions();
-    } catch (error) {
-      setRevisionsError(error instanceof Error ? error.message : t("commandCenter.portability.versions.rollbackError", "Unable to roll back configuration"));
-    } finally {
-      setRollbackId(null);
     }
   };
 
@@ -176,9 +129,5 @@ export function OrgPortabilityControls({ projectId, onSettingsRefresh }: OrgPort
       {importError ? <p className="cc-controls-error" role="alert">{importError}</p> : null}
     </section>
 
-    <section className="card cc-controls-card cc-portability-card cc-portability-card--versions" data-testid="cc-controls-config-versions">
-      <div className="cc-controls-card-header"><div><h3>{t("commandCenter.portability.versions.title", "Configuration versions")}</h3><p>{t("commandCenter.portability.versions.description", "Restore any recorded project configuration version.")}</p></div></div>
-      {revisionsError ? <p className="cc-controls-error" role="alert">{revisionsError}</p> : revisions === null ? <p className="cc-controls-muted">{t("commandCenter.portability.versions.loading", "Loading versions…")}</p> : revisions.length === 0 ? <p className="cc-controls-muted" data-testid="cc-config-versions-empty">{t("commandCenter.portability.versions.empty", "No configuration versions yet.")}</p> : <ul className="cc-portability-version-list" data-testid="cc-config-versions-list">{revisions.map((revision) => <li key={revision.id} className="cc-portability-version"><span><strong>{revision.configKind}</strong><small>{new Date(revision.createdAt).toLocaleString()}</small></span><button type="button" className="btn btn-secondary cc-controls-action" onClick={() => void rollback(revision)} disabled={rollbackId !== null}>{rollbackId === revision.id ? t("commandCenter.portability.versions.rollingBack", "Rolling back…") : <><RotateCcw size={16} aria-hidden="true" />{t("commandCenter.portability.versions.rollback", "Roll back")}</>}</button></li>)}</ul>}
-    </section>
   </>;
 }
