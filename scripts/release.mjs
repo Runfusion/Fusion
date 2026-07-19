@@ -7,7 +7,8 @@
 // If you want provenance, run the workflow manually instead of this script.
 //
 // Requirements:
-//   - clean working tree on `main`, up to date with origin
+//   - clean working tree on the channel's branch (`main` for --channel beta,
+//     `release` for stable), up to date with origin
 //   - at least one pending changeset in .changeset/
 //   - `npm login` already completed (publish uses the active npm token)
 //   - real releases require a live operator to type the authorization phrase
@@ -20,6 +21,12 @@
 //   pnpm release --dry-run        # preview only; non-interactive by default; no authorization or file/git/npm changes
 //   pnpm release --dry-run --interactive
 //                                 # preview only, but exercise the version prompt override
+//   pnpm release --channel beta   # beta release from `main`: enters changesets pre-mode,
+//                                 # versions X.Y.Z-beta.N, publishes npm dist-tag `beta`,
+//                                 # GitHub prerelease; skips Homebrew tap + X draft
+//   pnpm release --channel stable # (default) stable release from the `release` branch:
+//                                 # exits pre-mode if present, publishes dist-tag `latest`,
+//                                 # GitHub release marked latest, bumps Homebrew tap
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
@@ -44,7 +51,8 @@ import {
   partitionVersionsByCutoff,
 } from "./lib/changelog-archive.mjs";
 
-const args = new Set(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const args = new Set(argv);
 /*
  * FNXC:ReleaseScript 2026-06-14-23:08:
  * `--dry-run` must not read stdin in the default agent-shell path; `--interactive` is the explicit maintainer override for prompt coverage while preserving real-release prompts.
@@ -52,6 +60,30 @@ const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
 const AUTO_YES = args.has("--yes") || args.has("-y");
 const INTERACTIVE = args.has("--interactive");
+
+/*
+ * FNXC:UpdateChannels 2026-07-19-13:20:
+ * Two release tracks (see docs/plans/2026-07-19-001-beta-stable-release-tracks-plan.md):
+ * - `--channel beta` runs on `main`, uses changesets pre-mode (auto `pre enter beta`),
+ *   publishes to the npm `beta` dist-tag, tags vX.Y.Z-beta.N, and creates a GitHub
+ *   PRERELEASE. Homebrew tap and the X draft are stable-only and skipped.
+ * - `--channel stable` (default) runs on the long-lived `release` branch, exits
+ *   pre-mode if `.changeset/pre.json` was merged in from main, publishes to `latest`,
+ *   marks the GitHub Release latest, and bumps the Homebrew tap. After a stable
+ *   release the operator back-merges `release` into `main` (commands are printed).
+ * The publish command ALWAYS passes an explicit `--tag`: a beta accidentally landing
+ * on `latest` is the one unrecoverable-embarrassing failure of this scheme.
+ */
+const channelFlagIndex = argv.indexOf("--channel");
+const CHANNEL = channelFlagIndex !== -1 ? argv[channelFlagIndex + 1] : "stable";
+if (CHANNEL !== "stable" && CHANNEL !== "beta") {
+  console.error(`✗ Invalid --channel '${CHANNEL ?? ""}'. Valid channels: stable, beta.`);
+  process.exit(1);
+}
+const IS_BETA = CHANNEL === "beta";
+const RELEASE_BRANCH = IS_BETA ? "main" : "release";
+const NPM_DIST_TAG = IS_BETA ? "beta" : "latest";
+const PRE_JSON_PATH = join(".changeset", "pre.json");
 
 const color = (c, s) => `\x1b[${c}m${s}\x1b[0m`;
 const info = (s) => console.log(color(36, "▶ ") + s);
@@ -526,19 +558,73 @@ function findPackageDir(name) {
 
 // --- Preflight ------------------------------------------------------------
 
-info("Preflight checks…");
+info(`Preflight checks (${CHANNEL} channel)…`);
 
 const branch = run("git rev-parse --abbrev-ref HEAD", { capture: true }).stdout;
-if (branch !== "main") fail(`Must be on 'main' (currently '${branch}').`);
+if (branch !== RELEASE_BRANCH) {
+  if (IS_BETA) {
+    fail(`Beta releases are cut from 'main' (currently '${branch}').`);
+  }
+  fail(
+    `Stable releases are cut from the '${RELEASE_BRANCH}' branch (currently '${branch}').\n` +
+    `  To promote: merge/fast-forward '${RELEASE_BRANCH}' to the chosen beta commit on main, then release there.\n` +
+    `  First-time bootstrap: git branch ${RELEASE_BRANCH} main && git push -u origin ${RELEASE_BRANCH}\n` +
+    `  For a beta from main, run: pnpm release --channel beta`,
+  );
+}
 
 const dirty = run("git status --porcelain", { capture: true }).stdout;
 if (dirty) fail("Working tree is not clean. Commit or stash first.");
 
-run("git fetch origin main", { capture: true });
-const ahead = run("git rev-list --count origin/main..HEAD", { capture: true }).stdout;
-const behind = run("git rev-list --count HEAD..origin/main", { capture: true }).stdout;
-if (behind !== "0") fail(`Local main is behind origin/main by ${behind} commit(s). Pull first.`);
-if (ahead !== "0") warn(`Local main is ahead of origin/main by ${ahead} commit(s); they will be pushed.`);
+// The remote release branch may not exist yet on the first stable promotion;
+// fall back to a warning and let the final push create it with -u.
+const fetchRemote = run(`git fetch origin ${RELEASE_BRANCH}`, { capture: true, allowFail: true });
+let remoteBranchExists = fetchRemote.status === 0;
+if (remoteBranchExists) {
+  const ahead = run(`git rev-list --count origin/${RELEASE_BRANCH}..HEAD`, { capture: true }).stdout;
+  const behind = run(`git rev-list --count HEAD..origin/${RELEASE_BRANCH}`, { capture: true }).stdout;
+  if (behind !== "0") fail(`Local ${RELEASE_BRANCH} is behind origin/${RELEASE_BRANCH} by ${behind} commit(s). Pull first.`);
+  if (ahead !== "0") warn(`Local ${RELEASE_BRANCH} is ahead of origin/${RELEASE_BRANCH} by ${ahead} commit(s); they will be pushed.`);
+} else {
+  warn(`origin/${RELEASE_BRANCH} does not exist yet; the release push will create it.`);
+}
+
+/*
+ * FNXC:UpdateChannels 2026-07-19-13:20:
+ * Changesets pre-mode is the version engine for the beta track. In pre-mode,
+ * `changeset version` bumps to X.Y.Z-beta.N while PRESERVING the changeset
+ * .md files (recording them in pre.json), so the eventual stable release on
+ * the `release` branch aggregates every changeset across all betas after
+ * `changeset pre exit`. Beta auto-enters pre-mode here; stable auto-exits.
+ * Dry-runs revert whichever pre-mode mutation they made before exiting.
+ */
+let preModeMutation = "none"; // "entered" | "exited" | "none"
+const preJsonExists = () => existsSync(PRE_JSON_PATH) && JSON.parse(readFileSync(PRE_JSON_PATH, "utf8")).mode === "pre";
+if (IS_BETA) {
+  if (!preJsonExists()) {
+    info("Entering changesets pre-mode (beta)…");
+    run("pnpm changeset pre enter beta");
+    preModeMutation = "entered";
+  }
+} else if (existsSync(PRE_JSON_PATH) && preJsonExists()) {
+  info("Exiting changesets pre-mode (promoting to stable)…");
+  run("pnpm changeset pre exit");
+  preModeMutation = "exited";
+}
+
+function revertDryRunPreModeMutation() {
+  if (preModeMutation === "entered") {
+    // `pre enter` only creates/rewrites pre.json; restore or remove it.
+    const tracked = run(`git ls-files --error-unmatch ${PRE_JSON_PATH}`, { capture: true, allowFail: true });
+    if (tracked.status === 0) {
+      run(`git checkout -- ${PRE_JSON_PATH}`);
+    } else {
+      try { unlinkSync(PRE_JSON_PATH); } catch { /* best-effort */ }
+    }
+  } else if (preModeMutation === "exited") {
+    run(`git checkout -- ${PRE_JSON_PATH}`);
+  }
+}
 
 const changesetSummaries = readChangesetSummaries();
 if (changesetSummaries.length === 0) {
@@ -579,7 +665,7 @@ if (chosenVersion !== proposedVersion) {
 
 if (DRY_RUN) {
   warn("--dry-run: stopping before version bump. No files modified, no commit, no publish, no tag.");
-  info(`Would release v${chosenVersion} (${releases.length} package(s) bumped).`);
+  info(`Would release v${chosenVersion} on the ${CHANNEL} channel (npm dist-tag '${NPM_DIST_TAG}'${IS_BETA ? ", GitHub prerelease" : ", GitHub latest + Homebrew tap bump"}) with ${releases.length} package(s) bumped.`);
   /*
    * FNXC:ReleaseScript 2026-07-13-15:25:
    * Dry-run previews the LLM-authored Highlights + X draft (falls back to
@@ -597,6 +683,9 @@ if (DRY_RUN) {
   console.log(dryDistilled.tweet);
   console.log(color(90, `(${dryDistilled.tweet.length}/280 chars; source: ${dryDistilled.source})`));
   console.log(color(36, "──────────────────────────────────"));
+  // A dry-run must leave the tree exactly as it found it, including the
+  // pre-mode enter/exit performed to compute the channel's release plan.
+  revertDryRunPreModeMutation();
   process.exit(0);
 }
 
@@ -625,7 +714,7 @@ if (releaseAuthorization.mode === "requires-confirmation") {
   }
 }
 
-if (!(await confirm(`Proceed with release v${chosenVersion} (build, publish, tag)?`))) {
+if (!(await confirm(`Proceed with ${CHANNEL} release v${chosenVersion} (build, publish to npm tag '${NPM_DIST_TAG}', tag)?`))) {
   warn("Aborted by user.");
   process.exit(0);
 }
@@ -716,13 +805,18 @@ ok("Pre-publish smoke passed.");
 
 // --- Publish --------------------------------------------------------------
 
-info("Publishing to npm (non-private packages only)…");
-run("pnpm -r publish --access public --no-git-checks");
+/*
+ * FNXC:UpdateChannels 2026-07-19-13:20:
+ * ALWAYS pass an explicit --tag. Relying on npm's implicit default (`latest`)
+ * is how a beta would pollute the stable track for every `fn update` user.
+ */
+info(`Publishing to npm dist-tag '${NPM_DIST_TAG}' (non-private packages only)…`);
+run(`pnpm -r publish --access public --no-git-checks --tag ${NPM_DIST_TAG}`);
 
 // --- Push + tag -----------------------------------------------------------
 
-info("Pushing commit to origin/main…");
-run("git push origin main");
+info(`Pushing commit to origin/${RELEASE_BRANCH}…`);
+run(remoteBranchExists ? `git push origin ${RELEASE_BRANCH}` : `git push -u origin ${RELEASE_BRANCH}`);
 
 info(`Creating and pushing tag v${version}…`);
 run(`git tag v${version}`);
@@ -731,8 +825,13 @@ run(`git push origin v${version}`);
 // --- Homebrew tap bump ----------------------------------------------------
 // Sync homebrew-tap/Formula/fusion.rb (url + sha256) to the new version so
 // `brew install runfusion/tap/fusion` stays in lockstep with npm.
-info("Bumping homebrew tap formula…");
-bumpHomebrewTap(version);
+// The tap tracks the STABLE channel only — betas never touch the formula.
+if (IS_BETA) {
+  info("Beta channel: skipping Homebrew tap bump (tap tracks stable only).");
+} else {
+  info("Bumping homebrew tap formula…");
+  bumpHomebrewTap(version);
+}
 
 // --- GitHub Release ------------------------------------------------------
 
@@ -741,9 +840,14 @@ const changelogContent = readFileSync("CHANGELOG.md", "utf8");
 const releaseNotes = extractVersionNotes(changelogContent, version);
 const ghCheck = spawnSync("gh", ["--version"], { stdio: "pipe" });
 
+// Betas are GitHub PRERELEASES; only stable releases carry --latest so the
+// desktop stable auto-updater (which follows the GitHub "latest" release) and
+// the /releases/latest URL never see a beta.
+const ghReleaseTypeFlag = IS_BETA ? "--prerelease" : "--latest";
+
 if (ghCheck.status !== 0) {
   githubReleaseStatus = "missing-gh";
-  warn(`⚠ gh CLI not found. Create the GitHub Release manually:\n  gh release create v${version} --title "v${version}" --latest`);
+  warn(`⚠ gh CLI not found. Create the GitHub Release manually:\n  gh release create v${version} --title "v${version}" ${ghReleaseTypeFlag}`);
 } else {
   let notesFile;
   try {
@@ -753,7 +857,7 @@ if (ghCheck.status !== 0) {
 
     const ghCreate = spawnSync(
       "gh",
-      ["release", "create", `v${version}`, "--title", `v${version}`, "--notes-file", notesFile, "--latest"],
+      ["release", "create", `v${version}`, "--title", `v${version}`, "--notes-file", notesFile, ghReleaseTypeFlag],
       { stdio: "inherit" }
     );
 
@@ -772,21 +876,41 @@ if (ghCheck.status !== 0) {
 }
 
 if (githubReleaseStatus === "created") {
-  ok(`Released v${version}. Published to npm, tag pushed, GitHub Release created.`);
+  ok(`Released v${version} (${CHANNEL}). Published to npm tag '${NPM_DIST_TAG}', tag pushed, GitHub ${IS_BETA ? "prerelease" : "Release"} created.`);
 } else if (githubReleaseStatus === "missing-gh") {
-  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release skipped (gh CLI not found).`);
+  ok(`Released v${version} (${CHANNEL}). Published to npm tag '${NPM_DIST_TAG}', tag pushed. GitHub Release skipped (gh CLI not found).`);
 } else {
-  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release was not created (see warnings above).`);
+  ok(`Released v${version} (${CHANNEL}). Published to npm tag '${NPM_DIST_TAG}', tag pushed. GitHub Release was not created (see warnings above).`);
+}
+
+/*
+ * FNXC:UpdateChannels 2026-07-19-13:20:
+ * A stable release consumes the changesets + pre.json state on the `release`
+ * branch; main must pick that up (consumed changesets, changelogs, version,
+ * deleted pre.json) or the next beta double-releases old changesets. The merge
+ * can conflict if main moved during promotion, so print the commands instead
+ * of force-running them — fail-soft by design.
+ */
+if (!IS_BETA) {
+  console.log("");
+  info("Next step — back-merge the release branch into main:");
+  console.log(`    git checkout main && git pull origin main`);
+  console.log(`    git merge ${RELEASE_BRANCH} -m "chore(release): back-merge v${version} from ${RELEASE_BRANCH}"`);
+  console.log(`    git push origin main`);
+  console.log(color(90, "  (The next beta on main will re-enter pre-mode automatically.)"));
 }
 
 /*
  * FNXC:ReleaseScript 2026-07-13-15:25:
  * After a successful publish/tag, print the LLM-authored X draft (≤280 chars)
  * produced during distillation so the operator can copy-paste to X.
+ * FNXC:UpdateChannels 2026-07-19-13:20: stable-only — betas are not announced.
  */
-console.log("");
-console.log(color(36, "─── Draft post for X (copy-paste) ───"));
-console.log(releaseTweet);
-console.log(color(90, `(${releaseTweet.length}/280 chars; source: ${distillSource})`));
-console.log(color(36, "─────────────────────────────────────"));
+if (!IS_BETA) {
+  console.log("");
+  console.log(color(36, "─── Draft post for X (copy-paste) ───"));
+  console.log(releaseTweet);
+  console.log(color(90, `(${releaseTweet.length}/280 chars; source: ${distillSource})`));
+  console.log(color(36, "─────────────────────────────────────"));
+}
 

@@ -190,6 +190,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   updateCheckEnabled: true,
   fnBinaryCheckEnabled: true,
   updateCheckFrequency: "daily",
+  // FNXC:UpdateChannels 2026-07-19-12:30: release track for update surfaces;
+  // "stable" follows npm dist-tag `latest`, "beta" follows max(latest, beta).
+  updateChannel: "stable",
   autoReloadOnVersionChange: true,
   githubTrackingDefaultRepo: undefined,
   gitlabEnabled: undefined,

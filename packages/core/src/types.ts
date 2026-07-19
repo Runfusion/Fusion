@@ -14,6 +14,11 @@ import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
 import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
 import type { SecretScope } from "./secrets-store.js";
+import type { UpdateChannel } from "./app-version.js";
+// FNXC:UpdateChannels 2026-07-19-12:30: re-export type-only so browser-side
+// dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
+// package barrel) can name the update channel union.
+export type { UpdateChannel } from "./app-version.js";
 
 export {
   computeCapacityRisk,
@@ -2867,6 +2872,21 @@ export interface GlobalSettings {
    *  - `weekly`: 7-day cache TTL
    */
   updateCheckFrequency?: "manual" | "on-startup" | "daily" | "weekly";
+  /**
+   * FNXC:UpdateChannels 2026-07-19-12:30:
+   * See `UpdateChannel` in app-version.ts for the channel semantics.
+   * Fusion ships on two release tracks: `stable` (npm dist-tag `latest`, GitHub
+   * releases marked latest) and `beta` (npm dist-tag `beta`, GitHub prereleases
+   * tagged `vX.Y.Z-beta.N`, cut from `main`). This setting selects which track
+   * every update surface (CLI `fn update`, dashboard update check, desktop
+   * electron-updater) offers. Channel resolution: `stable` sees only `latest`;
+   * `beta` sees the semver-max of `latest` and `beta` so beta users are moved
+   * forward when a promoted stable overtakes their prerelease. Switching
+   * beta → stable never offers a downgrade; the user stays on their beta build
+   * until the next stable release surpasses it (`fn update --channel stable --force`
+   * is the explicit downgrade escape hatch). Default: `stable`.
+   */
+  updateChannel?: UpdateChannel;
   /** When true (default), the dashboard automatically reloads when a new build
    *  version is detected via /version.json polling or service worker activation.
    *  Set to false to suppress automatic reloads — the user must manually

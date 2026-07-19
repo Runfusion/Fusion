@@ -317,7 +317,8 @@ Usage:
   fn desktop --dev                    Launch source-checkout desktop with hot-reload (connects to Vite dev server)
   fn desktop --paused                 Launch with automation paused
   fn desktop --no-auth                Disable bearer-token auth for the embedded local dashboard
-  fn update [--check] [--global] [--json]   Update Fusion to the latest version
+  fn update [--check] [--global] [--json] [--channel <stable|beta>] [--force]
+                                       Update Fusion on the selected release channel
   fn upgrade                           Alias for fn update
   fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>, --no-dedup)
   fn task plan [description] [opts]    Create task via AI-guided planning
@@ -934,10 +935,16 @@ async function main() {
 
       case "update":
       case "upgrade": {
+        // FNXC:UpdateChannels 2026-07-19-13:05: --channel <stable|beta> selects
+        // and persists the release track; --force installs the channel target
+        // even when not newer (the explicit beta → stable downgrade path).
+        const channelFlagIndex = args.indexOf("--channel");
         await runUpdate({
           check: args.includes("--check"),
           global: args.includes("--global") ? true : undefined,
           json: args.includes("--json"),
+          channel: channelFlagIndex !== -1 ? args[channelFlagIndex + 1] : undefined,
+          force: args.includes("--force"),
         });
         break;
       }

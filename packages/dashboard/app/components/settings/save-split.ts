@@ -149,6 +149,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "fnBinaryCheckEnabled",
     "updateCheckEnabled",
     "updateCheckFrequency",
+    "updateChannel",
     "autoReloadOnVersionChange",
   ]),
   /*

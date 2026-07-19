@@ -3,12 +3,11 @@ import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { resolveGlobalDir } from "@fusion/core";
+import { resolveGlobalDir, isVersionNewer, resolveUpdateTargetVersion } from "@fusion/core";
+import type { UpdateChannel } from "@fusion/core";
 
 const CACHE_FILENAME = "update-check.json";
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
-const INSTALL_COMMAND = "npm install -g @runfusion/fusion@latest";
-const FORCE_INSTALL_COMMAND = "npm install --force -g @runfusion/fusion@latest";
 const INSTALL_TIMEOUT_MS = 120_000;
 const INSTALL_MAX_BUFFER = 10 * 1024 * 1024;
 
@@ -24,6 +23,8 @@ export type UpdateCheckResult = {
   latestVersion: string | null;
   updateAvailable: boolean;
   lastChecked: number;
+  /** Release track this result was resolved for; absent in pre-channel caches (treated as "stable"). */
+  channel?: UpdateChannel;
   error?: string;
 };
 
@@ -63,27 +64,18 @@ function getCachePath(fusionDir: string): string {
   return join(fusionDir, CACHE_FILENAME);
 }
 
-function parseVersion(version: string): number[] {
-  return version
-    .split(".")
-    .slice(0, 3)
-    .map((part) => Number.parseInt(part, 10))
-    .map((value) => (Number.isFinite(value) ? value : 0));
-}
-
-function isRemoteNewer(remoteVersion: string, currentVersion: string): boolean {
-  const remote = parseVersion(remoteVersion);
-  const current = parseVersion(currentVersion);
-  const maxLength = Math.max(remote.length, current.length, 3);
-
-  for (let i = 0; i < maxLength; i += 1) {
-    const remotePart = remote[i] ?? 0;
-    const currentPart = current[i] ?? 0;
-    if (remotePart > currentPart) return true;
-    if (remotePart < currentPart) return false;
-  }
-
-  return false;
+/*
+FNXC:UpdateChannels 2026-07-19-12:40:
+Version ordering and channel resolution moved to @fusion/core (`isVersionNewer`,
+`resolveUpdateTargetVersion`) so the CLI, dashboard, and desktop agree. The old
+local `isRemoteNewer` ignored prerelease identifiers, which is wrong the moment
+a `-beta.N` version exists (0.73.0-beta.2 vs -beta.3 compared equal).
+The install command pins the exact resolved version instead of `@latest` so a
+beta-channel install never silently lands on the stable dist-tag.
+*/
+function buildInstallCommand(version: string | null, force = false): string {
+  const spec = version ? `@runfusion/fusion@${version}` : "@runfusion/fusion@latest";
+  return `npm install${force ? " --force" : ""} -g ${spec}`;
 }
 
 function isBinCollisionInstallError(error: unknown): boolean {
@@ -190,6 +182,7 @@ function isValidResult(value: unknown): value is UpdateCheckResult {
     (typeof candidate.latestVersion === "string" || candidate.latestVersion === null) &&
     typeof candidate.updateAvailable === "boolean" &&
     typeof candidate.lastChecked === "number" &&
+    (candidate.channel === undefined || candidate.channel === "stable" || candidate.channel === "beta") &&
     (candidate.error === undefined || typeof candidate.error === "string")
   );
 }
@@ -230,7 +223,7 @@ export async function performUpdateInstall(
   const fusionDir = options.fusionDir ?? resolveGlobalDir();
 
   try {
-    await runExec(INSTALL_COMMAND, getInstallOptions());
+    await runExec(buildInstallCommand(latestVersion), getInstallOptions());
     await clearUpdateCheckCache(fusionDir);
     return {
       currentVersion,
@@ -260,7 +253,7 @@ export async function performUpdateInstall(
     }
 
     try {
-      await runExec(FORCE_INSTALL_COMMAND, getInstallOptions());
+      await runExec(buildInstallCommand(latestVersion, true), getInstallOptions());
       await clearUpdateCheckCache(fusionDir);
       return {
         currentVersion,
@@ -281,9 +274,12 @@ export async function performUpdateInstall(
 export async function performUpdateCheck(
   fusionDir: string,
   currentVersion: string,
-  options: { frequency?: UpdateCheckFrequency; force?: boolean } = {},
+  options: { frequency?: UpdateCheckFrequency; force?: boolean; channel?: UpdateChannel } = {},
 ): Promise<UpdateCheckResult> {
   const now = Date.now();
+  // FNXC:UpdateChannels 2026-07-19-12:40: normalize once; absent = stable so
+  // pre-channel callers and settings keep today's behavior.
+  const channel: UpdateChannel = options.channel === "beta" ? "beta" : "stable";
 
   /*
    * FNXC:DesktopUpdates 2026-07-03-15:35:
@@ -295,11 +291,15 @@ export async function performUpdateCheck(
       latestVersion: null,
       updateAvailable: false,
       lastChecked: now,
+      channel,
       error: "Current Fusion version is unavailable",
     };
   }
   const cached = readCachedUpdateCheck(fusionDir);
-  const cacheMatchesCurrentVersion = !cached || cached.currentVersion === currentVersion;
+  // A cache written for another channel must not be served — switching
+  // stable → beta should surface the beta on the next check, not after TTL.
+  const cacheMatchesCurrentVersion =
+    !cached || (cached.currentVersion === currentVersion && (cached.channel ?? "stable") === channel);
   const ttl = ttlForFrequency(options.frequency);
   const cacheStillFresh = cached && cacheMatchesCurrentVersion && now - cached.lastChecked < ttl;
 
@@ -332,6 +332,7 @@ export async function performUpdateCheck(
         latestVersion: null,
         updateAvailable: false,
         lastChecked: now,
+        channel,
       }
     );
   }
@@ -341,17 +342,22 @@ export async function performUpdateCheck(
     const payload = (await response.json()) as {
       "dist-tags"?: {
         latest?: string;
+        beta?: string;
       };
     };
 
-    const latestVersion = typeof payload?.["dist-tags"]?.latest === "string" ? payload["dist-tags"].latest : null;
-    const updateAvailable = latestVersion ? isRemoteNewer(latestVersion, currentVersion) : false;
+    const latestVersion = resolveUpdateTargetVersion(channel, {
+      latest: payload?.["dist-tags"]?.latest,
+      beta: payload?.["dist-tags"]?.beta,
+    });
+    const updateAvailable = latestVersion ? isVersionNewer(latestVersion, currentVersion) : false;
 
     const result: UpdateCheckResult = {
       currentVersion,
       latestVersion,
       updateAvailable,
       lastChecked: now,
+      channel,
     };
 
     await mkdir(fusionDir, { recursive: true });
@@ -366,6 +372,7 @@ export async function performUpdateCheck(
       latestVersion: null,
       updateAvailable: false,
       lastChecked: now,
+      channel,
       error: message,
     };
   }

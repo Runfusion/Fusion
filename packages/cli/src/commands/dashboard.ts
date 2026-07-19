@@ -158,6 +158,7 @@ type StartupUpdateStatus = {
   updateAvailable: true;
   latestVersion: string;
   currentVersion: string;
+  channel?: "stable" | "beta";
 };
 
 async function resolveCachedStartupUpdateStatus(importMetaUrl: string): Promise<StartupUpdateStatus | null> {
@@ -183,6 +184,7 @@ async function resolveCachedStartupUpdateStatus(importMetaUrl: string): Promise<
       updateAvailable: true,
       currentVersion: cachedUpdate.currentVersion,
       latestVersion: cachedUpdate.latestVersion,
+      channel: cachedUpdate.channel,
     };
   } catch {
     return null;
@@ -194,7 +196,10 @@ function formatUpdateMessage(updateStatus: StartupUpdateStatus | null): string |
     return null;
   }
 
-  return `⬆ Update available: v${updateStatus.latestVersion} (current: v${updateStatus.currentVersion}). Run \`fn update\` for an installed CLI, or pull the source checkout.`;
+  // FNXC:UpdateChannels 2026-07-19-13:05: label beta-channel offers so an
+  // operator can tell a prerelease notice from a stable one at a glance.
+  const channelLabel = updateStatus.channel === "beta" ? " [beta channel]" : "";
+  return `⬆ Update available: v${updateStatus.latestVersion}${channelLabel} (current: v${updateStatus.currentVersion}). Run \`fn update\` for an installed CLI, or pull the source checkout.`;
 }
 
 export class StreamedLogBuffer {

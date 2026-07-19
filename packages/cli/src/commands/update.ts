@@ -3,17 +3,33 @@ import { existsSync, readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getCachedUpdateStatus } from "../update-cache.js";
+import { isVersionNewer, resolveUpdateTargetVersion } from "@fusion/core";
+import type { UpdateChannel } from "@fusion/core";
+import { getCachedUpdateStatus, getConfiguredUpdateChannel, persistUpdateChannel } from "../update-cache.js";
 
 const execAsync = promisify(exec);
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
-const INSTALL_COMMAND = "npm install -g @runfusion/fusion@latest";
-const LOCAL_INSTALL_COMMAND = "npm install @runfusion/fusion@latest";
 
+/*
+FNXC:UpdateChannels 2026-07-19-13:00:
+`fn update` is channel-aware. `stable` (default) follows the npm `latest`
+dist-tag; `beta` follows the semver-max of `latest` and `beta` so beta users
+also receive promoted stable releases. The install always pins the exact
+resolved version (`@runfusion/fusion@X.Y.Z[-beta.N]`) — never a bare dist-tag —
+so a beta-channel install can never silently land on the wrong track.
+`--channel <stable|beta>` persists the choice to global settings (shared with
+the dashboard and desktop updater). Switching beta → stable does not downgrade;
+`--force` is the explicit escape hatch that installs the channel target even
+when it is not newer than the current version.
+*/
 export type RunUpdateOptions = {
   check?: boolean;
   global?: boolean;
   json?: boolean;
+  /** Raw --channel value; validated to "stable" | "beta". */
+  channel?: string;
+  /** Install the resolved channel target even when it is not newer (explicit downgrade). */
+  force?: boolean;
 };
 
 type UpdateStatus = {
@@ -21,6 +37,7 @@ type UpdateStatus = {
   latestVersion: string;
   updateAvailable: boolean;
   updated: boolean;
+  channel: UpdateChannel;
 };
 
 function readOwnCliVersion(): string | undefined {
@@ -54,48 +71,31 @@ function readOwnCliVersion(): string | undefined {
   return undefined;
 }
 
-function parseVersion(version: string): number[] {
-  return version
-    .split(".")
-    .slice(0, 3)
-    .map((part) => Number.parseInt(part, 10))
-    .map((part) => (Number.isFinite(part) ? part : 0));
-}
-
-function isRemoteNewer(remoteVersion: string, currentVersion: string): boolean {
-  const remote = parseVersion(remoteVersion);
-  const current = parseVersion(currentVersion);
-  const maxLength = Math.max(remote.length, current.length, 3);
-
-  for (let i = 0; i < maxLength; i += 1) {
-    const remotePart = remote[i] ?? 0;
-    const currentPart = current[i] ?? 0;
-    if (remotePart > currentPart) return true;
-    if (remotePart < currentPart) return false;
-  }
-
-  return false;
-}
-
-async function fetchLatestVersion(): Promise<string> {
+async function fetchChannelTargetVersion(channel: UpdateChannel): Promise<string> {
   const response = await fetch(REGISTRY_URL);
   const payload = (await response.json()) as {
     "dist-tags"?: {
       latest?: string;
+      beta?: string;
     };
   };
 
-  const latestVersion = payload?.["dist-tags"]?.latest;
-  if (typeof latestVersion !== "string" || latestVersion.length === 0) {
-    throw new Error("Could not determine latest version from npm registry response.");
+  const targetVersion = resolveUpdateTargetVersion(channel, {
+    latest: payload?.["dist-tags"]?.latest,
+    beta: payload?.["dist-tags"]?.beta,
+  });
+  if (typeof targetVersion !== "string" || targetVersion.length === 0) {
+    throw new Error(`Could not determine ${channel} version from npm registry response.`);
   }
 
-  return latestVersion;
+  return targetVersion;
 }
 
-function getInstallCommand(globalInstall: boolean, force = false): string {
-  const baseCommand = globalInstall ? INSTALL_COMMAND : LOCAL_INSTALL_COMMAND;
-  return force ? baseCommand.replace("npm install", "npm install --force") : baseCommand;
+function getInstallCommand(globalInstall: boolean, version: string, force = false): string {
+  // Pin the exact resolved version so the installed build always matches the
+  // selected channel (installing `@latest` would drag a beta user to stable).
+  const spec = `@runfusion/fusion@${version}`;
+  return `npm install${force ? " --force" : ""}${globalInstall ? " -g" : ""} ${spec}`;
 }
 
 type InstallError = Error & { stdout?: string; stderr?: string };
@@ -140,9 +140,9 @@ function printCollisionRemediation(binaryPath: string | null): void {
   }
 }
 
-async function installLatest(globalInstall: boolean, resolveBinaryPath: () => string | null = detectRunningBinaryPath): Promise<void> {
+async function installVersion(globalInstall: boolean, version: string, resolveBinaryPath: () => string | null = detectRunningBinaryPath): Promise<void> {
   try {
-    await execAsync(getInstallCommand(globalInstall), {
+    await execAsync(getInstallCommand(globalInstall, version), {
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -155,7 +155,7 @@ async function installLatest(globalInstall: boolean, resolveBinaryPath: () => st
     console.error("Detected legacy runfusion.ai bin symlinks; retrying update with --force.");
 
     try {
-      await execAsync(getInstallCommand(globalInstall, true), {
+      await execAsync(getInstallCommand(globalInstall, version, true), {
         timeout: 120_000,
         maxBuffer: 10 * 1024 * 1024,
       });
@@ -168,11 +168,20 @@ async function installLatest(globalInstall: boolean, resolveBinaryPath: () => st
 }
 
 function printStatus(status: UpdateStatus, checkOnly: boolean): void {
+  console.log(`Channel: ${status.channel}`);
   console.log(`Current version: ${status.currentVersion}`);
-  console.log(`Latest version: ${status.latestVersion}`);
+  console.log(`Latest ${status.channel} version: ${status.latestVersion}`);
 
   if (!status.updateAvailable) {
+    if (status.updated) {
+      // --force path: installed the channel target even though it wasn't newer.
+      console.log("Installed channel version (forced).");
+      return;
+    }
     console.log("Already up to date.");
+    if (status.channel === "stable" && isVersionNewer(status.currentVersion, status.latestVersion)) {
+      console.log("Current version is a beta ahead of stable. Use `fn update --force` to switch back to the stable build now, or stay until the next stable release overtakes it.");
+    }
     return;
   }
 
@@ -190,9 +199,12 @@ function printJson(status: UpdateStatus): void {
   console.log(JSON.stringify(status));
 }
 
-function getLatestVersionFallback(currentVersion: string): string | null {
+function getLatestVersionFallback(currentVersion: string, channel: UpdateChannel): string | null {
   const cached = getCachedUpdateStatus(currentVersion);
   if (!cached) return null;
+  // A cache written for another channel must not stand in for this one —
+  // e.g. a stable cache would hide the beta a freshly-switched user asked for.
+  if ((cached.channel ?? "stable") !== channel) return null;
   return cached.latestVersion;
 }
 
@@ -200,6 +212,32 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   const checkOnly = options.check === true;
   const globalInstall = options.global !== false;
   const jsonOutput = options.json === true;
+  const force = options.force === true;
+
+  if (options.channel !== undefined && options.channel !== "stable" && options.channel !== "beta") {
+    console.error(`Error: invalid --channel '${options.channel}'. Valid channels: stable, beta.`);
+    process.exit(1);
+    return;
+  }
+
+  // FNXC:UpdateChannels 2026-07-19-13:00: an explicit --channel flag is
+  // persisted (even with --check) so every update surface follows the switch.
+  let channel: UpdateChannel;
+  if (options.channel === "stable" || options.channel === "beta") {
+    channel = options.channel;
+    try {
+      await persistUpdateChannel(channel);
+      if (!jsonOutput) {
+        console.log(`Update channel set to '${channel}'.`);
+      }
+    } catch {
+      if (!jsonOutput) {
+        console.log(`Warning: could not persist update channel '${channel}'; using it for this run only.`);
+      }
+    }
+  } else {
+    channel = await getConfiguredUpdateChannel();
+  }
 
   const currentVersion = readOwnCliVersion();
   if (!currentVersion) {
@@ -210,9 +248,9 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
 
   let latestVersion: string;
   try {
-    latestVersion = await fetchLatestVersion();
+    latestVersion = await fetchChannelTargetVersion(channel);
   } catch (error) {
-    const fallbackVersion = getLatestVersionFallback(currentVersion);
+    const fallbackVersion = getLatestVersionFallback(currentVersion, channel);
     if (!fallbackVersion) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Error checking for updates: ${message}`);
@@ -226,7 +264,10 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
     }
   }
 
-  const updateAvailable = isRemoteNewer(latestVersion, currentVersion);
+  const updateAvailable = isVersionNewer(latestVersion, currentVersion);
+  // --force installs the channel target even when it isn't newer — the
+  // explicit beta → stable downgrade path. A same-version force is a no-op.
+  const shouldInstall = updateAvailable || (force && latestVersion !== currentVersion);
 
   if (checkOnly) {
     const checkStatus: UpdateStatus = {
@@ -234,6 +275,7 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
       latestVersion,
       updateAvailable,
       updated: false,
+      channel,
     };
 
     if (jsonOutput) {
@@ -248,12 +290,13 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
     return;
   }
 
-  if (!updateAvailable) {
+  if (!shouldInstall) {
     const status: UpdateStatus = {
       currentVersion,
       latestVersion,
       updateAvailable: false,
       updated: false,
+      channel,
     };
 
     if (jsonOutput) {
@@ -265,7 +308,7 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   }
 
   try {
-    await installLatest(globalInstall);
+    await installVersion(globalInstall, latestVersion);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error installing update: ${message}`);
@@ -276,8 +319,9 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   const updatedStatus: UpdateStatus = {
     currentVersion,
     latestVersion,
-    updateAvailable: true,
+    updateAvailable,
     updated: true,
+    channel,
   };
 
   if (jsonOutput) {

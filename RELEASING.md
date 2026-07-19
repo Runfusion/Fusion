@@ -62,12 +62,54 @@ When you merge the Version Packages PR:
   - Generates SHA256 checksums for all binaries and Android artifacts
   - Creates a **GitHub Release** with all binaries, Android artifacts, and checksums attached
 
-## Release channels
+## Release tracks: beta and stable
+
+Fusion ships on two tracks. Users pick theirs with the `updateChannel` global setting (Settings → General → Release channel) or `fn update --channel <stable|beta>`.
+
+| Track | Cut from | Version shape | npm dist-tag | GitHub Release | Homebrew |
+|-------|----------|---------------|--------------|----------------|----------|
+| beta | `main` | `X.Y.Z-beta.N` | `beta` | prerelease | — |
+| stable | `release` branch | `X.Y.Z` | `latest` | latest | bumped |
+
+### Beta release (from `main`)
+
+```bash
+pnpm release --channel beta
+```
+
+The script auto-enters changesets pre-mode (`.changeset/pre.json`, tag `beta`) the first time, versions to the next `-beta.N`, publishes with an explicit `--tag beta`, tags `vX.Y.Z-beta.N` (the tag push builds binaries and marks the GitHub Release as a prerelease), and skips the Homebrew tap and X draft. Changeset `.md` files are *preserved* through beta versioning — pre-mode records them in `pre.json` so the eventual stable release aggregates everything.
+
+### Promoting to stable (from the `release` branch)
+
+1. Fast-forward/merge `release` to the chosen beta's commit on `main`:
+   ```bash
+   git checkout release && git merge --ff-only vX.Y.Z-beta.N
+   ```
+   (First-time bootstrap: `git branch release main && git push -u origin release`.)
+2. Run the stable release there:
+   ```bash
+   pnpm release
+   ```
+   The script exits pre-mode, versions to the clean `X.Y.Z` with the aggregated changelog, publishes to `latest`, marks the GitHub Release latest, and bumps the Homebrew tap.
+3. Back-merge `release` into `main` (the script prints the exact commands). This carries the consumed changesets, changelogs, version bump, and pre.json removal back — without it, the next beta double-releases old changesets.
+
+### Hotfixes
+
+Commit on `release` (or a worktree branched from it), add a changeset, run `pnpm release`, then cherry-pick the fix back to `main`.
+
+### Channel semantics for users
+
+- `stable` follows the npm `latest` dist-tag only — betas are invisible.
+- `beta` follows the semver-max of `latest` and `beta`, so beta users are offered each promoted stable once it overtakes their prerelease.
+- Switching beta → stable never downgrades; the user stays on the installed beta until the next stable passes it. `fn update --channel stable --force` is the explicit downgrade.
+- Desktop beta builds emit `beta*.yml` electron-updater manifests; the desktop app selects them when `updateChannel` is `beta` (`allowPrerelease` + channel).
+
+## Distribution channels
 
 | Channel | Workflow | Trigger | Output |
 |---------|----------|---------|--------|
-| npm | `version.yml` | Push to `main` | npm packages with provenance |
-| GitHub Release | `release.yml` | Version tag (`v*`) | Signed platform binaries, Android APK/AAB + checksums |
+| npm | `version.yml` (stable only) or `pnpm release` | Manual | npm packages with provenance (CI) |
+| GitHub Release | `release.yml` | Version tag (`v*`; `v*-beta.N` → prerelease) | Signed platform binaries, Android APK/AAB + checksums |
 
 ## Platform binaries
 
@@ -128,6 +170,8 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 | `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags; Claude authors Highlights + a ≤280-char engagement X draft (soft deterministic fallback if Claude is offline) |
 | `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
 | `pnpm release --dry-run` | Preview only — show changesets, proposed version, and Claude-authored X draft preview, then exit before any file/git/npm changes |
+| `pnpm release --channel beta` | Beta release from `main`: pre-mode version `X.Y.Z-beta.N`, npm dist-tag `beta`, GitHub prerelease; no Homebrew/X draft |
+| `pnpm release --channel stable` | Explicit stable (the default): requires the `release` branch, publishes `latest`, marks the GitHub Release latest |
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |

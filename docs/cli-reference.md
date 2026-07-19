@@ -126,23 +126,28 @@ onboarding does not auto-launch.
 
 ## `fn update`
 
-Check for and install the latest `@runfusion/fusion` CLI release from npm.
+Check for and install the latest `@runfusion/fusion` CLI release from npm, on the configured release channel.
 
 ```bash
 fn update
 fn update --check
 fn update --global
 fn update --json
+fn update --channel beta      # switch to the beta track and update onto it
+fn update --channel stable    # switch back to stable (no downgrade; see --force)
+fn update --channel stable --force   # explicit downgrade onto the current stable
 fn upgrade
 ```
 
 | Option | Description |
 |---|---|
 | `--check` | Check only. Does not install. Exit code `1` when an update is available. |
-| `--global` | Explicitly install globally (`npm install -g @runfusion/fusion@latest`). This is the default behavior. |
-| `--json` | Output machine-readable status: `currentVersion`, `latestVersion`, `updateAvailable`, `updated`. |
+| `--global` | Explicitly install globally (`npm install -g @runfusion/fusion@<version>`). This is the default behavior. |
+| `--json` | Output machine-readable status: `currentVersion`, `latestVersion`, `updateAvailable`, `updated`, `channel`. |
+| `--channel <stable\|beta>` | Select the release track and persist it to global settings (`updateChannel`), shared with the dashboard and desktop updater. `stable` follows the npm `latest` dist-tag; `beta` follows the newer of `latest` and `beta`. |
+| `--force` | Install the resolved channel target even when it is not newer than the current version — the explicit beta → stable downgrade path. |
 
-`fn upgrade` is an alias for `fn update`.
+`fn upgrade` is an alias for `fn update`. Installs always pin the exact resolved version rather than a dist-tag, so a beta-channel install can never silently land on stable (or vice versa).
 
 ---
 
