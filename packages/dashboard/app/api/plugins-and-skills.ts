@@ -19,6 +19,7 @@ import type {
 } from "@fusion/dashboard";
 import { api } from "./client.js";
 import { withProjectId } from "./health.js";
+import { dedupe } from "./dedupe.js";
 
 // ── Plugin Management ────────────────────────────────────────────────────────
 

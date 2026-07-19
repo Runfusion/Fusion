@@ -4,6 +4,9 @@
  */
 import type {
   Message,
+  MessageMetadata,
+  MessageType,
+  ParticipantType,
   AgentRating,
   AgentRatingSummary,
   AgentRatingInput,

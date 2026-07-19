@@ -6,6 +6,10 @@ import type {
   TodoList,
   TodoItem,
   TodoListWithItems,
+  TodoListCreateInput,
+  TodoListUpdateInput,
+  TodoItemCreateInput,
+  TodoItemUpdateInput,
 } from "@fusion/core";
 import { api } from "./client.js";
 import { withProjectId } from "./health.js";
