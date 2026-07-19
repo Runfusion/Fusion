@@ -288,6 +288,22 @@ export interface WorkflowStepResult {
   /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
   bypassedFromVerdict?: WorkflowStepResult["verdict"];
   /*
+   * FNXC:StepResume 2026-07-24-13:00:
+   * STAS-032: A stuck `pending` pre-merge workflow step (caused by
+   * Runfusion/Fusion#1946 dispatched prompt node verdict callback never
+   * received) can be resumed to `failed` via `fn_workflow_step_resume`.
+   * These fields are stamped as audit trail — they do NOT participate in
+   * merge-blocking (getTaskMergeBlocker).
+   */
+  /** Operator identity that performed the resume, if this result was resumed from pending. */
+  resumedBy?: string;
+  /** ISO-8601 timestamp when the resume was applied. */
+  resumedAt?: string;
+  /** Mandatory operator-supplied justification for resuming this pending step. */
+  resumeReason?: string;
+  /** The `status` this result carried immediately before the resume rewrote it (always `"pending"`). */
+  resumedFromStatus?: WorkflowStepResult["status"];
+  /*
    * FNXC:WorkflowStepResults 2026-07-09-00:10:
    * FN-7727: self-healing recovery re-runs a failed pre-merge review node
    * (`code-review`, `code-review-remediation`, `plan-review`,
