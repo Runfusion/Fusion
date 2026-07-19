@@ -34,7 +34,7 @@ describe("pre-commit identity guard (real git)", () => {
         cwd: worktreeDir,
         encoding: "utf-8",
       });
-      expect(staleOwnerCommit.status).not.toBe(0);
+      expect(staleOwnerCommit.status).toBe(1);
       expect(`${staleOwnerCommit.stderr}${staleOwnerCommit.stdout}`).toContain(
         "fusion: refusing commit — worktree owns FN-OLD but HEAD is fusion/fn-new",
       );
@@ -48,7 +48,7 @@ describe("pre-commit identity guard (real git)", () => {
       expect(refreshedOwnerCommit.status).toBe(0);
 
       const taskIdPathRaw = git(worktreeDir, "git rev-parse --git-path fusion-task-id");
-      const taskIdPath = isAbsolute(taskIdPathRaw) ? taskIdPathRaw : resolve(worktreeDir, taskIdPathRaw);
+      const taskIdPath = resolve(worktreeDir, taskIdPathRaw);
       expect(readFileSync(taskIdPath, "utf-8").trim()).toBe("FN-NEW");
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
