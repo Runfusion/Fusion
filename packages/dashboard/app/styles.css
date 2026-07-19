@@ -385,6 +385,7 @@ svg.spinning {
   --provider-cursor-cli: #7c3aed;
   --provider-ollama: #d4a27f;
   /* Runtime-plugin marks. */
+  --provider-omp: var(--text);
   --provider-hermes: #d4961c;
   --provider-openclaw: #ff4f40;
   --provider-paperclip: var(--text);
