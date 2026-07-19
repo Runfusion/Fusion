@@ -480,17 +480,20 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       // six-column benchmark's merging → done edge and the builtin
       // in-progress → done mission-validation edge that legacy allowed unchecked.
       // The column-identity precondition inside `getTaskMergeBlocker` is
-      // neutralized by presenting the task as in-review: the fromFacts
-      // `mergeBlocker` flag IS the workflow's review-lane identity, so only the
-      // content checks (paused / blocking status / incomplete steps / pre-merge
-      // step results) decide. For builtin:coding this is byte-identical — its
-      // only merge-blocker column is literally "in-review".
+      // skipped via the explicit `skipColumnIdentityCheck` option (PR #2341
+      // review — previously this spoofed `column: "in-review"`, which would
+      // silently misapply any future column-dependent logic there): the
+      // fromFacts `mergeBlocker` flag IS the workflow's review-lane identity,
+      // so only the content checks (paused / blocking status / incomplete
+      // steps / pre-merge step results) decide. For builtin:coding this is
+      // byte-identical — its only merge-blocker column is literally
+      // "in-review".
       {
         const fromFacts = resolveTransitionColumnFacts(workflowIr, fromColumn);
         const toFacts = resolveTransitionColumnFacts(workflowIr, toColumn);
         const mergeBlockerReason =
           !bypassGuards && toFacts.flags.complete && fromFacts.flags.mergeBlocker === true
-            ? (getTaskMergeBlocker({ ...task, column: "in-review" }) ?? null)
+            ? (getTaskMergeBlocker(task, { skipColumnIdentityCheck: true }) ?? null)
             : null;
         const decision = evaluateTransitionInvariants({
           taskId: id,

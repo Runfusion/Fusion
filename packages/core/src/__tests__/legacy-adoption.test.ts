@@ -1,13 +1,13 @@
 /*
 FNXC:LegacyAdoption 2026-07-19-12:20 (U9 / R10 / KTD-8):
 The KTD-8 adoption contract + its build-failing WRITE-SITE CENSUS. The completeness
-test greps every task.status write literal in core/engine and fails the build if any
+test greps every task.status write literal in core/engine/dashboard and fails the build if any
 lacks an adoption-table row — so a status added during the cutover window is caught
 at build time instead of mass-parking rows `paused` at upgrade. Plus adoption-action
 + reviewLevel-backfill unit coverage (fixture rows resume owned; never both fields).
 */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -25,6 +25,27 @@ import type { Task } from "../types.js";
 
 const coreSrc = dirname(dirname(fileURLToPath(import.meta.url)));
 const engineSrc = join(coreSrc, "..", "..", "engine", "src");
+const dashboardSrc = join(coreSrc, "..", "..", "dashboard", "src");
+
+/*
+FNXC:LegacyAdoption 2026-07-19-13:40 (PR #2341 review; same finding on PR #2335):
+The census originally scanned a curated 6-file list while claiming "all of core +
+engine" — any task.status write elsewhere (scheduler.ts, comments-ops.ts, dashboard
+routes, or a NEW file in either package) silently bypassed the build gate. It now
+recursively enumerates every non-test .ts source under core/engine/dashboard src in a
+single pass, so the completeness claim matches what is actually scanned.
+*/
+function listSourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile()) continue;
+    const parent = entry.parentPath ?? root;
+    if (/(^|\/)(__tests__|dist|node_modules)(\/|$)/.test(parent)) continue;
+    if (!entry.name.endsWith(".ts") || entry.name.endsWith(".d.ts") || /\.test\.ts$/.test(entry.name)) continue;
+    out.push(join(parent, entry.name));
+  }
+  return out;
+}
 
 /**
  * Census: extract every literal WRITTEN to a task's status field across a source
@@ -36,11 +57,24 @@ const engineSrc = join(coreSrc, "..", "..", "engine", "src");
  */
 function censusTaskStatusWrites(sources: string[]): Set<string> {
   const found = new Set<string>();
+  /*
+  FNXC:LegacyAdoption 2026-07-19-13:50 (PR #2341 review):
+  Precision hardening required by the recursive scan. With the old curated 6-file list
+  the loose forms were safe; over the whole tree they false-positived on non-task
+  objects — `step.status = "pending"`, devserver/subtask `session.status`, dashboard
+  `usage.status = "ok"/"no-auth"` — and the updateTask lookahead crossed a `;` into a
+  neighboring `moveTask(...)` statement. Pattern 1 now stops at statement boundaries;
+  pattern 2 requires a task-named receiver (no direct `<nonTask>.status = "X"` write
+  can be a task row, and every real task write today goes through
+  updateTask/createTask/`as Partial<Task>` anyway).
+  */
   const patterns: RegExp[] = [
     // updateTask(id, { ... status: "X" ... }) / createTask({ ... status: "X" ... })
-    /(?:updateTask|createTask)\([\s\S]{0,600}?status:\s*"([a-z][a-z-]*)"/g,
-    // <expr>.status = "X"   (assignment, not === / == / >= / <=)
-    /\b\w+\.status\s*=\s*"([a-z][a-z-]*)"/g,
+    // — `[^;]` so the lookahead cannot cross into the next statement.
+    /(?:updateTask|createTask)\([^;]{0,600}?status:\s*"([a-z][a-z-]*)"/g,
+    // <taskExpr>.status = "X" (assignment, not === / == / >= / <=) — receiver must be
+    // task-named so step/session/usage/etc. object statuses are not censused.
+    /\b\w*[tT]ask\w*\.status\s*=\s*"([a-z][a-z-]*)"/g,
     // { status: "X", ... } as (unknown as)? Partial<Task
     /\{\s*status:\s*"([a-z][a-z-]*)"[\s\S]{0,200}?\}\s*as\s*(?:unknown\s*as\s*)?Partial<Task/g,
   ];
@@ -55,15 +89,11 @@ function censusTaskStatusWrites(sources: string[]): Set<string> {
 }
 
 describe("KTD-8 adoption table — write-site census completeness (build-failing)", () => {
-  it("every task.status write literal in core + engine has an adoption row", () => {
-    const files = [
-      join(coreSrc, "task-store", "moves.ts"),
-      join(coreSrc, "task-store", "task-creation.ts"),
-      join(engineSrc, "executor.ts"),
-      join(engineSrc, "triage.ts"),
-      join(engineSrc, "self-healing.ts"),
-      join(engineSrc, "merger.ts"),
-    ].map((f) => readFileSync(f, "utf-8"));
+  it("every task.status write literal in core + engine + dashboard has an adoption row", () => {
+    const paths = [coreSrc, engineSrc, dashboardSrc].flatMap(listSourceFiles);
+    // Sanity: the recursive walk found a real tree, not an empty/renamed root.
+    expect(paths.length).toBeGreaterThan(100);
+    const files = paths.map((f) => readFileSync(f, "utf-8"));
     const written = censusTaskStatusWrites(files);
     // `null` clears are not literals; the adoption table covers named statuses.
     const uncovered = [...written].filter((s) => LEGACY_STATUS_ADOPTION[s] === undefined);

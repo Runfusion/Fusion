@@ -3,7 +3,8 @@ FNXC:LegacyAdoption 2026-07-19-12:00 (U9 / R10 / KTD-8):
 Every pre-cutover task row must wake OWNED — no silently frozen rows. Because
 `task.status` is an OPEN string (not a closed enum), the adoption contract is
 derived from a WRITE-SITE CENSUS: the completeness assertion in
-legacy-adoption.test.ts greps every task.status write literal in core/engine and
+legacy-adoption.test.ts greps every task.status write literal in every non-test .ts
+source under core/engine/dashboard src (recursive scan, PR #2341 review) and
 fails the build if any lacks an adoption row here. So a status added during the
 cutover window fails the build instead of mass-parking rows `paused` at upgrade.
 
@@ -14,7 +15,10 @@ Adoption action per legacy status (KTD-8), for the FOUNDATIONAL targets (U9 scop
                      plan-review retry, queued/triaged → scheduler re-pickup).
   - preserve       : a live human/terminal gate the graph must NOT disturb
                      (awaiting-approval, awaiting-user-input, failed, error,
-                     blocked, done, cancelled, paused).
+                     blocked, done, cancelled). Pausing is NOT a status: it is
+                     the boolean `task.paused` field, which no adoption action
+                     touches except the explicit park-paused write — so there
+                     is deliberately no "paused" adoption row.
   - clear          : a transient in-flight status with no durable meaning post-
                      restart — clear to null and let normal dispatch resume.
   - park-paused    : UNMAPPABLE — an unknown status parks `paused` with a

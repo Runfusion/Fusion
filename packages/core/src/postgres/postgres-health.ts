@@ -181,7 +181,6 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   { table: "tasks", column: "workflow_ir_pin", type: "text" },
   { table: "tasks", column: "workflow_ir_pin_node_id", type: "text" },
   { table: "tasks", column: "workflow_ir_pin_column_id", type: "text" },
-  { table: "tasks", column: "workflow_ir_pin_column_id", type: "text" },
   // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp.
   { table: "tasks", column: "legacy_adopted_at", type: "text" },
   // distributed_task_id_state
