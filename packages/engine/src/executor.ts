@@ -16731,7 +16731,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         if (timeoutHandle) clearTimeout(timeoutHandle);
         const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
         if (activeWorkflowStepSession === session) {
-          this.deleteActiveWorkflowStepSession(task.id);
+          this.deleteActiveWorkflowStepSession(task.id, worktreePath);
         }
         // Suppress unused-variable warning; `timedOut` documents intent.
         void timedOut;
