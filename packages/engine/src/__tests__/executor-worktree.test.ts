@@ -2447,6 +2447,19 @@ describe("TaskExecutor worktree pool integration", () => {
       expect.objectContaining({ agentId: "executor" }),
     );
 
+    /*
+    FNXC:WorktreeIdentity 2026-07-19-16:05:
+    Reassigning a pooled checkout must refresh its task marker after the pool
+    changes branches; otherwise the shared pre-commit hook still names the
+    previous owner and blocks the new task's first commit.
+    */
+    expect(mockedInstallTaskWorktreeIdentityGuard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: "/tmp/test/.worktrees/idle-wt",
+        taskId: "FN-020",
+      }),
+    );
+
     // Pool should be empty after acquire
     expect(pool.size).toBe(0);
   });
