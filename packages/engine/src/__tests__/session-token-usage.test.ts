@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
-import { accumulateSessionTokenUsage, computeCacheHitRatio } from "../session-token-usage.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, computeCacheHitRatio } from "../session-token-usage.js";
 import { enforceTaskTokenBudgetForPersist } from "../token-budget-enforcer.js";
 import { TaskExecutor } from "../executor.js";
 
@@ -82,6 +82,57 @@ describe("accumulateSessionTokenUsage", () => {
       cacheWriteTokens: 2,
       hitRatio: computeCacheHitRatio(100, 5),
     });
+  });
+
+  it("uses an explicit task-start baseline to exclude resumed-session lifetime tokens", async () => {
+    const store = createStore(undefined);
+    const session = createSession({ tokens: { input: 1_000, output: 400, cacheRead: 50, cacheWrite: 10 } });
+
+    captureSessionTokenBaseline(session);
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+    expect(store.updateTask).not.toHaveBeenCalled();
+
+    session.getSessionStats.mockReturnValue({ tokens: { input: 1_025, output: 410, cacheRead: 55, cacheWrite: 12 } });
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+
+    expect(store._task.tokenUsage).toMatchObject({
+      inputTokens: 25,
+      outputTokens: 10,
+      cachedTokens: 5,
+      cacheWriteTokens: 2,
+      totalTokens: 42,
+    });
+    expect(store._task.tokenUsage?.perModel?.reduce((sum, bucket) => sum + bucket.totalTokens, 0)).toBe(42);
+  });
+
+  it("handles undefined task-start stats by retaining a zero snapshot baseline", async () => {
+    const store = createStore(undefined);
+    const session = createSession(undefined);
+
+    captureSessionTokenBaseline(session);
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+    expect(store.updateTask).not.toHaveBeenCalled();
+
+    session.getSessionStats.mockReturnValue({ tokens: { input: 4, output: 0, cacheRead: 0, cacheWrite: 0 } });
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+    expect(store._task.tokenUsage).toMatchObject({ inputTokens: 4, totalTokens: 4 });
+  });
+
+  it("re-baselines a reused session between task IDs without changing fresh-session defaults", async () => {
+    const taskAStore = createStore(undefined);
+    const taskBStore = createStore(undefined);
+    const session = createSession({ tokens: { input: 100, output: 40, cacheRead: 0, cacheWrite: 0 } });
+
+    await accumulateSessionTokenUsage(taskAStore, "FN-1", session);
+    expect(taskAStore._task.tokenUsage).toMatchObject({ inputTokens: 100, outputTokens: 40, totalTokens: 140 });
+
+    captureSessionTokenBaseline(session);
+    await accumulateSessionTokenUsage(taskBStore, "FN-2", session);
+    expect(taskBStore.updateTask).not.toHaveBeenCalled();
+
+    session.getSessionStats.mockReturnValue({ tokens: { input: 112, output: 45, cacheRead: 3, cacheWrite: 0 } });
+    await accumulateSessionTokenUsage(taskBStore, "FN-2", session);
+    expect(taskBStore._task.tokenUsage).toMatchObject({ inputTokens: 12, outputTokens: 5, cachedTokens: 3, totalTokens: 20 });
   });
 
   it("persists the actually-used session model snapshot with token usage", async () => {

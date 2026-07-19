@@ -95,7 +95,7 @@ import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.j
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { accumulateSessionTokenUsage, mergeTokenUsagePerModel } from "./session-token-usage.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
 import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
@@ -4314,6 +4314,20 @@ export class TaskExecutor {
     const runContext = this.getRunContextFor(taskId);
     await this.store.updateTask(taskId, { tokenUsage }, runContext);
     await enforceTaskTokenBudgetForPersist(this.store, taskId, runContext);
+  }
+
+  /*
+   * FNXC:TokenAnalytics 2026-07-17-14:00:
+   * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
+   */
+  private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
+    this.tokenUsageBaselines.set(taskId, (await this.extractSessionTokenUsage(session)) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+    });
   }
 
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
@@ -12142,6 +12156,10 @@ export class TaskExecutor {
         }
         await this.store.appendAgentLog(task.id, executorModelMarker, "status", undefined, "executor");
 
+        // Capture both executor and session-helper baselines before any task prompt consumes tokens.
+        await this.captureExecutorTokenUsageBaseline(task.id, session);
+        captureSessionTokenBaseline(session);
+
         // Make session available to custom tools
         sessionRef.current = session;
 
@@ -12227,10 +12245,7 @@ export class TaskExecutor {
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
-          await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+          await this.persistTokenUsage(task.id, session);
 
           // Check if proactive context compaction is needed based on token cap setting.
           // This runs after the main prompt completes to avoid interrupting active work.
@@ -12288,10 +12303,7 @@ export class TaskExecutor {
 
             await promptWithFallback(session, resumePrompt);
             checkSessionError(session);
-            await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+            await this.persistTokenUsage(task.id, session);
           }
 
           // If dependency was added during execution, discard worktree and move to triage
@@ -12543,6 +12555,8 @@ export class TaskExecutor {
                   taskId: task.id,
                 });
                 retrySession = createdRetrySession.session;
+                await this.captureExecutorTokenUsageBaseline(task.id, retrySession);
+                captureSessionTokenBaseline(retrySession);
                 if (createdRetrySession.sessionFile) {
                   this.store.updateTask(task.id, { sessionFile: createdRetrySession.sessionFile }).catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -12625,10 +12639,7 @@ export class TaskExecutor {
                 stuckDetector?.recordActivity(task.id);
                 await promptWithFallback(retrySession, retryPrompt);
                 checkSessionError(retrySession);
-                await accumulateSessionTokenUsage(this.store, task.id, retrySession, {
-                  agentId: task.assignedAgentId ?? undefined,
-                  role: "executor",
-                });
+                await this.persistTokenUsage(task.id, retrySession);
               } catch (retryError) {
                 this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
@@ -12762,6 +12773,8 @@ export class TaskExecutor {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${task.id}: failed to persist final single-session token usage before dispose: ${msg}`);
           });
+          this.tokenUsageBaselines.delete(task.id);
+          resetSessionTokenBaseline(session);
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await this.terminateAllChildren(task.id);
@@ -13045,10 +13058,7 @@ export class TaskExecutor {
 
               await promptWithFallback(activeEntry.session, reducedPrompt);
               checkSessionError(activeEntry.session);
-              await accumulateSessionTokenUsage(this.store, task.id, activeEntry.session, {
-                agentId: task.assignedAgentId ?? undefined,
-                role: "executor",
-              });
+              await this.persistTokenUsage(task.id, activeEntry.session);
 
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.

@@ -804,6 +804,48 @@ describe("executeHeartbeat", () => {
       expect(pauseTask).not.toHaveBeenCalled();
     });
 
+    it("captures the task baseline before heartbeat prompting so only prompted tokens persist", async () => {
+      const task = {
+        id: "FN-001",
+        title: "Token task",
+        description: "Account heartbeat tokens",
+        prompt: "# PROMPT.md",
+        steps: [],
+        column: "todo",
+        worktree: "/tmp/worktree-fn-001",
+        branch: "fusion/fn-001",
+        dependencies: [],
+        log: [],
+        attachments: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as TaskDetail;
+      const updateTask = vi.fn(async (_taskId: string, patch: Partial<TaskDetail>) => Object.assign(task, patch));
+      mockTaskStore = createMockTaskStore({
+        getTask: vi.fn(async () => task),
+        updateTask,
+      });
+      const store = createStoreWithAgentForExec({ taskId: "FN-001" });
+      const stats = { input: 1_000, output: 400, cacheRead: 50, cacheWrite: 10 };
+      const mockSession = createMockAgentSession() as any;
+      mockSession.getSessionStats = vi.fn(() => ({ tokens: stats }));
+      mockSession.prompt.mockImplementation(async () => {
+        Object.assign(stats, { input: 1_020, output: 410, cacheRead: 54, cacheWrite: 12 });
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect((task as any).tokenUsage).toMatchObject({
+        inputTokens: 20,
+        outputTokens: 10,
+        cachedTokens: 4,
+        cacheWriteTokens: 2,
+        totalTokens: 36,
+      });
+    });
+
     it("resumeAgent defaults to non-cascading and legacy cascade skips user/other-agent pauses", async () => {
       const pauseTask = vi.fn().mockResolvedValue(undefined);
       const getTasksByAssignedAgent = vi.fn().mockResolvedValue([

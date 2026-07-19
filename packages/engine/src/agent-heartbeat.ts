@@ -96,6 +96,7 @@ import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./hea
 import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./room-ambiguity.js";
 import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./room-coordination.js";
 import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./task-agent-sync.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./session-token-usage.js";
 
 const promptSizeLog = createLogger("prompt-size");
 
@@ -2907,6 +2908,14 @@ export class HeartbeatMonitor {
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
         });
 
+        /*
+         * FNXC:TokenAnalytics 2026-07-17-14:00:
+         * Bind task-scoped heartbeat sessions to their cumulative-token baseline before the prompt runs. Capturing after promptWithFallback would include this heartbeat's tokens in the baseline and lose them; omitting it would attribute prior-task lifetime counters.
+         */
+        if (!isNoTaskRun && taskId) {
+          captureSessionTokenBaseline(session);
+        }
+
         // Track for monitoring
         this.trackAgent(agentId, { dispose: () => session.dispose() }, run.id);
 
@@ -3364,7 +3373,6 @@ export class HeartbeatMonitor {
 
           if (!isNoTaskRun && taskId) {
             try {
-              const { accumulateSessionTokenUsage } = await import("./session-token-usage.js");
               await accumulateSessionTokenUsage(taskStore, taskId, session);
             } catch (accumulateErr) {
               heartbeatLog.warn(`Agent ${agentId} task token usage accumulate failed: ${accumulateErr instanceof Error ? accumulateErr.message : String(accumulateErr)}`);
