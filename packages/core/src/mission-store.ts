@@ -14,7 +14,7 @@
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
 import { fromJson, toJson, toJsonNullable } from "./db.js";
-import { normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
 import type { Goal, GoalStatus } from "./goal-types.js";
 import type {
   Mission,
@@ -3303,6 +3303,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Valid transitions:
    * - idle → implementing
    * - implementing → validating
+   * - validating → implementing (startup recovery)
    * - validating → needs_fix
    * - validating → passed
    * - validating → blocked
@@ -3325,16 +3326,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const currentState = feature.loopState ?? "idle";
 
     // Validate the transition
-    const validTransitions: Record<FeatureLoopState, FeatureLoopState[]> = {
-      idle: ["implementing"],
-      implementing: ["validating"],
-      validating: ["needs_fix", "passed", "blocked"],
-      needs_fix: ["implementing"],
-      passed: [],
-      blocked: [],
-    };
-
-    const allowedNextStates = validTransitions[currentState] || [];
+    const allowedNextStates = FEATURE_LOOP_TRANSITIONS[currentState] || [];
     if (!allowedNextStates.includes(newState)) {
       throw new Error(
         `Invalid loop state transition from '${currentState}' to '${newState}'. ` +
