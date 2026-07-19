@@ -244,6 +244,8 @@ describe("update-check", () => {
       updated: false,
       error: expect.stringMatching(/timed out after 5 minutes.*terminal/i),
     });
+    expect(result.error).toContain("npm install -g @runfusion/fusion@latest");
+    expect(result.error).not.toContain("npm install --force");
     expect(result.error).not.toContain("deprecated");
   });
 
@@ -259,6 +261,7 @@ describe("update-check", () => {
 
     expect(execFake).toHaveBeenCalledTimes(2);
     expect(result.error).toMatch(/timed out after 5 minutes.*terminal/i);
+    expect(result.error).toContain("npm install --force -g @runfusion/fusion@latest");
     expect(result.error).not.toContain("deprecated");
   });
 

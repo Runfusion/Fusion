@@ -114,8 +114,8 @@ function isInstallTimeoutError(error: unknown): boolean {
   return installError?.killed === true;
 }
 
-function installTimeoutError(globalInstall: boolean): Error {
-  const command = getInstallCommand(globalInstall);
+function installTimeoutError(globalInstall: boolean, force = false): Error {
+  const command = getInstallCommand(globalInstall, force);
   return new Error(
     `Update timed out after ${INSTALL_TIMEOUT_MS / 60_000} minutes. Retry from a terminal with: ${command}`,
   );
@@ -186,7 +186,7 @@ async function installLatest(globalInstall: boolean, resolveBinaryPath: () => st
       return;
     } catch (forceError) {
       if (isInstallTimeoutError(forceError)) {
-        throw installTimeoutError(globalInstall);
+        throw installTimeoutError(globalInstall, true);
       }
       printCollisionRemediation(resolveBinaryPath());
       throw forceError;

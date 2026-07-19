@@ -115,10 +115,11 @@ function isInstallTimeoutError(error: unknown): boolean {
   return installError?.killed === true;
 }
 
-function getInstallTimeoutMessage(): string {
+function getInstallTimeoutMessage(force = false): string {
+  const command = force ? FORCE_INSTALL_COMMAND : INSTALL_COMMAND;
   return (
     `Update timed out after ${INSTALL_TIMEOUT_MS / 60_000} minutes. ` +
-    "Close Fusion and retry from a terminal with: npm install -g @runfusion/fusion@latest"
+    `Close Fusion and retry from a terminal with: ${command}`
   );
 }
 
@@ -303,7 +304,7 @@ export async function performUpdateInstall(
         latestVersion,
         updated: false,
         error: isInstallTimeoutError(forceError)
-          ? getInstallTimeoutMessage()
+          ? getInstallTimeoutMessage(true)
           : getInstallErrorMessage(forceError),
       };
     }

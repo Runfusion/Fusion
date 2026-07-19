@@ -197,6 +197,10 @@ describe("runUpdate", () => {
     await expect(runUpdate()).rejects.toThrow("process.exit:1");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "npm install -g @runfusion/fusion@latest",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("npm install --force");
     expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
   });
 
@@ -215,6 +219,9 @@ describe("runUpdate", () => {
 
     expect(execAsyncMock).toHaveBeenCalledTimes(2);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "npm install --force -g @runfusion/fusion@latest",
+    );
     expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
   });
 
