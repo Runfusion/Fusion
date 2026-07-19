@@ -21,6 +21,7 @@ import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
+import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./code-node-runner.js";
 import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./review-checkout.js";
@@ -5753,9 +5754,16 @@ export class TaskExecutor {
                    KTD-10 is still enforced by moveTask).
     - emitAudit  → ids/counts-only run-audit (KTD-12) for column-transition/drift.
     - onWarn     → executor log sink; diagnostics never affect the run.
-  The KTD-3 durable IR pin (pinNodeEntry/loadPriorPin) is intentionally left
-  UNWIRED here until its store schema lands (U9); absent hooks make the controller
-  record no pin and keep detectDrift inert, which is byte-safe.
+
+  FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
+  The KTD-3 durable IR pin is WIRED: the U9b store schema landed the pin as task-row
+  fields (workflowIrPin/workflowIrPinNodeId/workflowIrPinColumnId, migration 0026), so
+  pinNodeEntry/loadPriorPin bind to that row via createStoreIrPinPersistence. Each real
+  node entry persists the resolved IR's content hash (change-only writes); on restart/
+  re-entry the runner loads the prior pin and detectDrift parks the run with
+  task:reconcile-workflow-drift when the pinned node/column is gone or the hash no longer
+  resolves, instead of traversing a mutated graph. Stores without the fields (in-memory
+  fakes, pre-U9b DBs) degrade to the previous inert no-pin posture.
   */
   /*
   FNXC:WorkflowNoMergeCompletion 2026-07-19-12:40:
@@ -5837,7 +5845,16 @@ export class TaskExecutor {
   }
 
   private buildColumnBoundaryHooks(task: Pick<Task, "id">): WorkflowColumnBoundaryHooks {
+    // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
+    // buildBranchPersistence — structural probe of the row surface so a store
+    // lacking the pin fields degrades to the inert no-pin seam.
+    const pinPersistence = createStoreIrPinPersistence(
+      this.store as unknown as WorkflowIrPinStoreSurface,
+      task.id,
+    );
     return {
+      pinNodeEntry: pinPersistence.pinNodeEntry,
+      loadPriorPin: pinPersistence.loadPriorPin,
       moveTask: async (toColumn, ctx) => {
         await this.store.moveTask(task.id, toColumn, {
           moveSource: "engine",

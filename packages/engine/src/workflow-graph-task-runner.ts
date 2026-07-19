@@ -150,7 +150,8 @@ export interface WorkflowGraphTaskRunnerDeps {
    * `moveTask` trait-hook path, pins the resolved IR per node-entry, and emits
    * `task:column-transition` / `task:reconcile-workflow-drift`. Absent → the graph
    * performs no lifecycle moves (byte-identical to the pre-cutover runner). The
-   * production wiring (store.moveTask + run-audit + run-state pin) lands in U5/U9.
+   * production wiring is buildColumnBoundaryHooks (executor.ts): store.moveTask +
+   * run-audit + the U9b task-row IR pin (createStoreIrPinPersistence).
    */
   columnBoundaryHooks?: WorkflowColumnBoundaryHooks;
 }

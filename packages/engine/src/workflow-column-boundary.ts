@@ -77,7 +77,8 @@ export interface WorkflowColumnBoundaryDeps {
   moveTask?: WorkflowColumnMove;
   /** Emit an ids/counts/outcomes-only run-audit event (KTD-12). */
   emitAudit?: (event: WorkflowColumnBoundaryAuditEvent) => void | Promise<void>;
-  /** KTD-3: persist the per-node-entry IR pin (in-code seam; schema wiring U9). */
+  /** KTD-3: persist the per-node-entry IR pin (wired to the task row's
+   *  `workflowIrPin*` fields via `createStoreIrPinPersistence` in production). */
   pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;
   /** KTD-3: the pin recorded by a prior (possibly crashed) run, for drift check. */
   priorPin?: WorkflowIrPin;
@@ -94,6 +95,87 @@ export interface WorkflowColumnBoundary {
   /** KTD-3 drift guard — run once at graph start. Returns true when the pinned
    *  node/column is gone from the current IR (run must park, not traverse). */
   detectDrift(): Promise<boolean>;
+}
+
+/*
+FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
+Store-backed KTD-3 pin persistence. The U9b schema landed the durable pin as three
+task-row fields (`workflowIrPin` = content hash, `workflowIrPinNodeId`,
+`workflowIrPinColumnId` — migration 0026), threaded through updateTask /
+serialization / slim projections in core. This factory binds that row surface to
+the boundary's `pinNodeEntry` / `loadPriorPin` seams:
+  - pinNodeEntry writes via `updateTask` ONLY when the pin actually changed
+    (same node re-entry / rework loops and same-hash chains are free — one row
+    write per real node entry, not per traversal step);
+  - loadPriorPin reads the fields back off the task row at run start so a
+    restart/re-entry compares the crashed run's pin against the CURRENT IR and
+    takes the drift-park path (`task:reconcile-workflow-drift`) on mismatch.
+Degradation: a store lacking `updateTask`/`getTask`, or whose rows do not carry
+the pin fields (in-memory fakes, pre-U9b DBs), yields no prior pin and no-op
+writes — exactly the pre-wiring inert posture, so legacy harnesses are untouched.
+*/
+
+/** The minimal task-row surface the pin persistence needs. Structural on purpose
+ *  so real stores and test fakes both fit without importing the full TaskStore. */
+export interface WorkflowIrPinStoreSurface {
+  updateTask?: (
+    id: string,
+    updates: {
+      workflowIrPin?: string | null;
+      workflowIrPinNodeId?: string | null;
+      workflowIrPinColumnId?: string | null;
+    },
+  ) => unknown;
+  getTask?: (id: string) => Promise<{
+    workflowIrPin?: string;
+    workflowIrPinNodeId?: string;
+    workflowIrPinColumnId?: string;
+  }>;
+}
+
+/** Build the store-backed `pinNodeEntry`/`loadPriorPin` pair for one task. */
+export function createStoreIrPinPersistence(
+  store: WorkflowIrPinStoreSurface,
+  taskId: string,
+): {
+  pinNodeEntry: (pin: WorkflowIrPin) => Promise<void>;
+  loadPriorPin: () => Promise<WorkflowIrPin | undefined>;
+} {
+  // Last pin known to be on the row (loaded or written) — the change-only gate.
+  let lastPin: WorkflowIrPin | undefined;
+  const samePin = (a: WorkflowIrPin, b: WorkflowIrPin): boolean =>
+    a.nodeId === b.nodeId && a.irHash === b.irHash && a.columnId === b.columnId;
+
+  return {
+    pinNodeEntry: async (pin) => {
+      if (typeof store.updateTask !== "function") return; // no-op degradation
+      if (lastPin && samePin(lastPin, pin)) return; // unchanged → no row write
+      await store.updateTask(taskId, {
+        workflowIrPin: pin.irHash,
+        workflowIrPinNodeId: pin.nodeId,
+        workflowIrPinColumnId: pin.columnId ?? null,
+      });
+      lastPin = pin;
+    },
+    loadPriorPin: async () => {
+      if (typeof store.getTask !== "function") return undefined;
+      try {
+        const row = await store.getTask(taskId);
+        if (!row?.workflowIrPin || !row.workflowIrPinNodeId) return undefined;
+        const pin: WorkflowIrPin = {
+          nodeId: row.workflowIrPinNodeId,
+          irHash: row.workflowIrPin,
+          columnId: row.workflowIrPinColumnId ?? undefined,
+        };
+        lastPin = pin;
+        return pin;
+      } catch {
+        // A store that cannot read the row degrades to "no prior pin" — the
+        // drift guard stays inert rather than failing the run on bookkeeping.
+        return undefined;
+      }
+    },
+  };
 }
 
 /**

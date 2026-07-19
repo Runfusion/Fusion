@@ -110,33 +110,6 @@ import {
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
 } from "@fusion/core";
-
-/*
-FNXC:WorkflowMergeLifecycle 2026-07-19-07:40 (U7 / R2/R7/KTD-10):
-Merge lifecycle moves derive their target column from the task's workflow IR, not
-literal enum ids: a recoverable merge-failure rebound targets the KTD-10 backlog
-column (hold → intake → first), a merge-lane failure parks in the merge-
-orchestration column, and completion moves to the complete-trait column.
-builtin:coding resolves these to todo / in-review / done so the default pipeline
-is byte-identical; a custom workflow (the benchmark) lands in its own backlog /
-Merging / Done columns. One IR resolution per merge op (not an enumeration loop);
-any resolution failure falls back to the legacy literal so a merge is never stranded.
-*/
-async function resolveMergerLifecycleColumn(
-  store: TaskStore,
-  taskId: string,
-  which: "rebound" | "complete" | "merge",
-): Promise<string> {
-  const fallback = which === "complete" ? "done" : which === "merge" ? "in-review" : "todo";
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    if (which === "complete") return resolveCompleteColumn(ir) ?? fallback;
-    if (which === "merge") return resolveMergeOrchestrationColumn(ir) ?? fallback;
-    return resolveReboundTarget(ir) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
@@ -323,6 +296,33 @@ import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merger
 
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
+
+/*
+FNXC:WorkflowMergeLifecycle 2026-07-19-07:40 (U7 / R2/R7/KTD-10):
+Merge lifecycle moves derive their target column from the task's workflow IR, not
+literal enum ids: a recoverable merge-failure rebound targets the KTD-10 backlog
+column (hold → intake → first), a merge-lane failure parks in the merge-
+orchestration column, and completion moves to the complete-trait column.
+builtin:coding resolves these to todo / in-review / done so the default pipeline
+is byte-identical; a custom workflow (the benchmark) lands in its own backlog /
+Merging / Done columns. One IR resolution per merge op (not an enumeration loop);
+any resolution failure falls back to the legacy literal so a merge is never stranded.
+*/
+async function resolveMergerLifecycleColumn(
+  store: TaskStore,
+  taskId: string,
+  which: "rebound" | "complete" | "merge",
+): Promise<string> {
+  const fallback = which === "complete" ? "done" : which === "merge" ? "in-review" : "todo";
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (which === "complete") return resolveCompleteColumn(ir) ?? fallback;
+    if (which === "merge") return resolveMergeOrchestrationColumn(ir) ?? fallback;
+    return resolveReboundTarget(ir) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /*
 FNXC:MergeReliability 2026-07-15-14:55:
