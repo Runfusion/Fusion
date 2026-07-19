@@ -184,6 +184,21 @@ describe("Scheduler workflow cutover", () => {
     expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-100", column: "in-progress" }));
   });
 
+  it("does not dispatch an operator-parked todo task when only userPaused remains true", async () => {
+    const parked = task({ id: "FN-PAUSED", paused: false, userPaused: true });
+    const store = storeWith([parked]);
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(onSchedule).not.toHaveBeenCalled();
+    expect(parked.column).toBe("todo");
+  });
+
   /*
   FNXC:WorkflowScheduling 2026-07-07-00:00:
   FN-7648 regression: a custom workflow's intake column can be renamed away from

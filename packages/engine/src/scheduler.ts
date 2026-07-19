@@ -136,9 +136,11 @@ function isIgnoredOverlapPath(path: string, ignorePath: string): boolean {
 function computeAutoClaimFingerprint(task: Task): string {
   const dependencies = [...(task.dependencies ?? [])].sort().join(",");
   const sortAt = task.columnMovedAt ?? task.createdAt;
+  /** FNXC:TaskDispatch 2026-07-19-14:40: `userPaused` is a durable operator stop even when legacy `paused` is false; candidacy caching and every dispatch selector must treat either flag as parked. */
   return [
     task.column,
     task.paused === true ? "1" : "0",
+    task.userPaused === true ? "1" : "0",
     task.assignedAgentId ?? "",
     task.checkedOutBy ?? "",
     task.deletedAt ?? "",
@@ -876,7 +878,7 @@ export class Scheduler {
       // When a previously-paused task is unpaused in a schedulable column,
       // trigger a scheduling pass immediately instead of waiting for the next
       // poll interval (up to 15 seconds).
-      if (task.paused) {
+      if (task.paused || task.userPaused) {
         this.pausedTaskIds.add(task.id);
       } else if (this.pausedTaskIds.has(task.id)) {
         // Task was paused, now unpaused — trigger scheduling
@@ -1484,7 +1486,7 @@ export class Scheduler {
 
       const now = Date.now();
       let todo = tasks.filter((t) => {
-        if (t.column !== "todo" || t.paused) return false;
+        if (t.column !== "todo" || t.paused || t.userPaused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
         // FNXC:CodingIdeasWorkflow 2026-07-04-10:45: a todo task with status "planning" is being specified in place by the triage service (merged planner/capacity column in Coding (Ideas)); it must not be dispatched until planning finishes and the status clears.
