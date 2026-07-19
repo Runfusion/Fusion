@@ -131,9 +131,12 @@ describe("refinement routing from triage", () => {
     await mkdir(taskDir, { recursive: true });
     await writeFile(promptPath, "# FN-R3\n\n## File Scope\n- packages/engine/src/triage.ts\n");
 
+    const task = createTriageTask({ id: taskId, sourceType: "task_refine", sourceParentTaskId: "FN-002" });
     const store: any = withStoreEvents({
       parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
       parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+      // FNXC:EngineTests 2026-07-19-01:20: finalizeApprovedTaskBody re-reads live task via getTask.
+      getTask: vi.fn().mockImplementation(async (id: string) => (id === taskId ? task : undefined)),
       updateTask: vi.fn().mockResolvedValue(undefined),
       moveTask: vi.fn().mockImplementation(async () => {
         const prompt = await readFile(promptPath, "utf8");
@@ -144,7 +147,6 @@ describe("refinement routing from triage", () => {
     });
 
     const processor = new TriageProcessor(store, rootDir);
-    const task = createTriageTask({ id: taskId, sourceType: "task_refine", sourceParentTaskId: "FN-002" });
 
     await (processor as any).finalizeApprovedTask(
       task,
@@ -172,6 +174,13 @@ describe("refinement routing from triage", () => {
     await mkdir(taskDir, { recursive: true });
     await writeFile(join(taskDir, "PROMPT.md"), "# FN-R4\n\n## File Scope\n- packages/engine/src/triage.ts\n");
 
+    const task = createTriageTask({
+      id: taskId,
+      sourceType: "task_refine",
+      sourceParentTaskId: "FN-003",
+      status: "planning",
+      log: [{ timestamp: "2026-05-15T12:00:00.000Z", action: "Spec review: APPROVE" }],
+    });
     const store: any = withStoreEvents({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -188,19 +197,14 @@ describe("refinement routing from triage", () => {
       getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
       parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
       parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+      // FNXC:EngineTests 2026-07-19-01:20: finalizeApprovedTaskBody re-reads live task via getTask.
+      getTask: vi.fn().mockImplementation(async (id: string) => (id === taskId ? task : undefined)),
       updateTask: vi.fn().mockResolvedValue(undefined),
       moveTask: vi.fn().mockResolvedValue(undefined),
       logEntry: vi.fn().mockResolvedValue(undefined),
     });
 
     const processor = new TriageProcessor(store, rootDir);
-    const task = createTriageTask({
-      id: taskId,
-      sourceType: "task_refine",
-      sourceParentTaskId: "FN-003",
-      status: "planning",
-      log: [{ timestamp: "2026-05-15T12:00:00.000Z", action: "Spec review: APPROVE" }],
-    });
 
     const recovered = await processor.recoverApprovedTask(task);
 

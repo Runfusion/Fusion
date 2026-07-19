@@ -32,6 +32,8 @@ vi.mock("../../api", async (importOriginal) => {
     repairOverlapBlocker: vi.fn().mockResolvedValue({ repaired: true, statusCleared: false, reason: "repaired", message: "Repaired", task: makeTask() }),
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
+    // FNXC:DashboardTests 2026-07-19-01:20: FN-8296 TaskDetail polls verification request status.
+    fetchTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     fetchAgentLogs: vi.fn().mockResolvedValue([]),
     requestSpecRevision: vi.fn().mockResolvedValue({}),
     rebuildTaskSpec: vi.fn().mockResolvedValue(makeTask({ column: "triage", status: "needs-replan" })),
@@ -157,6 +159,16 @@ vi.mock("lucide-react", () => ({
   Image: (props: any) => React.createElement("svg", { "data-testid": "image-icon", ...props }),
   FileText: (props: any) => React.createElement("svg", { "data-testid": "file-text-icon", ...props }),
   FileType: (props: any) => React.createElement("svg", { "data-testid": "file-type-icon", ...props }),
+  /*
+  FNXC:DashboardTests 2026-07-19-01:10:
+  FN-8288/FN-8291 NativeStructurePreview (via StandardChatSurface under TaskDetail)
+  imports Map/Lightbulb/BarChart3/Target for structure cards. Shared TaskDetailModal
+  lucide mock must export them or five modal suites fail at import.
+  */
+  Map: (props: any) => React.createElement("svg", { "data-testid": "map-icon", ...props }),
+  Lightbulb: (props: any) => React.createElement("svg", { "data-testid": "lightbulb-icon", ...props }),
+  BarChart3: (props: any) => React.createElement("svg", { "data-testid": "barchart3-icon", ...props }),
+  Target: (props: any) => React.createElement("svg", { "data-testid": "target-icon", ...props }),
   Video: (props: any) => React.createElement("svg", { "data-testid": "video-icon", ...props }),
   AudioLines: (props: any) => React.createElement("svg", { "data-testid": "audio-lines-icon", ...props }),
   Package: (props: any) => React.createElement("svg", { "data-testid": "package-icon", ...props }),

@@ -1516,7 +1516,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
       }
 
-      if (session.summary) {
+      /*
+      FNXC:PlanningMode 2026-07-19-01:45:
+      FN-8341 keeps a running `summary` on every live planning session from create time.
+      The pre-reactive stream path treated any summary as a terminal complete session and
+      ended SSE before consumeInitialTurn, so deferred first turns never ran (createFnAgent
+      call count 0 under start-streaming tests). Only validated (user-finalized) sessions
+      are terminal for this early summary+complete catch-up path.
+      */
+      if (session.validated && session.summary) {
         const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
         const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
         const summaryEventId = lastSummaryEvent?.id

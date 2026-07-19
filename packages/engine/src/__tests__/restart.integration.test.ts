@@ -350,6 +350,16 @@ function createMockStore(overrides: Record<string, any> = {}) {
     }),
     deleteTask: vi.fn().mockResolvedValue(undefined),
     getActiveMergingTask: vi.fn().mockReturnValue(undefined),
+    /*
+    FNXC:EngineTests 2026-07-19-01:20:
+    FN-8296 reads pending verification before createFnAgent; restart fakes must
+    stub these or resumeOrphaned execute paths fail before session creation.
+    */
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
+    finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
     _trigger(event: string, ...args: any[]) {
       for (const fn of listeners.get(event) || []) fn(...args);
     },

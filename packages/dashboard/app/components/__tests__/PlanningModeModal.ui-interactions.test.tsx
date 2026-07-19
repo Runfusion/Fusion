@@ -101,6 +101,8 @@ vi.mock("../../api", () => ({
   pauseTask: (...args: any[]) => mockPauseTask(...args),
   unpauseTask: (...args: any[]) => mockUnpauseTask(...args),
   fetchTaskDetail: (...args: any[]) => mockFetchTaskDetail(...args),
+  // FNXC:DashboardTests 2026-07-19-01:20: TaskDetailModal (smoke-mounted here) polls FN-8296 verification.
+  fetchTaskVerificationRequest: vi.fn().mockResolvedValue(null),
   requestSpecRevision: (...args: any[]) => mockRequestSpecRevision(...args),
   approvePlan: (...args: any[]) => mockApprovePlan(...args),
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),

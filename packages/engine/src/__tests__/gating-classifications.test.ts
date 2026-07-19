@@ -162,6 +162,7 @@ describe("gating-classifications parity", () => {
         "fn_task_logs_read",
         "fn_task_search",
         "fn_task_show",
+        "fn_task_verification_status",
         "fn_trait_list",
         "fn_update_identity",
         "fn_workflow_get",

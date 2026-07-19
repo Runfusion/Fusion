@@ -483,6 +483,16 @@ export function createMockStore() {
     getAgentLogCount: vi.fn().mockResolvedValue(0),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
+    /*
+    FNXC:EngineTests 2026-07-19-01:10:
+    FN-8296 runs pending chat-requested verification before createFnAgent. Minimal
+    executor mocks must stub the verification request readers so default execute()
+    paths do not throw "getTaskVerificationRequestAsync is not a function" and
+    fail before session creation (236 engine-default/reliability failures).
+    */
+    getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
+    finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
   };
   return store as any;
 }

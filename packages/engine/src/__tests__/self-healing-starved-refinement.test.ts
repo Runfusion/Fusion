@@ -211,6 +211,12 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
 
       const updateTask = vi.fn().mockResolvedValue(undefined);
       const moveTask = vi.fn().mockResolvedValue(undefined);
+      const refinement = task({
+        id: "FN-RG2",
+        sourceType: "task_refine",
+        status: "planning",
+        log: [{ timestamp: "2026-05-15T10:00:00.000Z", action: "Spec review: APPROVE" }],
+      });
       const store: any = {
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 2,
@@ -225,6 +231,8 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
         getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
         getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
         getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
+        // FNXC:EngineTests 2026-07-19-01:20: finalizeApprovedTaskBody re-reads live task via getTask.
+        getTask: vi.fn().mockImplementation(async (id: string) => (id === "FN-RG2" ? refinement : undefined)),
         updateTask,
         moveTask,
         logEntry: vi.fn().mockResolvedValue(undefined),
@@ -234,13 +242,6 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
         off: () => {},
         removeListener: () => {},
       };
-
-      const refinement = task({
-        id: "FN-RG2",
-        sourceType: "task_refine",
-        status: "planning",
-        log: [{ timestamp: "2026-05-15T10:00:00.000Z", action: "Spec review: APPROVE" }],
-      });
 
       const processor = new TriageProcessor(store, root);
       const recovered = await processor.recoverApprovedTask(refinement);

@@ -91,6 +91,10 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
   // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
   (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
+  // FNXC:EngineTests 2026-07-19-01:20: FN-8296 pending verification before createFnAgent.
+  (emitter as any).getTaskVerificationRequestAsync = vi.fn().mockResolvedValue(null);
+  (emitter as any).claimTaskVerificationRequest = vi.fn().mockResolvedValue(null);
+  (emitter as any).finishTaskVerificationRequest = vi.fn().mockResolvedValue(undefined);
   (emitter as any).updateSettings = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
 
@@ -138,6 +142,10 @@ function createSelfHealingStore(tasks: Task[], settingsOverrides: Record<string,
   // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
   (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
+  // FNXC:EngineTests 2026-07-19-01:20: FN-8296 pending verification before createFnAgent.
+  (emitter as any).getTaskVerificationRequestAsync = vi.fn().mockResolvedValue(null);
+  (emitter as any).claimTaskVerificationRequest = vi.fn().mockResolvedValue(null);
+  (emitter as any).finishTaskVerificationRequest = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
   return emitter;
 }
