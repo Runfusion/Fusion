@@ -23,7 +23,7 @@
     },
     {
       "file": "packages/dashboard/src/__tests__/dev-server-process.test.ts",
-      "reason": "Full-suite shard 4 (run 29661202279): clears fallback probe timer when URL is detected from logs — detectedEvents length 0 under dashboard-api-quality-backfill load; known timer/stdout race (prior FN-6722 quarantine, FN-6860 rescue). Re-flaked without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in packages/dashboard/vitest.config.ts.",
+      "reason": "Full-suite shard 4 (run 29661202279): clears fallback probe timer when URL is detected from logs \u2014 detectedEvents length 0 under dashboard-api-quality-backfill load; known timer/stdout race (prior FN-6722 quarantine, FN-6860 rescue). Re-flaked without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in packages/dashboard/vitest.config.ts.",
       "quarantinedAt": "2026-07-18"
     },
     {
@@ -40,6 +40,11 @@
       "file": "packages/engine/src/__tests__/reliability-interactions/merge-reuse-task-worktree.slow.test.ts",
       "reason": "Full-suite engine-slow (run 29663725381): FN-5363 queue-head pollution handoff left leased merge-queue row after merge under load without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in packages/engine/vitest.config.ts engine-slow exclude.",
       "quarantinedAt": "2026-07-18"
+    },
+    {
+      "file": "plugins/fusion-plugin-grok-runtime/src/__tests__/process-lifecycle.test.ts",
+      "reason": "Full-suite shard 4 (run 29671930241): process cleanup bound stress test timed out at 15s under package-lane load without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in plugins/fusion-plugin-grok-runtime/vitest.config.ts.",
+      "quarantinedAt": "2026-07-19"
     }
   ]
 }

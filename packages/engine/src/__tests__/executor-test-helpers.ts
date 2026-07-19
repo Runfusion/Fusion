@@ -483,6 +483,17 @@ export function createMockStore() {
     getAgentLogCount: vi.fn().mockResolvedValue(0),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
+    /*
+    FNXC:TaskVerificationRequest 2026-07-19-04:30:
+    Executor execute() claims pending chat-enqueued verification requests via
+    getTaskVerificationRequestAsync / claim / finish. Default null so existing
+    execute-path tests keep no-verification behavior; full-suite engine shards
+    went red without these stubs after the request API landed on main.
+    */
+    getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
+    finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
+    createTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
   };
   return store as any;
 }
