@@ -50,7 +50,7 @@ export interface Mission {
   /**
    * FNXC:MissionAutoMerge 2026-07-19-12:30:
    * Mission-level auto-merge override (create/update payloads + list/detail responses).
-   * Declared on Mission so createMission/updateMission share one type without Partial intersection widenings.
+   * `null` clears an explicit override back to project default on PATCH.
    */
   autoMerge?: boolean | null;
   /** When true, enable autopilot monitoring system for this mission */

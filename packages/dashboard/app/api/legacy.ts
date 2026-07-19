@@ -3945,8 +3945,10 @@ export type {
   AutoTranslateImportItem,
   AutoTranslateImportResponse,
   DraftGoalDescriptionResponse,
+  PlanningSubtaskDraft,
   RefineTextResponse,
   RefinementType,
+  SubtaskItem,
   TranslateImportContentResponse,
   TranslateImportFields,
 } from "./ai-text.js";

@@ -357,7 +357,7 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
   status: "defined",
 };
 
-function missionAutoMergeOverride(autoMerge?: boolean): MissionAutoMergeOverride {
+function missionAutoMergeOverride(autoMerge?: boolean | null): MissionAutoMergeOverride {
   return autoMerge === true ? "on" : autoMerge === false ? "off" : "inherit";
 }
 
