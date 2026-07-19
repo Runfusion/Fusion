@@ -591,8 +591,6 @@ export const COMPACTION_FALLBACK_INSTRUCTIONS = [
  */
 const MAX_TOKENS_OVERFLOW_EXACT_PATTERN = /maximum context length is (\d+).*?you requested (\d+).*?contains at least (\d+)/is;
 
-/** Safety margin (tokens) when retrying with reduced max_tokens. */
-const MAX_TOKENS_OVERFLOW_SAFETY_MARGIN = 4096;
 
 const MAX_COMPACTED_PROMPT_MEMORY_CHARS = 8_000;
 const MAX_COMPACTED_SUBTASK_GUIDANCE_CHARS = 1_200;
