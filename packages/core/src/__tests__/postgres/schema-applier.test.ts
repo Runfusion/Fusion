@@ -772,11 +772,11 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   crash on the first slim SELECT rather than degrade — which is exactly why the baseline
   edit alone is insufficient and the forward migration has to exist.
   */
-  it("upgrades an existing DB missing the IR-pin and legacy-adoption columns (0026)", async () => {
+  it("upgrades an existing DB missing the IR-pin and legacy-adoption columns (0027)", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0026';
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0027';
       ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin;
       ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin_node_id;
       ALTER TABLE project.tasks DROP COLUMN workflow_ir_pin_column_id;
@@ -824,13 +824,13 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   /*
   Numeric, not lexical. A bare "9" is the case where the two disagree: numerically 9 is far
   BELOW the current baseline (so an old marker must not trip the guard), but lexically "9"
-  sorts ABOVE "0026" and a string compare would refuse every open against such a database.
+  sorts ABOVE "0027" and a string compare would refuse every open against such a database.
   */
   it("compares schema versions numerically, not lexically", () => {
     expect(() => assertBinaryNotOlderThanDatabase(["9"])).not.toThrow();
     expect(() => assertBinaryNotOlderThanDatabase(["0009"])).not.toThrow();
     // A genuinely newer version still throws regardless of padding.
-    expect(() => assertBinaryNotOlderThanDatabase(["0027"])).toThrow(StaleBinarySchemaError);
+    expect(() => assertBinaryNotOlderThanDatabase(["0028"])).toThrow(StaleBinarySchemaError);
   });
 
 
