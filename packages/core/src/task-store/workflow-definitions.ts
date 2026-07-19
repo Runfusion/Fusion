@@ -476,10 +476,14 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
       const row = store.db
         .prepare("SELECT ir FROM workflows WHERE id = ?")
         .get(workflowId) as { ir: string } | undefined;
-      if (!row) return resolveDefaultWorkflowIr();
+      /* FNXC:WorkflowBuiltins 2026-07-19-12:20 (PR #2341 review): the deleted-workflow and
+         read-error fallbacks must apply built-in prompt overrides exactly like the
+         no-selection branch above — otherwise a task whose custom workflow was deleted
+         silently loses the project's default-workflow prompt customizations. */
+      if (!row) return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
       return parseWorkflowIr(row.ir);
     } catch {
-      return resolveDefaultWorkflowIr();
+      return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
     }
 }
 
