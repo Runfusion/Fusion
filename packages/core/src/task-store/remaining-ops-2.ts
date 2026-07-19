@@ -27,7 +27,7 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
-import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./remaining-ops-8.js";
+import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
