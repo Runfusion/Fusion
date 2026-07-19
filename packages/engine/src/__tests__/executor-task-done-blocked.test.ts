@@ -5,6 +5,7 @@ import * as worktreePool from "../worktree-pool.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { evaluateNoCommitsNoOpFinalize } from "@fusion/core";
 import {
+  captureNamedTool,
   createMockStore,
   mockedCreateFnAgent,
   mockedExecSync,
@@ -62,7 +63,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    tool = customTools.find((t: any) => t.name === "fn_task_done");
+    tool = captureNamedTool(customTools, "fn_task_done", tool);
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 

@@ -25,7 +25,7 @@ import { findLiveLineageChildren as findLiveLineageChildrenAsync } from "./async
 import { recordRunAuditEvent as recordRunAuditEventAsync } from "./async-audit.js";
 import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async-persistence.js";
 import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } from "./persistence.js";
-import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./remaining-ops-8.js";
+import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.js";
 import { ConfigRow } from "./row-types.js";
 import { ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT } from "./serialization.js";
 import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, Column, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";

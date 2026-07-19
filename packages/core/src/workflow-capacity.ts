@@ -128,3 +128,59 @@ export function resolveColumnCapacity(
 
   return { hasCapacity: true, limit, countPending };
 }
+
+/*
+FNXC:WorkflowCapacity 2026-07-19-02:20 (U4/KTD-9):
+Multiple `wip` columns SHARE one budget when they resolve their limit the same
+way — via a shared `limitSetting` (e.g. maxConcurrent) or the default-workflow
+in-progress read-through. The scheduler's single counter must count occupants
+across ALL columns sharing the target's budget, so operator-visible concurrency
+does not silently multiply when a workflow has two wip columns. A column with an
+explicit numeric `limit` is INDEPENDENT — its budget is itself alone. This pure
+helper resolves that column set; both enforcement points (the in-txn check in
+moves.ts and the hold/release sweep) sum their live counts across it, keeping one
+budget authority (KTD-5).
+*/
+
+/** The budget "key" a wip column resolves its limit through. Two columns share a
+ *  budget iff their keys are equal. `undefined` = not a capacity column. */
+function resolveColumnBudgetKey(ir: WorkflowIr, columnId: string): string | undefined {
+  const column = findColumn(ir, columnId);
+  if (!column) return undefined;
+  const flags = getTraitRegistry().resolveColumnFlags(column);
+  if (!flags.countsTowardWip) return undefined;
+  for (const ct of column.traits) {
+    const def = getTraitRegistry().getTrait(ct.trait);
+    if (!def?.flags.countsTowardWip) continue;
+    const cfg = ct.config ?? {};
+    // An explicit numeric limit is an independent per-column budget.
+    if (typeof cfg.limit === "number" && Number.isFinite(cfg.limit)) return `col:${columnId}`;
+    // A shared setting (maxConcurrent, …) pools every column that names it.
+    if (typeof cfg.limitSetting === "string") return `setting:${cfg.limitSetting}`;
+    break;
+  }
+  // Default-workflow in-progress read-through pools with the maxConcurrent setting.
+  if (columnId === DEFAULT_WIP_COLUMN_ID && isDefaultWorkflowColumns(ir)) return "setting:maxConcurrent";
+  // Capacity trait but no resolvable shared source → independent (self only).
+  return `col:${columnId}`;
+}
+
+/**
+ * Resolve the set of column ids whose live WIP occupancy shares ONE budget with
+ * `targetColumn` (KTD-9). Returns `[targetColumn]` for an explicit-`limit` or
+ * otherwise-independent column, every column sharing a `limitSetting`/default
+ * read-through for a pooled budget, and `[]` when the target is not a capacity
+ * column. Deterministic (declared column order).
+ */
+export function resolveWipBudgetColumns(ir: WorkflowIr, targetColumn: string): string[] {
+  const targetKey = resolveColumnBudgetKey(ir, targetColumn);
+  if (!targetKey) return [];
+  // A truthy targetKey proves findColumn located targetColumn, which proves
+  // `columns` is an array — and the loop necessarily re-collects targetColumn
+  // itself, so the set is never empty. No defensive fallbacks needed.
+  const set: string[] = [];
+  for (const c of (ir as WorkflowIrV2).columns) {
+    if (resolveColumnBudgetKey(ir, c.id) === targetKey) set.push(c.id);
+  }
+  return set;
+}

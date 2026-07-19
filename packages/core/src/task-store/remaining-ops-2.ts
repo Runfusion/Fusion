@@ -27,7 +27,7 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
-import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./remaining-ops-8.js";
+import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
@@ -51,6 +51,11 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "validatorModelProvider", "validatorModelId",
       "planningModelProvider", "planningModelId", "mergerModelProvider", "mergerModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
+      // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8): this projection is a SECOND
+      // copy of the slim column list (see getTaskSelectClauseImpl2). The IR pin, its node entry,
+      // and the adoption stamp must appear in BOTH or a task read through this path reads as
+      // unpinned/never-adopted and gets re-adopted or traversed drift-blind.
+      "workflowIrPin", "workflowIrPinNodeId", "workflowIrPinColumnId", "legacyAdoptedAt",
       "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "mergerThinkingLevel", "executionMode",
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",

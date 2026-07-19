@@ -26,6 +26,27 @@ function makeTask(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+/*
+FNXC:EngineTests 2026-07-19-03:48 (U10b):
+Requirement unchanged: the liveness gate only runs for a worktree the task ALREADY owned
+(resume, or a re-used/pooled path on a task with no live session) — never for a freshly created
+one. `hadAssignedWorktree` is that precondition.
+What changed: `execute()` now enters the workflow graph, which RE-READS the row from the store
+rather than trusting the object passed in. A `worktree` set only on the passed literal therefore
+left the store row worktree-less, the executor took the in-progress-with-no-worktree drift
+recovery path, `hadAssignedWorktree` was false, and the gate never armed. Publishing the
+already-assigned worktree into the store row is what production actually looks like.
+*/
+function seedAssignedWorktree(store: ReturnType<typeof createMockStore>, overrides: Record<string, unknown> = {}) {
+  store._setRow("FN-4935-T", {
+    worktree: "/repo/.worktrees/stale-path",
+    branch: "fusion/fn-4935-t",
+    sessionFile: null,
+    taskDoneRetryCount: 0,
+    ...overrides,
+  });
+}
+
 describe("reliability interactions: FN-4935 executor liveness gate", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -80,6 +101,7 @@ describe("reliability interactions: FN-4935 executor liveness gate", () => {
     });
 
     const store = createMockStore();
+    seedAssignedWorktree(store);
     const events: any[] = [];
     store.recordRunAuditEvent = vi.fn(async (event: any) => events.push(event));
 
@@ -174,6 +196,7 @@ describe("reliability interactions: FN-4935 executor liveness gate", () => {
     vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: false, classification: "incomplete", reason: "missing .git metadata" });
 
     const store = createMockStore();
+    seedAssignedWorktree(store, { taskDoneRetryCount: 999 });
     const events: any[] = [];
     store.recordRunAuditEvent = vi.fn(async (event: any) => events.push(event));
 
@@ -198,6 +221,7 @@ describe("reliability interactions: FN-4935 executor liveness gate", () => {
     vi.spyOn(worktreePool, "describeRegisteredWorktrees").mockRejectedValueOnce(new Error("boom"));
 
     const store = createMockStore();
+    seedAssignedWorktree(store);
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(makeTask({ sessionFile: null }));
 

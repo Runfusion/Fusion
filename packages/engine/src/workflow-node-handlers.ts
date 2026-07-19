@@ -631,7 +631,8 @@ export function createDefaultNodeHandlers(
   | "pr-respond"
   | "pr-merge"
   | "ask-user"
-  | "exit-gate",
+  | "exit-gate"
+  | "hold",
   WorkflowNodeHandler
 > {
   const promptLike = deps?.primitives
@@ -689,6 +690,20 @@ export function createDefaultNodeHandlers(
         primitiveContextForNode(node, ctx.task, ctx.context, attempt, ctx.signal),
     }),
     "manual-merge-hold": async () => ({ outcome: "failure", value: "manual-required" }),
+    /*
+    FNXC:WorkflowHoldNode 2026-07-19-12:05:
+    `hold` had NO default handler, so every hold node threw "No handler
+    registered for node kind: hold" and burned the node's retry budget before
+    reporting a bogus execution error. That made `builtin:pr-workflow`
+    unrunnable past `pr-create` (its `await-review` is a hold) and would have
+    done the same to `builtin:stepwise-coding`'s `rework-hold` on the rework
+    path. A hold node is a PARK, not work: it waits for an external release
+    (`config.release` = "manual" | "external-event") that arrives as a later
+    dispatch, so entry must park the card in place exactly like
+    `manual-merge-hold` — the outcome-labelled release edges are traversed by the
+    resuming run, never by the run that entered the hold.
+    */
+    hold: async () => ({ outcome: "failure", value: "manual-required" }),
     "retry-backoff": async () => ({ outcome: "success" }),
     "recovery-router": async (_node, ctx) => ({
       outcome: "success",

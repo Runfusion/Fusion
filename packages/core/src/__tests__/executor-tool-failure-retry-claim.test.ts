@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   claimNextToolFailureRetryImpl,
   markToolFailureRetryExhaustedAuditImpl,
-} from "../task-store/remaining-ops-6.js";
+} from "../task-store/branch-and-pr-entities.js";
 
 describe("executor tool-failure retry compatibility backend (FN-7996)", () => {
   it("preserves legacy terminal parking when no PostgreSQL claim store is available", async () => {

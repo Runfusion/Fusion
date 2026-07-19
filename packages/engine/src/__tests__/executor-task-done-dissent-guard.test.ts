@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
-import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function createTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -34,7 +34,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    doneTool = customTools.find((tool: any) => tool.name === "fn_task_done");
+    doneTool = captureNamedTool(customTools, "fn_task_done", doneTool);
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 

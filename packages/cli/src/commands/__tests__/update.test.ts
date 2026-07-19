@@ -84,7 +84,7 @@ describe("runUpdate", () => {
     await runUpdate();
 
     // FNXC:UpdateChannels 2026-07-19-13:45: installs pin the exact resolved version, never a bare dist-tag.
-    expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.2.4", expect.objectContaining({ timeout: 120_000 }));
+    expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.2.4", expect.objectContaining({ timeout: 300_000 }));
     expect(logSpy).toHaveBeenCalledWith("Update complete.");
   });
 
@@ -197,6 +197,59 @@ describe("runUpdate", () => {
 
     expect(execAsyncMock).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith("Error installing update: network down");
+  });
+
+  it("reports a timeout instead of npm deprecation warnings", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.4" } }) }));
+    execAsyncMock.mockRejectedValue(
+      Object.assign(new Error("Command failed"), {
+        killed: true,
+        signal: "SIGTERM",
+        stderr: "npm warn deprecated prebuild-install@7.1.3: No longer maintained.",
+      }),
+    );
+
+    await expect(runUpdate()).rejects.toThrow("process.exit:1");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "npm install -g @runfusion/fusion@1.2.4",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("npm install --force");
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
+  });
+
+  it("reports a timeout when the forced collision retry stalls", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.4" } }) }));
+    execAsyncMock
+      .mockRejectedValueOnce(new Error("npm ERR! code EEXIST\nnpm ERR! path /usr/local/bin/fn\nnpm ERR! File exists"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Command failed"), {
+          killed: true,
+          stderr: "npm warn deprecated prebuild-install@7.1.3: No longer maintained.",
+        }),
+      );
+
+    await expect(runUpdate()).rejects.toThrow("process.exit:1");
+
+    expect(execAsyncMock).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "npm install --force -g @runfusion/fusion@1.2.4",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
+  });
+
+  it("preserves a registry ETIMEDOUT diagnosis", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.4" } }) }));
+    execAsyncMock.mockRejectedValue(
+      Object.assign(new Error("connect ETIMEDOUT 10.0.0.1:443"), { killed: false }),
+    );
+
+    await expect(runUpdate()).rejects.toThrow("process.exit:1");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("connect ETIMEDOUT"));
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toMatch(/timed out after 5 minutes/i);
   });
 
 

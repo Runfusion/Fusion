@@ -169,6 +169,16 @@ describe("reliability interactions: FN-5153 soft-delete end-to-end", () => {
     } as any;
     const store = createMockStore();
     store.listTasks.mockResolvedValue([deletedTask]);
+    /*
+    FNXC:EngineTests 2026-07-19-03:24 (U10b):
+    Requirement unchanged: no executor entry point may run a soft-deleted task.
+    What changed: `execute()` now always enters the workflow graph, and the graph RE-READS the row
+    from the store instead of trusting the object handed to `execute()`. A fixture that marked
+    `deletedAt` only on its local literal therefore described an impossible world (store says
+    alive, caller says deleted) and the refusal never fired. Publish the deletion into the store
+    row so the store and the caller agree, which is the only state production can actually be in.
+    */
+    store._setRow(deletedTask.id, { deletedAt: deletedTask.deletedAt });
 
     const executor = new TaskExecutor(store as any, "/tmp/test");
     const warnSpy = vi.spyOn(executorLog, "warn");

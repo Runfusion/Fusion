@@ -21,7 +21,7 @@ Mission → Milestone → Slice → Feature → Task
 
 **Available tools:** Fusion registers tools (prefixed `fn_*`). No CLI commands or Bash needed — use the registered tools directly.
 
-**Naming boundary:** The published skill surface uses `fn_*` tool names (for example `fn_task_create`, `fn_mission_create`). Engine runtime sessions also inject additional `fn_*` tools (for example `fn_review_spec`, `fn_review_step`, `fn_spawn_agent`) that are not part of the published skill surface.
+**Naming boundary:** The published skill surface uses `fn_*` tool names (for example `fn_task_create`, `fn_mission_create`). Engine runtime sessions also inject additional `fn_*` tools (for example `fn_review_spec`, `fn_spawn_agent`) that are not part of the published skill surface.
 
 **Engine runtime tools:** Triage/executor/merger/heartbeat sessions include auto-injected engine tools that are not part of the published skill surface. See `references/engine-tools.md` for the canonical runtime-only catalog and usage boundaries.
 

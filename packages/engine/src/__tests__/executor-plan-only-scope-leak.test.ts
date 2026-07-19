@@ -106,7 +106,16 @@ describe("FN-4482 plan-only scope leak guard", () => {
     const result = await tool.execute("id", {});
     expect(result.content[0].text).toContain("Plan-Only scope-leak guard refused fn_task_done");
     expect(result.content[0].text).toContain("packages/core/src/db.ts");
-    expect(store.updateStep).not.toHaveBeenCalled();
+    /*
+    FNXC:EngineTests 2026-07-19-16:30 (U10b):
+    The requirement is that a refused fn_task_done advances nothing: no step is marked done and
+    the task never reaches the in-review merge boundary. Assert that directly on the step STATUS
+    rather than on "updateStep was never called at all" — under graph ownership the graph itself
+    marks the step `in-progress` when it enters the implementation node, which is setup, not
+    completion.
+    */
+    expect(store.updateStep.mock.calls.some((call: unknown[]) => call[2] === "done")).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4482", "in-review", expect.anything());
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4482", "in-review");
   });
 

@@ -19,36 +19,62 @@ interface TaskMovedEvent {
       };
     };
   };
-  // #1403: the store's `task:moved` event now carries `ColumnId` (custom column
-  // ids admitted). These handlers only literal-compare against legacy ids, so a
-  // string-widened field is safe.
+  // #1403: the store's `task:moved` event carries `ColumnId` (custom column ids
+  // admitted). U12 re-keys the decision on the complete/archived traits, so a
+  // workflow-defined terminal column maps to GitHub state like `done` does.
   from: string;
   to: string;
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-19-2b:50 (U12 / R2):
+GitHub open/closed state keys on the `complete` and `archived` TRAITS, not the literal ids `done`
+and `archived`. A user-authored workflow whose terminal column is called something else never
+closed its linked GitHub issue, and a custom archive column never mapped to `not_planned`.
+
+`classify` is injected rather than resolved here so this stays a pure decision function (the
+caller owns IR resolution). Its default reproduces the legacy literal mapping exactly, so every
+existing caller and the default workflow are byte-identical.
+*/
+export interface ColumnLifecycleClass {
+  complete: boolean;
+  archived: boolean;
+}
+
+export const legacyColumnLifecycleClass = (columnId: string): ColumnLifecycleClass => ({
+  complete: columnId === "done",
+  archived: columnId === "archived",
+});
+
 export function decideIssueAction(
   from: string,
   to: string,
+  classify: (columnId: string) => ColumnLifecycleClass = legacyColumnLifecycleClass,
 ): { action: "close" | "reopen"; stateReason: "completed" | "not_planned" | "reopened" } | null {
-  if (from === "archived" && to === "done") {
+  const fromClass = classify(from);
+  const toClass = classify(to);
+
+  // Un-archiving back into the completed column re-opens the issue.
+  if (fromClass.archived && toClass.complete) {
     return { action: "reopen", stateReason: "reopened" };
   }
 
-  if (to === "done" && from !== "done") {
+  if (toClass.complete && !fromClass.complete) {
     return { action: "close", stateReason: "completed" };
   }
 
-  if (to === "archived") {
-    if (from === "done") {
+  if (toClass.archived) {
+    if (fromClass.complete) {
       return { action: "close", stateReason: "completed" };
     }
-    if (from !== "archived") {
+    if (!fromClass.archived) {
       return { action: "close", stateReason: "not_planned" };
     }
     return null;
   }
 
-  if (from === "done" && to !== "done") {
+  // Leaving the completed column re-opens the issue.
+  if (fromClass.complete && !toClass.complete) {
     return { action: "reopen", stateReason: "reopened" };
   }
 
