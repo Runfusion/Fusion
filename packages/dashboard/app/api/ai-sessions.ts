@@ -74,6 +74,13 @@ export function parseConversationHistory(raw: string): ConversationHistoryEntry[
   }
 }
 
+/*
+FNXC:AiSessions 2026-07-19-12:30:
+fetchAiSessions / fetchAiSession intentionally soft-fail to [] / null instead of
+throwing via api(). Session pickers and multi-tab planners poll these endpoints and
+prefer an empty/missing surface over error banners when auth blips or the engine is
+momentarily unavailable — diverges from archive/ping helpers that must surface failures.
+*/
 export async function fetchAiSessions(
   projectId?: string,
   options?: { includeCompleted?: boolean; includeArchived?: boolean; type?: AiSessionSummary["type"] },
@@ -104,6 +111,7 @@ export async function unarchiveAiSession(id: string): Promise<void> {
   });
 }
 
+/** Soft-fail companion to fetchAiSessions — see FNXC:AiSessions above. */
 export async function fetchAiSession(id: string): Promise<AiSessionDetail | null> {
   const res = await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`), {
     headers: withTokenHeader(),

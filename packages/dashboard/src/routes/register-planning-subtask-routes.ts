@@ -223,7 +223,12 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     try {
       const { sessionId, subtasks, parentTaskId, branch, baseBranch, branchSelection, branchAssignment, workflowId } = req.body as {
         sessionId?: string;
-        subtasks?: Array<{ tempId: string; title: string; description: string; size?: "S" | "M" | "L"; dependsOn?: string[] }>;
+        /*
+        FNXC:SubtaskPriority 2026-07-19-12:30:
+        Accept optional priority from SubtaskItem so breakdown create-tasks preserves
+        stream-assigned prioritization (client maps subtask.priority onto this field).
+        */
+        subtasks?: Array<{ tempId: string; title: string; description: string; size?: "S" | "M" | "L"; priority?: string; dependsOn?: string[] }>;
         parentTaskId?: string;
         branch?: unknown;
         baseBranch?: unknown;
@@ -320,10 +325,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         column resolution. Omitting `column` lets the store resolve intake for the
         selected-or-default workflow (byte-identical "triage" for builtin:coding).
         */
+        const priority = typeof item.priority === "string" && (TASK_PRIORITIES as readonly string[]).includes(item.priority)
+          ? (item.priority as TaskPriority)
+          : undefined;
         const { task, wasDuplicate } = await createAgentTask(scopedStore, {
           title: item.title.trim(),
           description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
           dependencies: undefined,
+          ...(priority !== undefined ? { priority } : {}),
           // Inherit parent's model settings if available
           modelProvider: parentTask?.modelProvider,
           modelId: parentTask?.modelId,

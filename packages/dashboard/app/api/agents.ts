@@ -22,7 +22,7 @@ import type {
   AgentLogEntry,
 } from "@fusion/core";
 import type { MemoryFileInfo } from "./memory.js";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger, AgentBudgetStatus };
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger, AgentBudgetStatus, AgentLogEntry };
 import { api, buildApiUrl } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
@@ -38,9 +38,6 @@ export interface AgentPromptSizePoint {
   execChars: number;
   totalChars: number;
 }
-
-
-/** Append repoPath query param for workspace-mode sub-repo targeting */
 
 /** Fetch workspace sub-repos for a project */
 export function fetchWorkspaceRepos(projectId?: string): Promise<{ repos: string[] }> {

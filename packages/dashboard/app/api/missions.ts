@@ -47,6 +47,12 @@ export interface Mission {
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
   autoAdvance?: boolean;
+  /**
+   * FNXC:MissionAutoMerge 2026-07-19-12:30:
+   * Mission-level auto-merge override (create/update payloads + list/detail responses).
+   * Declared on Mission so createMission/updateMission share one type without Partial intersection widenings.
+   */
+  autoMerge?: boolean | null;
   /** When true, enable autopilot monitoring system for this mission */
   autopilotEnabled?: boolean;
   /** Current autopilot runtime state */
@@ -148,7 +154,7 @@ export function fetchMission(missionId: string, projectId?: string): Promise<Mis
 }
 
 /** Update mission */
-export function updateMission(missionId: string, updates: Partial<Mission> & { autoMerge?: boolean | null }, projectId?: string): Promise<Mission> {
+export function updateMission(missionId: string, updates: Partial<Mission>, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
     method: "PATCH",
     body: JSON.stringify(updates),

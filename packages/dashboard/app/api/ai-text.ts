@@ -360,6 +360,7 @@ export function createTasksFromBreakdown(
         title: subtask.title,
         description: subtask.description,
         size: subtask.suggestedSize,
+        ...(subtask.priority !== undefined ? { priority: subtask.priority } : {}),
         dependsOn: subtask.dependsOn,
       })),
     }),
