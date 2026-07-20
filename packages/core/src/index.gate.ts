@@ -2246,3 +2246,4 @@ export { evaluateTransitionInvariants, evaluateMergeBlockerPostcondition, evalua
 export { StaleBinarySchemaError, assertBinaryNotOlderThanDatabase } from "./postgres/schema-applier.js";
 export { promoteResearchFinding } from "./research-feature-promotion.js";
 export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";
+export * from "./task-document-concurrency.js";

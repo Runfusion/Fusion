@@ -2608,3 +2608,4 @@ export type { LanguageFamily, DetectedContentLanguage } from "./detect-content-l
 export { promoteResearchFinding } from "./research-feature-promotion.js";
 export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";
 export { getTotalAgentActiveMs, startPlanningSegment, finalizePlanningSegment } from "./task-timing.js";
+export * from "./task-document-concurrency.js";

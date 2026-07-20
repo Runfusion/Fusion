@@ -675,6 +675,8 @@ export interface TaskDocument {
   content: string;
   /** Monotonically increasing revision number (starts at 1) */
   revision: number;
+  /** SHA-256 of exact UTF-8 content, formatted `sha256:<64 lowercase hex>`. */
+  contentHash: string;
   /** Who created/last-edited this revision: "user" | "agent" | "system" */
   author: string;
   /** Optional extensible metadata (JSON object) */
@@ -713,6 +715,10 @@ export interface TaskDocumentCreateInput {
   author?: string;
   /** Optional extensible metadata */
   metadata?: Record<string, unknown>;
+  /** CAS expectation. Zero requires absence; positive values require an existing matching revision. */
+  expectedRevision?: number;
+  /** CAS expectation requiring an existing document with this canonical SHA-256 content hash. */
+  expectedContentHash?: string;
 }
 
 /**
