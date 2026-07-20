@@ -448,13 +448,14 @@ PR:
                                       Export Fusion agents to an Agent Companies package directory
                                       (agent skills assigned via metadata.skills affect execution-time tools)
   fn agent mailbox <id>             View an agent's mailbox
-  fn message inbox                  List inbox messages
+  fn message inbox [--user <cli|dashboard>]
+                                    List CLI or dashboard operator inbox messages
   fn message outbox                 List sent messages
   fn message send <agent-id> <msg>  Send a message to an agent
   fn message read <id>              Read a specific message
   fn message delete <id>            Delete a message
-  fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--conversation-id <id>]
-                                    Named mailbox conversation; delivers to agent inbox (not a chat room)
+  fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--reply-timeout-ms <n>] [--conversation-id <id>]
+                                    Named mailbox conversation with deadline-bounded inbox replies
   fn backup --create         Create a database backup immediately
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
@@ -2069,7 +2070,12 @@ async function main() {
         const subcommand = args[1];
         switch (subcommand) {
           case "inbox": {
-            await runMessageInbox(projectName);
+            const inboxUser = getFlagValue(args.slice(2), "--user");
+            if (inboxUser !== undefined && inboxUser !== "cli" && inboxUser !== "dashboard") {
+              console.error("Usage: fn message inbox [--user <cli|dashboard>]");
+              process.exit(1);
+            }
+            await runMessageInbox(projectName, inboxUser);
             break;
           }
           case "outbox": {
@@ -2119,6 +2125,7 @@ async function main() {
           once: parsed.once,
           nonInteractive: parsed.nonInteractive,
           pollIntervalMs: parsed.pollIntervalMs,
+          replyTimeoutMs: parsed.replyTimeoutMs,
           conversationId: parsed.conversationId,
           input,
         });

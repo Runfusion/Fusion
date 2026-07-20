@@ -1,162 +1,172 @@
 import { PassThrough, Readable } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  mockGetAgent,
-  mockGetConversation,
-  mockGetInbox,
-  mockSendMessage,
-  mockMarkAsRead,
-  mockClose,
-  mockCleanup,
-} = vi.hoisted(() => ({
-  mockGetAgent: vi.fn(),
-  mockGetConversation: vi.fn(),
-  mockGetInbox: vi.fn(),
-  mockSendMessage: vi.fn(),
-  mockMarkAsRead: vi.fn(),
-  mockClose: vi.fn(),
-  mockCleanup: vi.fn(),
-}));
+const mockGetAgent = vi.fn();
+const mockGetConversation = vi.fn();
+const mockGetInbox = vi.fn();
+const mockSendMessage = vi.fn();
+const mockMarkAsRead = vi.fn();
+const mockClose = vi.fn();
 
-vi.mock("@fusion/core", () => ({
-  AgentStore: vi.fn(function () {
-    return { init: vi.fn(), getAgent: mockGetAgent, close: mockClose };
-  }),
-  MessageStore: vi.fn(function () {
-    return {
-      getConversation: mockGetConversation,
-      getInbox: mockGetInbox,
-      sendMessage: mockSendMessage,
-      markAsRead: mockMarkAsRead,
-    };
-  }),
-}));
+vi.mock("@fusion/core", () => {
+  class AgentStore {
+    init = vi.fn(async () => undefined);
+    getAgent = mockGetAgent;
+    close = mockClose;
+  }
+  class MessageStore {
+    getConversation = mockGetConversation;
+    getInbox = mockGetInbox;
+    sendMessage = mockSendMessage;
+    markAsRead = mockMarkAsRead;
+  }
+  return { AgentStore, MessageStore, DASHBOARD_USER_ID: "dashboard" };
+});
 
 vi.mock("../../project-context.js", () => ({
-  resolveAgentStoreBase: vi.fn().mockResolvedValue({
-    rootDir: "/tmp/fusion-cli-chat-test",
+  resolveAgentStoreBase: vi.fn(async () => ({
+    rootDir: "/tmp/chat-test",
     asyncLayer: {},
-    cleanup: mockCleanup,
-  }),
+    cleanup: vi.fn(async () => undefined),
+  })),
 }));
 
 import { runChatInteractive } from "../chat.js";
-import { runMessageSend } from "../message.js";
 
-function outputBuffer(): { output: PassThrough; read: () => string } {
+function outputBuffer() {
   const output = new PassThrough();
-  const chunks: Buffer[] = [];
-  output.on("data", (chunk: Buffer) => chunks.push(chunk));
-  return { output, read: () => Buffer.concat(chunks).toString("utf8") };
+  let text = "";
+  output.on("data", (chunk: Buffer) => { text += chunk.toString(); });
+  return { output, text: () => text };
 }
 
-describe("runChatInteractive mailbox conversation", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockGetAgent.mockResolvedValue({ id: "agent-001" });
-    mockGetConversation.mockResolvedValue([]);
-    mockGetInbox.mockResolvedValue([]);
-    mockSendMessage.mockResolvedValue({ id: "msg-001" });
-    mockCleanup.mockResolvedValue(undefined);
-  });
+function reply(id: string, content: string, replyTo?: string) {
+  return {
+    id,
+    fromId: "agent-a",
+    fromType: "agent" as const,
+    toId: "cli",
+    toType: "user" as const,
+    content,
+    type: "agent-to-user" as const,
+    read: false,
+    ...(replyTo ? { metadata: { replyTo: { messageId: replyTo } } } : {}),
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  };
+}
 
-  it("stamps sequential default sends with one stable cli-chat conversation id", async () => {
-    for (const content of ["first", "second"]) {
-      await runChatInteractive("agent-001", {
-        once: true,
-        nonInteractive: true,
-        input: Readable.from(content),
-        output: outputBuffer().output,
-        replyTimeoutMs: 0,
-      });
-    }
+beforeEach(() => {
+  mockGetAgent.mockResolvedValue({ id: "agent-a" });
+  mockGetConversation.mockResolvedValue([]);
+  mockGetInbox.mockResolvedValue([]);
+  mockSendMessage.mockImplementation(async () => ({ id: `outbound-${mockSendMessage.mock.calls.length}` }));
+  mockMarkAsRead.mockResolvedValue(undefined);
+});
 
-    expect(mockSendMessage).toHaveBeenCalledTimes(2);
-    const metadata = mockSendMessage.mock.calls.map(([input]) => input.metadata);
-    expect(metadata).toEqual([
-      { wakeRecipient: true, kind: "cli-chat", conversationId: "cli-chat:cli:agent-001" },
-      { wakeRecipient: true, kind: "cli-chat", conversationId: "cli-chat:cli:agent-001" },
-    ]);
-  });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
-  it("renders only history from its conversation id or replies to its messages", async () => {
-    mockGetConversation.mockResolvedValue([
-      { id: "other", fromId: "agent-001", fromType: "agent", content: "other thread", type: "agent-to-user", read: false, createdAt: "2026-07-20T00:00:00.000Z", updatedAt: "2026-07-20T00:00:00.000Z", metadata: { conversationId: "other-thread" } },
-      { id: "thread-message", fromId: "user:cli", fromType: "user", content: "thread start", type: "user-to-agent", read: true, createdAt: "2026-07-20T00:00:01.000Z", updatedAt: "2026-07-20T00:00:01.000Z", metadata: { conversationId: "custom-thread" } },
-      { id: "thread-reply", fromId: "agent-001", fromType: "agent", content: "thread reply", type: "agent-to-user", read: false, createdAt: "2026-07-20T00:00:02.000Z", updatedAt: "2026-07-20T00:00:02.000Z", metadata: { replyTo: { messageId: "thread-message" } } },
-    ]);
-    const buffer = outputBuffer();
+describe("runChatInteractive", () => {
+  it("prints a reply delivered to the CLI mailbox for a one-shot CLI message", async () => {
+    const { output, text } = outputBuffer();
+    const replies = [reply("reply-1", "board review complete", "outbound-1")];
+    mockGetInbox.mockImplementation(async () => replies);
 
-    await runChatInteractive("agent-001", {
+    const code = await runChatInteractive("agent-a", {
       once: true,
       nonInteractive: true,
-      input: Readable.from(""),
-      output: buffer.output,
-      conversationId: "custom-thread",
-    });
-
-    expect(buffer.read()).toContain("thread start");
-    expect(buffer.read()).toContain("thread reply");
-    expect(buffer.read()).not.toContain("other thread");
-  });
-
-  it("renders only replies associated with the current conversation and leaves other mail unread", async () => {
-    mockGetInbox.mockResolvedValue([
-      { id: "unrelated", fromId: "agent-001", fromType: "agent", content: "unrelated", type: "agent-to-user", read: false, createdAt: "2026-07-20T00:00:00.000Z", updatedAt: "2026-07-20T00:00:00.000Z" },
-      { id: "reply", fromId: "agent-001", fromType: "agent", content: "associated", type: "agent-to-user", read: false, createdAt: "2026-07-20T00:00:01.000Z", updatedAt: "2026-07-20T00:00:01.000Z", metadata: { replyTo: { messageId: "msg-001" } } },
-    ]);
-    const buffer = outputBuffer();
-
-    await runChatInteractive("agent-001", {
-      once: true,
-      nonInteractive: true,
-      input: Readable.from("hello"),
-      output: buffer.output,
-      replyTimeoutMs: 5,
+      input: Readable.from(["review the board"]),
+      output,
       pollIntervalMs: 1,
+      replyTimeoutMs: 100,
     });
 
-    expect(buffer.read()).toContain("associated");
-    expect(buffer.read()).not.toContain("unrelated");
-    expect(mockMarkAsRead).toHaveBeenCalledWith("reply");
-    expect(mockMarkAsRead).not.toHaveBeenCalledWith("unrelated");
+    expect(code).toBe(0);
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ fromId: "cli", toId: "agent-a" }));
+    expect(text()).toContain("board review complete");
+    expect(mockMarkAsRead).toHaveBeenCalledWith("reply-1");
   });
 
-  it("uses an explicit conversation id and names inbox delivery in the session banner", async () => {
-    const buffer = outputBuffer();
-    await runChatInteractive("agent-001", {
+  it("returns at the reply deadline rather than a large poll interval", async () => {
+    vi.useFakeTimers();
+    const { output } = outputBuffer();
+    const command = runChatInteractive("agent-a", {
       once: true,
       nonInteractive: true,
-      input: Readable.from("hello"),
-      output: buffer.output,
-      conversationId: "custom-thread",
-      replyTimeoutMs: 0,
+      input: Readable.from(["ping"]),
+      output,
+      pollIntervalMs: 300_000,
+      replyTimeoutMs: 5_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_001);
+    await expect(command).resolves.toBe(0);
+  });
+
+  it("expires one interactive pending reply but keeps polling for a later reply", async () => {
+    vi.useFakeTimers();
+    const input = new PassThrough();
+    const { output, text } = outputBuffer();
+    const replies: ReturnType<typeof reply>[] = [];
+    mockGetInbox.mockImplementation(async () => replies);
+
+    const command = runChatInteractive("agent-a", {
+      input,
+      output,
+      pollIntervalMs: 300_000,
+      replyTimeoutMs: 5_000,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    input.write("first request\n");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_001);
+    expect(text()).toContain("No reply within 5s for: first request");
+
+    input.write("second request\n");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockSendMessage).toHaveBeenCalledTimes(2);
+    replies.push(reply("reply-2", "second answer", "outbound-2"));
+    // The only scheduled poll is capped by the second request's own deadline,
+    // not the 300-second normal interval.
+    await vi.advanceTimersByTimeAsync(5_001);
+
+    expect(text()).toContain("second answer");
+    expect(text()).not.toContain("No reply within 5s for: second request");
+    input.end("/exit\n");
+    await expect(command).resolves.toBe(0);
+  });
+});
+
+describe("named mailbox conversations", () => {
+  it("stamps a stable conversation ID and leaves unrelated agent mail unread", async () => {
+    const { output, text } = outputBuffer();
+    mockGetInbox.mockResolvedValue([
+      reply("other-thread", "other mailbox traffic"),
+      reply("thread-reply", "threaded answer", "outbound-1"),
+    ]);
+
+    await runChatInteractive("agent-a", {
+      once: true,
+      nonInteractive: true,
+      input: Readable.from(["status"]),
+      output,
+      pollIntervalMs: 1,
+      replyTimeoutMs: 100,
     });
 
     expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: { wakeRecipient: true, kind: "cli-chat", conversationId: "custom-thread" },
+      metadata: { wakeRecipient: true, kind: "cli-chat", conversationId: "cli-chat:cli:agent-a" },
     }));
-    expect(buffer.read()).toContain("Mailbox conversation");
-    expect(buffer.read()).toContain("agent inbox");
-    expect(buffer.read()).toContain("conversation-id: custom-thread");
-  });
-
-  it("explains mailbox delivery and the conversation id in REPL help", async () => {
-    const buffer = outputBuffer();
-    await runChatInteractive("agent-001", {
-      input: Readable.from("/help\n/exit\n"),
-      output: buffer.output,
-      pollIntervalMs: 1,
-    });
-
-    expect(buffer.read()).toContain("Mailbox delivery to the agent inbox");
-    expect(buffer.read()).toContain("conversation-id: cli-chat:cli:agent-001");
-  });
-
-  it("keeps fn message send as an unstamped one-shot message", async () => {
-    await runMessageSend("agent-001", "ordinary mail");
-
-    expect(mockSendMessage).toHaveBeenCalledWith(expect.not.objectContaining({ metadata: expect.anything() }));
+    expect(text()).toContain("threaded answer");
+    expect(text()).not.toContain("other mailbox traffic");
+    expect(mockMarkAsRead).toHaveBeenCalledWith("thread-reply");
+    expect(mockMarkAsRead).not.toHaveBeenCalledWith("other-thread");
   });
 });

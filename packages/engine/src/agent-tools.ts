@@ -450,14 +450,14 @@ export const deleteAgentParams = Type.Object({
 });
 
 export const sendMessageParams = Type.Object({
-  to_id: Type.String({ description: "Recipient ID (agent ID or user ID, depending on message type)" }),
+  to_id: Type.Optional(Type.String({ description: "Recipient ID. When replying, omit to deliver to the parent sender; otherwise provide the exact ID from fn_read_messages." })),
   content: Type.String({ description: "Message body (1-2000 characters)" }),
   type: Type.Optional(Type.Union([
     Type.Literal("agent-to-agent"),
     Type.Literal("agent-to-user"),
-  ], { description: "Message type (defaults to 'agent-to-agent')" })),
+  ], { description: "Message type. Required for explicit non-dashboard user recipients; inferred from a valid reply parent when omitted." })),
   reply_to_message_id: Type.Optional(
-    Type.String({ description: "Optional ID of the message you are replying to (use IDs from fn_read_messages output)" }),
+    Type.String({ description: "Optional ID of the message you are replying to. Parent-based recipient inference is allowed only when that message was addressed to you." }),
   ),
 });
 
@@ -4697,8 +4697,9 @@ export function createSendMessageTool(
     label: "Send Message",
     description:
       "Send a message to another agent or user. The recipient will be woken if they have " +
-      "`messageResponseMode: 'immediate'` configured. When replying to an existing message, " +
-      "include `reply_to_message_id` to preserve threading.",
+      "`messageResponseMode: 'immediate'` configured. When replying, include `reply_to_message_id`; omit " +
+      "`to_id` to reply to that message's sender only when the parent was addressed to you. Otherwise provide " +
+      "the exact recipient ID and appropriate type explicitly.",
     parameters: sendMessageParams,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: async (_id: string, params: Static<typeof sendMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
@@ -4717,13 +4718,6 @@ export function createSendMessageTool(
       }
 
       try {
-        const inferredDashboardRecipient = normalizeMessageParticipant(params.to_id, "user");
-        const messageType = params.type
-          ?? (inferredDashboardRecipient.id === DASHBOARD_USER_ID ? "agent-to-user" : "agent-to-agent");
-        const recipientType: "user" | "agent" = messageType === "agent-to-user" ? "user" : "agent";
-        const recipient = recipientType === "user"
-          ? normalizeMessageParticipant(params.to_id, recipientType)
-          : { id: params.to_id, type: recipientType };
         const replyToMessageId = params.reply_to_message_id?.trim();
 
         if (params.reply_to_message_id !== undefined && !replyToMessageId) {
@@ -4732,6 +4726,53 @@ export function createSendMessageTool(
             details: {},
           };
         }
+
+        /*
+        FNXC:CliChatReplyRouting 2026-07-20-12:00:
+        CLI mail belongs to `cli`, while dashboard mail belongs to `dashboard`.
+        FN-8424 requires a reply to a message addressed to this agent to default
+        to that parent's sender, preserving both mailbox identities. A foreign,
+        missing, or non-agent-addressed parent must never supply routing data:
+        agents may still intentionally name an explicit recipient, but cannot
+        launder a recipient through another agent's reply thread.
+        */
+        const parent = replyToMessageId ? await messageStore.getMessage(replyToMessageId) : undefined;
+        const parentWasAddressedToSender = parent != null
+          && normalizeMessageParticipant(parent.toId, parent.toType).id === fromAgentId
+          && parent.toType === "agent";
+        if (replyToMessageId && !parentWasAddressedToSender && !params.to_id?.trim()) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: reply_to_message_id does not reference a message addressed to this agent; provide an explicit to_id to send intentionally" }],
+            details: {},
+          };
+        }
+
+        const parentRecipient = parentWasAddressedToSender && parent
+          ? normalizeMessageParticipant(parent.fromId, parent.fromType)
+          : undefined;
+        const explicitRecipientId = params.to_id?.trim();
+        const recipientId = explicitRecipientId ?? parentRecipient?.id;
+        // FNXC:CliChatReplyRouting 2026-07-20-12:00: An explicit recipient that names the valid parent sender remains a reply, so it inherits that sender's participant type (notably `cli` -> user). A different explicit ID is an intentional forward and retains the legacy agent-to-agent default unless its type is stated.
+        const explicitTargetsParent = explicitRecipientId != null
+          && parentRecipient != null
+          && normalizeMessageParticipant(explicitRecipientId, parentRecipient.type).id === parentRecipient.id;
+        const recipientParticipantType = !explicitRecipientId || explicitTargetsParent
+          ? parentRecipient?.type
+          : undefined;
+        if (!recipientId) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: to_id is required unless replying to a message addressed to this agent" }],
+            details: {},
+          };
+        }
+
+        const inferredDashboardRecipient = normalizeMessageParticipant(recipientId, "user");
+        const messageType = params.type
+          ?? (recipientParticipantType === "user" || inferredDashboardRecipient.id === DASHBOARD_USER_ID ? "agent-to-user" : "agent-to-agent");
+        const recipientType: "user" | "agent" = messageType === "agent-to-user" ? "user" : "agent";
+        const recipient = recipientType === "user"
+          ? normalizeMessageParticipant(recipientId, recipientType)
+          : { id: recipientId, type: recipientType };
 
         /*
         FNXC:AgentMessaging 2026-07-28-12:10:
@@ -4743,13 +4784,13 @@ export function createSendMessageTool(
             resolvedRecipient = await options.agentStore.getAgent(recipient.id);
           } catch {
             return {
-              content: [{ type: "text" as const, text: `ERROR: Recipient agent '${params.to_id}' could not be validated — message not sent` }],
+              content: [{ type: "text" as const, text: `ERROR: Recipient agent '${recipient.id}' could not be validated — message not sent` }],
               details: {},
             };
           }
           if (resolvedRecipient == null) {
             return {
-              content: [{ type: "text" as const, text: `ERROR: Recipient agent '${params.to_id}' does not exist — message not sent` }],
+              content: [{ type: "text" as const, text: `ERROR: Recipient agent '${recipient.id}' does not exist — message not sent` }],
               details: {},
             };
           }
@@ -4788,7 +4829,7 @@ export function createSendMessageTool(
         return {
           content: [{
             type: "text" as const,
-            text: `Message sent to ${recipient.id === DASHBOARD_USER_ID ? DASHBOARD_USER_ID : params.to_id} (ID: ${result.value.id})`,
+            text: `Message sent to ${recipient.id} (ID: ${result.value.id})`,
           }],
           details: { messageId: result.value.id },
         };

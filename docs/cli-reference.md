@@ -1031,6 +1031,7 @@ User mailbox operations for sending and managing direct messages with agents.
 
 ```bash
 fn message inbox
+fn message inbox --user dashboard
 fn message outbox
 fn message send AGENT-001 "Please prioritize FN-222"
 fn message read MSG-123
@@ -1039,7 +1040,7 @@ fn message delete MSG-123
 
 | Subcommand | Description |
 |---|---|
-| `fn message inbox` | List your inbox messages (newest first, up to 20). |
+| `fn message inbox [--user <cli\|dashboard>]` | List the selected user mailbox (newest first, up to 20); defaults to the CLI mailbox. |
 | `fn message outbox` | List messages you sent (newest first, up to 20). |
 | `fn message send <agent-id> <content>` | Send a user→agent message and print the created message ID. |
 | `fn message read <id>` | Show one full message by ID and auto-mark it as read if unread. |
@@ -1047,7 +1048,8 @@ fn message delete MSG-123
 
 ### Mailbox behavior
 
-- `inbox` header shows unread totals as `Inbox (<count> unread)`.
+- `inbox` defaults to the separate CLI user mailbox (`cli`). Use `fn message inbox --user dashboard` to automate reads of the dashboard operator mailbox (`dashboard`) shown by the UI; the two identities are intentionally not unified.
+- `inbox` header shows unread totals as `Inbox (<count> unread)` or `Dashboard Inbox (<count> unread)`.
 - Unread inbox rows are prefixed with `●`; read rows have no dot.
 - Inbox sender labels use `Agent <id>` for agent senders and raw user IDs for user senders.
 - Outbox recipient labels use `Agent <id>` for agent recipients.
@@ -1062,29 +1064,30 @@ fn message delete MSG-123
 | Option | Description |
 |---|---|
 | `--project <name>` | Route mailbox operations to a specific registered project (resolved via project context). Supported by all `fn message` subcommands. |
+| `--user <cli\|dashboard>` | Select the mailbox for `fn message inbox`; defaults to `cli`. |
 
 ### Related command
 
-`fn agent mailbox <agent-id>` is separate from `fn message`: it inspects an **agent-owned mailbox** (agent inbox view), while `fn message ...` manages the **CLI user mailbox**.
+`fn agent mailbox <agent-id>` is separate from `fn message`: it inspects an **agent-owned mailbox** (agent inbox view), while `fn message ...` manages the CLI or dashboard operator user mailbox.
 
 ---
 
 ## `fn chat`
 
-Named mailbox conversation loop with a specific agent. It delivers through the agent's MessageStore inbox; it is **not** a dashboard ChatView/ChatStore session or a multi-agent room.
+Interactive CLI conversation loop with a specific agent.
 
 ```bash
-fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--conversation-id <id>]
+fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--reply-timeout-ms <n>] [--conversation-id <id>]
 ```
 
 ### Behavior
 
 - `fn chat <agent-id>` starts an interactive mailbox-conversation REPL.
 - `fn chat <agent-id> <message…>` sends one message and waits for a reply (`--once` implied).
-- The default conversation id is `cli-chat:cli:<agent-id>`, stable for the CLI user and target agent in the selected project. The session banner prints it so a later invocation resumes the same named thread.
-- Messages are sent as `user-to-agent` records from CLI user `cli` with `metadata.wakeRecipient=true`, `metadata.kind="cli-chat"`, and `metadata.conversationId`.
-- `fn message send` remains a one-shot mailbox command and does not add `cli-chat` conversation metadata.
-- Replies are polled from the CLI user inbox and printed only when they carry the active `conversationId` or use `replyTo.messageId` to reference a message already in that thread. This mailbox path does not create a dashboard chat session or a multi-agent room.
+- Messages are sent as `user-to-agent` records from CLI user `cli` with `metadata.wakeRecipient=true`, `metadata.kind="cli-chat"`, and a durable `metadata.conversationId`.
+- This is MessageStore mail plus polling, not token-streaming SSE. Replies are printed only when they carry the active conversation ID or reply to a known thread message.
+- Agents replying through `fn_send_message` should pass `reply_to_message_id`; replies default to the original sender only when that parent message was addressed to the replying agent.
+- One-shot chat has a reply deadline independent of the polling interval. Interactive chat tracks each outbound message independently: it prints a timeout for an unanswered request, clears that request, and continues the REPL for later messages.
 
 ### Options
 
@@ -1092,8 +1095,9 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--
 |---|---|
 | `--once` | Send one message and exit after first reply (or timeout). |
 | `--non-interactive` | Read full stdin to EOF as message body (useful for pipes/scripts). |
-| `--poll-ms <n>` | Poll interval in milliseconds (default `1000`, or `FUSION_CHAT_POLL_MS`). |
-| `--conversation-id <id>` | Override the default mailbox conversation id to name or share a thread. |
+| `--poll-ms <n>` | Poll interval in milliseconds (default `1000`, or `FUSION_CHAT_POLL_MS`). Poll sleeps are capped at the nearest reply deadline. |
+| `--reply-timeout-ms <n>` | Per-reply deadline in milliseconds (default `60000`, or `FUSION_CHAT_REPLY_TIMEOUT_MS`), independent of `--poll-ms`. |
+| `--conversation-id <id>` | Override the default named mailbox conversation ID. |
 
 ### Examples
 
@@ -1108,7 +1112,7 @@ fn chat agent-abc123 "status update?"
 printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 ```
 
-> Agent replies require a running engine for the same project (for example `fn dashboard` or `fn serve`). Reply streaming and dashboard-operator inbox readability are tracked separately in FN-8424 / issue #2363.
+> Agent replies require a running engine for the same project (for example `fn dashboard` or `fn serve`).
 >
 > See [Agents: Interactive CLI Chat](./agents.md#interactive-cli-chat) for agent-oriented details.
 
@@ -1293,6 +1297,7 @@ Subcommands: `search`, `install`.
 | `--once` | `fn chat` |
 | `--non-interactive` | `fn chat` |
 | `--poll-ms` | `fn chat` |
+| `--reply-timeout-ms` | `fn chat` |
 
 For configuration details used by these commands, see [Settings Reference](./settings-reference.md).
 
