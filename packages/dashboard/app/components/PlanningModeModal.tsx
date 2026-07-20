@@ -334,9 +334,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [error, setError] = useState<string | null>(null);
   const [, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
+  const conversationHistoryRef = useRef<ConversationHistoryEntry[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
   // FNXC:PlanningMode 2026-07-19-15:35: FN-8400 keeps the in-progress plan independent of the center-pane view so it remains visible while the next question is generating.
   const [runningSummary, setRunningSummary] = useState<PlanningSummary | null>(null);
+  const runningSummaryRef = useRef<PlanningSummary | null>(null);
   const [branchMode, setBranchMode] = useState<"project-default" | "auto-new" | "existing" | "custom-new">("project-default");
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
@@ -361,6 +363,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   Pending state belongs to the selected history entry and never replaces the running plan pane.
   */
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const editingQuestionIdRef = useRef<string | null>(null);
   const [isHistoryEditPending, setIsHistoryEditPending] = useState(false);
   const [isRenamingSession, setIsRenamingSession] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
@@ -641,6 +644,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     streamingOutputRef.current = streamingOutput;
   }, [streamingOutput]);
 
+  useEffect(() => {
+    conversationHistoryRef.current = conversationHistory;
+  }, [conversationHistory]);
+
+  useEffect(() => {
+    runningSummaryRef.current = runningSummary;
+  }, [runningSummary]);
+
+  useEffect(() => {
+    editingQuestionIdRef.current = editingQuestionId;
+  }, [editingQuestionId]);
+
   // Keep the streaming AI thinking pane pinned to the bottom as new tokens
   // arrive. If the user has scrolled up to read earlier output, we leave the
   // scroll position alone — only auto-follow when they're already near the
@@ -698,11 +713,29 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         if (cancelled || !session) return;
         if (currentSessionIdRef.current !== sessionId) return;
         if (session.status === "awaiting_input" && session.currentQuestion) {
+          /*
+          FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
+          Missed SSE recovery must hydrate the server's entire interview turn together. Keeping
+          the persisted Q&A history and running result while replacing only the center question
+          prevents an already-answered question or a blank plan pane from representing a
+          different turn than the server.
+          */
           resetPlanningAutoRetryBudget();
-          const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
+          const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion) as PlanningQuestion);
+          const history = parseConversationHistory(session.conversationHistory);
+          const summary = session.result
+            ? normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary)
+            : null;
+          conversationHistoryRef.current = history;
+          runningSummaryRef.current = summary;
+          setConversationHistory(history);
+          setResponseHistory(history
+            .map((entry) => entry.response)
+            .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
+          setRunningSummary(summary);
           setView({
             type: "question",
-            session: { sessionId, currentQuestion: question, summary: null },
+            session: { sessionId, currentQuestion: question, summary },
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
@@ -887,6 +920,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         onQuestion: (question) => {
           if (isStaleEvent()) return;
           const normalizedQuestion = normalizeQuestionOptions(question);
+          const isAnsweredQuestion = conversationHistoryRef.current.some(
+            (entry) => entry.question?.id === normalizedQuestion.id && entry.response !== undefined,
+          );
+          /*
+          FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
+          Buffered SSE reconnects may replay a question that the user already submitted. An
+          answered question may only return through the explicit rewind/edit branch, never as a
+          passive stream catch-up event that overwrites a newer awaiting-input question.
+          */
+          if (isAnsweredQuestion && editingQuestionIdRef.current !== normalizedQuestion.id) return;
           setIsReconnecting(false);
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
@@ -912,7 +955,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           setView({
             type: "question",
-            session: { sessionId, currentQuestion: normalizedQuestion, summary: runningSummary },
+            session: { sessionId, currentQuestion: normalizedQuestion, summary: runningSummaryRef.current },
           });
           setStreamingOutput("");
         },
@@ -943,6 +986,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           allowed to enter terminal SummaryView, preventing a first-answer SSE race from ending
           the interview.
           */
+          runningSummaryRef.current = normalizedSummary;
           setRunningSummary(normalizedSummary);
           setView((previous) => previous.type === "question"
             ? {
@@ -1934,7 +1978,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // Capture before clearing state: the edit branch rewrites this exact history row while
       // the server preserves the other answers and generates the appended next question.
       const submittedEditingQuestionId = editingQuestionId;
+      const historyBeforeSubmit = conversationHistoryRef.current;
       setEditingQuestionId(null);
+      editingQuestionIdRef.current = null;
 
       // Keep the existing SSE connection alive - do NOT close it!
       // The connection established in handleStartPlanning will continue
@@ -1945,23 +1991,22 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setResponseHistory((prev) => submittedEditingQuestionId
         ? prev.map((response, index) => conversationHistory.filter((entry) => entry.question && entry.response)[index]?.question?.id === submittedEditingQuestionId ? responses : response)
         : [...prev, responses]);
-      setConversationHistory((prev) => {
-        // Capture any reasoning that accumulated since the last question
-        // (e.g. thinking streamed while the user was reading the question).
-        const currentThinking = streamingOutputRef.current.trim();
-        let updated = prev;
-        if (currentThinking) {
-          const lastEntry = updated[updated.length - 1];
-          if (lastEntry?.thinkingOutput !== currentThinking) {
-            updated = [...updated, { thinkingOutput: currentThinking }];
-          }
+      // Capture any reasoning that accumulated since the last question
+      // (e.g. thinking streamed while the user was reading the question).
+      const currentThinking = streamingOutputRef.current.trim();
+      let optimisticHistory = historyBeforeSubmit;
+      if (currentThinking) {
+        const lastEntry = optimisticHistory[optimisticHistory.length - 1];
+        if (lastEntry?.thinkingOutput !== currentThinking) {
+          optimisticHistory = [...optimisticHistory, { thinkingOutput: currentThinking }];
         }
-        const answer = { question: activeQuestion, response: responses };
-        if (submittedEditingQuestionId) {
-          return updated.map((entry) => entry.question?.id === submittedEditingQuestionId ? answer : entry);
-        }
-        return [...updated, answer];
-      });
+      }
+      const answer = { question: activeQuestion, response: responses };
+      optimisticHistory = submittedEditingQuestionId
+        ? optimisticHistory.map((entry) => entry.question?.id === submittedEditingQuestionId ? answer : entry)
+        : [...optimisticHistory, answer];
+      conversationHistoryRef.current = optimisticHistory;
+      setConversationHistory(optimisticHistory);
       resetPlanningAutoRetryBudget();
       setView({ type: "loading" });
       setStreamingOutput(""); // Clear old thinking output when entering loading state
@@ -1969,11 +2014,63 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       try {
         // Submit response - AI will broadcast events via the already-connected stream
-        await respondToPlanning(sessionId, responses, projectId);
-        // Events (question/summary) will arrive via the existing SSE stream
+        const response = await respondToPlanning(sessionId, responses, projectId);
+        // The stream normally drives this transition. Adopt an already-returned next question
+        // when its event was lost so loading cannot later be replaced by a stale replay.
+        if ("type" in response && response.type === "question" && response.data.id !== activeQuestion.id) {
+          const nextQuestion = normalizeQuestionOptions(response.data);
+          setView({
+            type: "question",
+            session: { sessionId, currentQuestion: nextQuestion, summary: runningSummaryRef.current },
+          });
+        }
       } catch (err) {
-        setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response"));
-        setView({ type: "question", session });
+        const errorMessage = getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response");
+        /*
+        FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
+        A rejected HTTP response is ambiguous: the server may have accepted the answer before
+        the connection failed. Rehydrate durable state before restoring the form. If it was not
+        accepted, roll back the optimistic answer so history and the active question still agree.
+        */
+        try {
+          const persisted = await fetchAiSession(sessionId);
+          if (persisted?.status === "awaiting_input" && persisted.currentQuestion) {
+            const history = parseConversationHistory(persisted.conversationHistory);
+            const summary = persisted.result
+              ? normalizePlanningSummary(JSON.parse(persisted.result) as PlanningSummary)
+              : null;
+            const currentQuestion = normalizeQuestionOptions(JSON.parse(persisted.currentQuestion) as PlanningQuestion);
+            conversationHistoryRef.current = history;
+            runningSummaryRef.current = summary;
+            setConversationHistory(history);
+            setResponseHistory(history
+              .map((entry) => entry.response)
+              .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
+            setRunningSummary(summary);
+            setError(errorMessage);
+            setView({ type: "question", session: { sessionId, currentQuestion, summary } });
+            return;
+          }
+          if (persisted?.status === "generating") {
+            const history = parseConversationHistory(persisted.conversationHistory);
+            const summary = persisted.result
+              ? normalizePlanningSummary(JSON.parse(persisted.result) as PlanningSummary)
+              : null;
+            conversationHistoryRef.current = history;
+            runningSummaryRef.current = summary;
+            setConversationHistory(history);
+            setRunningSummary(summary);
+            setError(errorMessage);
+            setView({ type: "loading" });
+            return;
+          }
+        } catch {
+          // Fall back to the known pre-submit turn and remove its optimistic answer.
+        }
+        conversationHistoryRef.current = historyBeforeSubmit;
+        setConversationHistory(historyBeforeSubmit);
+        setError(errorMessage);
+        setView({ type: "question", session: { ...session, summary: runningSummaryRef.current } });
       }
     },
     [conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, view]
@@ -2158,14 +2255,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     try {
       const rewound = await rewindPlanningSession(view.session.sessionId, projectId, questionId);
       setEditingQuestionId(questionId);
-      setConversationHistory(rewound.history.map((item) => ({
+      editingQuestionIdRef.current = questionId;
+      const rewoundHistory = rewound.history.map((item) => ({
         question: item.question,
         response: item.response && typeof item.response === "object" && !Array.isArray(item.response)
           ? item.response as Record<string, unknown>
           : { [item.question.id]: item.response },
         thinkingOutput: item.thinkingOutput,
-      })));
-      const nextSummary = rewound.summary ? normalizePlanningSummary(rewound.summary) : runningSummary;
+      }));
+      conversationHistoryRef.current = rewoundHistory;
+      setConversationHistory(rewoundHistory);
+      const nextSummary = rewound.summary ? normalizePlanningSummary(rewound.summary) : runningSummaryRef.current;
+      runningSummaryRef.current = nextSummary;
       setRunningSummary(nextSummary);
       setView({ type: "question", session: { ...view.session, currentQuestion: rewound.currentQuestion, summary: nextSummary } });
     } catch (err) {

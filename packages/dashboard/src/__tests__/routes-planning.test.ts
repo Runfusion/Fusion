@@ -1459,6 +1459,74 @@ describe("Planning Mode Routes", () => {
         expect(streamRes.body).toContain("What is your preference?");
       });
 
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A persisted summary is the active interview's running plan, not a completion sentinel.
+      Reconnect must send it before the awaiting-input question and keep the subscription alive.
+      */
+      it("keeps a mid-interview stream open when a running summary and question are persisted", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Reconnect a running interview" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const { getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+
+        const runningSummary = {
+          title: "Running plan",
+          description: "Keep the interview turn aligned.",
+          suggestedSize: "M",
+          keyDeliverables: ["A synchronized interview"],
+        };
+        const nextQuestion = {
+          id: "q-mid-interview",
+          type: "text",
+          question: "What should happen next?",
+        };
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.summary = runningSummary;
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.currentQuestion = nextQuestion;
+
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+        setTimeout(() => planningStreamManager.broadcast(sessionId, { type: "complete" }), 10);
+        const streamRes = await streamPromise;
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain(runningSummary.title);
+        expect(streamRes.body).toContain("event: question");
+        expect(streamRes.body).toContain(nextQuestion.question);
+        expect(streamRes.body.indexOf("event: summary")).toBeLessThan(streamRes.body.indexOf("event: question"));
+      });
+
+      it("terminalizes a validated persisted summary session", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Validated reconnect" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const { getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+        // @ts-expect-error - test setup mutates the in-memory terminal session.
+        session!.summary = { title: "Validated plan", description: "Ready", suggestedSize: "S", keyDeliverables: [] };
+        // @ts-expect-error - test setup mutates the in-memory terminal session.
+        session!.validated = true;
+
+        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain("event: complete");
+      });
+
       it("emits catch-up question event for awaiting_input sessions", async () => {
         // This test verifies the fix for the mismatch where a session was advertised as
         // needing input but the resume path initially entered loading state.

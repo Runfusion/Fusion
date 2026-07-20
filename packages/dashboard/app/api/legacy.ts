@@ -2500,6 +2500,8 @@ export interface PlanningSession {
   summary: PlanningSummary | null;
 }
 
+/** The response endpoint may synchronously return a generated next question before SSE delivers it. */
+export type PlanningResponse = PlanningSession | { type: "question"; data: PlanningQuestion };
 
 /** SSE event types for planning session streaming */
 export type PlanningStreamEvent =
@@ -2632,8 +2634,8 @@ export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-): Promise<PlanningSession> {
-  return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
+): Promise<PlanningResponse> {
+  return api<PlanningResponse>(withProjectId("/planning/respond", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });

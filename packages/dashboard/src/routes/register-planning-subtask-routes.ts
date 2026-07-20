@@ -1551,6 +1551,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
       }
 
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A running summary is persisted after every interview turn, so it is catch-up state rather
+      than completion evidence. Reconnect must refresh that plan and continue into the current
+      awaiting-input question; only Validate writes `session.validated`, which authorizes a
+      terminal complete event and closes the stream.
+      */
       if (session.summary) {
         const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
         const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
@@ -1567,16 +1574,18 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
         }
 
-        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
-        const completeEventId = lastCompleteEvent?.id
-          ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
+        if (session.validated) {
+          const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+          const completeEventId = lastCompleteEvent?.id
+            ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
 
-        if (lastEventId === undefined || completeEventId > lastEventId) {
-          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          if (lastEventId === undefined || completeEventId > lastEventId) {
+            writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          }
+
+          res.end();
+          return;
         }
-
-        res.end();
-        return;
       }
 
       // First-connect catch-up should replay buffered thinking chunks so the

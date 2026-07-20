@@ -3576,6 +3576,123 @@ describe("PlanningModeModal", () => {
     });
   });
 
+  /*
+  FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
+  These regressions reproduce the operator-visible desync: an answered Q1 must never displace
+  Q2, and recovery must hydrate question, answered history, and running plan as one server turn.
+  */
+  describe("interview turn reconciliation", () => {
+    const secondQuestion: PlanningQuestion = {
+      id: "q-turn-reconciliation-next",
+      type: "text",
+      question: "Which constraint matters most next?",
+    };
+    const secondSummary = {
+      ...mockSummary,
+      title: "Updated synchronized plan",
+      description: "The plan reflects Q1 before asking Q2.",
+    };
+
+    it("keeps Q2 and the latest plan when a stale answered Q1 stream event replays on tablet", async () => {
+      mockViewport("tablet");
+      let streamHandlers: any;
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        queuePlanningStreamEvent(() => handlers.onQuestion?.(mockQuestion));
+        return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+      });
+      mockRespondToPlanning.mockImplementationOnce(async () => {
+        queuePlanningStreamEvent(() => {
+          streamHandlers.onSummary?.(secondSummary);
+          streamHandlers.onQuestion?.(secondQuestion);
+        });
+        return { sessionId: "session-123", currentQuestion: null, summary: null };
+      });
+
+      render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} />);
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), { target: { value: "Synchronize every turn" } });
+      fireEvent.click(screen.getByText("Start Planning"));
+      fireEvent.click(await screen.findByText("Medium"));
+      fireEvent.click(screen.getByRole("button", { name: "Next question" }));
+
+      expect(await screen.findByText(secondQuestion.question)).toBeDefined();
+      expect(screen.getByRole("button", { name: "Question" })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Running plan" }));
+      expect(within(screen.getByRole("complementary", { name: "Running plan" })).getByText(secondSummary.title)).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Answered questions" }));
+      expect(within(screen.getByRole("complementary", { name: "Answered questions" })).getByText(mockQuestion.question)).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Question" }));
+
+      await act(async () => {
+        streamHandlers.onQuestion?.(mockQuestion);
+      });
+
+      expect(screen.getByText(secondQuestion.question)).toBeDefined();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+    });
+
+    it("rolls back an optimistic answer when submit fails before server acceptance", async () => {
+      mockRespondToPlanning.mockRejectedValueOnce(new Error("submit timed out"));
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-123",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Still awaiting Q1",
+        inputPayload: JSON.stringify({ initialPlan: "Recover submit" }),
+        conversationHistory: "[]",
+        currentQuestion: JSON.stringify(mockQuestion),
+        result: JSON.stringify(mockSummary),
+        thinkingOutput: "",
+        projectId: null,
+      });
+
+      render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} initialPlan="Recover submit" />);
+      await screen.findByText(mockQuestion.question);
+      fireEvent.click(screen.getByText("Medium"));
+      fireEvent.click(screen.getByRole("button", { name: "Next question" }));
+
+      expect(await screen.findByText("submit timed out")).toBeDefined();
+      expect(screen.getByText(mockQuestion.question)).toBeDefined();
+      expect(screen.queryByTestId("conversation-history")).toBeNull();
+      expect(within(screen.getByRole("complementary", { name: "Running plan" })).getByText(mockSummary.title)).toBeDefined();
+    });
+
+    it("hydrates Q2, Q1 history, and running plan after loading poll misses SSE", async () => {
+      const persistedHistory = [{ question: mockQuestion, response: { [mockQuestion.id]: "medium" } }];
+      try {
+        mockRespondToPlanning.mockResolvedValueOnce({ sessionId: "session-123", currentQuestion: null, summary: null });
+        mockFetchAiSession.mockResolvedValueOnce({
+          id: "session-123",
+          type: "planning",
+          status: "awaiting_input",
+          title: "Recovered turn",
+          inputPayload: JSON.stringify({ initialPlan: "Poll recovery" }),
+          conversationHistory: JSON.stringify(persistedHistory),
+          currentQuestion: JSON.stringify(secondQuestion),
+          result: JSON.stringify(secondSummary),
+          thinkingOutput: "",
+          projectId: null,
+        });
+
+        render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} initialPlan="Poll recovery" />);
+        await screen.findByText(mockQuestion.question);
+        vi.useFakeTimers();
+        fireEvent.click(screen.getByText("Medium"));
+        fireEvent.click(screen.getByRole("button", { name: "Next question" }));
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(8000);
+        });
+
+        expect(screen.getByText(secondQuestion.question)).toBeDefined();
+        expect(within(screen.getByRole("complementary", { name: "Answered questions" })).getByText(mockQuestion.question)).toBeDefined();
+        expect(within(screen.getByRole("complementary", { name: "Running plan" })).getByText(secondSummary.title)).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe("session rename", () => {
     function renderActiveSessionForRename() {
       mockFetchAiSession.mockResolvedValueOnce({
