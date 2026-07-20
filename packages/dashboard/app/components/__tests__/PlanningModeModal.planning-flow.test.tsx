@@ -61,6 +61,7 @@ import {
   mockTaskDetail,
   MockEventSource,
   getMediaBlocks,
+  mockShortLandscapePhone,
   mockViewport,
 } from "./PlanningModeModal.test-helpers";
 
@@ -3610,6 +3611,41 @@ describe("PlanningModeModal", () => {
       await screen.findByText("Rename rejected");
       expect(screen.getByRole("heading", { name: "Original session" })).toBeDefined();
     });
+  });
+
+  it("uses progressive interview controls on tablet and short-landscape phone sessions", async () => {
+    for (const viewport of ["tablet", "short-landscape"] as const) {
+      if (viewport === "tablet") mockViewport("tablet");
+      else mockShortLandscapePhone();
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: `session-${viewport}`,
+        type: "planning",
+        status: "awaiting_input",
+        title: "Responsive planning session",
+        inputPayload: JSON.stringify({ initialPlan: "Responsive plan prompt" }),
+        conversationHistory: "[]",
+        result: JSON.stringify(mockSummary),
+        thinkingOutput: "",
+        projectId: null,
+        currentQuestion: JSON.stringify(mockQuestion),
+      });
+
+      const rendered = render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId={`session-${viewport}`} />);
+      await screen.findByText("What is the scope?");
+      expect(screen.getByRole("button", { name: "Question" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "Running plan" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "Answered questions" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "Next question" })).toBeDefined();
+
+      fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+      expect(await screen.findByRole("complementary", { name: "Planning sessions" })).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+      expect(rendered.container.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--show-detail", "planning-modal-body--compact-question");
+      expect(screen.getByRole("button", { name: "Next question" })).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Running plan" }));
+      expect(screen.getByRole("button", { name: "Validate plan" })).toBeDefined();
+      rendered.unmount();
+    }
   });
 
   describe.each(["desktop", "mobile"] as const)("single interview action on %s", (viewport) => {

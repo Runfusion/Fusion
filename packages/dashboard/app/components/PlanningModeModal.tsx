@@ -56,7 +56,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
-import { useViewportMode } from "../hooks/useViewportMode";
+import { isShortViewport, useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
@@ -512,6 +512,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:planning-modal-size");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  /*
+  FNXC:PlanningModeMobileTablet 2026-07-20-09:30:
+  Active interviews use progressive disclosure below desktop, plus every short CSS shell viewport.
+  `viewportMode === "mobile"` preserves the phone-class short-landscape contract from
+  isMobileViewport(); isShortViewport additionally guards non-phone short shells so CSS never
+  collapses three panes while JavaScript leaves their controls inaccessible. This is intentionally
+  temporary while a keyboard is open, rather than a global viewport-mode change.
+  */
+  const isCompactInterview = viewportMode !== "desktop" || isShortViewport();
+  const [compactInterviewPane, setCompactInterviewPane] = useState<"question" | "plan" | "history">("question");
   const { addToast } = useToast();
   const { pushNav } = useNavigationHistoryContext();
 
@@ -2235,8 +2245,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
             )}
           </div>
-          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && !isMobile && (
-            <button type="button" className="btn" onClick={() => setShowSessionList((current) => !current)}>
+          {/*
+          FNXC:PlanningModeMobileTablet 2026-07-20-09:12:
+          When the viewport cannot fit three interview panes, operators must still be able to return
+          to the session list and then back to the active question. Keep the list and detail state
+          synchronized on both transitions so a second Sessions press cannot leave the question pane
+          hidden by the mobile list CSS.
+          */}
+          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                const showList = !showSessionList;
+                setShowSessionList(showList);
+                if (isCompactInterview) setMobileShowDetail(!showList);
+              }}
+            >
               {t("planning.sessions", "Sessions")}
             </button>
           )}
@@ -2252,6 +2277,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         <div
           className={`planning-modal-body planning-modal-body--split ${
             mobileShowDetail ? "planning-modal-body--show-detail" : "planning-modal-body--show-list"
+          } ${
+            selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview
+              ? `planning-modal-body--compact-interview planning-modal-body--compact-${compactInterviewPane}`
+              : ""
           }`}
         >
           {selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") ? (
@@ -2283,7 +2312,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           FNXC:Planning 2026-06-23-02:00:
           Sidebar resize handle — parity with MissionManager's mission-manager__sidebar-resize-handle. Rendered only on desktop (sidebar stacks on mobile). Pointer-drag and arrow-key resize both clamp + persist width.
           */}
-          {!isMobile && (
+          {viewportMode === "desktop" && !isShortViewport() && (
             <div
               className="planning-sidebar-resize-handle"
               role="separator"
@@ -2296,6 +2325,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onPointerDown={handleSidebarResizeStart}
               onKeyDown={handleSidebarResizeKeyDown}
             />
+          )}
+
+          {selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview && (
+            <nav className="planning-compact-pane-switcher" aria-label={t("planning.interviewPanels", "Planning interview panels")}>
+              <button type="button" className={`btn ${compactInterviewPane === "question" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "question"} onClick={() => setCompactInterviewPane("question")}>
+                {t("planning.question", "Question")}
+              </button>
+              <button type="button" className={`btn ${compactInterviewPane === "plan" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "plan"} onClick={() => setCompactInterviewPane("plan")}>
+                {t("planning.runningPlan", "Running plan")}
+              </button>
+              <button type="button" className={`btn ${compactInterviewPane === "history" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "history"} onClick={() => setCompactInterviewPane("history")}>
+                {t("planning.answeredQuestions", "Answered questions")}
+              </button>
+            </nav>
           )}
 
           <div className="planning-detail">
