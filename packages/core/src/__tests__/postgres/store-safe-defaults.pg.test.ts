@@ -60,6 +60,8 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     await store.archiveTask(task.id, { cleanup: false });
 
     await expect(store.logEntry(task.id, "must reject")).rejects.toThrow(/archived.*read-only/);
+    await expect(store.moveTask(task.id, "todo")).rejects.toThrow(/archived|not found/);
+    await expect(store.updateTask(task.id, { priority: "high" })).rejects.toThrow(/archived|not found/);
     await expect(store.addComment(task.id, "must reject", "user")).rejects.toThrow(/archived.*read-only/);
     await expect(store.updateTaskComment(task.id, commentId!, "must reject")).rejects.toThrow(/archived.*read-only/);
     await expect(store.deleteTaskComment(task.id, commentId!)).rejects.toThrow(/archived.*read-only/);

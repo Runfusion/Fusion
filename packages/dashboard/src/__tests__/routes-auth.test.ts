@@ -4280,6 +4280,15 @@ describe("Pause/Unpause endpoints", () => {
         expect(store.upsertTaskDocument).not.toHaveBeenCalled();
       });
 
+      it("keeps ordinary replacement writes rejected for archived tasks", async () => {
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is archived — documents are read-only"));
+        const res = await REQUEST(buildApp(), "PUT", "/api/tasks/KB-001/documents/plan", JSON.stringify({
+          content: "replacement",
+        }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(500);
+        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
+      });
+
       it("updates existing document with 200", async () => {
         const updatedDoc = { id: "d1", taskId: "KB-001", key: "plan", content: "Updated plan", revision: 2, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
         (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(updatedDoc);
@@ -4458,6 +4467,13 @@ describe("Pause/Unpause endpoints", () => {
         const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/plan");
         expect(res.status).toBe(204);
         expect(store.deleteTaskDocument).toHaveBeenCalledWith("KB-001", "plan");
+      });
+
+      it("keeps ordinary deletes rejected for archived tasks", async () => {
+        (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is archived — documents are read-only"));
+        const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/plan");
+        expect(res.status).toBe(500);
+        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
       });
 
       it("returns 404 when document not found", async () => {

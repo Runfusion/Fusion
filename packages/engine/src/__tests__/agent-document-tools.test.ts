@@ -187,7 +187,7 @@ describe("task_document_read tool", () => {
     vi.clearAllMocks();
   });
 
-  it("reads a specific document by key and returns content", async () => {
+  it("reads a retained archived document directly by key and returns content", async () => {
     const { store, getTaskDocument } = createMockStore();
     getTaskDocument.mockResolvedValue(
       createMockDocument({ key: "plan", content: "Detailed execution checklist", revision: 4 }),
@@ -229,7 +229,7 @@ describe("task_document_read tool", () => {
     expect(getText(result)).toContain("- research (revision 1, updated 2026-04-08T12:30:00.000Z)");
   });
 
-  it("returns a no-documents message when list is empty", async () => {
+  it("keeps the archived document registry hidden when list is empty", async () => {
     const { store, getTaskDocuments } = createMockStore();
     getTaskDocuments.mockResolvedValue([]);
 
@@ -263,13 +263,15 @@ describe("chat task document tools", () => {
     return tool!;
   }
 
-  it("exposes canonical document tool names for chat agents", () => {
+  it("exposes canonical document tools without an archived publication capability", () => {
     const { store } = createMockStore();
+    const tools = createChatTaskDocumentTools(store);
 
-    expect(createChatTaskDocumentTools(store).map((tool) => tool.name)).toEqual([
+    expect(tools.map((tool) => tool.name)).toEqual([
       "fn_task_document_write",
       "fn_task_document_read",
     ]);
+    expect(JSON.stringify(tools.map((tool) => tool.parameters))).not.toMatch(/archived.publication|append_content|allow_archived/i);
   });
 
   it("writes a document to the explicit task_id", async () => {
@@ -318,7 +320,7 @@ describe("chat task document tools", () => {
     expect(result.details).toEqual(expect.objectContaining({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", taskId: "FN-2020" }));
   });
 
-  it("reads a document from the explicit task_id", async () => {
+  it("reads a retained archived document from the explicit task_id", async () => {
     const { store, getTaskDocument } = createMockStore();
     getTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2021", key: "notes", content: "Chat notes" }));
 
@@ -341,7 +343,7 @@ describe("chat task document tools", () => {
     expect(getText(result)).toContain("Document \"missing\" not found.");
   });
 
-  it("lists documents for the explicit task_id when key is omitted", async () => {
+  it("continues to use the live-only registry when an explicit key is omitted", async () => {
     const { store, getTaskDocuments } = createMockStore();
     getTaskDocuments.mockResolvedValue([
       createMockDocument({ taskId: "FN-2023", key: "plan", revision: 1 }),
