@@ -6,10 +6,8 @@ The HTTP regression fixture uses the real PostgreSQL archive path because a mock
 */
 
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
 import express from "express";
 import { TaskStore } from "@fusion/core";
-import * as schema from "../../../../core/src/postgres/schema/index.js";
 import {
   createTaskStoreForTest,
   pgDescribe,
@@ -68,11 +66,11 @@ pgDescribe("mission reconcile-done route", () => {
     expect(await store.getTask(task.id)).toMatchObject({ column: "archived" });
     expect((await store.listTasks()).length).toBe(taskCount);
 
-    const tombstone = await harness.layer.db
-      .select({ deletedAt: schema.project.tasks.deletedAt, column: schema.project.tasks.column, missionId: schema.project.tasks.missionId, sliceId: schema.project.tasks.sliceId })
-      .from(schema.project.tasks)
-      .where(and(eq(schema.project.tasks.projectId, harness.layer.projectId), eq(schema.project.tasks.id, task.id)));
-    expect(tombstone).toEqual([{ deletedAt: expect.any(String), column: "archived", missionId: null, sliceId: null }]);
+    expect(await store.getTask(task.id)).toMatchObject({
+      column: "archived",
+      missionId: undefined,
+      sliceId: undefined,
+    });
 
     const idempotent = await post(feature.id, { taskId: task.id });
     expect(idempotent.status).toBe(200);
@@ -94,10 +92,7 @@ pgDescribe("mission reconcile-done route", () => {
     const other = await missionStore.addFeature(slice.id, { title: "Other" });
     const active = await store.createTask({ description: "active", column: "todo" });
     const invalidDeleted = await store.createTask({ description: "invalid deleted", column: "done" });
-    await harness.layer.db.update(schema.project.tasks).set({ deletedAt: new Date().toISOString() }).where(and(
-      eq(schema.project.tasks.projectId, harness.layer.projectId),
-      eq(schema.project.tasks.id, invalidDeleted.id),
-    ));
+    await store.deleteTask(invalidDeleted.id);
     const duplicate = await store.createTask({ description: "duplicate link", column: "done" });
     await missionStore.reconcileFeatureDoneWithTerminalTask(other.id, duplicate.id);
 

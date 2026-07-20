@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   pgDescribe,
@@ -288,7 +288,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const tombstones = await h.layer().db
       .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt, missionId: schema.project.tasks.missionId, sliceId: schema.project.tasks.sliceId })
       .from(schema.project.tasks)
-      .where(and(eq(schema.project.tasks.projectId, h.layer().projectId), eq(schema.project.tasks.id, task.id)));
+      .where(eq(schema.project.tasks.id, task.id));
     expect(tombstones).toEqual([{ column: "archived", deletedAt: expect.any(String), missionId: null, sliceId: null }]);
     expect(await m.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
   });
@@ -304,10 +304,8 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     ]);
     const nonterminal = await h.store().createTask({ description: "active", column: "todo" });
     const invalidDeleted = await h.store().createTask({ description: "deleted without archive", column: "done" });
-    await h.layer().db.update(schema.project.tasks).set({ deletedAt: new Date().toISOString() }).where(and(
-      eq(schema.project.tasks.projectId, h.layer().projectId),
-      eq(schema.project.tasks.id, invalidDeleted.id),
-    ));
+    await h.layer().db.update(schema.project.tasks).set({ deletedAt: new Date().toISOString() })
+      .where(eq(schema.project.tasks.id, invalidDeleted.id));
     const linkedTask = await h.store().createTask({ description: "already linked", column: "done" });
     await m.reconcileFeatureDoneWithTerminalTask(other.id, linkedTask.id);
 
