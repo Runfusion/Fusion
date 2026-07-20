@@ -2761,7 +2761,7 @@ export function createTaskFromPlanning(
     workflowId?: string | null;
   },
 ): Promise<Task> {
-  return api<Task>(withProjectId("/planning/create-task", projectId), {
+  return api<{ task: Task; alreadyCreated: boolean }>(withProjectId("/planning/create-task", projectId), {
     method: "POST",
     body: JSON.stringify({
       ...(summary ? { sessionId, summary } : { sessionId }),
@@ -2770,7 +2770,7 @@ export function createTaskFromPlanning(
       ...(options?.branchSelection ? { branchSelection: options.branchSelection } : {}),
       ...(options?.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
     }),
-  });
+  }).then((response) => response.task);
 }
 
 /** Start subtask breakdown from a completed planning session */

@@ -2531,6 +2531,10 @@ export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from ".
 export {
   upsertAiSession,
   getAiSession,
+  claimPlanningSessionTaskCreation,
+  finalizePlanningSessionTaskCreation,
+  reconcilePlanningSessionTaskCreation,
+  releasePlanningSessionTaskCreation,
   listActiveAiSessions,
   listAllAiSessions,
   listRecoverableAiSessions,

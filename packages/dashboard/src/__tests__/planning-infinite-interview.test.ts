@@ -27,6 +27,8 @@ import {
 } from "../planning.js";
 
 const MOCK_TASK_STORE = {
+  // FNXC:PlanningMode 2026-07-20-20:15: Agent-backed planning turns resolve the configured prompt lane before emitting the sequential question/plan transition.
+  getSettings: vi.fn(async () => ({})),
   listTasks: vi.fn(async () => []),
   getTask: vi.fn(async () => { throw new Error("not found"); }),
 } as unknown as TaskStore;
@@ -191,10 +193,11 @@ describe("reactive Planning Mode question contract", () => {
       [fallbackQuestion.id]: "other",
       _other: "Ask about audit-log security before anything else.",
     }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(next).toEqual(expect.objectContaining({ type: "question", data: expect.objectContaining({ id: "rollout" }) }));
+    // FNXC:PlanningMode 2026-07-20-20:15: Answers update the plan only; the next
+    // question is user-triggered by refine so a focus can steer it.
+    expect(next).toEqual(expect.objectContaining({ type: "complete" }));
+    expect((await getSession(sessionId))?.currentQuestion).toBeUndefined();
     expect(prompts.at(-1)).toContain("Ask about audit-log security before anything else.");
-    expect(prompts.at(-1)).toContain("exactly one new, high-impact question");
-    expect(prompts.at(-1)).toContain("only the user can validate it");
     expect(events.filter((type) => type === "summary")).toHaveLength(2);
 
     await validateSession(sessionId);
@@ -217,8 +220,8 @@ describe("reactive Planning Mode question contract", () => {
       scope: "other",
       _other: "Ask me questions about audit logging security instead.",
     }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(firstNext.type).toBe("question");
-    expect(firstNext.data.id).not.toBe("scope");
+    expect(firstNext.type).toBe("complete");
+    expect((await getSession(created.sessionId))?.currentQuestion).toBeUndefined();
     expect(prompts[1]).toContain("Ask me questions about audit logging security instead.");
 
     const afterCompletion = await getSession(created.sessionId);
@@ -228,11 +231,7 @@ describe("reactive Planning Mode question contract", () => {
       title: "Secure account recovery delivery",
       keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
     });
-    expect(afterCompletion?.currentQuestion).toBeDefined();
-
-    const secondQuestion = afterCompletion!.currentQuestion!;
-    const secondNext = await submitResponse(created.sessionId, { [secondQuestion.id]: "option-1" }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(secondNext).toEqual(expect.objectContaining({ type: "question" }));
+    expect(afterCompletion?.currentQuestion).toBeUndefined();
     expect((await getSession(created.sessionId))?.summary).toBeDefined();
     expect((await getSession(created.sessionId))?.validated).toBe(false);
 
@@ -374,30 +373,19 @@ describe("reactive Planning Mode question contract", () => {
     expect(session?.validated).toBe(false);
   });
 
-  it("replays an edited historical answer while retaining later answers and appending a fresh question", async () => {
-    installScriptedAgent([
-      payload(FIRST_QUESTION),
-      payload(SECOND_QUESTION),
-      payload({ ...SECOND_QUESTION, id: "verification", question: "What verification is required?" }),
-      payload({ ...SECOND_QUESTION, id: "ignored-replay" }),
-      payload({ ...SECOND_QUESTION, id: "ignored-replay-after-edit" }),
-      payload({ ...SECOND_QUESTION, id: "fresh-after-edit", question: "What risk remains after the edit?" }),
-    ]);
+  it("replays an edited historical answer into plan review without automatically asking a question", async () => {
+    installScriptedAgent([payload(FIRST_QUESTION), completePayload(), completePayload(), completePayload(), completePayload()]);
     const created = await createSession("127.0.0.2", "Improve audit trails", MOCK_TASK_STORE, "/tmp/project");
     await submitResponse(created.sessionId, { scope: "secure" }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    const second = (await getSession(created.sessionId))!.currentQuestion!;
-    await submitResponse(created.sessionId, { [second.id]: "gradual" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
     await rewindSession(created.sessionId, "scope", "/tmp/project", undefined, MOCK_TASK_STORE);
-    await submitResponse(created.sessionId, { scope: "fast" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    const revised = await submitResponse(created.sessionId, { scope: "fast" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
     const edited = await getSession(created.sessionId);
-    expect(edited?.history).toHaveLength(2);
+    expect(revised.type).toBe("complete");
+    expect(edited?.history).toHaveLength(1);
     expect(edited?.history[0]?.response).toEqual({ scope: "fast" });
-    expect(edited?.history[1]?.response).toEqual({ [second.id]: "gradual" });
-    expect(edited?.currentQuestion?.id).toBe("fresh-after-edit");
-    expect(edited?.summary?.description).toContain("Fast delivery");
-    expect(edited?.summary?.description.match(/Gradual rollout/g)).toHaveLength(1);
-    expect(edited?.summary?.keyDeliverables).not.toContain(edited?.currentQuestion?.question);
+    expect(edited?.currentQuestion).toBeUndefined();
+    expect(edited?.summary).toBeDefined();
   });
 });

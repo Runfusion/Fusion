@@ -5684,6 +5684,11 @@ export interface PlanningSession {
   summary?: PlanningSummary;
   /** User explicitly validated the continuously maintained running plan. */
   validated?: boolean;
+  /** FNXC:PlanningMode 2026-07-20-15:45: Durable planning-to-task handoff cache; proposalClaimId is the crash-safe authority. */
+  createdTaskId?: string;
+  createClaimStatus?: "none" | "creating" | "created";
+  claimOwnerToken?: string;
+  claimStartedAt?: string;
   /**
    * Optional per-session auto-merge override for tasks planned in this session.
    * Not separately persisted; durable form is a branch_groups row keyed by session id.

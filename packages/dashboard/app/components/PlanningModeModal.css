@@ -539,64 +539,6 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
     flex-direction: column;
   }
 
-  /*
-  FNXC:PlanningModeMobileTablet 2026-07-20-09:30:
-  The compact interview class is shared by width-mobile, tablet, and short CSS shells.
-  Only one interview surface is visible at once, so a short landscape viewport cannot retain
-  desktop's three competing columns. Non-phone short screens use this same class as the explicit
-  mismatch guard for the compound shell query.
-  */
-  .planning-modal-body--compact-interview {
-    flex-direction: column;
-  }
-
-  /*
-  FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
-  FN-8445 requires compact interview tabs to remain directly below the Planning header for
-  Question, Running plan, and Answered questions. History renders before the switcher in DOM,
-  so visual flex order pins the shared chrome above its scrollable sibling on mobile and short shells.
-  */
-  .planning-modal-body--compact-interview .planning-compact-pane-switcher {
-    order: -1;
-  }
-
-  .planning-compact-pane-switcher {
-    display: flex;
-    flex: 0 0 auto;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    overflow-x: auto;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .planning-compact-pane-switcher .btn {
-    flex: 1 0 auto;
-    min-height: calc(var(--space-md) * 2.25);
-    justify-content: center;
-  }
-
-  .planning-modal-body--compact-interview .planning-sidebar,
-  .planning-modal-body--compact-interview .planning-detail,
-  .planning-modal-body--compact-interview .planning-running-plan {
-    width: 100%;
-    flex: 1 1 auto;
-    min-height: 0;
-    border: 0;
-  }
-
-  .planning-modal-body--compact-interview .planning-running-plan {
-    border-top: 0;
-  }
-
-  .planning-modal-body--compact-question .planning-sidebar,
-  .planning-modal-body--compact-question .planning-running-plan,
-  .planning-modal-body--compact-plan .planning-sidebar,
-  .planning-modal-body--compact-plan .planning-detail,
-  .planning-modal-body--compact-history .planning-detail,
-  .planning-modal-body--compact-history .planning-running-plan {
-    display: none;
-  }
   .planning-sidebar {
     width: 100%;
     border-right: none;
@@ -637,9 +579,7 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   RunningPlanPane; this selector is a layout backstop for future render paths so session
   rows stay scrollable above the New session footer instead of sharing height with a plan.
   */
-  .planning-modal-body--show-list .planning-detail,
-  .planning-modal-body--show-list .planning-running-plan,
-  .planning-modal-body--show-list .planning-compact-pane-switcher {
+  .planning-modal-body--show-list .planning-detail {
     display: none;
   }
   /* The rendered Back control needs a full touch target and must not be squeezed out of the title row. */
@@ -978,63 +918,6 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   max-width: 568px;
   margin: 0 auto;
   justify-content: center;
-}
-
-/*
-FNXC:PlanningMode 2026-07-19-12:00:
-The desktop interview is three panes: answered history, a single question editor, and an always-mounted
-running plan. On narrow screens the established detail navigation stacks panes without removing the plan.
-*/
-.planning-running-plan {
-  display: flex;
-  flex: 0 1 24rem;
-  flex-direction: column;
-  gap: var(--space-md);
-  min-width: 0;
-  padding: var(--space-lg);
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-  overflow: auto;
-}
-
-.planning-running-plan h4,
-.planning-running-plan h5 {
-  margin: 0;
-}
-
-/*
-FNXC:PlanningMode 2026-07-19-15:55:
-Answered-history rows are the sole in-session navigation: make each question a full-width, readable
-button so an earlier response can be edited without restoring the retired linear Back control.
-*/
-.planning-answered-history-edit {
-  width: 100%;
-  justify-content: flex-start;
-  gap: var(--space-sm);
-  overflow: hidden;
-  text-align: left;
-}
-
-.planning-answered-history-edit span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.planning-answered-history-edit.active {
-  border-color: var(--todo);
-  background: var(--card-hover);
-}
-
-.planning-running-plan-content {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.planning-running-plan-content p {
-  white-space: pre-wrap;
 }
 
 /* Question View */
@@ -1518,54 +1401,6 @@ FNXC:PlanningMode 2026-06-25-09:20:
 Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer must absorb the narrower detail pane instead of relying on the mobile full-width stack. Allow the three labeled actions to wrap inside the pane while preserving the desktop left/right grouping when space is available.
 */
 @media (min-width: 769px) and (max-width: 1024px) {
-  /* FNXC:PlanningModeMobileTablet 2026-07-20-09:30: tablet uses the same one-surface interview switcher rather than compressing three fixed panes beside the project navigation. */
-  .planning-modal-body--compact-interview {
-    flex-direction: column;
-  }
-
-  /*
-  FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
-  FN-8445 keeps every compact interview pane's shared tabs above Answered questions on tablet,
-  where history otherwise grows before the later DOM sibling in the column.
-  */
-  .planning-modal-body--compact-interview .planning-compact-pane-switcher {
-    order: -1;
-  }
-
-  .planning-compact-pane-switcher {
-    display: flex;
-    flex: 0 0 auto;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-lg);
-    overflow-x: auto;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .planning-compact-pane-switcher .btn {
-    flex: 1 0 auto;
-    min-height: calc(var(--space-md) * 2.25);
-    justify-content: center;
-  }
-
-  .planning-modal-body--compact-interview .planning-sidebar,
-  .planning-modal-body--compact-interview .planning-detail,
-  .planning-modal-body--compact-interview .planning-running-plan {
-    width: 100%;
-    flex: 1 1 auto;
-    min-height: 0;
-    border: 0;
-  }
-
-  .planning-modal-body--compact-question .planning-sidebar,
-  .planning-modal-body--compact-question .planning-running-plan,
-  .planning-modal-body--compact-plan .planning-sidebar,
-  .planning-modal-body--compact-plan .planning-detail,
-  .planning-modal-body--compact-history .planning-detail,
-  .planning-modal-body--compact-history .planning-running-plan {
-    display: none;
-  }
-
   /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
   .planning-modal-body--show-list {
     flex: 1;
@@ -1590,9 +1425,7 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
     flex-shrink: 0;
   }
 
-  .planning-modal-body--show-list .planning-detail,
-  .planning-modal-body--show-list .planning-running-plan,
-  .planning-modal-body--show-list .planning-compact-pane-switcher {
+  .planning-modal-body--show-list .planning-detail {
     display: none;
   }
 
@@ -2149,11 +1982,4 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
 /* Subtask header override */
 .subtask-item-header--between {
   justify-content: space-between;
-}
-
-.planning-answered-history-response {
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
