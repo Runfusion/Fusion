@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ArtifactWithTask, ColumnId, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { artifactMediaUrlWithToken, fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
+import { artifactMediaUrlWithToken, fetchArtifact, fetchTaskDetail, fetchTaskDocument, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
 import { useArtifacts } from "../hooks/useArtifacts";
 import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
@@ -249,10 +249,14 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   /*
   FNXC:TaskDocumentCAS 2026-07-20-11:06:
   The global Artifacts editor pins the selected task document's loaded revision/hash for the lifetime of its draft. Conflict refreshes may reveal the newer revision, but must leave the shared FileEditor open with the user's draft on desktop and mobile and must not auto-retry.
+
+  FNXC:TaskDocumentCAS 2026-07-20-15:42:
+  A conflict must require an explicit rebase before another Save. Capture the freshly fetched revision/hash separately, keep the draft byte-for-byte unchanged, and only advance the write baseline when the operator chooses Rebase; this prevents both deterministic stale retries and silent overwrites.
   */
   const [editingTaskDocumentId, setEditingTaskDocumentId] = useState<string | null>(null);
   const [taskDocDraft, setTaskDocDraft] = useState("");
   const [taskDocPrecondition, setTaskDocPrecondition] = useState<{ revision: number; contentHash: string } | null>(null);
+  const [pendingTaskDocRebase, setPendingTaskDocRebase] = useState<{ revision: number; contentHash: string } | null>(null);
   const [taskDocSaving, setTaskDocSaving] = useState(false);
   const [artifactDocContent, setArtifactDocContent] = useState<string | null>(null);
   const [artifactDocLoading, setArtifactDocLoading] = useState(false);
@@ -329,6 +333,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setTaskDocMarkdownStates(new Map());
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setTaskDocPrecondition(null);
+    setPendingTaskDocRebase(null);
     setTaskDocSaving(false);
     setArtifactDocContent(null);
     setArtifactDocLoading(false);
@@ -426,6 +432,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
       setSelectedTaskItem(null);
       setEditingTaskDocumentId(null);
       setTaskDocDraft("");
+      setTaskDocPrecondition(null);
+      setPendingTaskDocRebase(null);
       setArtifactDocContent(null);
       setArtifactDocLoading(false);
       setArtifactDocError(null);
@@ -473,6 +481,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
       setSelectedTaskItem(null);
       setEditingTaskDocumentId(null);
       setTaskDocDraft("");
+      setTaskDocPrecondition(null);
+      setPendingTaskDocRebase(null);
       setArtifactDocContent(null);
       setArtifactDocLoading(false);
       setArtifactDocError(null);
@@ -580,6 +590,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setSelectedTaskItem({ kind: "document", id: docId });
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setTaskDocPrecondition(null);
+    setPendingTaskDocRebase(null);
     setArtifactDocContent(null);
     setArtifactDocLoading(false);
     setArtifactDocError(null);
@@ -589,6 +601,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setSelectedTaskItem({ kind: "artifact", id: artifactId });
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setTaskDocPrecondition(null);
+    setPendingTaskDocRebase(null);
     setArtifactDocContent(null);
     setArtifactDocError(null);
     setRenderArtifactMarkdown(true);
@@ -598,6 +612,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setSelectedTaskItem(null);
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setTaskDocPrecondition(null);
+    setPendingTaskDocRebase(null);
     setArtifactDocContent(null);
     setArtifactDocLoading(false);
     setArtifactDocError(null);
@@ -617,16 +633,24 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setTaskDocDraft(selectedTaskDocument.content);
     setEditingTaskDocumentId(selectedTaskDocument.id);
     setTaskDocPrecondition({ revision: selectedTaskDocument.revision, contentHash: selectedTaskDocument.contentHash });
+    setPendingTaskDocRebase(null);
   }, [selectedTaskDocument]);
 
   const handleCancelTaskDocEdit = useCallback(() => {
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
     setTaskDocPrecondition(null);
+    setPendingTaskDocRebase(null);
   }, []);
 
+  const handleRebaseTaskDocEdit = useCallback(() => {
+    if (!pendingTaskDocRebase) return;
+    setTaskDocPrecondition(pendingTaskDocRebase);
+    setPendingTaskDocRebase(null);
+  }, [pendingTaskDocRebase]);
+
   const handleSaveTaskDocEdit = useCallback(async () => {
-    if (!selectedTaskDocument || !taskDocPrecondition) return;
+    if (!selectedTaskDocument || !taskDocPrecondition || pendingTaskDocRebase) return;
     setTaskDocSaving(true);
     try {
       await putTaskDocument(selectedTaskDocument.taskId, selectedTaskDocument.key, taskDocDraft, {
@@ -637,18 +661,25 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
       setEditingTaskDocumentId(null);
       setTaskDocDraft("");
       setTaskDocPrecondition(null);
+      setPendingTaskDocRebase(null);
       addToast(t("documents.taskDocumentSaved", "Document saved"), "success");
     } catch (err) {
       if (typeof err === "object" && err !== null && "status" in err && err.status === 409) {
-        await refreshDocuments();
-        addToast(t("documents.taskDocumentStale", "This document changed since you opened it. Your draft is preserved; review the latest revision and save again after rebasing."), "error");
+        try {
+          const latest = await fetchTaskDocument(selectedTaskDocument.taskId, selectedTaskDocument.key, projectId);
+          await refreshDocuments();
+          setPendingTaskDocRebase({ revision: latest.revision, contentHash: latest.contentHash });
+          addToast(t("documents.taskDocumentStale", "This document changed since you opened it. Your draft is preserved; review the latest revision, then choose Rebase draft before saving."), "error");
+        } catch (refreshError) {
+          addToast(refreshError instanceof Error ? refreshError.message : String(refreshError), "error");
+        }
       } else {
         addToast(err instanceof Error ? err.message : String(err), "error");
       }
     } finally {
       setTaskDocSaving(false);
     }
-  }, [selectedTaskDocument, taskDocDraft, taskDocPrecondition, projectId, refreshDocuments, addToast, t]);
+  }, [selectedTaskDocument, taskDocDraft, taskDocPrecondition, pendingTaskDocRebase, projectId, refreshDocuments, addToast, t]);
 
   useEffect(() => {
     if (!selectedTaskArtifact || getArtifactCategory(selectedTaskArtifact) !== "doc") {
@@ -1151,7 +1182,12 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                             <button className="btn btn-sm" onClick={handleCancelTaskDocEdit} disabled={taskDocSaving}>
                               {t("documents.cancelEdit", "Cancel")}
                             </button>
-                            <button className="btn btn-sm btn-primary" onClick={() => void handleSaveTaskDocEdit()} disabled={taskDocSaving}>
+                            {pendingTaskDocRebase && (
+                              <button className="btn btn-sm" onClick={handleRebaseTaskDocEdit} disabled={taskDocSaving}>
+                                {t("documents.rebaseTaskDocument", "Rebase draft")}
+                              </button>
+                            )}
+                            <button className="btn btn-sm btn-primary" onClick={() => void handleSaveTaskDocEdit()} disabled={taskDocSaving || pendingTaskDocRebase !== null}>
                               {taskDocSaving ? t("documents.saving", "Saving…") : t("documents.saveTaskDocument", "Save")}
                             </button>
                           </>

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import { DocumentsView } from "../DocumentsView";
-import { fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, updateArtifact } from "../../api";
+import { fetchArtifact, fetchTaskDetail, fetchTaskDocument, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, updateArtifact } from "../../api";
 import { useArtifacts } from "../../hooks/useArtifacts";
 import { useDocuments } from "../../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../../hooks/useProjectMarkdownFiles";
@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
   fetchAllDocuments: vi.fn(),
   fetchWorkspaceFileContent: vi.fn(),
   fetchTaskDetail: vi.fn(),
+  fetchTaskDocument: vi.fn(),
   fetchArtifacts: vi.fn(),
   fetchArtifact: vi.fn(),
   updateArtifact: vi.fn(),
@@ -48,6 +49,7 @@ const mockUseArtifacts = vi.mocked(useArtifacts);
 const mockUseProjectMarkdownFiles = vi.mocked(useProjectMarkdownFiles);
 const mockFetchWorkspaceFileContent = vi.mocked(fetchWorkspaceFileContent);
 const mockFetchTaskDetail = vi.mocked(fetchTaskDetail);
+const mockFetchTaskDocument = vi.mocked(fetchTaskDocument);
 const mockFetchArtifact = vi.mocked(fetchArtifact);
 const mockUpdateArtifact = vi.mocked(updateArtifact);
 const mockPutTaskDocument = vi.mocked(putTaskDocument);
@@ -426,6 +428,7 @@ describe("DocumentsView", () => {
       size: 18,
     });
     mockFetchTaskDetail.mockResolvedValue({ id: "KB-001" } as TaskDetail);
+    mockFetchTaskDocument.mockResolvedValue(mockTaskDocuments[0]);
   });
 
   afterEach(() => {
@@ -1406,8 +1409,17 @@ describe("DocumentsView", () => {
     expect(addToast).toHaveBeenCalledWith("Document saved", "success");
   });
 
-  it("preserves the editor draft and refreshes after a task-document conflict", async () => {
-    mockPutTaskDocument.mockRejectedValue(Object.assign(new Error("stale"), { status: 409 }));
+  it("explicitly rebases a preserved conflict draft before saving with the refreshed baseline", async () => {
+    const refreshed = {
+      ...mockTaskDocuments[0],
+      content: "Concurrent server content",
+      revision: 2,
+      contentHash: `sha256:${"b".repeat(64)}`,
+    };
+    mockFetchTaskDocument.mockResolvedValue(refreshed);
+    mockPutTaskDocument
+      .mockRejectedValueOnce(Object.assign(new Error("stale"), { status: 409 }))
+      .mockResolvedValueOnce({ ...refreshed, content: "Preserved stale draft", revision: 3 });
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
     fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
@@ -1416,8 +1428,17 @@ describe("DocumentsView", () => {
     fireEvent.change(screen.getByLabelText("file editor"), { target: { value: "Preserved stale draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.stringContaining("draft is preserved"), "error"));
+    const rebaseButton = await screen.findByRole("button", { name: "Rebase draft" });
     expect(screen.getByLabelText("file editor")).toHaveValue("Preserved stale draft");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(rebaseButton);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutTaskDocument).toHaveBeenNthCalledWith(2, "KB-001", "plan", "Preserved stale draft", {
+      expectedRevision: 2,
+      expectedContentHash: `sha256:${"b".repeat(64)}`,
+    }, undefined));
+    await waitFor(() => expect(screen.queryByLabelText("file editor")).not.toBeInTheDocument());
   });
 
   it("cancels task document editing without saving and suppresses select-to-comment while editing", async () => {

@@ -122,8 +122,19 @@ describe("TaskDocumentsTab", () => {
     });
   });
 
-  it("forwards the loaded revision and hash and preserves a stale draft", async () => {
-    mockPutTaskDocument.mockRejectedValue(Object.assign(new Error("stale"), { status: 409 }));
+  it("explicitly rebases a preserved conflict draft before saving with the refreshed baseline", async () => {
+    const refreshedDocuments = mockDocuments.map((doc) => doc.key === "plan" ? {
+      ...doc,
+      content: "Concurrent server content",
+      revision: 2,
+      contentHash: `sha256:${"c".repeat(64)}`,
+    } : doc);
+    mockFetchTaskDocuments
+      .mockResolvedValueOnce(mockDocuments)
+      .mockResolvedValue(refreshedDocuments);
+    mockPutTaskDocument
+      .mockRejectedValueOnce(Object.assign(new Error("stale"), { status: 409 }))
+      .mockResolvedValueOnce(refreshedDocuments[0]);
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} projectId="project-1" canEdit />);
 
     const card = await waitFor(() => getDocumentCard("plan"));
@@ -132,12 +143,17 @@ describe("TaskDocumentsTab", () => {
     fireEvent.change(editor, { target: { value: "My preserved draft" } });
     fireEvent.click(within(card).getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(mockPutTaskDocument).toHaveBeenCalledWith("KB-001", "plan", "My preserved draft", {
-      expectedRevision: 1,
-      expectedContentHash: `sha256:${"a".repeat(64)}`,
-    }, "project-1"));
+    const rebaseButton = await within(card).findByRole("button", { name: "Rebase draft" });
     expect(editor).toHaveValue("My preserved draft");
-    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("draft is preserved"), "error");
+    expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(rebaseButton);
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutTaskDocument).toHaveBeenNthCalledWith(2, "KB-001", "plan", "My preserved draft", {
+      expectedRevision: 2,
+      expectedContentHash: `sha256:${"c".repeat(64)}`,
+    }, "project-1"));
+    await waitFor(() => expect(within(card).queryByRole("textbox")).not.toBeInTheDocument());
   });
 
   it("renders the renamed Artifacts heading with document list", async () => {
