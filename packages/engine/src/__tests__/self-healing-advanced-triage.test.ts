@@ -112,8 +112,9 @@ describe("advanced workflow tasks stranded in triage", () => {
     const stranded = task("FN-RACING-CLAIM");
     const store = storeFor([stranded]);
     let claimed = false;
-    const moveTaskIf = (store.moveTaskIf as ReturnType<typeof vi.fn>).getMockImplementation()!;
-    (store.moveTaskIf as ReturnType<typeof vi.fn>).mockImplementation(async (...args: unknown[]) => {
+    const moveTaskIfMock = vi.mocked(store.moveTaskIf);
+    const moveTaskIf = moveTaskIfMock.getMockImplementation()!;
+    moveTaskIfMock.mockImplementation(async (...args) => {
       claimed = true;
       return moveTaskIf(...args);
     });
