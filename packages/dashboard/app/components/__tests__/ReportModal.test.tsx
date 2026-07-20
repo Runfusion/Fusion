@@ -1,19 +1,112 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReportModal } from "../ReportModal";
 import * as api from "../../api";
+import * as capture from "../../utils/report-capture";
 
 vi.mock("../../api", () => ({
+  reportAttachment: vi.fn(),
   reportDraft: vi.fn(),
   reportFile: vi.fn(),
   reportHelp: vi.fn(),
 }));
+vi.mock("../../utils/report-capture", () => ({
+  captureScreenshot: vi.fn(),
+  getRecentActivity: vi.fn(() => []),
+  recordActivity: vi.fn(),
+}));
 
+const reportAttachment = vi.mocked(api.reportAttachment);
 const reportDraft = vi.mocked(api.reportDraft);
 const reportFile = vi.mocked(api.reportFile);
+const captureScreenshot = vi.mocked(capture.captureScreenshot);
 
 describe("ReportModal", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    captureScreenshot.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+  });
+
+  /*
+   * FNXC:ReportPipeline 2026-07-20-09:35:
+   * Opt-in capture must visibly enter its pending preview container before the
+   * retained artifact reference can unlock filing.
+   */
+  it("uploads an opted-in screenshot and sends its reference only after retention confirmation", async () => {
+    reportAttachment.mockResolvedValueOnce({ artifactId: "123e4567-e89b-42d3-a456-426614174000" });
+    reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Store a screenshot locally" }));
+    expect(screen.getByText("Capturing and storing locally…")).toBeInTheDocument();
+    expect(document.querySelector(".report-modal__screenshot-preview")).toBeInTheDocument();
+    const confirmation = await screen.findByRole("checkbox", { name: /I confirm Fusion may retain/ });
+    fireEvent.click(confirmation);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => expect(reportDraft).toHaveBeenCalledWith(expect.objectContaining({
+      screenshotArtifactId: "123e4567-e89b-42d3-a456-426614174000",
+    })));
+    reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1" });
+    fireEvent.click(await screen.findByRole("button", { name: "File report" }));
+    await waitFor(() => expect(reportFile).toHaveBeenCalledWith(expect.objectContaining({
+      screenshotArtifactId: "123e4567-e89b-42d3-a456-426614174000",
+    })));
+  });
+
+  /*
+   * FNXC:ReportPipeline 2026-07-19-20:45:
+   * Capture failure must return the modal to an accessible retryable prompt;
+   * opt-out removes the only attachment-specific affordances without shells.
+   */
+  it("returns a failed screenshot capture to an accessible retryable prompt without empty controls", async () => {
+    captureScreenshot.mockRejectedValueOnce(new Error("Screen capture was denied"));
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Store a screenshot locally" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Screen capture was denied");
+    expect(screen.getByRole("checkbox", { name: "Store a screenshot locally" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByText("Capturing and storing locally…")).not.toBeInTheDocument();
+    for (const button of screen.getAllByRole("button")) expect(button.textContent?.trim() || button.getAttribute("aria-label")?.trim()).toBeTruthy();
+  });
+
+  it("keeps screenshot references out of both requests when reporters do not opt in", async () => {
+    vi.mocked(capture.getRecentActivity).mockReturnValue(["local trace"]);
+    reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
+    reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1" });
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(reportDraft).toHaveBeenCalledWith(expect.objectContaining({ activityTrace: ["local trace"], screenshotArtifactId: undefined })));
+    fireEvent.click(await screen.findByRole("button", { name: "File report" }));
+    await waitFor(() => expect(reportFile).toHaveBeenCalledWith(expect.objectContaining({ screenshotArtifactId: undefined })));
+  });
+
+  it("retains the canonical mobile rule because modal DOM is breakpoint-independent", () => {
+    const css = readFileSync("app/components/ReportModal.css", "utf8");
+    expect(css).toMatch(/@media \(max-width: 768px\)/);
+    expect(css).toMatch(/\.report-modal \{ inline-size: 100%;/);
+  });
+
+  it("clears a pending capture when the reporter opts out", async () => {
+    let resolveUpload!: (value: { artifactId: string }) => void;
+    reportAttachment.mockReturnValueOnce(new Promise((resolve) => { resolveUpload = resolve; }));
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    const option = screen.getByRole("checkbox", { name: "Store a screenshot locally" });
+    fireEvent.click(option);
+    fireEvent.click(option);
+    resolveUpload({ artifactId: "123e4567-e89b-42d3-a456-426614174000" });
+
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: /I confirm Fusion may retain/ })).not.toBeInTheDocument());
+    expect(option).not.toBeChecked();
+  });
 
   it("shows an actionable error and retry affordance when preparing a report fails", async () => {
     reportDraft.mockRejectedValueOnce(new Error("offline"));
@@ -62,18 +155,16 @@ describe("ReportModal", () => {
     })));
   });
 
-  it("shows a roadmap match inline without a filing or dead-link affordance", async () => {
-    reportDraft.mockResolvedValueOnce({ kind: "roadmap-match", roadmap: { featureId: "RF-1", title: "Offline report queue", description: "Keep reports available while offline" } });
+  it("offers a reviewed endorsement for a roadmap issue", async () => {
+    reportDraft.mockResolvedValueOnce({ kind: "duplicate-found", report: { userPrompt: "Keep reports while offline", body: "data" }, issue: { number: 30, title: "Offline report queue", url: "https://example.test/issues/30", roadmap: true } });
     render(<ReportModal actionType="idea" onClose={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("What would you like Fusion to do?"), { target: { value: "Keep reports while offline" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByText("Already on the roadmap")).toBeInTheDocument();
-    expect(screen.getByText("Offline report queue")).toBeInTheDocument();
-    expect(screen.getByText("Keep reports available while offline")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /file/i })).not.toBeInTheDocument();
+    expect(await screen.findByText("Already on the roadmap — add your data point?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and add data point" }));
+    await waitFor(() => expect(reportFile).toHaveBeenCalledWith(expect.objectContaining({ endorseRoadmapIssueNumber: 30 })));
   });
 
   it("lets people return to the guided prompt after an unavailable response", async () => {
@@ -87,18 +178,17 @@ describe("ReportModal", () => {
     expect(screen.getByLabelText("What would you like to share?")).toBeInTheDocument();
   });
 
-  it("warns when a reviewed screenshot could not be attached", async () => {
-    reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
-    reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1", screenshotNotAttached: true });
-    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+  it.each([
+    ["issue", "Report filed as an Issue"],
+    ["discussion", "Report sent"],
+  ] as const)("shows the %s filing destination", async (destination, message) => {
+    reportDraft.mockResolvedValueOnce({ kind: "filed", destination, url: "https://example.test/1" });
+    render(<ReportModal actionType="feedback" onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.change(screen.getByLabelText("What would you like to share?"), { target: { value: "A thought" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByText("Review your report");
-    fireEvent.click(screen.getByRole("button", { name: "File report" }));
 
-    expect(await screen.findByText("Report sent without screenshot")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("No screenshot pixels were shared");
+    expect(await screen.findByText(message)).toBeInTheDocument();
   });
 
   it("keeps the original derivation marker when the review prompt is edited", async () => {

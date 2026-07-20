@@ -516,10 +516,31 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
  * Returns `"<provider>/<modelId>"` (e.g. `"anthropic/claude-sonnet-4-5"`)
  * or `"unknown model"` when the session has no model set.
  */
+/*
+FNXC:MultiShapeModelMarker 2026-07-20-08:00:
+Lane logs share this formatter across pi and ACP runtimes. Pi supplies a
+{provider,id} model object, while Grok/ACP sessions carry a string model plus a
+lastModelDescription; accept both so dashboard-parseable provider/model markers
+never degrade to `undefined/undefined`.
+*/
 export function describeModel(session: AgentSession): string {
-  const model = session.model;
-  if (!model) return "unknown model";
-  return `${model.provider}/${model.id}`;
+  const model = (session as { model?: unknown }).model;
+  if (model && typeof model === "object") {
+    const { provider, id } = model as { provider?: unknown; id?: unknown };
+    if (typeof provider === "string" && provider.trim() && typeof id === "string" && id.trim()) {
+      return `${provider}/${id}`;
+    }
+  }
+
+  const lastModelDescription = (session as { lastModelDescription?: unknown }).lastModelDescription;
+  if (typeof lastModelDescription === "string" && lastModelDescription.trim()) {
+    return lastModelDescription.trim();
+  }
+
+  if (typeof model === "string" && model.trim()) {
+    return model.trim();
+  }
+  return "unknown model";
 }
 
 /**

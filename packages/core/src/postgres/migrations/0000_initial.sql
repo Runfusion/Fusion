@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   no_commits_expected integer DEFAULT 0,
   enabled_workflow_steps jsonb DEFAULT '[]',
   modified_files jsonb DEFAULT '[]',
+  declared_symbols jsonb NOT NULL DEFAULT '[]'::jsonb,
   mission_id text,
   slice_id text,
   scope_override integer,

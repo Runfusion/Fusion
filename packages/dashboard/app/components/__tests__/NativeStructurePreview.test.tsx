@@ -14,11 +14,19 @@ const refs: NativeStructureRef[] = [
   { kind: "research-finding", id: "INS-1" },
   { kind: "eval-result", id: "EV-1" },
   { kind: "goal", id: "G-1" },
+  { kind: "roadmap-item", id: "RF-1" },
 ];
 
 function payload(ref: NativeStructureRef): NativeStructurePreviewPayload {
-  const views = { mission: "missions", milestone: "missions", "research-finding": "insights", "eval-result": "evals", goal: "goals" } as const;
-  return { available: true, kind: ref.kind, kindLabel: ref.kind, title: `${ref.kind} title`, excerpt: "Compact excerpt", openTarget: { view: views[ref.kind], id: ref.id } };
+  const views = { mission: "missions", milestone: "missions", "research-finding": "insights", "eval-result": "evals", goal: "goals", "roadmap-item": "roadmaps" } as const;
+  return {
+    available: true,
+    kind: ref.kind,
+    kindLabel: ref.kind === "roadmap-item" ? "Roadmap item" : ref.kind,
+    title: `${ref.kind} title`,
+    excerpt: "Compact excerpt",
+    openTarget: { view: views[ref.kind], id: ref.id },
+  };
 }
 
 describe("NativeStructurePreview", () => {
@@ -74,12 +82,11 @@ describe("NativeStructurePreview", () => {
     await waitFor(() => expect(screen.getByTestId("native-structure-preview-error")).toBeInTheDocument());
   });
 
-  it("does not fetch or crash for a deferred runtime kind", () => {
-    fetchPreview.mockClear();
-    const deferredRef = { kind: "roadmap-item", id: "R-1" } as unknown as NativeStructureRef;
-    render(<NativeStructurePreview ref={deferredRef} onOpen={vi.fn()} />);
-    expect(screen.getByTestId("native-structure-preview-unavailable")).toBeInTheDocument();
-    expect(fetchPreview).not.toHaveBeenCalled();
+  it("renders the missing-only roadmap-item placeholder", () => {
+    const ref: NativeStructureRef = { kind: "roadmap-item", id: "RF-missing" };
+    render(<NativeStructurePreview ref={ref} payload={{ available: false, kind: "roadmap-item", id: ref.id, reason: "missing" }} onOpen={vi.fn()} />);
+    expect(screen.getByTestId("native-structure-preview-unavailable")).toHaveAttribute("data-reason", "missing");
+    expect(screen.getByText("roadmap item")).toBeInTheDocument();
   });
 
   it("lets a later caller-supplied payload replace a failed fetch", async () => {
@@ -93,8 +100,21 @@ describe("NativeStructurePreview", () => {
     expect(screen.queryByTestId("native-structure-preview-error")).toBeNull();
   });
 
-  it("keeps the open affordance inside the mobile layout contract", () => {
-    const { container } = render(<NativeStructurePreview ref={refs[0]} payload={payload(refs[0])} onOpen={vi.fn()} />);
+  it("dispatches roadmap-item navigation without a dead anchor", () => {
+    const ref: NativeStructureRef = { kind: "roadmap-item", id: "RF-1" };
+    const result = payload(ref);
+    const onOpen = vi.fn();
+    const { container } = render(<NativeStructurePreview ref={ref} payload={result} onOpen={onOpen} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Roadmap item: roadmap-item title" }));
+
+    expect(onOpen).toHaveBeenCalledWith(ref, expect.objectContaining({ openTarget: { view: "roadmaps", id: "RF-1" } }));
+    expect(container.querySelector("a[href]")).toBeNull();
+  });
+
+  it("keeps the roadmap-item open affordance inside the mobile layout contract", () => {
+    const ref: NativeStructureRef = { kind: "roadmap-item", id: "RF-1" };
+    const { container } = render(<NativeStructurePreview ref={ref} payload={payload(ref)} onOpen={vi.fn()} />);
     expect(container.querySelector(".native-structure-preview__open")).toBeInTheDocument();
     const css = loadAllAppCss();
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.native-structure-preview__open/);

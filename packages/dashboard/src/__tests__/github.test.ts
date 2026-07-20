@@ -2435,19 +2435,33 @@ describe("GitHubClient", () => {
 describe("isGitHubIssueAlreadyImported", () => {
   const input = { owner: "owner", repo: "repo", issueNumber: 1, sourceUrl: "https://github.com/owner/repo/issues/1" };
 
-  it("matches edited sourceIssue metadata, legacy source metadata, and description URLs", () => {
-    expect(isGitHubIssueAlreadyImported({ description: "Source: https://github.com/OWNER/REPO/issues/1" }, input)).toBe(true);
+  it("prefers persisted sourceIssue provenance over an edited description", () => {
     expect(isGitHubIssueAlreadyImported({
-      description: "Edited description",
-      sourceIssue: { provider: "github", repository: "Owner/Repo", issueNumber: 1, externalIssueId: "1", url: "https://github.com/other/repo/issues/2" },
+      description: "Edited description without source URL",
+      sourceIssue: { provider: "github", repository: "Owner/Repo", externalIssueId: "1", url: "https://github.com/other/repo/issues/99" },
     }, input)).toBe(true);
+  });
+
+  it("matches normalized legacy metadata after sourceIssue", () => {
     expect(isGitHubIssueAlreadyImported({
-      description: "Edited description",
+      description: "Edited description without source URL",
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/Owner/Repo/issues/2", issueNumber: 1 } },
     }, input)).toBe(true);
   });
 
-  it("does not match a fresh issue", () => {
+  it("does not let a description URL override nonmatching structured provenance", () => {
+    expect(isGitHubIssueAlreadyImported({
+      description: `Quoted target URL: ${input.sourceUrl}`,
+      sourceIssue: { provider: "github", repository: "other/repo", issueNumber: 2, url: "https://github.com/other/repo/issues/2" },
+    }, input)).toBe(false);
+    expect(isGitHubIssueAlreadyImported({
+      description: `Quoted target URL: ${input.sourceUrl}`,
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/other/repo/issues/2", issueNumber: 2 } },
+    }, input)).toBe(false);
+  });
+
+  it("uses description URLs only as the final legacy fallback", () => {
+    expect(isGitHubIssueAlreadyImported({ description: "Source: https://github.com/OWNER/REPO/issues/1" }, input)).toBe(true);
     expect(isGitHubIssueAlreadyImported({ description: "Unrelated" }, input)).toBe(false);
   });
 });

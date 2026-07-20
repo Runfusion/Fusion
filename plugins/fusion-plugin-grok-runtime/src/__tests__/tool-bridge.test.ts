@@ -1,5 +1,9 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { startFusionToolBridge, toolsToMcpToolDefs } from "../tool-bridge.js";
+import { fusionToolsMcpServerPath, startFusionToolBridge, toolsToMcpToolDefs } from "../tool-bridge.js";
 
 describe("tool-bridge", () => {
   it("filters built-ins and maps tool schemas", () => {
@@ -84,6 +88,33 @@ describe("tool-bridge", () => {
     expect(body.content?.[0]?.text).toContain("FN-1");
 
     await bridge!.dispose();
+  });
+
+  it("serves MCP initialize from the co-located schema server", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "fusion-mcp-smoke-"));
+    const schemaPath = join(directory, "schemas.json");
+    await writeFile(schemaPath, "[]");
+    const child = spawn(process.execPath, [fusionToolsMcpServerPath(), schemaPath], {
+      env: { ...process.env, FUSION_GROK_TOOL_BRIDGE_URL: "http://127.0.0.1:1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let output = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          output += chunk;
+          const line = output.split("\n")[0];
+          if (line) resolve(JSON.parse(line) as Record<string, unknown>);
+        });
+        child.once("error", reject);
+        child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+      });
+      expect((response.result as { serverInfo?: { name?: string } }).serverInfo?.name).toBe("fusion-custom-tools");
+    } finally {
+      child.kill();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("returns null when there are no custom tools", async () => {

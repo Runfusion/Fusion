@@ -47,6 +47,9 @@ import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./task-agent-sync.js";
+import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./mission-symbol-admission.js";
+
+const SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
 
 /*
 FNXC:WorkflowScheduling 2026-07-15-12:55:
@@ -854,8 +857,17 @@ export class Scheduler {
         this.options.snapshotManager?.invalidate("task:updated");
       }
       // Track mission failure signals before moveTask clears failure metadata.
-      if (task.sliceId && task.column === "in-progress" && task.status === "failed") {
-        this.failedTaskIds.add(task.id);
+      if (task.sliceId && task.status === "failed") {
+        if (task.column === "in-progress") this.failedTaskIds.add(task.id);
+        /*
+        FNXC:MissionReconciliation 2026-08-01-00:00:
+        In-place failure parks do not emit task:moved, but they release the
+        task's durable symbol lock. Reconcile any mission-linked failure update
+        so the roadmap records withheld provenance without fabricating completion.
+        */
+        if (this.options.missionStore) {
+          void this.handleMissionTaskMove(task.id, task.column);
+        }
       } else if (task.status !== "failed") {
         this.failedTaskIds.delete(task.id);
       }
@@ -1326,6 +1338,8 @@ export class Scheduler {
       // Refresh the poll interval if the persisted setting has changed
       this.refreshPollInterval(settings.pollIntervalMs);
 
+      await this.renewActiveMissionSymbolLocks(tasks);
+
       // Global pause (hard stop): halt all scheduling activity
       if (settings.globalPause) {
         if (!this.wasGlobalPaused) {
@@ -1761,8 +1775,24 @@ export class Scheduler {
         // If staleness evaluation was skipped (missing/unreadable file), continue to
         // existing scheduler logic which handles filesystem validation separately.
 
-        // Check file scope overlap when enabled
-        if (settings.groupOverlappingFiles) {
+        // FNXC:MissionSymbolAdmission 2026-08-01-00:00: Apply the same three-way
+        // admission before the early overlap/priority pass and the final release
+        // reservation. Otherwise this pass would serialize approved disjoint symbols
+        // (or misdiagnose unapproved mission work as an overlap) before lock admission.
+        const earlyMissionAdmission = await decideMissionSymbolAdmission(
+          task,
+          this.options.missionStore,
+          { planApprovalRequired: settings.planApprovalMode === "require-all" },
+        );
+        if (earlyMissionAdmission.kind === "lineage-blocked") {
+          await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+          await this.logDispatchQueuedReason(task.id, `queued — mission lineage blocked: ${earlyMissionAdmission.reason}`);
+          continue;
+        }
+
+        // Check file scope overlap when enabled. Approved, resolvable mission work
+        // bypasses this coarse pass and is mutually excluded by its durable symbols.
+        if (settings.groupOverlappingFiles && earlyMissionAdmission.kind === "coarse-fallback") {
           const taskScope = await getFilteredFileScope(task.id);
           const coordinationOnlyTask = isCoordinationOnlyTask(task, taskScope);
           if (taskScope.length > 0 && !coordinationOnlyTask) {
@@ -2262,6 +2292,56 @@ export class Scheduler {
    * worktree allocation into the reservation-first ordering (KTD-10). Failures
    * are isolated so a sweep error never breaks the scheduling pass.
    */
+  /**
+   * FNXC:MissionSymbolAdmission 2026-07-19-22:04:
+   * Active implementation follows the workflow `countsTowardWip` trait, so renamed
+   * and multi-WIP workflows keep their declared symbols exclusively held.
+   */
+  private async renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> {
+    for (const task of tasks) {
+      let isImplementationColumn = task.column === "in-progress";
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, task.id);
+        const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
+        if (column) isImplementationColumn = resolveColumnFlags(column).countsTowardWip === true;
+      } catch {
+        // Preserve the legacy in-progress fallback if workflow resolution is unavailable.
+      }
+      if (!isImplementationColumn) continue;
+      // TaskStore normalizes durable declarations on write; renewal deliberately
+      // reads that field rather than the prompt so an explicit declaration clear
+      // can never recreate a lock.
+      const symbols = [...new Set((task.declaredSymbols ?? []).filter((symbol): symbol is string => typeof symbol === "string" && symbol.trim().length > 0))];
+      if (symbols.length === 0) continue;
+
+      // A direct mission/slice link is sufficient for renewal. Feature-only links
+      // are resolved through the store when available, without re-evaluating
+      // approval: a running owner retains its admission lease until transition release.
+      let missionLinked = Boolean(task.missionId || task.sliceId);
+      if (!missionLinked && this.options.missionStore) {
+        try {
+          missionLinked = Boolean(await this.options.missionStore.getFeatureByTaskId(task.id));
+        } catch (error) {
+          schedulerLog.warn(`Symbol-lock renewal lineage lookup failed for ${task.id}:`, error);
+          continue;
+        }
+      }
+      if (!missionLinked) continue;
+
+      try {
+        const result = await this.store.renewSymbolLocks(symbols, task.id, SYMBOL_LOCK_LEASE_MS);
+        if (result.lost.length > 0) {
+          schedulerLog.warn(`Symbol-lock renewal lost ownership for ${task.id}: ${result.lost.join(", ")}`);
+          await this.store.logEntry(task.id, `symbol-lock renewal lost: ${result.lost.join(", ")}`);
+        }
+      } catch (error) {
+        // Do not abort capacity admission for unrelated tasks; the durable expiry
+        // and self-healing reconciliation remain the crash-safe backstop.
+        schedulerLog.warn(`Symbol-lock renewal failed for ${task.id}:`, error);
+      }
+    }
+  }
+
   private async runHoldReleaseSweepPass(tasks: Task[], settings: Settings): Promise<void> {
     try {
       const maxWorktrees = settings.maxWorktrees ?? this.options.maxWorktrees ?? 4;
@@ -2766,7 +2846,25 @@ export class Scheduler {
             return null;
           }
 
-          if (settings.groupOverlappingFiles) {
+          /*
+          FNXC:MissionSymbolAdmission 2026-07-31-12:00:
+          FN-8306 blocks mission-linked work before any file-scope or work-slot
+          reservation unless the canonical lineage predicate is satisfied. A
+          symbol-lock candidate bypasses coarse overlap only; every capacity,
+          checkout, dependency, and semaphore gate below still applies.
+          */
+          const missionAdmission = await decideMissionSymbolAdmission(
+            freshTask,
+            this.options.missionStore,
+            { planApprovalRequired: latestSettings.planApprovalMode === "require-all" },
+          );
+          if (missionAdmission.kind === "lineage-blocked") {
+            await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+            await this.logDispatchQueuedReason(task.id, `queued — mission lineage blocked: ${missionAdmission.reason}`);
+            return null;
+          }
+
+          if (settings.groupOverlappingFiles && missionAdmission.kind === "coarse-fallback") {
             const taskScope = await getFilteredFileScope(task.id);
             if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
               const overlappingTaskId = Array.from(activeScopes.entries())
@@ -2857,6 +2955,37 @@ export class Scheduler {
             registerPreHeldExecutorSlot(task.id);
           }
 
+          let acquiredSymbols: string[] | undefined;
+          if (missionAdmission.kind === "symbol-lock") {
+            /*
+            FNXC:MissionSymbolAdmission 2026-07-31-12:00:
+            Acquire after all capacity gates and immediately before hold release;
+            the reservation release path below returns this lock if moveTask
+            rejects, while a successful move transfers ownership to the task.
+            */
+            const lockResult = await this.store.acquireSymbolLocks(
+              missionAdmission.symbols,
+              { ownerTaskId: task.id, missionId: freshTask.missionId, featureId: missionAdmission.feature.id, agentId: "scheduler" },
+              SYMBOL_LOCK_LEASE_MS,
+            );
+            if (!lockResult.acquired) {
+              dropPreHeldExecutorSlot(task.id, sem);
+              if (reservedScope) {
+                activeScopes.delete(task.id);
+                activeScopeColumns.delete(task.id);
+              }
+              const conflict = lockResult.conflicts[0];
+              await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+              await this.logDispatchQueuedReason(
+                task.id,
+                `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
+              );
+              return null;
+            }
+            acquiredSymbols = missionAdmission.symbols;
+            await this.store.logEntry(task.id, `symbol-lock admission acquired: ${missionAdmission.symbols.join(", ")}`);
+          }
+
           dispatchPrepByTaskId.set(task.id, {
             baseBranch: this.resolveBaseBranch(freshTask, tasks),
             dispatchStormCount: nextDispatchStormCount,
@@ -2881,6 +3010,9 @@ export class Scheduler {
               reservedConcurrentSlots = Math.max(0, reservedConcurrentSlots - 1);
               dispatchPrepByTaskId.delete(task.id);
               dropPreHeldExecutorSlot(task.id, sem);
+              if (acquiredSymbols) {
+                void this.store.releaseSymbolLocks(acquiredSymbols, task.id);
+              }
             },
           };
         },
@@ -3011,7 +3143,7 @@ export class Scheduler {
   }
 
   private async resolveMissionFeatureForTask(missionStore: MissionStore | AsyncMissionStore, task: Task): Promise<MissionFeature | undefined> {
-    const linkedFeature = await missionStore.getFeatureByTaskId(task.id);
+    const linkedFeature = await resolveMissionFeatureForTask(missionStore, task);
     if (linkedFeature) {
       return linkedFeature;
     }

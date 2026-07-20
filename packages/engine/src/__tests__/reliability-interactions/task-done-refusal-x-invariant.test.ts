@@ -79,20 +79,20 @@ describe("FN-4851 reliability interactions: task-done refusals x invariant", () 
     invariantSpy.mockRestore();
   });
 
-  it("runs dissent refusal before scope-leak guard when invariants pass", async () => {
+  it("does not let summary prose prevent the scope-leak guard from running", async () => {
     const invariantSpy = vi.spyOn(TaskExecutor.prototype as any, "verifyWorktreeInvariants").mockResolvedValue({ ok: true });
     const scopeSpy = vi.spyOn(TaskExecutor.prototype as any, "evaluateTaskDoneScopeLeak");
     const { doneTool } = await setup();
 
     const result = await doneTool.execute("done", { summary: "To unblock, land FN-4789 first." });
 
-    expect(result.details.refusalClass).toBe("summary-claims-incomplete");
-    expect(scopeSpy).not.toHaveBeenCalled();
+    expect(result.details.refusalClass).toBeUndefined();
+    expect(scopeSpy).toHaveBeenCalled();
     scopeSpy.mockRestore();
     invariantSpy.mockRestore();
   });
 
-  it("shares one retry budget across mixed refusal classes", async () => {
+  it("shares one retry budget across repeated structural refusals", async () => {
     const { doneTool, store, getTask } = await setup({ steps: [{ name: "S1", status: "in-progress" }, { name: "S2", status: "pending" }] });
 
     // FNXC:WorkflowLifecycle 2026-07-01-21:20: setup()'s execute() drives a bare mock agent through the
@@ -115,28 +115,22 @@ describe("FN-4851 reliability interactions: task-done refusals x invariant", () 
         steps: [{ name: "S1", status: "in-progress" }, { name: "S2", status: "pending" }],
       });
 
-    await doneTool.execute("1", { summary: "Task is not complete." });
+    stageIncompleteSteps();
+    await doneTool.execute("1", { summary: "Completed implementation and tests." });
     expect(getTask().taskDoneRetryCount).toBe(1);
 
     stageIncompleteSteps();
     await doneTool.execute("2", { summary: "Completed implementation and tests." });
     expect(getTask().taskDoneRetryCount).toBe(2);
 
-    /*
-    FNXC:WorkflowReviewGates 2026-07-19-02:45:
-    U10 (R9): refusals 3 and 4 used to be driven by `fn_review_step` producing a REVISE verdict
-    (`pending-code-review-revise`). That tool is deleted and the verdict map has no writer, so the
-    class is unreachable from the executor. The invariant under test is the SHARED budget across
-    MIXED classes — not which specific classes — so the sequence now mixes bulk-step-completion
-    with summary-claims-incomplete, keeping three distinct classes on one budget.
-    */
     stageIncompleteSteps();
     const third = await doneTool.execute("3", { summary: "Completed implementation and tests." });
     expect(third.details.refusalClass).toBe("bulk-step-completion-without-review");
     expect(getTask().taskDoneRetryCount).toBe(3);
 
-    const fourth = await doneTool.execute("4", { summary: "Task is not complete." });
-    expect(fourth.details.refusalClass).toBe("summary-claims-incomplete");
+    stageIncompleteSteps();
+    const fourth = await doneTool.execute("4", { summary: "Completed implementation and tests." });
+    expect(fourth.details.refusalClass).toBe("bulk-step-completion-without-review");
     // FNXC:WorkflowLifecycle 2026-07-01-21:20: The shared retry budget is exhausted on the 4th refusal
     // (count already 3). Exhaustion is terminal and now parks the task `status: "failed"` in place under
     // the workflow-graph failure model (superseding FN-1284's move-to-in-review escalation); the invariant

@@ -459,17 +459,61 @@ async function ensureMigrationStateTable(db: PostgresJsDatabase<Record<string, n
   )`));
 }
 
+export interface SqliteMigrationState {
+  migrationKey: string;
+  projectId: string | null;
+  status: "running" | "complete" | "failed";
+  lastError: string | null;
+  updatedAt: Date | string;
+}
+
+/**
+ * FNXC:MigrationStatusDashboard 2026-07-19-12:25:
+ * Dashboard health reads the authoritative per-project cutover marker after
+ * listen. A running or failed marker is never aged out here: progress ticks do
+ * not update updated_at, and post-listen running means completion was missed.
+ * Reads must not create the marker table: dashboard and startup connections can
+ * use a runtime role that intentionally lacks CREATE permission in public.
+ */
+export async function getSqliteMigrationState(
+  db: PostgresJsDatabase<Record<string, never>>,
+  migrationKey: string,
+): Promise<SqliteMigrationState | null> {
+  const tableRows = (await db.execute(sql`
+    SELECT to_regclass('public.${sql.raw(SQLITE_MIGRATION_STATE_TABLE)}') IS NOT NULL AS exists
+  `)) as unknown as Array<{ exists: boolean }>;
+  if (!tableRows[0]?.exists) return null;
+
+  const rows = (await db.execute(sql`
+    SELECT migration_key, project_id, status, last_error, updated_at
+    FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+    WHERE migration_key = ${migrationKey}
+    LIMIT 1
+  `)) as unknown as Array<{
+    migration_key: string;
+    project_id: string | null;
+    status: "running" | "complete" | "failed";
+    last_error: string | null;
+    updated_at: Date | string;
+  }>;
+  const row = rows[0];
+  return row
+    ? {
+        migrationKey: row.migration_key,
+        projectId: row.project_id,
+        status: row.status,
+        lastError: row.last_error,
+        updatedAt: row.updated_at,
+      }
+    : null;
+}
+
 /** Return true only after a fully verified cutover records its durable marker. */
 export async function isSqliteMigrationComplete(
   db: PostgresJsDatabase<Record<string, never>>,
   migrationKey: string,
 ): Promise<boolean> {
-  await ensureMigrationStateTable(db);
-  const rows = (await db.execute(sql`
-    SELECT status FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
-    WHERE migration_key = ${migrationKey}
-  `)) as unknown as Array<{ status: string }>;
-  return rows[0]?.status === "complete";
+  return (await getSqliteMigrationState(db, migrationKey))?.status === "complete";
 }
 
 /** Mark caller-side stamping and verification complete for a durable cutover. */

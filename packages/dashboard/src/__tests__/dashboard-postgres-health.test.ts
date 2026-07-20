@@ -4,12 +4,14 @@ import type { AsyncDataLayer, TaskStore } from "@fusion/core";
 const healthMocks = vi.hoisted(() => ({
   checkPostgresHealth: vi.fn(),
   detectTaskIdIntegrityAnomaliesAsync: vi.fn(),
+  getSqliteMigrationState: vi.fn(),
 }));
 
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
   checkPostgresHealth: healthMocks.checkPostgresHealth,
   detectTaskIdIntegrityAnomaliesAsync: healthMocks.detectTaskIdIntegrityAnomaliesAsync,
+  getSqliteMigrationState: healthMocks.getSqliteMigrationState,
 }));
 
 import {
@@ -32,6 +34,7 @@ describe("evaluateDashboardPostgresHealth", () => {
       checkedAt: "2026-07-14T23:45:00.000Z",
       anomalies: [],
     });
+    healthMocks.getSqliteMigrationState.mockResolvedValue(null);
   });
 
   it("derives and probes the PostgreSQL layer owned by TaskStore", async () => {
@@ -43,6 +46,48 @@ describe("evaluateDashboardPostgresHealth", () => {
     expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(layer.db);
     expect(result.database.healthy).toBe(true);
     expect(result.taskIdIntegrity.status).toBe("ok");
+  });
+
+  it("surfaces durable failed and running cutovers without an age threshold", async () => {
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    for (const status of ["failed", "running"] as const) {
+      healthMocks.getSqliteMigrationState.mockResolvedValueOnce({
+        migrationKey: "project:/repo",
+        projectId: null,
+        status,
+        lastError: status === "failed" ? "copy failed" : null,
+        updatedAt: "2000-01-01T00:00:00.000Z",
+      });
+      const result = await evaluateDashboardPostgresHealth(store);
+      expect(result.migration).toMatchObject({ active: false, durableStatus: status, phase: status });
+      expect(result.migration?.label).toBeTruthy();
+    }
+  });
+
+  it("uses the typed bound project id before the root-directory fallback", async () => {
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    healthMocks.getSqliteMigrationState.mockResolvedValue({
+      migrationKey: "project:daemon-project",
+      projectId: "daemon-project",
+      status: "failed",
+      lastError: "copy failed",
+      updatedAt: "2000-01-01T00:00:00.000Z",
+    });
+
+    const result = await evaluateDashboardPostgresHealth(store, undefined, {
+      projectId: "daemon-project",
+    });
+
+    expect(healthMocks.getSqliteMigrationState).toHaveBeenCalledWith(layer.db, "project:daemon-project");
+    expect(result.migration).toMatchObject({ migrationKey: "project:daemon-project", durableStatus: "failed" });
+  });
+
+  it("omits migration chrome for a complete marker", async () => {
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    healthMocks.getSqliteMigrationState.mockResolvedValue({
+      migrationKey: "project:/repo", projectId: null, status: "complete", lastError: null, updatedAt: new Date(),
+    });
+    expect((await evaluateDashboardPostgresHealth(store)).migration).toBeUndefined();
   });
 
   it("uses an explicit integration layer for health and compaction without consulting TaskStore", () => {
@@ -61,7 +106,7 @@ describe("evaluateDashboardPostgresHealth", () => {
     expect(healthMocks.checkPostgresHealth).not.toHaveBeenCalled();
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: ["PostgreSQL health layer unavailable"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
@@ -78,12 +123,29 @@ describe("evaluateDashboardPostgresHealth", () => {
 
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: ["PostgreSQL task-ID integrity check failed: integrity query timed out"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
       status: "error",
       error: "PostgreSQL task-ID integrity check failed: integrity query timed out",
     });
+  });
+
+  it("keeps advisory migration-status failures from degrading proven database health", async () => {
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    healthMocks.getSqliteMigrationState.mockRejectedValue(
+      new Error("Failed query: SELECT migration marker", { cause: new Error("permission denied") }),
+    );
+
+    const result = await evaluateDashboardPostgresHealth(store);
+
+    expect(result.database).toMatchObject({
+      healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
+    });
+    expect(result.taskIdIntegrity).toMatchObject({ status: "ok", anomalies: [] });
+    expect(result.migration).toBeUndefined();
   });
 });

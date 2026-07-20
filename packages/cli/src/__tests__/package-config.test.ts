@@ -167,6 +167,32 @@ describe("CLI package.json publishing config", () => {
     assertRuntimeDepsAreNotOptionalPeers(applyPrepackTransform(pkg), "published manifest");
   });
 
+  /*
+  FNXC:PublishBoundary 2026-07-19-21:20:
+  FN-8413 / issue #2355 requires the root published manifest to carry every
+  third-party dependency used by the raw TypeScript pi-claude-cli extension.
+  The nested private dist/pi-claude-cli/package.json is inert during npm
+  install, so keep the SDK pinned to the driver's compatible 0.24.0 API here
+  and after prepack rather than relying on the workspace dependency.
+  */
+  it("keeps raw pi-claude-cli runtime dependencies on the published root manifest", () => {
+    const piClaudeCliPkg = loadPackageJson("pi-claude-cli");
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.dependencies).toHaveProperty("@agentclientprotocol/sdk", "0.24.0");
+    expect(publishedPkg.dependencies).toHaveProperty("@agentclientprotocol/sdk", "0.24.0");
+
+    for (const [name, specifier] of Object.entries(piClaudeCliPkg.dependencies ?? {})) {
+      if (name.startsWith("@fusion/") || typeof specifier !== "string" || specifier.includes("workspace:")) {
+        continue;
+      }
+      expect(
+        pkg.dependencies,
+        `raw pi-claude-cli dependency ${name} must be installed from the published root manifest`,
+      ).toHaveProperty(name, specifier);
+    }
+  });
+
   it("defines test:docs-index as a single-file docs README index lane", () => {
     const script = pkg.scripts?.["test:docs-index"];
     const parts = script?.trim().split(/\s+/) ?? [];

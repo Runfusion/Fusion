@@ -13,6 +13,7 @@ import {
   getCurrentRepo,
   runGh,
 } from "@fusion/core";
+import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_BYTES } from "./issue-image-attachments.js";
 
 const execAsync = promisify(exec);
 
@@ -113,8 +114,11 @@ function parseIssueUrl(stdout: string): { owner: string; repo: string; number: n
 }
 
 /*
-FNXC:GithubImport 2026-07-15-00:00:
-GitHub import deduplication must survive edited task descriptions and owner/repo casing changes. Both CLI import paths, both extension tools, and dashboard single/batch routes share this sourceIssue-first helper, mirroring GitLab provenance while retaining legacy description URL matching.
+FNXC:GithubImport 2026-07-17-00:00:
+GitHub issue import deduplication treats persisted provenance as authoritative so edited descriptions and owner/repo casing changes cannot misidentify an import. Every dashboard, CLI, and extension issue-import surface shares this helper, which checks sourceIssue first, legacy github_import metadata second, and legacy description URLs last.
+
+FNXC:GithubImport 2026-07-17-00:00:
+The description compatibility fallback is eligible only when neither GitHub sourceIssue nor object-shaped github_import metadata exists. A nonmatching structured record must return false rather than letting quoted or stale URL text override its provenance.
 */
 export function buildGitHubIssueSource(owner: string, repo: string, issue: { number: number; html_url: string }): {
   sourceIssue: TaskSourceIssue;
@@ -148,12 +152,9 @@ export function isGitHubIssueAlreadyImported(
 ): boolean {
   const { owner, repo, issueNumber, sourceUrl } = input;
   const repository = `${owner}/${repo}`;
-  const normalizedSourceUrl = sourceUrl.toLocaleLowerCase();
-
-  if (task.description?.toLocaleLowerCase().includes(normalizedSourceUrl)) return true;
-
   const sourceIssue = task.sourceIssue;
-  if (sourceIssue?.provider === "github") {
+  const hasGitHubSourceIssue = sourceIssue?.provider === "github";
+  if (hasGitHubSourceIssue) {
     if (equalsIgnoreCase(sourceIssue.url, sourceUrl)) return true;
     if (equalsIgnoreCase(sourceIssue.repository, repository)
       && (sourceIssue.issueNumber === issueNumber || sourceIssue.externalIssueId === String(issueNumber))) {
@@ -162,14 +163,19 @@ export function isGitHubIssueAlreadyImported(
   }
 
   const metadata = task.source?.sourceMetadata;
-  if (task.source?.sourceType === "github_import" && metadata && typeof metadata === "object") {
+  const hasGitHubSourceMetadata = task.source?.sourceType === "github_import" && metadata && typeof metadata === "object";
+  if (hasGitHubSourceMetadata) {
     const sourceMetadata = metadata as Record<string, unknown>;
     if (equalsIgnoreCase(typeof sourceMetadata.issueUrl === "string" ? sourceMetadata.issueUrl : undefined, sourceUrl)) return true;
-    return sourceMetadata.issueNumber === issueNumber
-      && equalsIgnoreCase(repositoryFromGitHubIssueUrl(sourceMetadata.issueUrl), repository);
+    if (sourceMetadata.issueNumber === issueNumber
+      && equalsIgnoreCase(repositoryFromGitHubIssueUrl(sourceMetadata.issueUrl), repository)) {
+      return true;
+    }
   }
 
-  return false;
+  if (hasGitHubSourceIssue || hasGitHubSourceMetadata) return false;
+
+  return task.description?.toLocaleLowerCase().includes(sourceUrl.toLocaleLowerCase()) ?? false;
 }
 
 /**
@@ -229,6 +235,23 @@ export interface CreatedIssue {
   createdAt: string;
 }
 
+export interface UploadImageAssetParams {
+  owner: string;
+  repo: string;
+  path: string;
+  contentBase64: string;
+  message: string;
+  branch?: string;
+  mimeType: string;
+}
+
+export interface UploadedImageAsset {
+  htmlUrl: string;
+  rawUrl: string;
+  path: string;
+  sha: string;
+}
+
 export interface DiscussionCandidate {
   id: string;
   number: number;
@@ -236,6 +259,33 @@ export interface DiscussionCandidate {
   body: string | null;
   url: string;
   state: "open" | "closed";
+}
+
+export interface DiscussionCategory {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/** A repository capability error that allows report delivery to fall back to Issues. */
+export class DiscussionsDisabledError extends Error {
+  override readonly name = "DiscussionsDisabledError";
+
+  constructor(owner: string, repo: string, cause?: unknown) {
+    super(`Discussions are not enabled for ${owner}/${repo}.`, { cause });
+  }
+}
+
+export function isDiscussionsDisabledError(error: unknown): error is DiscussionsDisabledError {
+  return error instanceof DiscussionsDisabledError;
+}
+
+function mapDiscussionsDisabledError(owner: string, repo: string, error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/discussions? (?:are |is )?(?:not )?(?:enabled|disabled)|discussion.*disabled/i.test(message)) {
+    throw new DiscussionsDisabledError(owner, repo, error);
+  }
+  throw error;
 }
 
 export interface CreatedDiscussion {
@@ -746,6 +796,45 @@ export class GitHubClient {
 
     this.token = tokenOrOptions?.token;
     this.forceMode = tokenOrOptions?.forceMode;
+  }
+
+  /**
+   * FNXC:ReportScreenshotUpload 2026-07-19-12:00:
+   * Report pixels cross the permanent GitHub boundary only through the documented
+   * Contents API, never the undocumented web upload endpoint. MIME and decoded-size
+   * validation happens before either auth transport. A private repository's raw URL
+   * requires viewer authentication and therefore cannot be promised as anonymous inline media.
+   */
+  async uploadImageAsset(params: UploadImageAssetParams): Promise<UploadedImageAsset> {
+    if (!ALLOWED_IMAGE_MIMES.has(params.mimeType)) throw new Error("Unsupported image MIME type for GitHub upload.");
+    const normalized = params.contentBase64.replace(/\s/g, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || Buffer.from(normalized, "base64").byteLength > MAX_IMAGE_BYTES) {
+      throw new Error("Image upload exceeds the 5MB limit or is not valid base64.");
+    }
+    const endpoint = `repos/${encodeURIComponent(params.owner)}/${encodeURIComponent(params.repo)}/contents/${params.path.split("/").map(encodeURIComponent).join("/")}`;
+    if (this.forceMode === "gh-cli") { this.requireGh(); return this.uploadImageAssetWithGh(endpoint, params); }
+    if (this.forceMode === "token") { this.requireToken(); return this.uploadImageAssetWithApi(endpoint, params); }
+    if (this.hasGhAuth()) {
+      try { return await this.uploadImageAssetWithGh(endpoint, params); }
+      catch (error) { if (!this.token) throw new Error("Failed to upload GitHub image asset.", { cause: error }); }
+    }
+    if (this.token) return this.uploadImageAssetWithApi(endpoint, params);
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' or set GITHUB_TOKEN.");
+  }
+
+  private async uploadImageAssetWithGh(endpoint: string, params: UploadImageAssetParams): Promise<UploadedImageAsset> {
+    const body = JSON.stringify({ message: params.message, content: params.contentBase64, ...(params.branch ? { branch: params.branch } : {}) });
+    const result = await runGhJsonAsync<{ content?: { html_url?: string; download_url?: string; path?: string; sha?: string } }>(["api", "--method", "PUT", endpoint, "--input", "-"], { input: body });
+    const content = result.content;
+    if (!content?.html_url || !content.download_url || !content.path || !content.sha) throw new Error("GitHub Contents API returned an incomplete image asset.");
+    return { htmlUrl: content.html_url, rawUrl: content.download_url, path: content.path, sha: content.sha };
+  }
+
+  private async uploadImageAssetWithApi(endpoint: string, params: UploadImageAssetParams): Promise<UploadedImageAsset> {
+    const result = await this.fetchThrottled<{ content?: { html_url?: string; download_url?: string; path?: string; sha?: string } }>(`${this.baseUrl}/${endpoint}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: params.message, content: params.contentBase64, ...(params.branch ? { branch: params.branch } : {}) }) });
+    const content = result.data?.content;
+    if (!result.success || !content?.html_url || !content.download_url || !content.path || !content.sha) throw new Error(result.error ?? "GitHub Contents API returned an incomplete image asset.");
+    return { htmlUrl: content.html_url, rawUrl: content.download_url, path: content.path, sha: content.sha };
   }
 
   /**
@@ -2274,9 +2363,14 @@ export class GitHubClient {
     so reports cannot silently miss a duplicate merely because it is inactive.
     */
     while (hasNextPage && matches.length < limit) {
-      const payload: DiscussionSearchPayload | undefined = await this.runGraphqlQuery<DiscussionSearchPayload>(`query($owner:String!, $repo:String!, $cursor:String) {
-        repository(owner:$owner, name:$repo) { discussions(first:100, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}) { nodes { id number title body url isClosed } pageInfo { hasNextPage endCursor } } }
-      }`, { owner, repo, cursor });
+      let payload: DiscussionSearchPayload | undefined;
+      try {
+        payload = await this.runGraphqlQuery<DiscussionSearchPayload>(`query($owner:String!, $repo:String!, $cursor:String) {
+          repository(owner:$owner, name:$repo) { discussions(first:100, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}) { nodes { id number title body url isClosed } pageInfo { hasNextPage endCursor } } }
+        }`, { owner, repo, cursor });
+      } catch (error) {
+        mapDiscussionsDisabledError(owner, repo, error);
+      }
       const discussions: DiscussionConnection | undefined = payload?.repository?.discussions ?? undefined;
       for (const discussion of discussions?.nodes ?? []) {
         if (discussion.isClosed) continue;
@@ -2291,6 +2385,23 @@ export class GitHubClient {
     return matches;
   }
 
+  /*
+  FNXC:GithubDiscussions 2026-07-16-20:00:
+  GitHub Discussions have no REST API coverage. Category discovery stays on the
+  established GraphQL transport, preserving the same gh/token auth behavior as
+  search, creation, comments, and reactions.
+  */
+  async listDiscussionCategories(owner: string, repo: string): Promise<DiscussionCategory[]> {
+    type CategoryPayload = {
+      repository?: { discussionCategories?: { nodes?: Array<DiscussionCategory | null> | null } | null } | null;
+    };
+    const payload = await this.runGraphqlQuery<CategoryPayload>(`query($owner:String!, $repo:String!) {
+      repository(owner:$owner, name:$repo) { discussionCategories(first:100) { nodes { id name slug } } }
+    }`, { owner, repo });
+    return (payload?.repository?.discussionCategories?.nodes ?? [])
+      .filter((category): category is DiscussionCategory => Boolean(category?.id && category.name && category.slug));
+  }
+
   /** Adds the same visible +1 signal to a Discussion duplicate as to an Issue duplicate. */
   async addDiscussionReaction(discussionId: string): Promise<void> {
     const payload = await this.runGraphqlQuery<{
@@ -2301,20 +2412,33 @@ export class GitHubClient {
     if (!payload?.addReaction?.reaction) throw new Error("GitHub did not return the discussion reaction.");
   }
 
-  async createDiscussion(owner: string, repo: string, title: string, body: string): Promise<CreatedDiscussion> {
-    const categoryPayload = await this.runGraphqlQuery<{
-      repository?: { id?: string; discussionCategories?: { nodes?: Array<{ id: string }> | null } | null } | null;
-    }>(`query($owner:String!, $repo:String!) {
-      repository(owner:$owner, name:$repo) { id discussionCategories(first:1) { nodes { id } } }
-    }`, { owner, repo });
+  /*
+  FNXC:ReportPipeline 2026-07-18-12:00:
+  FN-8308 owns category discovery and the reportDiscussionCategory setting.
+  A stale or absent selected category deterministically uses the repository's
+  first category, while disabled Discussions is a typed signal for Issue fallback.
+  */
+  async createDiscussion(owner: string, repo: string, title: string, body: string, selectedCategoryId?: string): Promise<CreatedDiscussion> {
+    let categoryPayload: { repository?: { id?: string; discussionCategories?: { nodes?: Array<{ id: string }> | null } | null } | null } | undefined;
+    try {
+      categoryPayload = await this.runGraphqlQuery(`query($owner:String!, $repo:String!) {
+        repository(owner:$owner, name:$repo) { id discussionCategories(first:100) { nodes { id } } }
+      }`, { owner, repo });
+    } catch (error) {
+      mapDiscussionsDisabledError(owner, repo, error);
+    }
     const repositoryId = categoryPayload?.repository?.id;
-    const categoryId = categoryPayload?.repository?.discussionCategories?.nodes?.[0]?.id;
-    if (!repositoryId || !categoryId) throw new Error(`Discussions are not enabled for ${owner}/${repo}.`);
-    const payload = await this.runGraphqlQuery<{
-      createDiscussion?: { discussion?: { id: string; number: number; url: string } | null } | null;
-    }>(`mutation($repositoryId:ID!, $categoryId:ID!, $title:String!, $body:String!) {
-      createDiscussion(input:{repositoryId:$repositoryId, categoryId:$categoryId, title:$title, body:$body}) { discussion { id number url } }
-    }`, { repositoryId, categoryId, title, body });
+    const categories = categoryPayload?.repository?.discussionCategories?.nodes ?? [];
+    const categoryId = categories.find((category) => category.id === selectedCategoryId)?.id ?? categories[0]?.id;
+    if (!repositoryId || !categoryId) throw new DiscussionsDisabledError(owner, repo);
+    let payload: { createDiscussion?: { discussion?: { id: string; number: number; url: string } | null } | null } | undefined;
+    try {
+      payload = await this.runGraphqlQuery(`mutation($repositoryId:ID!, $categoryId:ID!, $title:String!, $body:String!) {
+        createDiscussion(input:{repositoryId:$repositoryId, categoryId:$categoryId, title:$title, body:$body}) { discussion { id number url } }
+      }`, { repositoryId, categoryId, title, body });
+    } catch (error) {
+      mapDiscussionsDisabledError(owner, repo, error);
+    }
     const discussion = payload?.createDiscussion?.discussion;
     if (!discussion) throw new Error("GitHub did not return the created discussion.");
     return { id: discussion.id, number: discussion.number, htmlUrl: discussion.url };
@@ -2333,7 +2457,8 @@ export class GitHubClient {
 
   /** Run a read-only GraphQL query (gh CLI when available, else token/REST). */
   private async runGraphqlQuery<T>(query: string, variables: Record<string, string | number | null>): Promise<T | undefined> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli" || (this.forceMode === undefined && this.hasGhAuth())) {
+      if (this.forceMode === "gh-cli") this.requireGh();
       const args = ["api", "graphql", "-f", `query=${query}`];
       for (const [key, value] of Object.entries(variables)) {
         if (value === null) continue;
@@ -2345,6 +2470,7 @@ export class GitHubClient {
       if (payload.errors?.length) throw new Error(payload.errors[0].message);
       return payload.data;
     }
+    if (this.forceMode === "token") this.requireToken();
     if (this.token) {
       const response = await fetch(`${this.baseUrl}/graphql`, {
         method: "POST",
@@ -2389,7 +2515,8 @@ export class GitHubClient {
   }
 
   private async runGraphqlMutation(query: string, variables: Record<string, string>): Promise<void> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli" || (this.forceMode === undefined && this.hasGhAuth())) {
+      if (this.forceMode === "gh-cli") this.requireGh();
       const args = ["api", "graphql", "-f", `query=${query}`];
       for (const [key, value] of Object.entries(variables)) {
         args.push("-F", `${key}=${value}`);
@@ -2399,6 +2526,7 @@ export class GitHubClient {
       if (payload.errors?.length) throw new Error(payload.errors[0].message);
       return;
     }
+    if (this.forceMode === "token") this.requireToken();
     if (this.token) {
       const response = await fetch(`${this.baseUrl}/graphql`, {
         method: "POST",

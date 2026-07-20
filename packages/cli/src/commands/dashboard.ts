@@ -32,6 +32,9 @@ import {
   type TraitFlags,
   createTaskStoreForBackend,
   FUSION_RESTART_EXIT_CODE,
+  FUSION_NON_RETRYABLE_EXIT_CODE,
+  isPostgresUniqueError,
+  ProjectPartitionRekeyError,
 } from "@fusion/core";
 import {
   createServer,
@@ -158,6 +161,7 @@ type StartupUpdateStatus = {
   updateAvailable: true;
   latestVersion: string;
   currentVersion: string;
+  channel?: "stable" | "beta";
 };
 
 async function resolveCachedStartupUpdateStatus(importMetaUrl: string): Promise<StartupUpdateStatus | null> {
@@ -183,6 +187,7 @@ async function resolveCachedStartupUpdateStatus(importMetaUrl: string): Promise<
       updateAvailable: true,
       currentVersion: cachedUpdate.currentVersion,
       latestVersion: cachedUpdate.latestVersion,
+      channel: cachedUpdate.channel,
     };
   } catch {
     return null;
@@ -194,7 +199,10 @@ function formatUpdateMessage(updateStatus: StartupUpdateStatus | null): string |
     return null;
   }
 
-  return `⬆ Update available: v${updateStatus.latestVersion} (current: v${updateStatus.currentVersion}). Run \`fn update\` for an installed CLI, or pull the source checkout.`;
+  // FNXC:UpdateChannels 2026-07-19-13:05: label beta-channel offers so an
+  // operator can tell a prerelease notice from a stable one at a glance.
+  const channelLabel = updateStatus.channel === "beta" ? " [beta channel]" : "";
+  return `⬆ Update available: v${updateStatus.latestVersion}${channelLabel} (current: v${updateStatus.currentVersion}). Run \`fn update\` for an installed CLI, or pull the source checkout.`;
 }
 
 export class StreamedLogBuffer {
@@ -909,14 +917,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     host: selectedHost,
     log: (message) => logSink.log(message, "dashboard"),
   });
-  const dashboardBackendBoot = await phaseTime(
-    "backend.factory",
-    () => createTaskStoreForBackend({
-      rootDir: cwd,
-      onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
-    }),
-    logPhase,
-  );
+  let dashboardBackendBoot: Awaited<ReturnType<typeof createTaskStoreForBackend>>;
+  try {
+    dashboardBackendBoot = await phaseTime(
+      "backend.factory",
+      () => createTaskStoreForBackend({
+        rootDir: cwd,
+        onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
+      }),
+      logPhase,
+    );
+  } catch (error) {
+    const fatal = classifyDashboardFatalExit(error);
+    if (fatal.nonRetryable) {
+      console.error(`[dashboard] startup stopped: unique constraint or project partition reconciliation failure: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(fatal.exitCode);
+    }
+    throw error;
+  }
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Dashboard runtime storage is
   // PostgreSQL-only; factory failure is surfaced instead of creating a dead store.
   store = dashboardBackendBoot.taskStore;
@@ -3532,6 +3550,13 @@ export function shouldSuperviseDashboard(
  * This does NOT use shell detachment wrappers, shell kill loops, or unbounded retries.
  * Port 4040 processes are never killed — the child binds its own port.
  */
+export function classifyDashboardFatalExit(error: unknown): { exitCode: number; nonRetryable: boolean } {
+  if (isPostgresUniqueError(error) || error instanceof ProjectPartitionRekeyError) {
+    return { exitCode: FUSION_NON_RETRYABLE_EXIT_CODE, nonRetryable: true };
+  }
+  return { exitCode: 1, nonRetryable: false };
+}
+
 export async function runDashboardSupervised(
   port: number,
   _opts: Parameters<typeof runDashboard>[1] = {},
@@ -3624,6 +3649,11 @@ export async function runDashboardSupervised(
     and reset the crash budget — an intentional restart must never consume
     SUPERVISE_MAX_RESTARTS or incur crash backoff.
     */
+    if (exitCode === FUSION_NON_RETRYABLE_EXIT_CODE) {
+      console.error("[dashboard:supervisor] dashboard stopped after a non-retryable unique constraint or project partition identity reconciliation failure; inspect the preceding startup error.");
+      process.exit(exitCode);
+    }
+
     if (exitCode === FUSION_RESTART_EXIT_CODE) {
       console.log("[dashboard:supervisor] restart requested — restarting now");
       restartCount = 0;

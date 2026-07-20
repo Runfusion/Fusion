@@ -52,6 +52,7 @@ describe("Header", () => {
   it("derives report context from task hash routes and legacy query parameters", () => {
     expect(resolveReportContextRefs({ hash: "#/tasks/FN-8277", search: "?agentId=agent-1" })).toEqual({ taskId: "FN-8277", agentId: "agent-1" });
     expect(resolveReportContextRefs({ hash: "", search: "?taskId=FN-8277" })).toEqual({ taskId: "FN-8277", agentId: undefined });
+    expect(resolveReportContextRefs({ hash: "#/command-center", search: "" })).toBeUndefined();
   });
 
   beforeEach(() => {
@@ -62,6 +63,12 @@ describe("Header", () => {
   it("renders the logo and brand", () => {
     renderHeader();
     expect(screen.getByText("Fusion")).toBeDefined();
+  });
+
+  it.each(["desktop", "tablet", "mobile"] as const)("does not render the relocated Report affordance in the %s header", (tier) => {
+    renderHeader({}, tier);
+    expect(screen.queryByRole("button", { name: "Report" })).toBeNull();
+    expect(screen.queryByText("Report bug")).toBeNull();
   });
 
   it("applies shell host metadata on the header root", () => {
@@ -353,7 +360,7 @@ describe("Header", () => {
       expect(onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-dependency-graph:queue");
     });
 
-    it("hides legacy roadmaps overflow item when roadmap plugin view is present", () => {
+    it("renders hosted roadmaps primary item when roadmap plugin view is present", () => {
       renderHeader({
         onChangeView: noop,
         experimentalFeatures: {},
@@ -365,8 +372,36 @@ describe("Header", () => {
         ],
       });
 
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.queryByTestId("view-overflow-roadmaps")).toBeNull();
+      expect(screen.getByTestId("view-toggle-plugin-fusion-plugin-roadmap-roadmaps")).toBeInTheDocument();
+    });
+
+    it("shows Compound Engineering in sidebar-off header navigation and removes it after disable and uninstall", () => {
+      const compoundEngineeringView = [{
+        pluginId: "fusion-plugin-compound-engineering",
+        view: {
+          viewId: "compound-engineering",
+          label: "Compound Engineering",
+          componentPath: "./CompoundEngineeringView",
+          icon: "Boxes",
+          placement: "primary" as const,
+          order: 36,
+        },
+      }];
+      const rendered = renderHeader({
+        onChangeView: noop,
+        leftSidebarNavActive: false,
+        pluginDashboardViews: compoundEngineeringView,
+      });
+      const testId = "view-toggle-plugin-fusion-plugin-compound-engineering-compound-engineering";
+
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+      rendered.rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} onChangeView={noop} leftSidebarNavActive={false} pluginDashboardViews={[]} />);
+      expect(screen.queryByTestId(testId)).toBeNull();
+
+      rendered.rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} onChangeView={noop} leftSidebarNavActive={false} pluginDashboardViews={compoundEngineeringView} />);
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+      rendered.rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} onChangeView={noop} leftSidebarNavActive={false} pluginDashboardViews={[]} />);
+      expect(screen.queryByTestId(testId)).toBeNull();
     });
 
     it("renders view overflow trigger when an experimental overflow feature is enabled", () => {

@@ -140,12 +140,18 @@ export class WhatsAppConnection {
     } finally {
       if (socket) {
         await this.resetLoggedOutAuth(socket);
-        if (this.sock === null || this.sock === socket) {
-          this.status = { state: "disconnected" };
-        }
       } else {
         await this.persistence.clearAuthState();
         this.authState = await createPersistenceAuthState(this.persistence);
+      }
+      if (!this.stopped) {
+        /**
+         * FNXC:WhatsAppSettingsRePair 2026-07-20-12:00:
+         * Logout from Plugin Manager is a re-pair action, not a terminal disconnect. Once auth is cleared, reconnect so settings can present a fresh QR or code instead of stranding the operator on disconnected.
+         */
+        this.status = { state: "starting" };
+        this.scheduleReconnect();
+      } else {
         this.status = { state: "disconnected" };
       }
     }
@@ -228,9 +234,16 @@ export class WhatsAppConnection {
     if (update.connection === "close") {
       if (isLoggedOutDisconnect(update.lastDisconnect?.error)) {
         await this.resetLoggedOutAuth(socket);
-        if (this.sock === null || this.sock === socket) {
+        if (this.stopped) {
           this.status = { state: "disconnected", lastError: "loggedOut" };
+          return;
         }
+        /**
+         * FNXC:WhatsAppSettingsRePair 2026-07-20-12:00:
+         * A logged-out socket also needs a fresh pairing connection while the plugin remains enabled. Scheduling through the shared backoff guard prevents logout and close events from creating competing sockets.
+         */
+        this.status = { state: "starting" };
+        this.scheduleReconnect();
         return;
       }
 

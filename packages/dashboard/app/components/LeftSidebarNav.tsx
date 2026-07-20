@@ -271,11 +271,13 @@ export function LeftSidebarNav({
   const compoundPluginEntry = sortedPluginViews.find(
     (entry) => entry.pluginId === "fusion-plugin-compound-engineering",
   );
+  /*
+  FNXC:RoadmapsNavigation 2026-07-19-12:00:
+  The bundled registry now hosts the manifest-advertised roadmaps view. Keep it in the
+  normal plugin pool so roadmap-item previews have a live callback navigation destination.
+  */
   const remainingPluginViews = sortedPluginViews.filter(
-    (entry) =>
-      entry !== graphPluginEntry &&
-      entry !== compoundPluginEntry &&
-      !(entry.pluginId === "fusion-plugin-roadmap" && entry.view.viewId === "roadmaps"),
+    (entry) => entry !== graphPluginEntry && entry !== compoundPluginEntry,
   );
 
   /*
@@ -286,8 +288,6 @@ export function LeftSidebarNav({
 
   Flag gates preserved verbatim from the prior layout: agents (showAgentsTab), goals (goalsView), insight (insights), research (researchView), ideation (ideationView), skills (showSkillsTab), memory (memoryView), evals (evalsView). graph and compound are skipped when their plugin view is absent.
 
-  FNXC:Navigation 2026-06-22-18:50:
-  Roadmaps is no longer a dashboard navigation destination. Keep filtering it out even if a persisted plugin dashboard-view row is present, while preserving other plugin views in their sorted fallback section.
   */
   const navEntries: SidebarNavEntry[] = [
     /*

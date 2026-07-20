@@ -19,6 +19,7 @@ import type {
   CentralCore,
   TaskStore,
   RegisteredProject,
+  MigrationProgressEvent,
 } from "@fusion/core";
 import { ProjectEngine } from "./project-engine.js";
 import type { ProjectEngineOptions } from "./project-engine.js";
@@ -60,6 +61,8 @@ export interface EngineManagerOptions {
    * project root. Callers may still pass per-call overrides via ensureEngine.
    */
   externalTaskStore?: ProjectEngineOptions["externalTaskStore"];
+  /** Forward first-boot SQLite migration progress to a fixed-port holding server. */
+  onMigrationProgress?: (event: MigrationProgressEvent) => void;
 }
 
 /** Default interval for background reconciliation (30 seconds). */
@@ -553,6 +556,7 @@ export class ProjectEngineManager {
       maxWorktrees: (settings?.maxWorktrees as number) ?? 10,
       // Shared global semaphore — all engines share one concurrency pool
       globalSemaphore: this.globalSemaphore,
+      onMigrationProgress: this.options.onMigrationProgress,
     };
   }
 

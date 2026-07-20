@@ -140,6 +140,7 @@ export interface TaskRow {
   noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
+  declaredSymbols: string | null;
   missionId: string | null;
   sliceId: string | null;
   scopeOverride: number | null;
@@ -187,7 +188,7 @@ export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
   "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
-  "modifiedFiles", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
+  "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
 ]);
 
@@ -349,6 +350,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("noCommitsExpected", (task) => task.noCommitsExpected ? 1 : 0),
   defineTaskColumn("enabledWorkflowSteps", (task) => toJson(task.enabledWorkflowSteps || [])),
   defineTaskColumn("modifiedFiles", (task) => toJson(task.modifiedFiles || [])),
+  defineTaskColumn("declaredSymbols", (task) => toJson(task.declaredSymbols || []), "declared_symbols"),
   defineTaskColumn("missionId", (task) => task.missionId ?? null),
   defineTaskColumn("sliceId", (task) => task.sliceId ?? null),
   defineTaskColumn("scopeOverride", (task) => task.scopeOverride ? 1 : null),

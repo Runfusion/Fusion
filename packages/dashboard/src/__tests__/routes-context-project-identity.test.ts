@@ -154,6 +154,18 @@ describe("routes/context central project identity seam", () => {
       expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
     });
 
+    /*
+     * FNXC:ProjectScoping 2026-07-15-20:20:
+     * An explicit launch project id on SSE/WebSocket must reuse the injected
+     * launch store, not create a second EventEmitter-bearing scoped store.
+     */
+    it("explicit launch id → injected store, no duplicate realtime binding", async () => {
+      const options = { engine: makeEngine("launch-proj", tag("engine-store")) } as unknown as ServerOptions;
+      const store = await resolveScopedStore("launch-proj", rawLaunchStore, undefined, "launch-proj", options);
+      expect(store).toBe(rawLaunchStore);
+      expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
+    });
+
     it("explicit id ≠ launch, getEngine undefined → getOrCreateProjectStore", async () => {
       const options = { engine: makeEngine("launch-proj", tag("engine-store")) } as unknown as ServerOptions;
       const store = await resolveScopedStore("other-proj", rawLaunchStore, undefined, "launch-proj", options);

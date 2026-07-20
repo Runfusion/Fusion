@@ -14,9 +14,19 @@ const plugin = definePlugin({
     onSchemaInit: ensureRoadmapSchema,
   },
   routes: createRoadmapPluginRoutes(),
+  dashboardViews: [{
+    viewId: "roadmaps",
+    label: "Roadmaps",
+    componentPath: "./dashboard-view",
+    icon: "Map",
+    placement: "primary",
+    order: 30,
+  }],
   /*
-  FNXC:RoadmapsNavigation 2026-06-22-18:50:
-  The roadmap dashboard view was removed from the product surface. Keep the plugin's schema/routes/domain exports available for compatibility, but do not advertise a dashboardViews entry.
+  FNXC:RoadmapsNavigation 2026-07-19-12:00:
+  Native-structure roadmap-item previews require a real hosted `roadmaps` open target.
+  Advertise this bundled dashboard destination while leaving roadmap schema, routes, and
+  persistence ownership unchanged.
   */
 });
 

@@ -385,6 +385,8 @@ describe("executeHeartbeat", () => {
       const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
       expect(section).toContain("**stuck**");
       expect(section).toContain("Actions for Unresponsive Reports");
+      expect(section).toContain("first check task-log/step progress, the active heartbeat run, and worktree/session liveness");
+      expect(section).toContain("If work is live, do not stop or reassign it");
     });
 
     it("buildReportsHealthSection classifies stale agents", async () => {
@@ -744,26 +746,23 @@ describe("executeHeartbeat", () => {
   });
 
   describe("agent pause does not pause assigned tasks", () => {
-    it("pauseAgent leaves zero, one, and many assigned tasks untouched", async () => {
-      for (const assignedTasks of [
-        [],
-        [{ id: "FN-001", paused: undefined, pausedByAgentId: undefined }],
-        [
-          { id: "FN-001", paused: undefined, pausedByAgentId: undefined },
-          { id: "FN-002", paused: false, pausedByAgentId: undefined },
-          { id: "FN-003", paused: true, userPaused: true, pausedByAgentId: undefined },
-        ],
-      ]) {
+    it("ignores both cascade values and leaves every assigned-task pause state untouched", async () => {
+      for (const cascadeToTasks of [false, true]) {
+        const assignedTasks = [
+          { id: "FN-USER", paused: true, userPaused: true, pausedByAgentId: undefined, pausedReason: "manual" },
+          { id: "FN-OWN", paused: true, userPaused: false, pausedByAgentId: "agent-001", pausedReason: "legacy-agent-pause" },
+          { id: "FN-OTHER", paused: true, userPaused: false, pausedByAgentId: "agent-other", pausedReason: "other-agent-pause" },
+          { id: "FN-LIVE", paused: false, userPaused: false, pausedByAgentId: undefined, pausedReason: undefined },
+        ];
         const pauseTask = vi.fn().mockResolvedValue(undefined);
         const getTasksByAssignedAgent = vi.fn().mockResolvedValue(assignedTasks);
         mockTaskStore = createMockTaskStore({ pauseTask, getTasksByAssignedAgent });
-        const store = createStoreWithAgentForExec({ taskId: assignedTasks[0]?.id });
+        const store = createStoreWithAgentForExec({ taskId: "FN-USER" });
         const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
         const before = structuredClone(assignedTasks);
 
-        await monitor.pauseAgent("agent-001");
+        await monitor.pauseAgent("agent-001", { cascadeToTasks });
 
-        expect(pauseTask).not.toHaveBeenCalledWith(expect.any(String), true, expect.anything(), expect.anything());
         expect(pauseTask).not.toHaveBeenCalled();
         expect(getTasksByAssignedAgent).not.toHaveBeenCalled();
         expect(assignedTasks).toEqual(before);
@@ -807,12 +806,54 @@ describe("executeHeartbeat", () => {
       expect(pauseTask).not.toHaveBeenCalled();
     });
 
-    it("resumeAgent cascade skips user-paused tasks but unpauses agent-only pauses", async () => {
+    it("captures the task baseline before heartbeat prompting so only prompted tokens persist", async () => {
+      const task = {
+        id: "FN-001",
+        title: "Token task",
+        description: "Account heartbeat tokens",
+        prompt: "# PROMPT.md",
+        steps: [],
+        column: "todo",
+        worktree: "/tmp/worktree-fn-001",
+        branch: "fusion/fn-001",
+        dependencies: [],
+        log: [],
+        attachments: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as TaskDetail;
+      const updateTask = vi.fn(async (_taskId: string, patch: Partial<TaskDetail>) => Object.assign(task, patch));
+      mockTaskStore = createMockTaskStore({
+        getTask: vi.fn(async () => task),
+        updateTask,
+      });
+      const store = createStoreWithAgentForExec({ taskId: "FN-001" });
+      const stats = { input: 1_000, output: 400, cacheRead: 50, cacheWrite: 10 };
+      const mockSession = createMockAgentSession() as any;
+      mockSession.getSessionStats = vi.fn(() => ({ tokens: stats }));
+      mockSession.prompt.mockImplementation(async () => {
+        Object.assign(stats, { input: 1_020, output: 410, cacheRead: 54, cacheWrite: 12 });
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect((task as any).tokenUsage).toMatchObject({
+        inputTokens: 20,
+        outputTokens: 10,
+        cachedTokens: 4,
+        cacheWriteTokens: 2,
+        totalTokens: 36,
+      });
+    });
+
+    it("resumeAgent defaults to non-cascading and legacy cascade skips user/other-agent pauses", async () => {
       const pauseTask = vi.fn().mockResolvedValue(undefined);
       const getTasksByAssignedAgent = vi.fn().mockResolvedValue([
-        { id: "FN-001", paused: true, pausedByAgentId: "agent-001" },
-        { id: "FN-002", paused: true, pausedByAgentId: "agent-001", userPaused: true },
-        { id: "FN-003", paused: true, userPaused: true },
+        { id: "FN-001", paused: true, pausedByAgentId: "agent-001", userPaused: false, pausedReason: "legacy-agent-pause" },
+        { id: "FN-002", paused: true, pausedByAgentId: "agent-001", userPaused: true, pausedReason: "manual" },
+        { id: "FN-003", paused: true, pausedByAgentId: "agent-other", userPaused: false, pausedReason: "other-agent-pause" },
       ]);
       mockTaskStore = createMockTaskStore({ pauseTask, getTasksByAssignedAgent });
       const store = createStoreWithAgentForExec({
@@ -821,6 +862,10 @@ describe("executeHeartbeat", () => {
         runtimeConfig: { enabled: false },
       });
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      await monitor.resumeAgent("agent-001");
+      expect(getTasksByAssignedAgent).not.toHaveBeenCalled();
+      expect(pauseTask).not.toHaveBeenCalled();
 
       await monitor.resumeAgent("agent-001", { cascadeToTasks: true });
 

@@ -1,16 +1,19 @@
-import type { GlobalSettings, ProjectSettings, ReportActionType, ReportMode } from "@fusion/core";
-import { resolveTaskGithubTracking } from "@fusion/core";
-import { GitHubClient } from "./github.js";
+import { createHash } from "node:crypto";
+import type { GlobalSettings, ProjectSettings, ReportActionType, ReportMode, ReportTarget } from "@fusion/core";
+import { parseRepoSlug, resolveTaskGithubTracking } from "@fusion/core";
+import { GitHubClient, isDiscussionsDisabledError } from "./github.js";
+import { EXT_BY_MIME } from "./issue-image-attachments.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { buildIssueSearchQueries, DEDUP_MATCH_THRESHOLD, scoreCandidateIssue } from "./github-tracking-dedup.js";
-import { scrubReportPayload, type ReportScrubContext } from "./report-scrub.js";
-import type { RoadmapDedupSource } from "./report-roadmap-source.js";
+import { scrubReportPayload, scrubReportText, type ReportScrubContext } from "./report-scrub.js";
 
-export type { ReportActionType, ReportMode };
+export type { ReportActionType, ReportMode, ReportTarget };
 
 export interface ReportScreenshot {
-  dataUrl: string;
-  capturedAt: string;
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  bytes: Buffer | Uint8Array;
 }
 
 export interface ReportInput {
@@ -18,8 +21,10 @@ export interface ReportInput {
   userPrompt: string;
   contextRefs?: { taskId?: string; agentId?: string };
   activityTrace?: string[];
-  /** Binary pixels are preserved for explicit, reviewed upload only. */
-  screenshot?: ReportScreenshot;
+  /** Provenance-validated local screenshot artifact reference. */
+  screenshotArtifactId?: string;
+  /** Server-resolved report screenshot; never client-supplied pixels. */
+  attachment?: ReportScreenshot;
 }
 
 export interface StructuredReport {
@@ -29,32 +34,30 @@ export interface StructuredReport {
   summary: string;
   body: string;
   context: Record<string, unknown>;
-  /** User-reviewed pixels; never interpolated into text context. */
-  screenshot?: ReportScreenshot;
+  /** Local screenshot artifact reference; pixels never transit egress. */
+  screenshotArtifactId?: string;
+  attachment?: ReportScreenshot;
   sessionToken?: string;
 }
 
 export type ReportResult =
   | { kind: "draft-ready"; report: StructuredReport; mode: ReportMode }
-  | { kind: "duplicate-found"; report: StructuredReport; mode: ReportMode; issue: { number: number; url: string; title: string; discussionId?: string } }
-  | { kind: "roadmap-match"; report: StructuredReport; mode: ReportMode; roadmap: { featureId: string; title: string; description: string } }
-  | { kind: "filed"; url: string; report: StructuredReport; screenshotNotAttached?: boolean }
-  | { kind: "endorsed"; url: string; issueNumber: number; report: StructuredReport; screenshotNotAttached?: boolean }
+  | { kind: "duplicate-found"; report: StructuredReport; mode: ReportMode; issue: { number: number; url: string; title: string; discussionId?: string; roadmap?: true } }
+  | { kind: "filed"; url: string; report: StructuredReport; destination: "issue" | "discussion" }
+  | { kind: "endorsed"; url: string; issueNumber: number; report: StructuredReport }
 
   | { kind: "unavailable"; reason: string; message: string };
 
 export interface ReportPipelineDeps {
-  projectSettings: Pick<ProjectSettings, "reportMode" | "reportModeByAction" | "reportRoadmapDedup" | "githubTrackingDefaultRepo" | "githubAuthMode" | "githubAuthToken">;
+  projectSettings: Pick<ProjectSettings, "reportMode" | "reportModeByAction" | "reportTarget" | "reportTargetByAction" | "reportDiscussionCategory" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo" | "githubTrackingDefaultRepo" | "githubAuthMode" | "githubAuthToken">;
   globalSettings?: Partial<GlobalSettings>;
-  client?: Pick<GitHubClient, "createIssue" | "searchIssues" | "commentOnIssue" | "addIssueReaction"> & Partial<Pick<GitHubClient, "searchDiscussions" | "createDiscussion" | "commentOnDiscussion" | "addDiscussionReaction" | "uploadReportImage" | "deleteReportImage">>;
+  client?: Pick<GitHubClient, "createIssue" | "searchIssues" | "commentOnIssue" | "addIssueReaction"> & Partial<Pick<GitHubClient, "searchDiscussions" | "createDiscussion" | "commentOnDiscussion" | "addDiscussionReaction" | "listDiscussionCategories" | "uploadImageAsset">>;
   scrubContext?: ReportScrubContext;
   gatherContext?: (input: ReportInput) => Promise<Record<string, unknown>>;
-  roadmapSource?: RoadmapDedupSource;
 }
 
 const MAX_PROMPT_LENGTH = 4_000;
 export const MAX_ACTIVITY_TRACE_ENTRIES = 20;
-export const MAX_SCREENSHOT_DATA_URL_LENGTH = 2_800_000;
 /*
 FNXC:ReportPipeline 2026-07-16-10:45:
 Screenshot capture remains a per-report, off-by-default user choice rather than
@@ -92,7 +95,6 @@ function expectedBehavior(actionType: ReportActionType): string {
 function structureReport(input: ReportInput, gathered: Record<string, unknown>): StructuredReport {
   const prompt = requirePrompt(input);
   if (input.activityTrace && (input.activityTrace.length > MAX_ACTIVITY_TRACE_ENTRIES || input.activityTrace.some((entry) => typeof entry !== "string" || entry.length > 1_000))) throw new Error("Activity trace is invalid.");
-  if (input.screenshot && input.screenshot.dataUrl.length > MAX_SCREENSHOT_DATA_URL_LENGTH) throw new Error("Screenshot is too large.");
   // FNXC:ReportPipeline 2026-07-16-09:00:
   // Activity trace is ordinary text context. It must continue through
   // scrubReportPayload with every other report field before GitHub egress.
@@ -102,9 +104,10 @@ function structureReport(input: ReportInput, gathered: Record<string, unknown>):
     userPrompt: prompt,
     sourcePrompt: prompt,
     summary: `[${input.actionType}] ${prompt.slice(0, 120)}`,
-    body: `## Summary\n${prompt}\n\n## Reproduction / context\n${formattedContext}\n\n## Expected behavior\n${expectedBehavior(input.actionType)}\n\n## Actual behavior / request\n${prompt}\n\n## Environment\n${formattedContext}`,
+    body: `## Summary\n${prompt}\n\n## Reproduction / context\n${formattedContext}\n\n## Expected behavior\n${expectedBehavior(input.actionType)}\n\n## Actual behavior / request\n${prompt}\n\n## Environment\n${formattedContext}${input.screenshotArtifactId ? `\n\n## Screenshot\nA screenshot was captured and stored locally (artifact ${input.screenshotArtifactId}).` : ""}`,
     context,
-    screenshot: input.screenshot,
+    screenshotArtifactId: input.screenshotArtifactId,
+    attachment: input.attachment,
     sessionToken: crypto.randomUUID(),
   };
 }
@@ -120,11 +123,17 @@ function resolveRepo(deps: ReportPipelineDeps) {
   return resolveTaskGithubTracking({ githubTracking: undefined }, deps.projectSettings, deps.globalSettings).repo;
 }
 
-type ReportDestination = "issue" | "discussion";
+type ReportDestination = ReportTarget;
 type DuplicateCandidate = { number: number; title: string; body: string | null; html_url: string; state: "open" | "closed"; discussionId?: string };
 
 function destinationFor(actionType: ReportActionType): ReportDestination {
   return actionType === "feedback" || actionType === "help" ? "discussion" : "issue";
+}
+
+/** FNXC:ReportPipeline 2026-07-16-20:30: Explicit and configured targets override historic action routing without changing its unset fallback. */
+export function resolveReportTarget(actionType: ReportActionType, settings: Pick<ProjectSettings, "reportTarget" | "reportTargetByAction">, explicitOverride?: ReportTarget): ReportTarget {
+  const isTarget = (value: unknown): value is ReportTarget => value === "issue" || value === "discussion";
+  return [explicitOverride, settings.reportTargetByAction?.[actionType], settings.reportTarget].find(isTarget) ?? destinationFor(actionType);
 }
 
 function reportKeywords(report: StructuredReport): string[] {
@@ -145,75 +154,73 @@ async function findDuplicate(client: NonNullable<ReportPipelineDeps["client"]>, 
   return undefined;
 }
 
-export async function findRoadmapMatch(roadmapSource: RoadmapDedupSource, report: StructuredReport) {
+
+export interface ResolvedRoadmapDedupe {
+  enabled: boolean;
+  label: string;
+  repo: { owner: string; repo: string } | null;
+}
+
+export function resolveRoadmapDedupe(deps: Pick<ReportPipelineDeps, "projectSettings" | "globalSettings">): ResolvedRoadmapDedupe {
+  const project = deps.projectSettings;
+  const global = deps.globalSettings;
+  const enabled = project.reportRoadmapDedupeEnabled ?? global?.reportRoadmapDedupeEnabled ?? true;
+  const label = (project.reportRoadmapLabel ?? global?.reportRoadmapLabel ?? "roadmap").trim();
+  const trackingRepo = resolveRepo(deps as ReportPipelineDeps);
+  const repo = parseRepoSlug(project.reportRoadmapRepo ?? global?.reportRoadmapRepo) ?? trackingRepo;
+  return { enabled: enabled && Boolean(label), label, repo };
+}
+
+async function findRoadmapDuplicate(client: NonNullable<ReportPipelineDeps["client"]>, roadmap: ResolvedRoadmapDedupe, report: StructuredReport) {
+  if (!roadmap.enabled || !roadmap.repo) return undefined;
   const keywords = reportKeywords(report);
-  const candidates = await roadmapSource(keywords);
-  const match = candidates
-    .map((candidate) => ({ candidate, score: scoreCandidateIssue(candidate, [], keywords).score }))
-    .filter(({ score }) => score >= DEDUP_MATCH_THRESHOLD)
-    .sort((left, right) => right.score - left.score)[0];
-  return match?.candidate;
+  try {
+    for (const query of buildIssueSearchQueries([], keywords)) {
+      const candidates = await client.searchIssues(roadmap.repo.owner, roadmap.repo.repo, `label:${roadmap.label} ${query}`, { state: "open", limit: 20 });
+      const match = candidates.filter((candidate) => candidate.state === "open")
+        .map((candidate) => ({ candidate, score: scoreCandidateIssue(candidate, [], keywords).score }))
+        .sort((left, right) => right.score - left.score)
+        .find(({ score }) => score >= DEDUP_MATCH_THRESHOLD);
+      if (match) return match.candidate;
+    }
+  } catch {
+    // An optional public roadmap must never block the established destination dedupe path.
+  }
+  return undefined;
 }
 
-function approvedReportImageUrl(candidate: string | undefined, owner: string, repo: string): string | undefined {
-  if (!candidate || candidate.length > 2_048 || /[\s()[\]<>"']/.test(candidate)) return undefined;
+function markdownEscapeImageAlt(value: string): string {
+  return value.replace(/[[\]()!\r\n]/g, (character) => character === "\r" || character === "\n" ? " " : `\\` + character);
+}
+
+async function embedScreenshot(args: { report: StructuredReport; client: NonNullable<ReportPipelineDeps["client"]>; owner: string; repo: string; scrubContext?: ReportScrubContext }): Promise<StructuredReport> {
+  const { attachment } = args.report;
+  if (!attachment || !args.client.uploadImageAsset) return args.report;
   try {
-    const url = new URL(candidate);
-    const repositoryPrefix = `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/`;
-    // FNXC:ReportPipeline 2026-07-18-16:30: The image host response is outside
-    // the mandatory text scrub boundary. Embed only a raw.githubusercontent.com
-    // HTTPS URL for the selected repository, never arbitrary Markdown or pixels.
-    if (
-      url.protocol !== "https:"
-      || url.hostname !== "raw.githubusercontent.com"
-      || url.port !== ""
-      || url.username
-      || url.password
-      || url.search
-      || url.hash
-      || !url.pathname.startsWith(repositoryPrefix)
-    ) return undefined;
-    return url.toString();
+    const extension = EXT_BY_MIME[attachment.mimeType];
+    if (!extension) return args.report;
+    /*
+    FNXC:ReportScreenshotEmbedding 2026-07-19-12:30:
+    Repository paths must not reveal client tokens, artifact ids, filenames, or
+    local project details. A one-way digest yields a fixed, traversal-free
+    identifier while the separately scrubbed and Markdown-escaped alt text
+    preserves a safe user-facing label.
+    */
+    const safeId = createHash("sha256").update(`${args.report.sessionToken ?? ""}:${attachment.artifactId}`).digest("hex").slice(0, 32);
+    const path = `.fusion-reports/${safeId}/screenshot.${extension}`;
+    const uploaded = await args.client.uploadImageAsset({ owner: args.owner, repo: args.repo, path, contentBase64: Buffer.from(attachment.bytes).toString("base64"), message: "chore: add Fusion report screenshot", mimeType: attachment.mimeType });
+    const alt = markdownEscapeImageAlt(scrubReportText(attachment.filename, args.scrubContext) || "Report screenshot");
+    return { ...args.report, body: `${args.report.body}\n\n## Screenshots\n![${alt}](${uploaded.rawUrl})` };
   } catch {
-    return undefined;
+    // Image hosting is explicitly best-effort: scrubbed text filing must proceed.
+    return args.report;
   }
 }
 
-function appendReviewedScreenshot(report: StructuredReport, screenshotUrl: string | undefined): StructuredReport {
-  return screenshotUrl
-    ? { ...report, body: `${report.body}\n\n## Screenshot\n![User-reviewed screenshot](${screenshotUrl})` }
-    : report;
-}
-
-async function attachReviewedScreenshot(
-  screenshot: ReportScreenshot | undefined,
-  client: NonNullable<ReportPipelineDeps["client"]>,
-  owner: string,
-  repo: string,
-  attach: (screenshotUrl: string) => Promise<void>,
-): Promise<{ screenshotUrl?: string; screenshotNotAttached: boolean }> {
-  if (!screenshot) return { screenshotNotAttached: false };
-  // FNXC:ReportPipeline 2026-07-18-19:30: A screenshot is sensitive binary
-  // egress. Upload only after the report's text operation succeeds, and require
-  // a compensating delete before upload so an attachment-comment failure cannot
-  // leave an orphaned user image in GitHub.
-  if (!client.uploadReportImage || !client.deleteReportImage) return { screenshotNotAttached: true };
-  const candidate = await client.uploadReportImage(owner, repo, screenshot).catch(() => undefined);
-  const screenshotUrl = approvedReportImageUrl(candidate, owner, repo);
-  if (!screenshotUrl) return { screenshotNotAttached: true };
-  try {
-    await attach(screenshotUrl);
-    return { screenshotUrl, screenshotNotAttached: false };
-  } catch {
-    await Promise.resolve(client.deleteReportImage(owner, repo, screenshotUrl)).catch(() => undefined);
-    return { screenshotNotAttached: true };
-  }
-}
-
-async function endorseDiscussionDuplicate(args: { issueNumber: number; discussionId: string; report: StructuredReport; screenshotUrl?: string; client: NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">; scrubContext?: ReportScrubContext }): Promise<Extract<ReportResult, { kind: "endorsed" }>> {
+async function endorseDiscussionDuplicate(args: { issueNumber: number; discussionId: string; report: StructuredReport; client: NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">; scrubContext?: ReportScrubContext }): Promise<Extract<ReportResult, { kind: "endorsed" }>> {
 
   const sessionToken = args.report.sessionToken ?? `${args.discussionId}:${args.report.summary}`;
-  const report = appendReviewedScreenshot(scrubReportPayload(args.report, args.scrubContext), args.screenshotUrl);
+  const report = scrubReportPayload(args.report, args.scrubContext);
   const existing = endorsedSessions.get(sessionToken);
   if (existing) return { kind: "endorsed", ...existing, report };
   /*
@@ -228,10 +235,10 @@ async function endorseDiscussionDuplicate(args: { issueNumber: number; discussio
   return { kind: "endorsed", ...result, report };
 }
 
-export async function endorseDuplicate(args: { owner: string; repo: string; issueNumber: number; report: StructuredReport; screenshotUrl?: string; client: NonNullable<ReportPipelineDeps["client"]>; scrubContext?: ReportScrubContext }): Promise<Extract<ReportResult, { kind: "endorsed" }>> {
+export async function endorseDuplicate(args: { owner: string; repo: string; issueNumber: number; report: StructuredReport; client: NonNullable<ReportPipelineDeps["client"]>; scrubContext?: ReportScrubContext }): Promise<Extract<ReportResult, { kind: "endorsed" }>> {
   const sessionToken = args.report.sessionToken ?? `${args.issueNumber}:${args.report.summary}`;
   const existing = endorsedSessions.get(sessionToken);
-  const report = appendReviewedScreenshot(scrubReportPayload(args.report, args.scrubContext), args.screenshotUrl);
+  const report = scrubReportPayload(args.report, args.scrubContext);
   if (existing) return { kind: "endorsed", ...existing, report };
   /*
   FNXC:ReportPipeline 2026-07-16-18:00:
@@ -267,69 +274,69 @@ function normalizeSubmittedReport(input: ReportInput, gathered: Record<string, u
     summary: !promptChangedSinceDerivation && typeof submitted.summary === "string" && submitted.summary.trim() ? submitted.summary : rebuilt.summary,
     body: !promptChangedSinceDerivation && typeof submitted.body === "string" && submitted.body.trim() ? submitted.body : rebuilt.body,
     context: submitted.context && typeof submitted.context === "object" ? { ...rebuilt.context, ...submitted.context } : rebuilt.context,
-    screenshot: input.screenshot,
+    screenshotArtifactId: input.screenshotArtifactId,
+    attachment: input.attachment,
     sessionToken: typeof submitted.sessionToken === "string" && submitted.sessionToken ? submitted.sessionToken : rebuilt.sessionToken,
   };
 }
 
-export async function runReportPipeline(input: ReportInput, deps: ReportPipelineDeps, options: { file?: boolean; endorseIssueNumber?: number; endorseDiscussionId?: string; report?: StructuredReport } = {}): Promise<ReportResult> {
+export async function runReportPipeline(input: ReportInput, deps: ReportPipelineDeps, options: { file?: boolean; targetType?: ReportTarget; discussionCategoryId?: string; endorseIssueNumber?: number; endorseDiscussionId?: string; endorseRoadmapIssueNumber?: number; report?: StructuredReport } = {}): Promise<ReportResult> {
   const gathered = await deps.gatherContext?.(input) ?? { taskId: input.contextRefs?.taskId, agentId: input.contextRefs?.agentId };
   const normalized = normalizeSubmittedReport(input, gathered, options.report);
-  // FNXC:ReportPipeline 2026-07-18-14:30: Screenshot data is validated by the
-  // route and is not textual report content. Strip it before the mandatory text
-  // scrub, then restore only the explicit per-report input for reviewed upload.
-  const { screenshot: _screenshot, ...textualReport } = normalized;
-  let report: StructuredReport = { ...scrubReportPayload(textualReport, deps.scrubContext), ...(input.screenshot ? { screenshot: input.screenshot } : {}) };
+  // Buffers are not text scrub input; retain the already route-validated attachment separately.
+  const report: StructuredReport = { ...scrubReportPayload({ ...normalized, attachment: undefined }, deps.scrubContext), attachment: normalized.attachment };
 
   const mode = resolveReportMode(input.actionType, deps.projectSettings);
-  /*
-  FNXC:ReportPipeline 2026-07-18-12:30:
-  An opted-in roadmap hit takes deterministic precedence over GitHub matching
-  and filing. It returns local roadmap context only, so no issue, discussion,
-  comment, reaction, or other external egress can occur in either report mode.
-  */
-  if (deps.projectSettings.reportRoadmapDedup && deps.roadmapSource) {
-    const roadmap = await findRoadmapMatch(deps.roadmapSource, report);
-    if (roadmap) return {
-      kind: "roadmap-match",
-      report,
-      mode,
-      roadmap: { featureId: roadmap.featureId, title: roadmap.title, description: roadmap.body ?? "" },
-    };
-  }
   const clientResult = createClient(deps);
   if (clientResult.unavailable) return clientResult.unavailable;
   const repo = resolveRepo(deps);
   if (!repo || !clientResult.client) return { kind: "unavailable", reason: "repo_missing", message: "Configure a GitHub tracking repository before filing reports." };
-  const shouldAttachScreenshot = Boolean(input.screenshot) && (options.file || mode === "auto-file");
-  const destination = destinationFor(input.actionType);
-  // FNXC:ReportPipeline 2026-07-18-19:30: Validate and publish the scrubbed
-  // text report before starting screenshot egress. This avoids uploading pixels
-  // for stale duplicate endorsements or a failed create operation.
-  const duplicate = await findDuplicate(clientResult.client, repo.owner, repo.repo, report, destination);
-  const attachToIssue = (issueNumber: number) => attachReviewedScreenshot(
-    shouldAttachScreenshot ? input.screenshot : undefined, clientResult.client!, repo.owner, repo.repo,
-    async (url) => { await clientResult.client!.commentOnIssue(repo.owner, repo.repo, issueNumber, `## Screenshot\n![User-reviewed screenshot](${url})`); },
-  );
-  const attachToDiscussion = (discussionId: string) => attachReviewedScreenshot(
-    shouldAttachScreenshot ? input.screenshot : undefined, clientResult.client!, repo.owner, repo.repo,
-    async (url) => { await clientResult.client!.commentOnDiscussion!(discussionId, `## Screenshot\n![User-reviewed screenshot](${url})`); },
-  );
+  const roadmap = resolveRoadmapDedupe(deps);
+  /*
+  FNXC:ReportPipeline 2026-07-18-20:15:
+  FR-30 public-roadmap issues are an additive, OPEN-only dedupe source. A roadmap
+  hit deterministically wins over destination matches, and endorsement reuses the
+  issue +1/scrub path; unavailable roadmap search falls through without egress.
+  */
+  const roadmapDuplicate = await findRoadmapDuplicate(clientResult.client, roadmap, report);
+  let destination = resolveReportTarget(input.actionType, deps.projectSettings, options.targetType);
+  let duplicate: DuplicateCandidate | undefined;
+  try {
+    duplicate = await findDuplicate(clientResult.client, repo.owner, repo.repo, report, destination);
+  } catch (error) {
+    if (destination === "discussion" && isDiscussionsDisabledError(error)) {
+      destination = "issue";
+      duplicate = await findDuplicate(clientResult.client, repo.owner, repo.repo, report, destination);
+    } else if (destination === "discussion") {
+      return { kind: "unavailable", reason: "discussion_unavailable", message: "GitHub Discussions are unavailable for this repository or token." };
+    } else {
+      throw new Error("GitHub Issue duplicate search failed.");
+    }
+  }
+  if (options.endorseRoadmapIssueNumber) {
+    if (!roadmapDuplicate || roadmapDuplicate.number !== options.endorseRoadmapIssueNumber || !roadmap.repo) {
+      return { kind: "unavailable", reason: "duplicate_not_verified", message: "The selected roadmap item is no longer an open matching report. Please prepare the report again." };
+    }
+    const endorsed = await endorseDuplicate({ owner: roadmap.repo.owner, repo: roadmap.repo.repo, issueNumber: roadmapDuplicate.number, report: await embedScreenshot({ report, client: clientResult.client, owner: roadmap.repo.owner, repo: roadmap.repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client, scrubContext: deps.scrubContext });
+    return endorsed;
+  }
   if (options.endorseDiscussionId) {
     if (!clientResult.client.commentOnDiscussion || !clientResult.client.addDiscussionReaction || destination !== "discussion" || duplicate?.discussionId !== options.endorseDiscussionId) {
       return { kind: "unavailable", reason: "duplicate_not_verified", message: "The selected discussion is no longer an open matching report. Please prepare the report again." };
     }
-    const endorsed = await endorseDiscussionDuplicate({ issueNumber: duplicate.number, discussionId: duplicate.discussionId, report, client: clientResult.client as NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">, scrubContext: deps.scrubContext });
-    const attachment = await attachToDiscussion(duplicate.discussionId);
-    return { ...endorsed, report: appendReviewedScreenshot(endorsed.report, attachment.screenshotUrl), ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+    const endorsed = await endorseDiscussionDuplicate({ issueNumber: duplicate.number, discussionId: duplicate.discussionId, report: await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client as NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">, scrubContext: deps.scrubContext });
+    return endorsed;
   }
   if (options.endorseIssueNumber) {
     if (destination !== "issue" || duplicate?.number !== options.endorseIssueNumber) {
       return { kind: "unavailable", reason: "duplicate_not_verified", message: "The selected issue is no longer an open matching report. Please prepare the report again." };
     }
-    const endorsed = await endorseDuplicate({ owner: repo.owner, repo: repo.repo, issueNumber: duplicate.number, report, client: clientResult.client, scrubContext: deps.scrubContext });
-    const attachment = await attachToIssue(duplicate.number);
-    return { ...endorsed, report: appendReviewedScreenshot(endorsed.report, attachment.screenshotUrl), ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+    const endorsed = await endorseDuplicate({ owner: repo.owner, repo: repo.repo, issueNumber: duplicate.number, report: await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client, scrubContext: deps.scrubContext });
+    return endorsed;
+  }
+  if (roadmapDuplicate) {
+    if (mode === "auto-file") return endorseDuplicate({ owner: roadmap.repo!.owner, repo: roadmap.repo!.repo, issueNumber: roadmapDuplicate.number, report: await embedScreenshot({ report, client: clientResult.client, owner: roadmap.repo!.owner, repo: roadmap.repo!.repo, scrubContext: deps.scrubContext }), client: clientResult.client, scrubContext: deps.scrubContext });
+    return { kind: "duplicate-found", report, mode, issue: { number: roadmapDuplicate.number, url: roadmapDuplicate.html_url, title: roadmapDuplicate.title, roadmap: true } };
   }
   if (duplicate) {
     if (mode === "auto-file") {
@@ -337,26 +344,46 @@ export async function runReportPipeline(input: ReportInput, deps: ReportPipeline
         if (!duplicate.discussionId || !clientResult.client.commentOnDiscussion || !clientResult.client.addDiscussionReaction) {
           return { kind: "unavailable", reason: "discussion_unsupported", message: "This GitHub connection cannot endorse discussions." };
         }
-        const endorsed = await endorseDiscussionDuplicate({ issueNumber: duplicate.number, discussionId: duplicate.discussionId, report, client: clientResult.client as NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">, scrubContext: deps.scrubContext });
-        const attachment = await attachToDiscussion(duplicate.discussionId);
-        return { ...endorsed, report: appendReviewedScreenshot(endorsed.report, attachment.screenshotUrl), ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+        try {
+          const endorsed = await endorseDiscussionDuplicate({ issueNumber: duplicate.number, discussionId: duplicate.discussionId, report: await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client as NonNullable<ReportPipelineDeps["client"]> & Pick<GitHubClient, "commentOnDiscussion" | "addDiscussionReaction">, scrubContext: deps.scrubContext });
+          return endorsed;
+        } catch { return { kind: "unavailable", reason: "discussion_unavailable", message: "GitHub Discussions are unavailable for this repository or token." }; }
       }
-      const endorsed = await endorseDuplicate({ owner: repo.owner, repo: repo.repo, issueNumber: duplicate.number, report, client: clientResult.client, scrubContext: deps.scrubContext });
-      const attachment = await attachToIssue(duplicate.number);
-      return { ...endorsed, report: appendReviewedScreenshot(endorsed.report, attachment.screenshotUrl), ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+      const endorsed = await endorseDuplicate({ owner: repo.owner, repo: repo.repo, issueNumber: duplicate.number, report: await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client, scrubContext: deps.scrubContext });
+    return endorsed;
     }
     return { kind: "duplicate-found", report, mode, issue: { number: duplicate.number, url: duplicate.html_url, title: duplicate.title, discussionId: duplicate.discussionId } };
   }
   if (!options.file && mode === "draft-review") return { kind: "draft-ready", report, mode };
   if (destination === "discussion") {
     if (!clientResult.client.createDiscussion || !clientResult.client.commentOnDiscussion) return { kind: "unavailable", reason: "discussion_unsupported", message: "This GitHub connection cannot create discussions." };
-    const created = await clientResult.client.createDiscussion(repo.owner, repo.repo, report.summary, report.body);
-    const attachment = await attachToDiscussion(created.id);
-    report = appendReviewedScreenshot(report, attachment.screenshotUrl);
-    return { kind: "filed", url: created.htmlUrl, report, ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+    let categoryId = options.discussionCategoryId;
+    if (!categoryId) {
+      const configuredCategory = deps.projectSettings.reportDiscussionCategory;
+      if (!configuredCategory || !clientResult.client.listDiscussionCategories) return { kind: "unavailable", reason: "discussion_category_missing", message: "Select a Discussion category before filing reports to GitHub Discussions." };
+      try { categoryId = (await clientResult.client.listDiscussionCategories(repo.owner, repo.repo)).find((category) => category.id === configuredCategory || category.slug === configuredCategory)?.id; } catch { return { kind: "unavailable", reason: "discussion_categories_unavailable", message: "GitHub Discussions are unavailable for this repository or token." }; }
+      if (!categoryId) return { kind: "unavailable", reason: "discussion_category_invalid", message: "The selected Discussion category is missing or unavailable for this repository." };
+    }
+    try {
+      const embeddedReport = await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext });
+      const created = await clientResult.client.createDiscussion(repo.owner, repo.repo, embeddedReport.summary, embeddedReport.body, categoryId);
+      return { kind: "filed", url: created.htmlUrl, report: embeddedReport, destination: "discussion" };
+    } catch (error) {
+      if (!isDiscussionsDisabledError(error)) return { kind: "unavailable", reason: "discussion_unavailable", message: "GitHub Discussions are unavailable for this repository or token." };
+      /*
+      FNXC:ReportPipeline 2026-07-18-12:15:
+      Disabled Discussions can surface during dedupe or creation. Both signals
+      must switch to Issue dedupe before filing, and filed results disclose the
+      actual destination so reporters are never told a Discussion was created.
+      */
+      const issueDuplicate = await findDuplicate(clientResult.client, repo.owner, repo.repo, report, "issue");
+      if (issueDuplicate) {
+        if (mode === "auto-file") return endorseDuplicate({ owner: repo.owner, repo: repo.repo, issueNumber: issueDuplicate.number, report: await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext }), client: clientResult.client, scrubContext: deps.scrubContext });
+        return { kind: "duplicate-found", report, mode, issue: { number: issueDuplicate.number, url: issueDuplicate.html_url, title: issueDuplicate.title } };
+      }
+    }
   }
-  const created = await clientResult.client.createIssue({ owner: repo.owner, repo: repo.repo, title: report.summary, body: report.body, labels: ["community"] });
-  const attachment = await attachToIssue(created.number);
-  report = appendReviewedScreenshot(report, attachment.screenshotUrl);
-  return { kind: "filed", url: created.htmlUrl, report, ...(attachment.screenshotNotAttached ? { screenshotNotAttached: true } : {}) };
+  const embeddedReport = await embedScreenshot({ report, client: clientResult.client, owner: repo.owner, repo: repo.repo, scrubContext: deps.scrubContext });
+  const created = await clientResult.client.createIssue({ owner: repo.owner, repo: repo.repo, title: embeddedReport.summary, body: embeddedReport.body, labels: ["community"] });
+  return { kind: "filed", url: created.htmlUrl, report: embeddedReport, destination: "issue" };
 }

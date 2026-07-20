@@ -49,6 +49,7 @@ const BATCH1_METHODS = [
 const BATCH2_METHODS = [
   "recoverCompletedTasks",
   "recoverStrandedCompletedTodoTasks",
+  "recoverAdvancedTriageTasks",
   "recoverStaleIncompleteReviewTasks",
   "recoverReviewTasksWithFailedPreMergeSteps",
   "recoverInterruptedMergingTasks",
@@ -179,6 +180,29 @@ describe("FN-5284: self-healing DB corruption surfacing", () => {
           errors: ["bad row", "bad index"],
           notificationDispatched: true,
         }),
+      }),
+    );
+  });
+
+  it("uses SQLite corruption wording for the fallback ntfy notification", async () => {
+    const store = createMockStore({
+      getDatabaseHealth: vi.fn().mockReturnValue({
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["connection refused"],
+        lastCheckedAt: new Date("2026-05-20T00:05:00.000Z"),
+        isRunning: false,
+      }),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    stubMaintenance(manager);
+
+    await (manager as any).runMaintenance();
+
+    expect(notifierModule.sendNtfyNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Database corruption detected",
+        message: "Background SQLite integrity check detected corruption. Errors: connection refused.",
       }),
     );
   });

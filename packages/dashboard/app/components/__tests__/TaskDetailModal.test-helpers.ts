@@ -101,6 +101,13 @@ vi.mock("lucide-react", () => ({
   Maximize2: () => null,
   Minimize2: () => null,
   Loader2: (props: any) => React.createElement("svg", { "data-testid": "loader2-icon", ...props }),
+  /*
+  FNXC:TaskDetailTabPersistence 2026-07-20-19:10:
+  FN-8394's restored mocked-session guard reaches TaskVerificationStatus. Keep
+  its success-icon mock available so this deterministic tab-state regression
+  does not depend on the unrelated lucide module implementation.
+  */
+  CheckCircle2: () => null,
   Send: (props: any) => React.createElement("svg", { "data-testid": "send-icon", ...props }),
   Square: (props: any) => React.createElement("svg", { "data-testid": "square-icon", ...props }),
   Info: (props: any) => React.createElement("svg", { "data-testid": "info-icon", ...props }),

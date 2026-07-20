@@ -1306,6 +1306,7 @@
     "relativeTimeMinutes_one": "",
     "relativeTimeMinutes_other": "",
     "removeAttachment": "{{name}} 첨부 파일 제거",
+    "recent": "최근",
     "rename": "",
     "renameConversationAria": "",
     "renameConversationBody": "",
@@ -1602,19 +1603,6 @@
         "confirmTitle": "조직 번들을 가져올까요?",
         "confirmMessage": "미리본 구성을 이 프로젝트에 적용합니다.",
         "confirmApply": "번들 가져오기"
-      },
-      "versions": {
-        "title": "구성 버전",
-        "description": "기록된 프로젝트 구성 버전을 복원합니다.",
-        "loading": "버전 불러오는 중…",
-        "empty": "아직 구성 버전이 없습니다.",
-        "loadError": "구성 버전을 불러올 수 없습니다",
-        "rollback": "롤백",
-        "rollingBack": "롤백 중…",
-        "rollbackError": "구성을 롤백할 수 없습니다",
-        "confirmTitle": "구성을 롤백할까요?",
-        "confirmMessage": "이 버전을 복원할까요? 롤백은 새 버전으로 기록됩니다.",
-        "confirmRollback": "롤백"
       }
     },
     "ecosystem": {
@@ -2009,12 +1997,12 @@
     "title": "프로젝트 대시보드"
   },
   "dbBanner": {
-    "body": "Fusion의 백그라운드 SQLite 무결성 검사에서 손상이 발견되었습니다. 중요한 작업을 계속하기 전에 아래의 실패한 개체를 검토하세요.",
-    "instructions": "프로젝트를 백업하고, 데이터베이스가 정상적으로 열리면 {{cmd}}를 시도해 보세요. 손상이 지속될 경우 알려진 정상 백업에서 복원하세요. 저장소 레이아웃 및 복구 안내는 {{link}}를 참고하세요.",
+    "body": "Fusion의 PostgreSQL 상태 검사에서 오류가 보고되었습니다. 중요한 작업을 계속하기 전에 아래 세부 정보를 검토하세요.",
+    "instructions": "프로젝트를 백업하고 <cmd>데이터베이스 로그</cmd>와 PostgreSQL 연결 및 권한을 확인한 다음 상태를 새로 고치세요. 저장소 및 복구 지침은 <docsLink>docs/storage.md</docsLink>를 참조하세요.",
     "lastChecked": "마지막 확인: {{checkedAtLabel}}",
     "refreshHealth": "상태 새로 고침",
     "refreshing": "새로 고치는 중…",
-    "title": "데이터베이스 손상 감지됨",
+    "title": "데이터베이스 상태 검사 실패",
     "whatToDo": "조치 방법:"
   },
   "deepLink": {
@@ -4687,7 +4675,12 @@
     "usingDefault": "기본값 사용",
     "whatToBuild": "무엇을 만들고 싶으신가요?",
     "whatToBuildPlaceholder": "예: 로그인, 회원가입, 비밀번호 재설정이 포함된 사용자 인증 시스템 구축...",
-    "agentClarification": ""
+    "agentClarification": "",
+    "nextQuestion": "다음 질문",
+    "answeredQuestions": "답변한 질문",
+    "runningPlan": "진행 중인 계획",
+    "renameSession": "세션 이름 바꾸기",
+    "editAnswer": "{{question}} 답변 수정"
   },
   "plugins": {
     "addItem": "항목 추가",
@@ -5946,10 +5939,32 @@
       "ephemeralAgentTaskCreationPolicyDeny": "거부",
       "reportModeHelp": "인앱 버그/피드백/아이디어/도움말 리포트 제출 방식. 기본값: draft-review(제출 전 운영자가 초안 검토).",
       "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다.",
+      "reportRoadmapRepo": "Public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "reviewArtifacts": "리뷰 산출물",
       "reviewArtifactsHint": "적격한 향후 작업이 리뷰 산출물을 생성할지 제어합니다. 사용자 보고와 활동 캡처는 별도로 유지됩니다. 기본값: 꺼짐.",
-      "reportRoadmapDedup": "보고서를 제출하기 전에 로드맵 확인",
-      "reportRoadmapDedupHelp": "활성화하면 일치하는 로드맵 기능이 다른 GitHub 이슈나 토론을 만들지 않고 인라인으로 표시됩니다. 기본값: 꺼짐."
+      "reportRoadmapDedupeEnabled": "Deduplicate reports against public roadmap",
+      "reportRoadmapDedupeEnabledHelp": "Match open, labeled roadmap issues before filing. Default: on.",
+      "reportRoadmapLabel": "Public roadmap label",
+      "reportRoadmapLabelHelp": "Open GitHub Issues with this label are considered roadmap items. Default: roadmap.",
+      "reportRoadmapDedup": "Check roadmap before filing reports",
+      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
+      "reportTarget": "기본 보고 대상",
+      "reportTargetHelp": "선택적 이슈 또는 토론 대상입니다. 설정하지 않으면 피드백과 도움말은 토론을, 버그와 아이디어는 이슈를 사용합니다.",
+      "reportTargetInherit": "작업 기본 대상 유지",
+      "reportTargetIssue": "GitHub 이슈",
+      "reportTargetDiscussion": "GitHub 토론",
+      "reportTargetOverride": {
+        "bug": "버그 대상 재정의",
+        "feedback": "피드백 대상 재정의",
+        "idea": "아이디어 대상 재정의",
+        "help": "도움말 대상 재정의"
+      },
+      "reportDiscussionCategory": "토론 카테고리",
+      "reportDiscussionCategoryHelp": "Required when filing to GitHub Discussions. Categories are loaded from the configured repository.",
+      "reportDiscussionCategorySelect": "토론 카테고리 선택",
+      "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
+      "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5964,6 +5979,12 @@
       "frequency": "",
       "general": "",
       "globalDefaultTrackingRepo": "",
+      "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",
+      "reportRoadmapDedupeEnabledHelp": "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled).",
+      "reportRoadmapLabel": "Global public roadmap label",
+      "reportRoadmapLabelHelp": "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap).",
+      "reportRoadmapRepo": "Global public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "leaveBothThinkingTogglesOffToKeepThe": "",
       "manualOnlyNeverAutoCheck": "",
       "onStartupOncePerServerLaunch": "",
@@ -6315,7 +6336,8 @@
         "project": "이 프로젝트에만 적용됨"
       },
       "globalMcp": "MCP Servers · Global",
-      "mcp": "MCP Servers · Project"
+      "mcp": "MCP Servers · Project",
+      "configVersions": "구성 버전"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6821,6 +6843,19 @@
       "embeddedConnectionCap": "내장 PostgreSQL 연결 상한",
       "embeddedConnectionCapError": "32에서 2,000 사이의 값을 입력하세요.",
       "advanced": "고급 데이터베이스 설정"
+    },
+    "configVersions": {
+      "title": "구성 버전",
+      "description": "기록된 프로젝트 구성 버전을 복원합니다.",
+      "loading": "버전 불러오는 중…",
+      "empty": "아직 구성 버전이 없습니다.",
+      "loadError": "구성 버전을 불러올 수 없습니다",
+      "rollback": "롤백",
+      "rollingBack": "롤백 중…",
+      "rollbackError": "구성을 롤백할 수 없습니다",
+      "confirmTitle": "구성을 롤백할까요?",
+      "confirmMessage": "이 버전을 복원할까요? 롤백은 새 버전으로 기록됩니다.",
+      "confirmRollback": "롤백"
     }
   },
   "setup": {
@@ -9141,6 +9176,13 @@
     "roadmapMatch": {
       "title": "이미 로드맵에 있습니다",
       "message": "이 보고서는 이미 계획된 기능과 일치합니다."
-    }
+    },
+    "roadmapDuplicate": {
+      "title": "Already on the roadmap — add your data point?"
+    },
+    "targetLabel": "등록 대상",
+    "targetInherit": "구성된 작업 대상 사용",
+    "targetIssue": "GitHub 이슈",
+    "targetDiscussion": "GitHub 토론"
   }
 }

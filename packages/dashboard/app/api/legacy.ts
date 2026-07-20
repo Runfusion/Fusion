@@ -2500,6 +2500,8 @@ export interface PlanningSession {
   summary: PlanningSummary | null;
 }
 
+/** The response endpoint may synchronously return a generated next question before SSE delivers it. */
+export type PlanningResponse = PlanningSession | { type: "question"; data: PlanningQuestion };
 
 /** SSE event types for planning session streaming */
 export type PlanningStreamEvent =
@@ -2619,13 +2621,21 @@ export function validatePlanningSession(sessionId: string, projectId?: string): 
   return api<{ summary: PlanningSummary; validated: boolean }>(withProjectId(`/planning/${encodeURIComponent(sessionId)}/validate`, projectId), { method: "POST" });
 }
 
+/** Rename a planning session after the server verifies the session type. */
+export function updatePlanningSessionTitle(sessionId: string, title: string, projectId?: string): Promise<{ sessionId: string; title: string }> {
+  return api<{ sessionId: string; title: string }>(withProjectId(`/planning/${encodeURIComponent(sessionId)}/title`, projectId), {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
 /** Submit a response to the current planning question */
 export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-): Promise<PlanningSession> {
-  return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
+): Promise<PlanningResponse> {
+  return api<PlanningResponse>(withProjectId("/planning/respond", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });
@@ -2636,8 +2646,8 @@ export function rewindPlanningSession(
   sessionId: string,
   projectId?: string,
   questionId?: string,
-): Promise<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }> {
-  return api<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }>(
+): Promise<{ currentQuestion: PlanningQuestion; summary?: PlanningSummary; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }> {
+  return api<{ currentQuestion: PlanningQuestion; summary?: PlanningSummary; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/back`, projectId),
     {
       method: "POST",

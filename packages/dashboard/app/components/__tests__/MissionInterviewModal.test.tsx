@@ -18,6 +18,7 @@ const mockAcquireSessionLock = vi.fn();
 const mockReleaseSessionLock = vi.fn();
 const mockForceAcquireSessionLock = vi.fn();
 const mockFetchModels = vi.fn();
+const mockFetchSettings = vi.fn();
 
 vi.mock("../../api", () => ({
   startMissionInterview: (...args: any[]) => mockStartMissionInterview(...args),
@@ -32,6 +33,7 @@ vi.mock("../../api", () => ({
   releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
   forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
+  fetchSettings: (...args: any[]) => mockFetchSettings(...args),
 }));
 
 const mockGetMissionGoal = vi.fn(() => "");
@@ -149,6 +151,7 @@ describe("MissionInterviewModal", () => {
     mockReleaseSessionLock.mockResolvedValue(undefined);
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+    mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "off" });
     localStorage.removeItem("floating-window:mission-interview");
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
       callback(0);
@@ -182,6 +185,16 @@ describe("MissionInterviewModal", () => {
     Object.defineProperty(element, "setPointerCapture", { configurable: true, value: vi.fn() });
     Object.defineProperty(element, "releasePointerCapture", { configurable: true, value: vi.fn() });
   }
+
+  it("renders the configured thinking level as the mission interview default", async () => {
+    mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "high" });
+
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("custom-model-dropdown-thinking-badge")).toHaveTextContent("Default (high)");
+    });
+  });
 
   it("renders mission interview inside a floating desktop workspace", () => {
     setViewport(1200, 900);

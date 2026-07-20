@@ -14,7 +14,7 @@ function formatDuration(durationMs: number | undefined): string | null {
  * command control or reimplements the chat/executor permission boundary.
  */
 export function TaskVerificationStatus({ request, compact = false }: { request: TaskVerificationRequest | null; compact?: boolean }) {
-  if (!request) return compact ? null : <p className="task-verification-status task-verification-status--empty">No chat verification requested.</p>;
+  if (!request) return null;
 
   const running = request.status === "requested" || request.status === "running";
   const failed = request.status === "failed" || request.status === "rejected";

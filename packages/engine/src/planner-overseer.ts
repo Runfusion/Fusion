@@ -426,8 +426,12 @@ export class PlannerOverseerMonitor {
         const loggedKey = `${stage}|${signal}|${reason}`;
         if (this.lastLoggedKey.get(task.id) !== loggedKey) {
           this.lastLoggedKey.set(task.id, loggedKey);
+          /*
+          FNXC:PlannerOversight 2026-07-19-00:00:
+          Activity feed label is short "planner" (not "planner-overseer") so operators scanning the task feed can tell this is planner lifecycle observation without the longer overseer product name.
+          */
           await this.store
-            .logEntry(task.id, `[planner-overseer] stage=${stage} signal=${signal}: ${reason}`)
+            .logEntry(task.id, `[planner] stage=${stage} signal=${signal}: ${reason}`)
             .catch(() => undefined);
         }
       }

@@ -1,0 +1,115 @@
+/*
+FNXC:WhatsAppSettingsPairing 2026-07-20-12:00:
+The pairing panel must remain readable in the constrained Settings modal on desktop and mobile. Its QR, code action, and instructions use the shared plugin/button primitives and design tokens rather than a parallel settings surface.
+*/
+.whatsapp-pairing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent));
+}
+
+.whatsapp-pairing-heading-row,
+.whatsapp-pairing-code-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.whatsapp-pairing-description,
+.whatsapp-pairing-instructions h6 {
+  margin: 0;
+}
+
+.whatsapp-pairing-description {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.whatsapp-pairing-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+}
+
+.whatsapp-pairing-status--connected,
+.whatsapp-pairing-success {
+  color: var(--color-success);
+}
+
+.whatsapp-pairing-status--error {
+  color: var(--color-error);
+}
+
+.whatsapp-pairing-qr {
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+
+.whatsapp-pairing-qr-image {
+  display: block;
+  width: min(calc(var(--space-2xl) * 6), 100%);
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.whatsapp-pairing-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.whatsapp-pairing-code-controls .input {
+  flex: 1;
+  min-inline-size: min(calc(var(--space-2xl) * 6), 100%);
+}
+
+.whatsapp-pairing-code-output {
+  width: fit-content;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.whatsapp-pairing-success {
+  margin: 0;
+}
+
+.whatsapp-pairing-instructions {
+  padding-top: var(--space-md);
+  border-top: var(--btn-border-width) solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.whatsapp-pairing-instructions ol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-block: var(--space-sm) 0;
+  padding-inline-start: var(--space-lg);
+}
+
+.whatsapp-pairing-instructions strong {
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .whatsapp-pairing-code-controls > * {
+    width: 100%;
+  }
+}

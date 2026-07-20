@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   parseChangesetBody,
   parseChangesetFile,
+  parseChangesetChangelogEntries,
   validateChangeset,
   MAX_SUMMARY_LENGTH,
   CATEGORIES,
@@ -150,4 +151,25 @@ test("handles file without frontmatter gracefully", () => {
   const result = parseChangesetFile(raw);
   assert.equal(result.frontmatter, "");
   assert.equal(result.parsed.summary, "No frontmatter.");
+});
+
+// --- parseChangesetChangelogEntries ---
+
+test("preserves multiline labeled fields from Changesets changelog bullets", () => {
+  const notes = [
+    "### Patch Changes",
+    "",
+    "- 831ed4c: summary: Restore Chinese roadmap duplicate labels.",
+    "  category: fix",
+    "  dev: Restores zh-CN and zh-TW catalog entries.",
+  ].join("\n");
+
+  assert.deepEqual(parseChangesetChangelogEntries(notes), [
+    {
+      summary: "Restore Chinese roadmap duplicate labels.",
+      category: "fix",
+      dev: "Restores zh-CN and zh-TW catalog entries.",
+      legacy: false,
+    },
+  ]);
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPluginDashboardViews } from "../api";
 import type { PluginDashboardViewEntry } from "../api";
+import { subscribeSse } from "../sse-bus";
 
 const dashboardViewsCache = new Map<string, { views: PluginDashboardViewEntry[]; expiresAt: number }>();
 const CACHE_TTL_MS = 60_000;
@@ -31,6 +32,25 @@ export function usePluginDashboardViews(projectId?: string): {
     dashboardViewsCache.delete(cacheKey);
     setReloadKey((key) => key + 1);
   }, [projectId]);
+
+  /*
+  FNXC:CompoundEngineeringNav 2026-07-19-17:01:
+  An enabled plugin becomes a navigation destination only after its project-scoped loader starts it.
+  Subscribe at the shared dashboard-views seam so install, enable, disable, and uninstall lifecycle
+  changes invalidate every nav renderer together instead of leaving a 60-second stale empty sidebar.
+  */
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("projectId", projectId);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+
+    const refreshViews = () => refetch();
+    return subscribeSse(`/api/events${query}`, {
+      events: { "plugin:lifecycle": refreshViews },
+      // A reconnect may have missed a lifecycle event, so re-read the loaded set.
+      onReconnect: refreshViews,
+    });
+  }, [projectId, refetch]);
 
   useEffect(() => {
     const cacheKey = projectId ?? "default";

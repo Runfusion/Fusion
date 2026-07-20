@@ -1,4 +1,5 @@
 import type { Settings } from "@fusion/core";
+import { basename } from "node:path";
 import { resolveTaskWorktreePath } from "./worktree-paths.js";
 
 /*
@@ -36,4 +37,16 @@ export function pinnedWorktreePathForTask(
   rootDir: string,
 ): string {
   return resolveTaskWorktreePath(rootDir, settings, pinnedWorktreeSlug(taskId));
+}
+
+/** Preserve the task-pinned naming invariant while normalizing legacy paths. */
+export function preservedWorktreeTargetPathForTask(
+  taskId: string,
+  sourcePath: string,
+  settings: Pick<Settings, "worktreeNaming" | "worktreesDir"> | undefined,
+  rootDir: string,
+): string {
+  return isTaskPinnedWorktreeNaming(settings)
+    ? pinnedWorktreePathForTask(taskId, settings, rootDir)
+    : resolveTaskWorktreePath(rootDir, settings, basename(sourcePath));
 }

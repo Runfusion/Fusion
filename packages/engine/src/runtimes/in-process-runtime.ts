@@ -314,6 +314,7 @@ export class InProcessRuntime
         const backendBoot = await createTaskStoreForBackend({
           rootDir: this.config.workingDirectory,
           projectId: this.config.projectId,
+          onMigrationProgress: this.config.onMigrationProgress,
         });
         // FNXC:PostgresFinalCutover 2026-07-14-17:20: Engine runtimes must fail
         // startup when PostgreSQL cannot boot; constructing a SQLite TaskStore is no longer valid.
@@ -1048,7 +1049,8 @@ export class InProcessRuntime
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         listWorktreeHolders: () => this.executor?.listWorktreeHolders() ?? [],
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
-        getPlanningTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
+        getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
+        reserveAdvancedTriageRecovery: (taskId) => this.triageProcessor?.tryReserveAdvancedRecovery(taskId),
         evictStaleTriageProcessing: () => this.triageProcessor?.evictStaleProcessing() ?? new Set<string>(),
         enqueueMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) ?? false : undefined,
         requeueForAutoMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) ?? false : undefined,

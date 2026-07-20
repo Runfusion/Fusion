@@ -1,3 +1,4 @@
+import { createRoadmapStoreForTaskStore } from "@fusion-plugin-examples/roadmap";
 import type {
   NativeStructurePreviewPayload,
   NativeStructurePreviewResult,
@@ -11,6 +12,7 @@ const KIND_LABELS: Record<NativeStructureRef["kind"], string> = {
   "research-finding": "Research finding",
   "eval-result": "Evaluation result",
   goal: "Goal",
+  "roadmap-item": "Roadmap item",
 };
 const MAX_EXCERPT_LENGTH = 180;
 
@@ -40,7 +42,12 @@ function text(value: string | null | undefined, fallback: string): string {
  * This is a read-only projection over the task-scoped stores; it never duplicates structure
  * persistence. Existing archived/dismissed lifecycle status supplies `soft-deleted` because no
  * target has a tombstone column. Missing and unavailable structures are returned, never thrown;
- * eval results have no archive lifecycle and can only be missing.
+ * eval results and roadmap items have no archive lifecycle and can only be missing.
+ *
+ * FNXC:NativeStructureEmbed 2026-07-19-12:45:
+ * Roadmap-item is a project-scoped, read-only projection through the plugin's supported
+ * createRoadmapStoreForTaskStore seam. Adapter/layer failures degrade to missing; do not
+ * duplicate roadmap persistence or reach into plugin store internals.
  */
 export async function resolveNativeStructurePreview(
   store: TaskStore,
@@ -83,6 +90,22 @@ export async function resolveNativeStructurePreview(
       if (!goal) return unavailable(ref, "missing");
       if (goal.status === "archived") return unavailable(ref, "soft-deleted");
       return preview(ref, goal.title, text(goal.description, `Status: ${goal.status}`), { view: "goals", id: goal.id });
+    }
+    case "roadmap-item": {
+      try {
+        const roadmapStore = createRoadmapStoreForTaskStore(store);
+        const feature = await roadmapStore.getFeature(ref.id);
+        if (!feature) return unavailable(ref, "missing");
+        const milestone = await roadmapStore.getMilestone(feature.milestoneId);
+        return preview(ref, feature.title, text(feature.description, ""), {
+          view: "roadmaps",
+          id: feature.id,
+          milestoneId: feature.milestoneId,
+          ...(milestone ? { roadmapId: milestone.roadmapId } : {}),
+        });
+      } catch {
+        return unavailable(ref, "missing");
+      }
     }
   }
 }

@@ -16,6 +16,9 @@ scripts/dev-with-memory.mjs.
 */
 export const FUSION_RESTART_EXIT_CODE = 86;
 
+/* FNXC:ProjectPartitionMerge 2026-07-20-12:00: A classified unique-constraint startup failure is deterministic, so supervised dashboard boot must stop once rather than consume the crash-restart budget. */
+export const FUSION_NON_RETRYABLE_EXIT_CODE = 87;
+
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const DEFAULT_MAX_LIFETIME_MS = 600_000;
 const MAX_KILL_WAIT_MS = 1_000;

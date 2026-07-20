@@ -14,6 +14,11 @@ import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
 import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
 import type { SecretScope } from "./secrets-store.js";
+import type { UpdateChannel } from "./app-version.js";
+// FNXC:UpdateChannels 2026-07-19-12:30: re-export type-only so browser-side
+// dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
+// package barrel) can name the update channel union.
+export type { UpdateChannel } from "./app-version.js";
 
 export {
   computeCapacityRisk,
@@ -726,6 +731,13 @@ export interface TaskDocumentWithTask extends TaskDocument {
 export type ArtifactType = "document" | "image" | "video" | "audio" | "other";
 
 /**
+ * FNXC:ReportPipeline 2026-07-19-10:00:
+ * Report screenshots are local image artifacts with this explicit provenance.
+ * Only the reference may reach report egress; screenshot pixels never do.
+ */
+export const REPORT_ATTACHMENT_SOURCE = "report-attachment";
+
+/**
  * FNXC:ArtifactRegistry 2026-06-19-22:04:
  * Agents need a first-class registry for multi-type artifacts that are visible across agents and tasks. Store binary media on disk and persist only metadata plus relative URIs in SQLite so query paths stay lightweight and never inline binary bytes.
  */
@@ -869,11 +881,11 @@ export function isReviewArtifactGenerationEligible(
 /**
  * FNXC:NativeStructureEmbed 2026-07-16-12:00:
  * Chat and mail share this compact reference contract so their consumers never invent
- * incompatible structure identifiers. `roadmap-item` remains a deferred future kind until
- * its plugin exposes a PostgreSQL-safe read adapter and a restored dashboard destination.
+ * incompatible structure identifiers. `roadmap-item` is resolved through the roadmap plugin's
+ * PostgreSQL-safe adapter and is missing-only because roadmap entities have no soft-delete state.
  */
 export interface NativeStructureRef {
-  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal";
+  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal" | "roadmap-item";
   id: string;
   projectId?: string;
 }
@@ -882,11 +894,17 @@ export interface NativeStructureRef {
  * FNXC:NativeStructureEmbed 2026-07-16-12:00:
  * Dashboard destinations are callback/view-state based rather than HTML routes. Consumers use
  * this stable descriptor with their navigation callback; it is intentionally not a URL.
+ *
+ * FNXC:NativeStructureEmbed 2026-07-19-12:30:
+ * Roadmap-item descriptors carry optional hierarchy context for the hosted `roadmaps` view;
+ * consumers pass this object to onOpen instead of manufacturing a deep-link URL.
  */
 export interface NativeStructureOpenTarget {
-  view: "missions" | "insights" | "evals" | "goals";
+  view: "missions" | "insights" | "evals" | "goals" | "roadmaps";
   id: string;
   missionId?: string;
+  roadmapId?: string;
+  milestoneId?: string;
 }
 
 /**
@@ -1652,6 +1670,8 @@ export interface Task {
    * metadata fallback when live stats are unavailable.
    */
   modifiedFiles?: string[];
+  /** Durable normalized symbol declarations used by scheduler admission. */
+  declaredSymbols?: string[];
   /** Opt out of the squash file-scope invariant for this task. */
   scopeOverride?: boolean;
   /** Optional justification for bypassing the squash file-scope invariant. */
@@ -2319,6 +2339,8 @@ export interface TaskCreateInput {
   scopeOverrideReason?: string;
   /** Append-only list of file paths auto-widened into `## File Scope` by merger safety checks. */
   scopeAutoWiden?: string[];
+  /** Optional declared symbols; own-property undefined is an explicit runtime clear. */
+  declaredSymbols?: string[];
   /** Per-task GitHub issue tracking overrides for Fusion-created linked issues. */
   githubTracking?: Pick<TaskGithubTracking, "enabled" | "repoOverride">;
   /** Review level for task execution — controls review rigor: 0=None, 1=Plan Only, 2=Plan and Code, 3=Full */
@@ -2869,6 +2891,10 @@ export interface GlobalSettings {
   /** Global fallback GitHub tracking repo in `owner/repo` format (FN-3868).
    *  Used when a project has no githubTrackingDefaultRepo. */
   githubTrackingDefaultRepo?: string;
+  /** Global fallback configuration for public-roadmap report deduplication. */
+  reportRoadmapDedupeEnabled?: boolean;
+  reportRoadmapLabel?: string;
+  reportRoadmapRepo?: string;
   /** Global GitLab integration enable flag. Undefined is effectively enabled for backward compatibility; projects can override this value. */
   gitlabEnabled?: boolean;
   /** Global fallback GitLab web instance URL. Defaults effectively to https://gitlab.com when unset.
@@ -2895,6 +2921,21 @@ export interface GlobalSettings {
    *  - `weekly`: 7-day cache TTL
    */
   updateCheckFrequency?: "manual" | "on-startup" | "daily" | "weekly";
+  /**
+   * FNXC:UpdateChannels 2026-07-19-12:30:
+   * See `UpdateChannel` in app-version.ts for the channel semantics.
+   * Fusion ships on two release tracks: `stable` (npm dist-tag `latest`, GitHub
+   * releases marked latest) and `beta` (npm dist-tag `beta`, GitHub prereleases
+   * tagged `vX.Y.Z-beta.N`, cut from `main`). This setting selects which track
+   * every update surface (CLI `fn update`, dashboard update check, desktop
+   * electron-updater) offers. Channel resolution: `stable` sees only `latest`;
+   * `beta` sees the semver-max of `latest` and `beta` so beta users are moved
+   * forward when a promoted stable overtakes their prerelease. Switching
+   * beta → stable never offers a downgrade; the user stays on their beta build
+   * until the next stable release surpasses it (`fn update --channel stable --force`
+   * is the explicit downgrade escape hatch). Default: `stable`.
+   */
+  updateChannel?: UpdateChannel;
   /** When true (default), the dashboard automatically reloads when a new build
    *  version is detected via /version.json polling or service worker activation.
    *  Set to false to suppress automatic reloads — the user must manually
@@ -3284,6 +3325,7 @@ export type SecretsEnvConfig = SecretsEnvSettings;
  */
 export type ReportMode = "draft-review" | "auto-file";
 export type ReportActionType = "bug" | "feedback" | "idea" | "help";
+export type ReportTarget = "issue" | "discussion";
 
 export interface ProjectSettings {
   /** Hard stop: when true, all automated agent activity is **immediately**
@@ -4200,12 +4242,24 @@ export interface ProjectSettings {
    */
   reportMode?: ReportMode;
   reportModeByAction?: Partial<Record<ReportActionType, ReportMode>>;
+  /*
+  FNXC:ReportPipeline 2026-07-16-20:15:
+  Report filing targets remain unset by default so the report pipeline retains
+  its established action-specific routing. Operators may select a project-wide
+  Issue/Discussion target, a per-action exception, and a Discussion category.
+  */
+  reportTarget?: ReportTarget;
+  reportTargetByAction?: Partial<Record<ReportActionType, ReportTarget>>;
+  reportDiscussionCategory?: string;
   /**
    * FNXC:ReportPipeline 2026-07-18-12:00:
-   * Roadmap deduplication is opt-in because projects without a roadmap must
-   * retain the existing Issues-and-Discussions-only report behavior.
+   * FR-30 public-roadmap dedupe is an additive GitHub Issue source. Effective
+   * values resolve project → global → built-in defaults and reuse tracking-repo
+   * resolution when no dedicated roadmap repo is configured.
    */
-  reportRoadmapDedup?: boolean;
+  reportRoadmapDedupeEnabled?: boolean;
+  reportRoadmapLabel?: string;
+  reportRoadmapRepo?: string;
   /**
    * FNXC:GitLabConfiguration 2026-07-02-00:00:
    * FN-7422 adds durable GitLab instance/API URL settings for GitLab.com and self-managed hosts. FN-7423 layers token settings onto the same project-over-global configuration contract without adding runtime GitLab imports or tracking.
@@ -4897,6 +4951,7 @@ export interface ArchivedTaskEntry {
   baseCommitSha?: string;
   /** List of files modified by this task */
   modifiedFiles?: string[];
+  declaredSymbols?: string[];
   /** Mission ID this task is linked to */
   missionId?: string;
   /** Slice ID this task is linked to */
@@ -5587,6 +5642,12 @@ export interface PlanningQuestion {
   question: string;
   description?: string;
   options?: Array<{ id: string; label: string; description?: string; pros?: string[]; cons?: string[]; isOther?: boolean; customText?: string }>;
+  /*
+  FNXC:PlanningMode 2026-07-20-00:00:
+  FN-8434 carries the evolving plan beside the next interview question. This field is additive:
+  it must never be interpreted as model authority to complete a user-controlled Planning Mode session.
+  */
+  runningPlan?: PlanningSummary;
 }
 
 /** The final summary generated after planning conversation completes */
@@ -6182,16 +6243,16 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
   }
 
   /*
-  FNXC:NativeStructureEmbed 2026-07-20-12:00:
-  Mail accepts only the shared five-kind NativeStructureRef union. Reject unsupported future
-  kinds at the persistence boundary so every stored attachment remains renderable by the shared
-  preview component; labels are optional attach-time fallbacks, not serialized preview snapshots.
+  FNXC:NativeStructureEmbed 2026-07-19-12:30:
+  Mail accepts only the shared six-kind NativeStructureRef union. The roadmap item uses the
+  plugin-owned read adapter at render time, so attachment metadata remains a ref rather than a
+  duplicated persistence snapshot; labels are optional attach-time fallbacks.
   */
   if (metadata.nativeStructures !== undefined) {
     if (!Array.isArray(metadata.nativeStructures)) {
       throw new Error("metadata.nativeStructures must be an array");
     }
-    const supportedKinds: NativeStructureRef["kind"][] = ["mission", "milestone", "research-finding", "eval-result", "goal"];
+    const supportedKinds: NativeStructureRef["kind"][] = ["mission", "milestone", "research-finding", "eval-result", "goal", "roadmap-item"];
     for (const embed of metadata.nativeStructures) {
       if (typeof embed !== "object" || embed === null || Array.isArray(embed)) {
         throw new Error("metadata.nativeStructures entries must be objects");

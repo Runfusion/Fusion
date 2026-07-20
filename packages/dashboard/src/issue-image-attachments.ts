@@ -16,10 +16,10 @@ Import must never fail because an image failed to download: the task (the operat
 */
 
 /** Mirrors TaskStore.ALLOWED_MIME_TYPES image subset — addAttachment rejects anything else. */
-const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 /** Mirrors TaskStore.MAX_ATTACHMENT_SIZE (5MB). Checked before buffering so a huge asset can't balloon dashboard memory. */
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /** Bound per-issue work: a pathological issue (or a long comment thread) must not stall the import request. */
 const MAX_IMAGES_PER_ISSUE = 10;
@@ -28,7 +28,7 @@ const DOWNLOAD_TIMEOUT_MS = 15_000;
 const MAX_DOWNLOAD_REDIRECTS = 3;
 const IMAGE_DOWNLOAD_CONCURRENCY = 3;
 
-const EXT_BY_MIME: Record<string, string> = {
+export const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/gif": "gif",

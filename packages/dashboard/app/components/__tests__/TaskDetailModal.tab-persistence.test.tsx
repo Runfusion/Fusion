@@ -218,7 +218,7 @@ describe("TaskDetailModal tab persistence", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active"));
   });
 
-  it("keeps the Terminal guard when the CLI session disappears", async () => {
+  it("keeps the Terminal guard when the mocked CLI session disappears", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url) => {
       const body = url.toString().includes("FN-TERMINAL")

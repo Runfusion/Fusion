@@ -3107,8 +3107,13 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       </button>
       {mobileSessionMenuOpen && (
         <div className="chat-mobile-session-dropdown" role="menu" data-testid="chat-mobile-session-dropdown">
-          {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-mobile-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
-          {[...pinnedFilteredSessions, ...unpinnedFilteredSessions].map((session) => (
+          {[
+            { id: "pinned", label: t("chat.pinned", "Pinned"), testId: "chat-mobile-pinned-divider", sessions: pinnedFilteredSessions },
+            { id: "recent", label: t("chat.recent", "Recent"), testId: "chat-mobile-recent-divider", sessions: unpinnedFilteredSessions },
+          ].filter((group) => group.sessions.length > 0).map((group) => (
+            <section className="chat-session-section" data-testid={`chat-mobile-session-section-${group.id}`} key={group.id}>
+              <div className="chat-pinned-divider" data-testid={group.testId}>{group.label}</div>
+              {group.sessions.map((session) => (
             <div
               key={session.id}
               className={`chat-mobile-session-option-row${activeSession?.id === session.id ? " chat-mobile-session-option-row--active" : ""}`}
@@ -3144,6 +3149,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 <Pencil size={14} />
               </button>
             </div>
+              ))}
+            </section>
           ))}
           {/*
           FNXC:Chat 2026-06-27-00:00:
@@ -3319,9 +3326,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
                 <>
-                  {/* FNXC:ChatPinned 2026-07-16-12:00: Direct-session pins are grouped on desktop and mobile; the store caps each scope at three. */}
-                  {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
-                  {filteredSessions.map((session) => {
+                  {/*
+                  FNXC:ChatPinned 2026-07-19-00:00:
+                  Direct conversation pins must be two explicit sections on every session-list surface.
+                  Do not flatten Recent rows beneath Pinned: labels and wrappers make the pin boundary
+                  clear for desktop, mobile, full Chat, and Quick Chat (all share this component).
+                  */}
+                  {[
+                    { id: "pinned", label: t("chat.pinned", "Pinned"), testId: "chat-pinned-divider", sessions: pinnedFilteredSessions },
+                    { id: "recent", label: t("chat.recent", "Recent"), testId: "chat-recent-divider", sessions: unpinnedFilteredSessions },
+                  ].filter((group) => group.sessions.length > 0).map((group) => (
+                    <section className="chat-session-section" data-testid={`chat-session-section-${group.id}`} key={group.id}>
+                      <div className="chat-pinned-divider" data-testid={group.testId}>{group.label}</div>
+                      {group.sessions.map((session) => {
                   const isActive = activeSession?.id === session.id;
                   const showUnreadDot = !isActive && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3397,7 +3414,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       </div>
                     </div>
                   );
-                  })}
+                      })}
+                    </section>
+                  ))}
                 </>
               )}
             </div>

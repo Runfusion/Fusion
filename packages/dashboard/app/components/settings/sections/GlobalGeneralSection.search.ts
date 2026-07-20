@@ -66,6 +66,16 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "updateChannel",
+    labelKey: "settings.globalGeneral.releaseChannel",
+    labelFallback: "Release channel",
+    helpKey: "settings.globalGeneral.releaseChannelHelp",
+    helpFallback:
+      " Stable follows official releases. Beta follows pre-releases cut from main (versions like 0.73.0-beta.2) and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades; you stay on the installed beta until the next stable release passes it. Default: stable. ",
+    keywords: ["beta", "channel", "release track", "prerelease", "early access"],
+  },
+  {
+    sectionId: "global-general",
     key: "autoReloadOnVersionChange",
     labelKey: "settings.globalGeneral.autoReloadDashboardOnVersionChange",
     labelFallback: " Auto-reload dashboard on version change ",

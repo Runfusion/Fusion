@@ -536,6 +536,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
    */
   const showEditAction = isUserMessage && canEdit && Boolean(onEditMessage);
   const [isEditing, setIsEditing] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editedText, setEditedText] = useState(message.content);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -545,16 +546,31 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   }, [message.content]);
 
   const cancelEditing = useCallback(() => {
+    if (isSavingEdit) return;
     setIsEditing(false);
     setEditedText(message.content);
-  }, [message.content]);
+  }, [isSavingEdit, message.content]);
 
-  const saveEdit = useCallback(() => {
+  const saveEdit = useCallback(async () => {
     const trimmed = editedText.trim();
-    if (!trimmed || trimmed === message.content) return;
-    setIsEditing(false);
-    void onEditMessage?.(message.id, trimmed);
-  }, [editedText, message.content, message.id, onEditMessage]);
+    if (!trimmed || trimmed === message.content.trim() || !onEditMessage || isSavingEdit) return;
+
+    /*
+    FNXC:ChatMessageEdit 2026-07-19-00:00:
+    Save is an async truncate-and-resend operation, not a fire-and-forget click. Keep this
+    editor mounted and lock its actions until the surface handler finishes so repeated clicks
+    cannot race the PATCH rewind with multiple stream starts; only then remove the editor.
+    */
+    setIsSavingEdit(true);
+    try {
+      await onEditMessage(message.id, trimmed);
+      setIsEditing(false);
+    } catch {
+      // Surface handlers own recovery/toasts; keep the correction visible for unexpected failures.
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [editedText, isSavingEdit, message.content, message.id, onEditMessage]);
 
   useEffect(() => {
     if (isEditing) {
@@ -650,6 +666,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
             ref={editTextareaRef}
             className="input chat-message-edit-textarea"
             value={editedText}
+            disabled={isSavingEdit}
             onChange={(event) => setEditedText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
@@ -657,14 +674,14 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
                 cancelEditing();
               } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
-                saveEdit();
+                void saveEdit();
               }
             }}
             rows={3}
           />
           <div className="chat-message-edit-actions">
-            <button type="button" className="btn btn-sm" onClick={cancelEditing}>{t("chat.editMessageCancel", "Cancel")}</button>
-            <button type="button" className="btn btn-sm btn-primary" disabled={!editedText.trim() || editedText.trim() === message.content} onClick={saveEdit}>{t("chat.editMessageSave", "Save")}</button>
+            <button type="button" className="btn btn-sm" data-testid={`chat-message-edit-cancel-${message.id}`} disabled={isSavingEdit} onClick={cancelEditing}>{t("chat.editMessageCancel", "Cancel")}</button>
+            <button type="button" className="btn btn-sm btn-primary" data-testid={`chat-message-edit-save-${message.id}`} disabled={isSavingEdit || !editedText.trim() || editedText.trim() === message.content.trim()} onClick={() => void saveEdit()}>{t("chat.editMessageSave", "Save")}</button>
           </div>
         </div>
       ) : (

@@ -15,11 +15,8 @@ function createTask(stepStatuses: Array<"done" | "skipped" | "pending" | "in-pro
   } as any;
 }
 
-describe("preflight PREMISE STALE: escape hatch", () => {
-  it("allows fn_task_done when summary starts with PREMISE STALE: even if it contains 'done' near 'the task'", () => {
-    // Without the bypass, the scoped-incomplete regex matches 'done' and the
-    // 40-char window contains 'the task' → would refuse with
-    // summary-claims-incomplete. The bypass must let this through.
+describe("fn_task_done summary-independent refusal checks", () => {
+  it("allows fn_task_done when summary starts with PREMISE STALE:", () => {
     const task = createTask(["done", "skipped", "skipped", "skipped", "skipped"]);
     const result = evaluateTaskDoneRefusal(
       task,
@@ -29,10 +26,7 @@ describe("preflight PREMISE STALE: escape hatch", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("allows fn_task_done when summary starts with PREMISE STALE: and contains 'I'm blocked' style dissent phrasing", () => {
-    // Natural premise-stale phrasing may accidentally include a dissent-pattern
-    // word ("blocked from", "to unblock", "requires follow-up"). The bypass
-    // must not refuse on the dissent regex when the sentinel is present.
+  it("allows fn_task_done when summary contains blocked-work phrasing", () => {
     const task = createTask(["done", "skipped", "skipped"]);
     const result = evaluateTaskDoneRefusal(
       task,
@@ -42,7 +36,7 @@ describe("preflight PREMISE STALE: escape hatch", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("is case-insensitive on the sentinel", () => {
+  it("allows a lowercase PREMISE STALE sentinel", () => {
     const task = createTask(["done", "skipped"]);
     const result = evaluateTaskDoneRefusal(
       task,
@@ -52,19 +46,14 @@ describe("preflight PREMISE STALE: escape hatch", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("does NOT bypass when sentinel appears later in the summary (must be at start)", () => {
-    // Defends against agents tacking the sentinel into the middle to dodge a
-    // genuine incomplete-work refusal.
-    const task = createTask(["done", "pending"]);
+  it("does not reject incomplete-work prose when PREMISE STALE appears later", () => {
+    const task = createTask(["done"]);
     const result = evaluateTaskDoneRefusal(
       task,
       { summary: "The task is not done yet, but PREMISE STALE: I think it's stale anyway" },
       new Map(),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.refusalClass).toBe("summary-claims-incomplete");
-    }
+    expect(result).toEqual({ ok: true });
   });
 
   it("still enforces pending-code-review-revise even with the sentinel", () => {

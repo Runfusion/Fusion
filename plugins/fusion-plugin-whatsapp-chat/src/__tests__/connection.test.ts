@@ -136,7 +136,7 @@ describe("WhatsAppConnection", () => {
     expect(connection.getStatus()).toMatchObject({ state: "error", lastError: "bad qr" });
   });
 
-  it("reconnects on close unless logged out", async () => {
+  it("reconnects after a logged-out close while the plugin remains started", async () => {
     vi.useFakeTimers();
     const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
     await connection.start();
@@ -146,6 +146,20 @@ describe("WhatsAppConnection", () => {
     expect(mockState.makeWASocket).toHaveBeenCalledTimes(2);
 
     await mockState.handlers.get("connection.update")?.({ connection: "close", lastDisconnect: { error: { output: { statusCode: 401 } } } });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mockState.makeWASocket).toHaveBeenCalledTimes(3);
+    expect(connection.getStatus()).toMatchObject({ state: "starting" });
+    vi.useRealTimers();
+  });
+
+  it("reconnects after explicit logout so settings can re-pair", async () => {
+    vi.useFakeTimers();
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createInMemoryPersistence());
+    await connection.start();
+
+    await connection.logout();
+
+    expect(connection.getStatus()).toMatchObject({ state: "starting" });
     await vi.advanceTimersByTimeAsync(1000);
     expect(mockState.makeWASocket).toHaveBeenCalledTimes(2);
     vi.useRealTimers();

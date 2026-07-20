@@ -30,11 +30,11 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
-import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
@@ -61,6 +61,7 @@ import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, ty
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./auto-merge-finalization.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
+import { isTaskStillInPlanningStage } from "./replan-target.js";
 /*
 FNXC:Workspace 2026-06-22-14:10 (Phase D review G — cycle dissolved):
 `isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It now lives in
@@ -76,6 +77,7 @@ import { shouldReclaimWedgedMerge } from "./merge-reclaim-policy.js";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
+import { preservedWorktreeTargetPathForTask } from "./worktree-pinning.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { resolveBranchGroupMergeRouting } from "./group-merge-coordinator.js";
 import type { OwnedLandedClassification } from "./merger.js";
@@ -294,6 +296,8 @@ export interface SelfHealingOptions {
    * Used to avoid recovering active triage sessions.
    */
   getPlanningTaskIds?: () => Set<string>;
+  /** Atomically fence planner ownership while advanced triage recovery runs. */
+  reserveAdvancedTriageRecovery?: (taskId: string) => (() => void) | undefined;
   /**
    * Evict tasks from the triage processor's `processing` set that have been
    * there longer than the staleness threshold (hung promises from stuck kills).
@@ -1375,6 +1379,7 @@ export class SelfHealingManager {
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
+      { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks().then(() => undefined) },
       { name: "stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks().then(() => undefined) },
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures().then(() => undefined) },
@@ -2670,6 +2675,7 @@ export class SelfHealingManager {
           },
           { name: "recover-completed-tasks", fn: () => this.recoverCompletedTasks() },
           { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks() },
+          { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks() },
           { name: "recover-stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks() },
           { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
           { name: "recover-missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures() },
@@ -3003,6 +3009,128 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Stranded completed todo task recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Re-home workflow-graph tasks stranded in the planner column after the
+   * executor aborted its own column-boundary move. A worktree plus a durable
+   * graph pin is the proof that this is advanced execution state, not an
+   * ordinary triage card. Completed work goes through the normal review
+   * recovery seam; incomplete remediation resumes at its pinned column.
+   */
+  async recoverAdvancedTriageTasks(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const tasks = await this.store.listTasks({ column: "triage", slim: true });
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
+      const hasForeignPathOwner = (task: Task) => {
+        if (!task.worktree) return false;
+        const owner = activeSessionRegistry.lookupByPath(task.worktree);
+        return owner != null && owner.taskId !== task.id;
+      };
+      const candidates = tasks.filter((task) =>
+        task.column === "triage"
+        && task.status == null
+        && !task.paused
+        && !task.error
+        && Boolean(task.worktree)
+        && Boolean(task.workflowIrPinNodeId)
+        && !executingIds.has(task.id)
+        && !planningIds.has(task.id)
+        && this.options.isTaskActive?.(task.id) !== true
+        && this.options.getActiveMergeTaskId?.() !== task.id
+        && !hasForeignPathOwner(task),
+      );
+
+      let recovered = 0;
+      for (const snapshot of candidates) {
+        const releaseReservation = this.options.reserveAdvancedTriageRecovery?.(snapshot.id);
+        if (this.options.reserveAdvancedTriageRecovery && !releaseReservation) continue;
+        try {
+          const live = await this.store.getTask(snapshot.id);
+          if (
+            live.column !== "triage"
+            || live.status != null
+            || live.paused
+            || live.error
+            || !live.worktree
+            || !live.workflowIrPinNodeId
+            || (this.options.getExecutingTaskIds?.() ?? new Set<string>()).has(live.id)
+            || this.options.isTaskActive?.(live.id) === true
+            || this.options.getActiveMergeTaskId?.() === live.id
+            || hasForeignPathOwner(live)
+          ) {
+            continue;
+          }
+
+          // A prior aborted graph can leave its own registry claim behind after every
+          // executable/planning/merge owner has gone away. The durable task row and the
+          // liveness callbacks above prove that claim is stale; clear it so completed
+          // recovery can reuse the preserved worktree instead of rejecting its own path.
+          const pathOwner = activeSessionRegistry.lookupByPath(live.worktree);
+          if (pathOwner?.taskId === live.id) {
+            activeSessionRegistry.unregisterPath(live.worktree);
+          }
+
+          const steps = live.steps ?? [];
+          const complete = steps.length > 0
+            && steps.every((step) => step.status === "done" || step.status === "skipped");
+          if (complete) {
+            if (!this.options.recoverCompletedTask) continue;
+            if (await this.options.recoverCompletedTask(live)) recovered++;
+            continue;
+          }
+
+          const resumeColumn = live.workflowIrPinColumnId;
+          if (!resumeColumn || resumeColumn === "triage") continue;
+          const moved = await this.store.moveTaskIf(live.id, resumeColumn, (current) =>
+            current.column === "triage"
+            && current.status == null
+            && !current.paused
+            && !current.error
+            && current.worktree === live.worktree
+            && current.workflowIrPinNodeId === live.workflowIrPinNodeId
+            && current.workflowIrPinColumnId === resumeColumn
+            && !(this.options.getExecutingTaskIds?.() ?? new Set<string>()).has(current.id)
+            && !(this.options.getPlanningTaskIds?.() ?? new Set<string>()).has(current.id)
+            && this.options.isTaskActive?.(current.id) !== true
+            && this.options.getActiveMergeTaskId?.() !== current.id
+            && !hasForeignPathOwner(current),
+          {
+            moveSource: "engine",
+            workflowMoveSource: "self-healing-advanced-triage",
+            workflowMoveMetadata: {
+              reason: "graph-boundary-self-abort-recovery",
+              pinnedNodeId: live.workflowIrPinNodeId,
+            },
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+          if (!moved.moved) continue;
+          await this.store.logEntry(
+            live.id,
+            `Auto-recovered workflow task stranded in triage — resumed at pinned ${resumeColumn} column`,
+          );
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn(`Failed to recover advanced triage task ${snapshot.id}: ${errorMessage}`);
+        } finally {
+          releaseReservation?.();
+        }
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Advanced triage recovery failed: ${errorMessage}`);
       return 0;
     }
   }
@@ -3843,6 +3971,32 @@ export class SelfHealingManager {
           const preservedCommitCount = inspection.kind === "fully-subsumed"
             ? 0
             : inspection.taskAttributedCommitCount;
+          const placement = await relocateReclaimableWorktreeIntoRoot({
+            rootDir: this.options.rootDir,
+            sourcePath: inspection.livePath,
+            targetPath: preservedWorktreeTargetPathForTask(task.id, inspection.livePath, settings, this.options.rootDir),
+            taskId: task.id,
+            settings,
+            isPathActive: (path) =>
+              activeSessionRegistry.isPathActive(path)
+              || executingTaskLock.has(task.id)
+              || executingIds.has(task.id)
+              || activeTaskIds.has(task.id.toUpperCase()),
+          });
+          if (placement.kind === "deferred-live") {
+            await this.store.logEntry(
+              task.id,
+              `[recovery] deferred relocation of active preserved worktree ${placement.path}`,
+            );
+            continue;
+          }
+          const reclaimedWorktreePath = placement.path;
+          if (placement.relocated) {
+            await this.store.logEntry(
+              task.id,
+              `[recovery] relocated preserved worktree from ${inspection.livePath} to ${reclaimedWorktreePath}`,
+            );
+          }
           const stepSignature = buildResumeLimboStepSignature(task);
           const hasActiveSessionSignal = Boolean(task.checkedOutBy) || activeTaskIds.has(task.id.toUpperCase());
           const hasPriorSnapshot = typeof task.resumeLimboTipSha === "string" && typeof task.resumeLimboStepSignature === "string";
@@ -3867,6 +4021,7 @@ export class SelfHealingManager {
               preserveResumeState: true,
             });
             await this.store.updateTask(task.id, {
+              ...(placement.relocated ? { worktree: reclaimedWorktreePath } : {}),
               resumeLimboCount: 0,
               resumeLimboTipSha: inspection.tipSha,
               resumeLimboStepSignature: stepSignature,
@@ -3907,7 +4062,7 @@ export class SelfHealingManager {
           }
 
           await this.store.updateTask(task.id, {
-            worktree: inspection.livePath,
+            worktree: reclaimedWorktreePath,
             branch: task.branch,
             paused: false,
             pausedReason: undefined,
@@ -3919,7 +4074,7 @@ export class SelfHealingManager {
           });
           await this.store.logEntry(
             task.id,
-            `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${inspection.livePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`,
+            `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${reclaimedWorktreePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`,
           );
 
           if (task.column === "in-review") {
@@ -3951,7 +4106,7 @@ export class SelfHealingManager {
               metadata: {
                 taskId: task.id,
                 branch: task.branch,
-                worktreePath: inspection.livePath,
+                worktreePath: reclaimedWorktreePath,
                 existingTipSha: inspection.tipSha,
                 strandedCommitCount: inspection.kind === "fully-subsumed" ? 0 : inspection.strandedCommits.length,
                 subsumed: inspection.kind === "fully-subsumed",
@@ -10991,6 +11146,12 @@ export class SelfHealingManager {
   }
 
   /*
+  FNXC:AgentLifecyclePause 2026-07-19-00:00:
+  FN-8362: Startup heartbeat recovery changes only durable agent state and
+  metadata. It must never read or mutate an assigned task's paused, userPaused,
+  pausedByAgentId, or pausedReason fields; task safety parks remain separately
+  owned by their reason-specific writers.
+
   FNXC:AgentHeartbeat 2026-07-12-17:26:
   FN-7884: Engine restart is an explicit operator retry boundary for durable heartbeat agents. Startup recovery must immediately clear recoverable `error` and `error-retry-exhausted` parks, reset shared heartbeatErrorRecovery/durableErrorRecovery budget state, and re-arm heartbeats without steady-state staleness/cooldown/exhaustion gates; operator-actionable, stale-module, user-paused, error-unrecoverable, disabled, ephemeral, and actively executing agents remain suppressed.
 
@@ -11073,6 +11234,12 @@ export class SelfHealingManager {
     return resetCount;
   }
 
+  /*
+  FNXC:AgentLifecyclePause 2026-07-19-00:00:
+  Error auto-recovery, retry-exhaustion, and unrecoverable-error parking are
+  agent-only transitions. Assigned task pause state is never cascaded or
+  cleared by this sweep, including when a heartbeat is re-armed.
+  */
   async recoverOrphanedAgents(): Promise<number> {
     const agentStore = this.options.agentStore;
     if (!agentStore) {
@@ -11839,8 +12006,16 @@ export class SelfHealingManager {
 
       let recovered = 0;
       for (const task of orphanedApproved) {
+        // FNXC:Triage 2026-07-29-12:00:
+        // FN-8361 candidates come from a stale board snapshot. Do not enter delayed
+        // recovery after scheduler advancement; triage revalidates every later write.
+        const live = await this.store.getTask(task.id).catch(() => null);
+        // Narrow test/legacy adapters can return an unrelated fixture row; only use a
+        // re-read when it identifies the requested candidate.
+        const recoveryTask = live?.id === task.id ? live : task;
+        if (!isTaskStillInPlanningStage(recoveryTask)) continue;
         log.log(`Recovering specified triage task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
-        const success = await recoverFn(task);
+        const success = await recoverFn(recoveryTask);
         if (success) recovered++;
       }
 
@@ -11908,6 +12083,25 @@ export class SelfHealingManager {
           }
 
           const resolution = settings.triageDuplicateResolution ?? "prompt";
+          /*
+          FNXC:DuplicateIntake 2026-07-20-12:00:
+          FN-8440 forbids self-healing from re-arming a duplicate-decision-required hold after
+          an operator kept this exact task/canonical pair. Keep cleanup is bounded by the same
+          pause guard as inactive-marker recovery so manual and unrelated pauses are never cleared.
+          */
+          if (resolution === "prompt" && isTriageDuplicateKeepAcknowledged(task.sourceMetadata, canonicalTask.id)) {
+            if (canClearInactiveMarker) {
+              rmSync(promptPath, { force: true });
+              await this.store.updateTask(task.id, {
+                paused: false,
+                pausedReason: null,
+                status: null,
+                sourceMetadataPatch: { nearDuplicateDismissed: true },
+              });
+              resolved += 1;
+            }
+            continue;
+          }
           if (resolution === "delete") {
             await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id) } });
           } else if (resolution === "prompt") {
@@ -12078,7 +12272,24 @@ export class SelfHealingManager {
       for (const task of orphaned) {
         try {
           log.log(`Recovering orphaned planning task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
-          await this.store.updateTask(task.id, { status: null });
+          // FNXC:Triage 2026-07-29-12:00:
+          // FN-8361 closes the stale listTasks → updateTask race: only clear planning
+          // under the TaskStore lock, never overwrite a scheduler-claimed row.
+          let applied = false;
+          if (typeof this.store.updateTaskAtomic === "function") {
+            await this.store.updateTaskAtomic(task.id, (live) => {
+              if (!isTaskStillInPlanningStage(live)) return null;
+              applied = true;
+              return { status: null };
+            });
+          } else {
+            const live = await this.store.getTask(task.id);
+            if (live && isTaskStillInPlanningStage(live)) {
+              await this.store.updateTask(task.id, { status: null });
+              applied = true;
+            }
+          }
+          if (!applied) continue;
           await this.store.logEntry(
             task.id,
             "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",

@@ -138,6 +138,8 @@ Layer behavior:
 - **Triage planning loop** — after triage reads the generated `PROMPT.md`, an exact redirect marker short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
 - **Self-healing sweep** — maintenance Batch 2 runs `resolveExplicitDuplicateMarkerTasks()` across `triage`/`todo` tasks to clean up older stuck marker tasks. The sweep is best-effort, capped at 50 marker tasks per cycle, and can be disabled with the internal setting `resolveExplicitDuplicateMarkerEnabled: false` (default `true`).
 
+An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the marker-only prompt and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
+
 All three layers fail open: parse errors, task lookup failures, file-read failures, activity-recording errors, or other unexpected exceptions log a warning and continue normal intake/triage/self-healing flow instead of blocking task creation or recovery.
 
 Activity uses the existing `task:auto-archived-duplicate` event with `metadata.source` disambiguators:
@@ -153,15 +155,15 @@ The duplicate-close task log line remains `Duplicate of <canonicalTaskId> — cl
 Fusion applies two conservative intake heuristics that may auto-archive newly filed tasks before execution starts:
 
 - **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs/commands, Fusion probes current `main`. If all definitive probes show the cited bug does not reproduce, the task is archived as `auto-resolved-ghost-bug`.
-- **Same-agent duplicate intake** (create path): if the same `source.sourceAgentId` (or `source.sourceParentTaskId`) filed a highly similar task within 24h (threshold `0.75`), Fusion still detects the near-duplicate — but what happens next depends on the `autoArchiveDuplicateTasksEnabled` project/global setting (default **`false`**, FN-7658):
-  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with Keep/Archive actions surfaces it for a human decision. The task is never moved to `archived` automatically.
-  - **`true`** (legacy behavior, opt-in): the later task is archived as `auto-resolved-duplicate` and the earliest sibling is kept, exactly as before FN-7658.
+- **Same-agent duplicate intake** (all task-create backends): if the same `source.sourceAgentId` (or `source.sourceParentTaskId`) filed a highly similar task within 24h (threshold `0.75`), Fusion still detects the near-duplicate — but what happens next depends on the `autoArchiveDuplicateTasksEnabled` project/global setting (default **`false`**, FN-7658/FN-8401):
+  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with Keep/Archive actions surfaces it for a human decision. Neither the new task nor its live siblings are moved to `archived` or deleted automatically.
+  - **`true`** (legacy behavior, opt-in): only the later/new task is archived as `auto-resolved-duplicate`; its live siblings remain intact.
 
 Ghost-bug preflight is unaffected by `autoArchiveDuplicateTasksEnabled` — it is a distinct heuristic and always auto-archives on a definitive non-repro.
 
 Both heuristics are **fail-open**: probe/detection errors, timeouts, or inconclusive signals do not block normal intake — the task continues in the regular flow.
 
-Tombstone-resurrection blocking (recreating a soft-deleted task within the sticky window) is a separate safety mechanism from same-agent duplicate intake and is **not** gated by `autoArchiveDuplicateTasksEnabled` — it always throws `TombstonedTaskResurrectionError` regardless of the setting.
+Tombstone-resurrection blocking (including a same-agent near-duplicate of a soft-deleted task within the sticky window) is shared by every task-create backend and is **not** gated by `autoArchiveDuplicateTasksEnabled` — it always throws `TombstonedTaskResurrectionError` regardless of the setting.
 
 Activity + run-audit event types:
 

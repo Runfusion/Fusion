@@ -310,7 +310,7 @@ describe("PlanningModeModal", () => {
 
         await waitFor(() => {
           expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from handoff", undefined, undefined, {
-            clarificationEnabled: false,
+            clarificationEnabled: true,
           }, undefined);
         });
 
@@ -400,6 +400,7 @@ describe("PlanningModeModal", () => {
           expect(mockFetchAiSession).toHaveBeenCalledWith("session-existing");
         });
 
+        fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
         fireEvent.click(screen.getByRole("button", { name: "New session" }));
 
         const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
@@ -560,7 +561,6 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Test plan" } });
 
       expect(startButton.closest("button")?.hasAttribute("disabled")).toBe(false);
@@ -655,8 +655,9 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, {
           planningModelProvider: "anthropic",
           planningModelId: "claude-sonnet-4-5",
+          thinkingLevel: undefined,
         }, {
-          clarificationEnabled: false,
+          clarificationEnabled: true,
         }, undefined);
       });
     });
@@ -691,7 +692,7 @@ describe("PlanningModeModal", () => {
         expect(disclosureScope.getByText("openai/gpt-4o")).toBeDefined();
       });
       expect(disclosureScope.getByText(/Selects which model runs the planning interview/)).toBeDefined();
-      expect(disclosureScope.getByLabelText("Allow follow-up clarification questions")).toBeDefined();
+      expect(disclosureScope.queryByLabelText("Allow follow-up clarification questions")).toBeNull();
     });
 
     it("calls startPlanningStreaming without model override when none selected", async () => {
@@ -705,15 +706,13 @@ describe("PlanningModeModal", () => {
         />
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Build auth system" } });
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
-          clarificationEnabled: false,
+          clarificationEnabled: true,
         }, undefined);
       });
     });
@@ -768,7 +767,7 @@ describe("PlanningModeModal", () => {
         undefined,
         undefined,
         {
-          clarificationEnabled: false,
+          clarificationEnabled: true,
         },
         "draft-123",
       );
@@ -853,7 +852,7 @@ describe("PlanningModeModal", () => {
       // Wait for startPlanningStreaming to be called (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
-          clarificationEnabled: false,
+          clarificationEnabled: true,
         }, undefined);
       }, { timeout: 2000 });
 
@@ -878,7 +877,7 @@ describe("PlanningModeModal", () => {
       // The auto-start should happen with the initial plan (allow time for setTimeout in useEffect)
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
-          clarificationEnabled: false,
+          clarificationEnabled: true,
         }, undefined);
       }, { timeout: 2000 });
     });
@@ -906,7 +905,6 @@ describe("PlanningModeModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
-      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
         target: { value: "Draft a migration plan" },
       });

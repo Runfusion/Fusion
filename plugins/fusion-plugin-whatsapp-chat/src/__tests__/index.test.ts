@@ -61,6 +61,39 @@ describe("whatsapp plugin", () => {
     expect(paths).toContain("POST /logout");
   });
 
+  it("returns pairing data in status for the settings panel", async () => {
+    const ctx = {
+      pluginId: "fusion-plugin-whatsapp-chat",
+      settings: { allowedSenders: ["15550001111"] },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      emitEvent: vi.fn(),
+      taskStore: {
+        getRootDir: () => "/repo-status",
+        getAsyncLayer: () => ({ projectId: "/repo-status" }),
+      },
+    } as unknown as PluginContext;
+    await plugin.hooks!.onLoad!(ctx);
+    connectionInstances[0]?.getStatus.mockReturnValue({
+      state: "awaiting-qr",
+      qrDataUrl: "data:image/png;base64,pairing",
+      pairingCode: "123-456",
+    });
+
+    const statusRoute = plugin.routes!.find((route) => route.method === "GET" && route.path === "/status")!;
+    const response = await statusRoute.handler({} as never, ctx) as { status: number; body: Record<string, unknown> };
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        status: "awaiting-qr",
+        qrDataUrl: "data:image/png;base64,pairing",
+        pairingCode: "123-456",
+        allowedSenders: ["15550001111"],
+      },
+    });
+    await plugin.hooks!.onUnload!(ctx);
+  });
+
   it("uses only pairing-era settings", () => {
     const schema = plugin.manifest.settingsSchema ?? {};
     expect(Object.keys(schema).sort()).toEqual([

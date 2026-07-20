@@ -96,6 +96,7 @@ import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./hea
 import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./room-ambiguity.js";
 import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./room-coordination.js";
 import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./task-agent-sync.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./session-token-usage.js";
 
 const promptSizeLog = createLogger("prompt-size");
 
@@ -246,26 +247,31 @@ export interface HeartbeatExecutionOptions {
   contextSnapshot?: Record<string, unknown>;
 }
 
+/*
+FNXC:AgentLifecyclePause 2026-07-19-00:00:
+FN-8362: Agent lifecycle is not task lifecycle. Pausing, sleeping, or stopping
+an agent (including CLI and pi-extension stop/start bridges) must never pause
+its assigned tasks, even when legacy callers supply cascadeToTasks. Ordinary
+pauses are user-owned; approval, token-budget, worktrunk, and dispatch guards
+are separate reason-specific task safety pauses.
+*/
 export interface PauseAgentOptions {
   pauseReason?: string;
   stopActiveRun?: boolean;
-  /**
-   * Deprecated/ignored for pause: pausing or sleeping an agent never pauses
-   * assigned tasks. Tasks remain in their current column so the scheduler can
-   * re-dispatch them.
-   */
+  /** Deprecated/ignored for pause; retained only for source compatibility. */
   cascadeToTasks?: boolean;
 }
 
+/*
+FNXC:AgentLifecyclePause 2026-07-19-00:00:
+Ordinary agent resume is non-cascading. The explicit legacy cleanup escape
+hatch may unpause only a task marked pausedByAgentId for this same agent, and
+must never clear userPaused task intent.
+*/
 export interface ResumeAgentOptions {
   triggerDetail?: string;
   triggerSource?: string;
   clearPauseReason?: boolean;
-  /**
-   * When true, unpauses tasks paused by this agent. Defaults to false; this is
-   * legacy cleanup only and correctness must not depend on cascade-unpause.
-   * User-paused tasks are never cascade-unpaused.
-   */
   cascadeToTasks?: boolean;
 }
 
@@ -377,6 +383,12 @@ function resolveAutoClaimCandidatesInPromptLimit(agent: Agent, settings?: Settin
   return Math.max(0, Math.min(10, integer));
 }
 
+/*
+FNXC:AutoClaim 2026-07-19-00:00:
+FN-8362 keeps automatic backlog pickup executor-only by default. An engineer
+may opt in per-agent (runtimeConfig.engineerBacklogAutoClaim), which overrides
+the project setting; neither value changes explicit assignment/delegation.
+*/
 function resolveEngineerBacklogAutoClaim(agent: Agent, settings?: Settings): boolean {
   const runtimeConfig = (agent.runtimeConfig ?? {}) as AgentHeartbeatConfig;
   const perAgent = runtimeConfig.engineerBacklogAutoClaim;
@@ -1690,6 +1702,12 @@ export class HeartbeatMonitor {
     this.clearRunState(agentId);
   }
 
+  /*
+  FNXC:AgentLifecyclePause 2026-07-19-00:00:
+  This intentionally mutates only the agent row. Do not cascade a pause to
+  assigned tasks: agent stop/sleep is scheduling control, while task pause
+  ownership and system safety reasons are independent.
+  */
   async pauseAgent(agentId: string, options: PauseAgentOptions = {}): Promise<Agent> {
     const { pauseReason, stopActiveRun = false } = options;
 
@@ -1718,6 +1736,11 @@ export class HeartbeatMonitor {
     return updated;
   }
 
+  /*
+  FNXC:AgentLifecyclePause 2026-07-19-00:00:
+  Normal resume must leave assigned tasks untouched. The compatibility-only
+  cascade below is deliberately narrow: same-agent non-user pauses only.
+  */
   async resumeAgent(agentId: string, options: ResumeAgentOptions = {}): Promise<Agent> {
     const {
       triggerDetail = "Triggered from state resume",
@@ -2483,7 +2506,16 @@ export class HeartbeatMonitor {
             sourceType: "agent_heartbeat",
             sourceAgentId: agentId,
             sourceRunId: runContext?.runId,
-          }, { rootDir: this.rootDir }));
+          }, {
+            rootDir: this.rootDir,
+            /*
+            FNXC:MissionAdmission 2026-08-01-02:00:
+            Idle heartbeats have no source task whose approved lineage can be
+            inherited. Require a supplied lineage so the factory validates and
+            persists the same Feature → Slice → Milestone → Mission proof.
+            */
+            requireMissionLineage: true,
+          }));
 
           /*
           FNXC:AgentTooling 2026-06-27-11:45:
@@ -2495,7 +2527,7 @@ export class HeartbeatMonitor {
 
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
-          heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
+          heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir, sourceAgentId: agentId }));
           heartbeatTools.push(createTaskAssignTool(this.store, taskStore));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
           heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));
@@ -2885,6 +2917,14 @@ export class HeartbeatMonitor {
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
         });
 
+        /*
+         * FNXC:TokenAnalytics 2026-07-17-14:00:
+         * Bind task-scoped heartbeat sessions to their cumulative-token baseline before the prompt runs. Capturing after promptWithFallback would include this heartbeat's tokens in the baseline and lose them; omitting it would attribute prior-task lifetime counters.
+         */
+        if (!isNoTaskRun && taskId) {
+          captureSessionTokenBaseline(session);
+        }
+
         // Track for monitoring
         this.trackAgent(agentId, { dispose: () => session.dispose() }, run.id);
 
@@ -3100,8 +3140,13 @@ export class HeartbeatMonitor {
               : [];
             const noTaskActionGuidanceLines = plannerHeartbeatPatrolEnabled
               ? [
-                "2. **Create new tasks** — Use fn_task_create for net-new executable work.",
-                "   Prefer concrete tasks with clear outcomes; avoid vague placeholders.",
+                /*
+                FNXC:MissionAdmission 2026-07-30-00:00:
+                FN-8307 forbids idle heartbeats from inventing implementation work.
+                Creation/delegation is available only with a validated approved mission lineage.
+                */
+                "2. **Mission-linked tasks only** — Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference.",
+                "   Do not create off-mission implementation work; prefer safe coordination when no approved lineage exists.",
                 "",
               ]
               : [
@@ -3112,7 +3157,7 @@ export class HeartbeatMonitor {
             const noTaskFlowGuidanceLines = plannerHeartbeatPatrolEnabled
               ? [
                 "5. **Monitor project flow** — Review board/project signals and surface issues",
-                "   by creating or delegating follow-up work as appropriate.",
+                "   by creating or delegating only approved mission-linked follow-up work as appropriate.",
                 "",
               ]
               : [
@@ -3155,15 +3200,15 @@ export class HeartbeatMonitor {
               "   If replying, use fn_send_message and include reply_to_message_id so threads stay linked.",
               "",
               ...noTaskActionGuidanceLines,
-              "3. **Delegate work** — Use fn_list_agents to find available specialists, then",
-              "   fn_delegate_task when immediate ownership by a specific agent is beneficial.",
+              "3. **Delegate mission work** — Use fn_list_agents to find available specialists, then",
+              "   fn_delegate_task only with an approved Feature → Slice → Milestone → Mission reference.",
               "",
               "4. **Update memory** — Use fn_memory_append for durable, reusable learnings",
               "   (conventions, pitfalls, architecture constraints), not transient chatter.",
               "",
               ...noTaskFlowGuidanceLines,
               "When auto-claim relevant tasks is enabled, review Open Task Candidates above and",
-              "prioritize tasks that align with your role and soul before creating net-new tasks.",
+              "prioritize approved mission work that aligns with your role and soul before creating tasks.",
               ...candidateLines,
               ...pendingMessagesLines,
               ...pendingRoomMessagesLines,
@@ -3342,7 +3387,6 @@ export class HeartbeatMonitor {
 
           if (!isNoTaskRun && taskId) {
             try {
-              const { accumulateSessionTokenUsage } = await import("./session-token-usage.js");
               await accumulateSessionTokenUsage(taskStore, taskId, session);
             } catch (accumulateErr) {
               heartbeatLog.warn(`Agent ${agentId} task token usage accumulate failed: ${accumulateErr instanceof Error ? accumulateErr.message : String(accumulateErr)}`);
@@ -3621,7 +3665,15 @@ export class HeartbeatMonitor {
 
     const actionLines = ["### Actions for Unresponsive Reports"];
     if (hasStuck) {
-      actionLines.push("- For **stuck** reports: consider sending a message via fn_send_message asking for status, or reassigning their task via fn_delegate_task to a healthy agent.");
+      /*
+      FNXC:ReportsHealthRecovery 2026-07-20-00:36:
+      FN-8410 found that a durable engineer can remain `running` while a useful
+      executor session advances its task without refreshing lastHeartbeatAt.
+      Reports Health must preserve the stuck signal for genuinely orphaned runs,
+      but its first action must require live-work proof before any reassignment
+      so a manager does not terminate productive work to clear an optical alert.
+      */
+      actionLines.push("- For **stuck** reports: first check task-log/step progress, the active heartbeat run, and worktree/session liveness. If work is live, do not stop or reassign it; request status if needed. Reassign only after no live session and no forward progress are confirmed.");
     }
     if (hasStale) {
       actionLines.push("- For **stale** reports: the agent may have lost its heartbeat trigger — create a follow-up task to investigate.");
@@ -3712,7 +3764,7 @@ export class HeartbeatMonitor {
       sourceAgentId: agentId,
       sourceRunId: runContext?.runId,
       sourceParentTaskId: taskId,
-    }, { rootDir: this.rootDir });
+    }, { rootDir: this.rootDir, sourceTaskId: taskId, sourceAgentId: agentId });
     const trackedCreateTool: ToolDefinition = {
       ...baseCreateTool,
       execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {
@@ -3769,7 +3821,7 @@ export class HeartbeatMonitor {
     tools.push(createArtifactViewTool(taskStore));
     // Agent delegation tools — discover and delegate work to other agents
     tools.push(createListAgentsTool(this.store));
-    tools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
+    tools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir, sourceTaskId: taskId, sourceAgentId: agentId }));
     tools.push(createTaskAssignTool(this.store, taskStore));
     tools.push(createGetAgentConfigTool(this.store, agentId));
     tools.push(createUpdateAgentConfigTool(this.store, agentId));

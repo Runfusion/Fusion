@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type {
   TaskStore,
   Task,
@@ -56,6 +56,7 @@ import {
   type ThinkingLevel,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
+import { resolveArtifactMediaPath } from "../artifact-media.js";
 import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
@@ -161,27 +162,6 @@ async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promis
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
-}
-
-function resolveArtifactMediaPath(scopedStore: TaskStore, artifact: { taskId?: string; uri?: string }): string | null {
-  if (!artifact.uri) {
-    return null;
-  }
-
-  const anchorDir = artifact.taskId ? scopedStore.getTaskDir(artifact.taskId) : scopedStore.getFusionDir();
-  const expectedArtifactsDir = resolve(anchorDir, "artifacts");
-  const expectedAttachmentsDir = artifact.taskId ? resolve(anchorDir, "attachments") : null;
-  const mediaPath = resolve(anchorDir, artifact.uri);
-  const underArtifacts = mediaPath === expectedArtifactsDir || mediaPath.startsWith(`${expectedArtifactsDir}${sep}`);
-  const underAttachments = expectedAttachmentsDir !== null && (mediaPath === expectedAttachmentsDir || mediaPath.startsWith(`${expectedAttachmentsDir}${sep}`));
-  /*
-   * FNXC:ArtifactRegistry 2026-07-10-00:00:
-   * Attachment-sourced image artifacts intentionally store `attachments/<file>` URIs so /media streams the original task attachment bytes without a second artifact copy. Keep the resolver anchored to task-owned artifact/attachment directories only; task-less artifacts still resolve exclusively under `.fusion/artifacts/`.
-   */
-  if (!underArtifacts && !underAttachments) {
-    throw badRequest("Invalid artifact media path");
-  }
-  return mediaPath;
 }
 
 interface AutoSyncOutcome {
@@ -4011,8 +3991,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.get("/native-structures/:kind/:id/preview", async (req, res) => {
     try {
       const { kind, id } = req.params;
-      if (kind !== "mission" && kind !== "milestone" && kind !== "research-finding" && kind !== "eval-result" && kind !== "goal") {
-        throw badRequest("kind must be one of: mission, milestone, research-finding, eval-result, goal");
+      if (kind !== "mission" && kind !== "milestone" && kind !== "research-finding" && kind !== "eval-result" && kind !== "goal" && kind !== "roadmap-item") {
+        throw badRequest("kind must be one of: mission, milestone, research-finding, eval-result, goal, roadmap-item");
       }
       if (!id.trim()) throw badRequest("id must be non-empty");
       const { store: scopedStore } = await getProjectContext(req);

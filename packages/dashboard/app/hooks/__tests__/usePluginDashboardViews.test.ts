@@ -2,17 +2,43 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { usePluginDashboardViews, __test_clearDashboardViewsCache } from "../usePluginDashboardViews";
 import * as api from "../../api";
+import { subscribeSse } from "../../sse-bus";
 
 vi.mock("../../api", () => ({
   fetchPluginDashboardViews: vi.fn(),
 }));
 
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: vi.fn(() => vi.fn()),
+}));
+
 const mockFetch = vi.mocked(api.fetchPluginDashboardViews);
+const mockSubscribeSse = vi.mocked(subscribeSse);
+
+const compoundEngineeringView = {
+  pluginId: "fusion-plugin-compound-engineering",
+  view: {
+    viewId: "compound-engineering",
+    label: "Compound Engineering",
+    componentPath: "./dashboard-view",
+    icon: "Boxes",
+    placement: "primary" as const,
+    order: 36,
+  },
+};
+
+function emitPluginLifecycle(transition: string): void {
+  const subscription = mockSubscribeSse.mock.calls.at(-1)?.[1];
+  const handler = subscription?.events?.["plugin:lifecycle"];
+  if (!handler) throw new Error("expected plugin:lifecycle subscription");
+  handler(new MessageEvent("plugin:lifecycle", { data: JSON.stringify({ transition }) }));
+}
 
 describe("usePluginDashboardViews", () => {
   beforeEach(() => {
     __test_clearDashboardViewsCache();
     mockFetch.mockReset();
+    mockSubscribeSse.mockClear();
   });
 
   it("returns empty array when no dashboard views are registered", async () => {
@@ -100,6 +126,49 @@ describe("usePluginDashboardViews", () => {
     const second = renderHook(() => usePluginDashboardViews("project-b"));
     await waitFor(() => expect(second.result.current.loading).toBe(false));
     expect(mockFetch).toHaveBeenCalledWith("project-b");
+  });
+
+  it("refreshes the current project's cached views across install, disable, and uninstall lifecycle transitions", async () => {
+    mockFetch
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([compoundEngineeringView])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([compoundEngineeringView])
+      .mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() => usePluginDashboardViews("project-a"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.views).toEqual([]);
+
+    emitPluginLifecycle("registered");
+    await waitFor(() => expect(result.current.views).toEqual([compoundEngineeringView]));
+
+    emitPluginLifecycle("disabled");
+    await waitFor(() => expect(result.current.views).toEqual([]));
+
+    emitPluginLifecycle("enabled");
+    await waitFor(() => expect(result.current.views).toEqual([compoundEngineeringView]));
+
+    emitPluginLifecycle("uninstalled");
+    await waitFor(() => expect(result.current.views).toEqual([]));
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("never exposes project A's Compound Engineering view after switching to project B", async () => {
+    mockFetch
+      .mockResolvedValueOnce([compoundEngineeringView])
+      .mockResolvedValueOnce([]);
+
+    const { result, rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => usePluginDashboardViews(projectId),
+      { initialProps: { projectId: "project-a" } },
+    );
+    await waitFor(() => expect(result.current.views).toEqual([compoundEngineeringView]));
+
+    rerender({ projectId: "project-b" });
+    await waitFor(() => expect(result.current.views).toEqual([]));
+    expect(mockFetch).toHaveBeenNthCalledWith(1, "project-a");
+    expect(mockFetch).toHaveBeenNthCalledWith(2, "project-b");
   });
 
   it("supports filtering view entries by pluginId in consumers", async () => {

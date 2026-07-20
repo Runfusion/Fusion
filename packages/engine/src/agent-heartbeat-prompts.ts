@@ -107,10 +107,10 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 2. For each message, classify it: informational, question, request, or escalation.
 3. Take one concrete action per actionable message:
    - If the message requires a response, use fn_send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - When replying, include 'reply_to_message_id' and set 'to_id' to the exact [from: type:id] ID from fn_read_messages (including cli). Omit 'to_id' only to use the safe reply-to-parent default for a message addressed to you.
    - If the message is informational, acknowledge it by logging with fn_task_log.
-   - If the message requests net-new work, first check whether an open task already covers it; only call fn_task_create when no existing open task matches.
-   - If ownership is clear and an agent is available, delegate using fn_delegate_task.
+   - If the message requests net-new work, first check whether an open task already covers it; idle/no-task heartbeats may create only with approved Feature → Slice → Milestone → Mission lineage.
+   - If ownership is clear and an agent is available, delegate only approved mission-linked work using fn_delegate_task.
 4. If a Pending Room Messages section is present, review it too:
    - Use fn_post_room_message only when the room content is relevant to your role, soul, or identity.
    - If a Room Ambiguity Notices section is present, follow it exactly: echo resolved referents before acting, and under clarification notices do not create tasks.
@@ -123,7 +123,7 @@ Example flow:
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
-- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked, and use the exact sender ID reported by fn_read_messages (including cli).
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 
@@ -144,10 +144,10 @@ ${HEARTBEAT_CRITICAL_RULES}
 
 Your job:
 1. Review your context — check messages, memory, and project state.
-2. Do ONE useful action: analyze, create follow-up tasks, delegate work, or update memory.
+2. Do ONE useful action: analyze, create approved mission-linked follow-up work, delegate approved mission work, or update memory.
 3. Use fn_task_list, fn_task_show, and fn_task_search to inspect existing work before creating or delegating tasks.
-4. Use fn_task_create to spawn follow-up work — but first scan the board/context for an existing open task covering the same work; do not duplicate.
-5. Use fn_list_agents and fn_delegate_task to coordinate with other agents.
+4. Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference; first scan the board/context for an existing open task covering the same work.
+5. Use fn_list_agents and fn_delegate_task only for work carrying that approved mission lineage.
 6. Use fn_get_agent_config and fn_update_agent_config to read/tune direct-report agents for better routing outcomes.
 7. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
@@ -179,8 +179,8 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 ## Triage and Routing Decisions
 
 Use this decision rule:
-- **fn_task_create:** create executable work when ownership is not predetermined.
-- **fn_delegate_task:** assign immediately when a specific agent should own the work now.
+- **fn_task_create:** create executable work only when it carries an approved Feature → Slice → Milestone → Mission reference.
+- **fn_delegate_task:** assign approved mission work immediately when a specific agent should own it now.
 - **fn_memory_append:** use \`scope="agent"\` for your own operating context and \`scope="project"\` for repo-wide durable knowledge; avoid transient run-by-run chatter.
 
 If unsure who should do the work, prefer fn_task_create and let scheduler routing happen naturally.
@@ -209,7 +209,7 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 1. If fn_read_messages is available, use it to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
    - If the message requires a response and fn_send_message is available, use fn_send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - When replying, include 'reply_to_message_id' and set 'to_id' to the exact [from: type:id] ID from fn_read_messages (including cli). Omit 'to_id' only to use the safe reply-to-parent default for a message addressed to you.
    - If the message is informational, acknowledge it and respond via fn_send_message when appropriate.
    - If the message requests work, check whether an open task already covers it; only create a follow-up with fn_task_create when no existing open task matches.
    - If the request has a clear owner and fn_delegate_task is available, delegate it directly.
@@ -221,7 +221,7 @@ Example flow:
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
-- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked, and use the exact sender ID reported by fn_read_messages (including cli).
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 

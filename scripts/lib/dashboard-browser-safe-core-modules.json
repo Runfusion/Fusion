@@ -1,0 +1,59 @@
+{
+  "modules": [
+    {
+      "module": "types",
+      "reason": "2026-07-16: Vite aliases the package root to this browser-safe compatibility leaf.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "near-duplicate-canonical",
+      "reason": "2026-07-16: Canonical activity helpers import types only, unlike near-duplicate which reaches node:crypto.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "task-merge",
+      "reason": "2026-07-16: Shared task merge predicates are browser-safe UI logic.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "model-pricing",
+      "reason": "2026-07-16: Model cost data and calculations have no Node-only dependencies.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "mobile-nav-primary-items",
+      "reason": "2026-07-16: Mobile navigation selection helpers use erased core types only.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "active-merge-status",
+      "reason": "2026-07-16: Merge-status predicate is a dependency-free browser helper.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "workflow-settings-resolver",
+      "reason": "2026-07-16: Workflow setting resolution uses browser-safe workflow metadata helpers.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "settings-schema",
+      "reason": "2026-07-16: Settings defaults and validation metadata are browser-safe.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "session-advisor",
+      "reason": "2026-07-16: Session advisory predicates use erased core types only.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "blocker-fanout",
+      "reason": "2026-07-16: Blocker fanout helper is dependency-free browser logic.",
+      "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "detect-content-language",
+      "reason": "2026-07-16: Language detection is pure shared string logic with an explicit Vite subpath alias.",
+      "verifiedAt": "2026-07-16"
+    }
+  ]
+}

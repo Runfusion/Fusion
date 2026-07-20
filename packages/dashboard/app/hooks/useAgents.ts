@@ -4,6 +4,7 @@ import { fetchAgents, fetchAgentStats } from "../api";
 import { isEphemeralAgent } from "@fusion/core";
 import { subscribeSse } from "../sse-bus";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useProjectContextGuard } from "./useProjectContextGuard";
 
 interface UseAgentsOptions {
   filterState?: AgentState | "all";
@@ -23,12 +24,14 @@ interface AgentFilter {
 const SSE_REFRESH_DEBOUNCE_MS = 250;
 
 export function useAgents(projectId?: string, options?: UseAgentsOptions) {
+  const agentsCacheKey = projectId ? `${SWR_CACHE_KEYS.AGENTS}:${projectId}` : SWR_CACHE_KEYS.AGENTS;
+  const statsCacheKey = projectId ? `${SWR_CACHE_KEYS.AGENT_STATS}:${projectId}` : SWR_CACHE_KEYS.AGENT_STATS;
   const [agents, setAgents] = useState<Agent[]>(() => {
-    const cached = readCache<Agent[]>(SWR_CACHE_KEYS.AGENTS, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
+    const cached = readCache<Agent[]>(agentsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     return Array.isArray(cached) ? cached : [];
   });
   const [stats, setStats] = useState<AgentStats | null>(() => {
-    const cached = readCache<AgentStats>(SWR_CACHE_KEYS.AGENT_STATS, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
+    const cached = readCache<AgentStats>(statsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     return cached ?? null;
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -52,8 +55,31 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
   // next SSE event.
   const agentsGenRef = useRef(0);
   const statsGenRef = useRef(0);
+  /*
+  FNXC:ProjectScoping 2026-07-15-20:10:
+  Agent snapshots and their SSE-triggered refreshes are scoped to the project
+  captured at dispatch, so a stale prior-project response cannot replace B.
+  */
+  const { capture } = useProjectContextGuard(projectId, "useAgents");
+
+  useEffect(() => {
+    /*
+    FNXC:ProjectScoping 2026-07-16-00:00:
+    Agent cache hydration is keyed by project. On a project switch, clear A's
+    snapshot immediately or hydrate only B's cache while B's scoped request runs.
+    */
+    const cachedAgents = readCache<Agent[]>(agentsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
+    const cachedStats = readCache<AgentStats>(statsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
+    const nextAgents = Array.isArray(cachedAgents) ? cachedAgents : [];
+    const nextStats = cachedStats ?? null;
+    setAgents(nextAgents);
+    setStats(nextStats);
+    hasCachedHydrationRef.current = nextAgents.length > 0 || nextStats !== null;
+    setIsLoading(false);
+  }, [agentsCacheKey, statsCacheKey]);
 
   const loadAgents = useCallback(async (filter?: AgentFilter, opts?: { forceFresh?: boolean }) => {
+    const context = capture();
     const gen = ++agentsGenRef.current;
     if (!hasCachedHydrationRef.current) {
       setIsLoading(true);
@@ -72,36 +98,37 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
         : await fetchAgents(mergedFilter, projectId);
       // A newer call superseded us — drop this response so we don't clobber
       // fresher state with stale data.
-      if (gen !== agentsGenRef.current) return;
+      if (gen !== agentsGenRef.current || context.isStale()) return;
       // Defensive dedupe: a race between the initial fetch and an SSE refresh
       // (or a backend that returned the same agent twice) would otherwise put
       // duplicate ids into every list rendered from this hook, flooding React
       // with duplicate-key warnings until the dashboard runs out of heap.
       const unique = Array.from(new Map(data.map((a) => [a.id, a])).values());
       setAgents(unique);
-      writeCache(SWR_CACHE_KEYS.AGENTS, unique, { maxBytes: 500_000 });
+      writeCache(agentsCacheKey, unique, { maxBytes: 500_000 });
       hasCachedHydrationRef.current = hasCachedHydrationRef.current || unique.length > 0;
     } catch (err) {
       console.error("Failed to load agents:", err);
     } finally {
       if (gen === agentsGenRef.current) setIsLoading(false);
     }
-  }, [projectId, options?.filterState, options?.showSystemAgents]);
+  }, [agentsCacheKey, capture, projectId, options?.filterState, options?.showSystemAgents]);
 
   const loadStats = useCallback(async (opts?: { forceFresh?: boolean }) => {
+    const context = capture();
     const gen = ++statsGenRef.current;
     try {
       const data = opts?.forceFresh
         ? await fetchAgentStats(projectId, { forceFresh: true })
         : await fetchAgentStats(projectId);
-      if (gen !== statsGenRef.current) return;
+      if (gen !== statsGenRef.current || context.isStale()) return;
       setStats(data);
-      writeCache(SWR_CACHE_KEYS.AGENT_STATS, data, { maxBytes: 500_000 });
+      writeCache(statsCacheKey, data, { maxBytes: 500_000 });
       hasCachedHydrationRef.current = true;
     } catch (err) {
       console.error("Failed to load agent stats:", err);
     }
-  }, [projectId]);
+  }, [capture, projectId, statsCacheKey]);
 
   useEffect(() => {
     void loadAgents();
@@ -123,6 +150,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
   // fetch+debounce window, we issue at most 2 fetches (the initial debounced
   // fetch and one trailing catch-up).
   useEffect(() => {
+    const context = capture();
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -161,6 +189,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
     };
 
     const refresh = (): void => {
+      if (context.isStale()) return;
       if (fetchInProgress) {
         // Mark a trailing refresh; don't schedule a new timer that would race
         // the in-flight fetch and (via forceFresh) discard its response.
@@ -187,7 +216,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
       if (debounceTimer) clearTimeout(debounceTimer);
       unsubscribe();
     };
-  }, [projectId, loadAgents, loadStats]);
+  }, [capture, projectId, loadAgents, loadStats]);
 
   // refreshAgents is the canonical post-mutation refetch entrypoint. It
   // defaults to forceFresh so consumers don't have to remember — anyone

@@ -95,7 +95,7 @@ import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.j
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { accumulateSessionTokenUsage, mergeTokenUsagePerModel } from "./session-token-usage.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
 import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
@@ -125,7 +125,8 @@ import {
 // filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
+import { preservedWorktreeTargetPathForTask } from "./worktree-pinning.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
@@ -477,17 +478,7 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
 
-export const DISSENT_PATTERNS: RegExp[] = [
-  /\btask (is|was)(?: not|n['’]?t) complete\b/i,
-  /\b(?:i (?:could|can)(?:not|n['’]?t)|unable to|failed to) (?:complete|finish|implement)\b/i,
-  /\b(?:partially|not fully) (?:complete|implemented|done|finished)\b/i,
-  /\b(?:i['’]?m blocked|blocked from|blocking issue prevents)\b/i,
-  /\bto unblock\b/i,
-  /\b(?:needs|requires) (?:FN-\d+|further work|additional work|follow[- ]?up)\b/i,
-];
-
 type TaskDoneRefusalClass =
-  | "summary-claims-incomplete"
   | "bulk-step-completion-without-review"
   | "pending-code-review-revise";
 
@@ -581,7 +572,7 @@ function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: strin
 
 export function evaluateTaskDoneRefusal(
   task: Task,
-  params: { summary?: string },
+  _params: { summary?: string },
   codeReviewVerdicts: Map<number, ReviewVerdict>,
 ): TaskDoneRefusalResult {
   const pendingSteps: number[] = [];
@@ -599,48 +590,6 @@ export function evaluateTaskDoneRefusal(
         reason,
         message: formatTaskDoneRefusal("pending-code-review-revise", reason),
       };
-    }
-  }
-
-  const summary = params.summary?.trim();
-  // Preflight escape hatch: when the agent's preflight finds PROMPT.md is out
-  // of sync with HEAD (work already done on the base), it marks remaining
-  // steps `skipped` and calls fn_task_done with a `PREMISE STALE:` summary.
-  // Skip the summary-text refusals (dissent + scoped-incomplete) for this
-  // sentinel so a natural premise-stale explanation like "...the work is
-  // already done on HEAD" cannot deadlock the executor. The pending-review
-  // and bulk-step-completion guards above/below still apply.
-  const isPremiseStale = !!summary && /^premise stale:/i.test(summary);
-  if (summary && !isPremiseStale) {
-    const dissentMatch = DISSENT_PATTERNS.find((pattern) => pattern.test(summary));
-    if (dissentMatch) {
-      const matchText = summary.match(dissentMatch)?.[0] ?? dissentMatch.source;
-      const reason = `summary indicates incomplete work (${JSON.stringify(matchText)})`;
-      return {
-        ok: false,
-        refusalClass: "summary-claims-incomplete",
-        reason,
-        message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
-      };
-    }
-
-    const scopedPattern = /\b(incomplete|not implemented|not done|not finished)\b/i;
-    const scopedMatch = scopedPattern.exec(summary);
-    if (scopedMatch) {
-      const start = Math.max(0, scopedMatch.index - 40);
-      const end = Math.min(summary.length, scopedMatch.index + scopedMatch[0].length + 40);
-      const scopedWindow = summary.slice(start, end);
-      const hasFirstPersonContext = /\b(i|i['’]?m|i['’]?ve|my|we)\b/i.test(scopedWindow)
-        || /\b(the task|this task)\b/i.test(scopedWindow);
-      if (hasFirstPersonContext) {
-        const reason = `summary indicates incomplete work (${JSON.stringify(scopedMatch[0])})`;
-        return {
-          ok: false,
-          refusalClass: "summary-claims-incomplete",
-          reason,
-          message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
-        };
-      }
     }
   }
 
@@ -1711,6 +1660,14 @@ export class TaskExecutor {
    *  Prevents the task:moved handler from dispatching execute() before the
    *  bounce finishes its own dispatch. */
   private workflowRerunPending = new Set<string>();
+  /**
+   * Task ids whose current `task:moved` event is being emitted by this
+   * executor's workflow lifecycle handling (column boundaries or Plan Review
+   * replans). The store emits synchronously, so this narrowly distinguishes a
+   * graph's own transition from an external engine/user move that must still
+   * hard-cancel the active run.
+   */
+  private workflowLifecycleMovesInFlight = new Set<string>();
   /** FN-5256: in-flight session-disposal promises keyed by taskId. The
    *  task:moved (away from in-progress) and task:deleted listeners populate
    *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
@@ -3089,6 +3046,12 @@ export class TaskExecutor {
           }),
         );
       } else if (from === "in-progress") {
+        if (this.workflowLifecycleMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
+          executorLog.log(
+            `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
+          );
+          return;
+        }
         this.trackTaskDisposal(
           task.id,
           this.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
@@ -4316,6 +4279,20 @@ export class TaskExecutor {
     await enforceTaskTokenBudgetForPersist(this.store, taskId, runContext);
   }
 
+  /*
+   * FNXC:TokenAnalytics 2026-07-17-14:00:
+   * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
+   */
+  private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
+    this.tokenUsageBaselines.set(taskId, (await this.extractSessionTokenUsage(session)) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+    });
+  }
+
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
     const activeSession = session ?? this.activeSessions.get(taskId)?.session;
     const currentUsage = await this.extractSessionTokenUsage(activeSession);
@@ -4594,13 +4571,32 @@ export class TaskExecutor {
       }
       await this.persistTokenUsage(task.id);
       const originColumn = task.column;
-      const promotedFromTodo = originColumn === "todo";
-      if (promotedFromTodo) {
+      const promotedFromPlannerColumn = originColumn === "todo" || originColumn === "triage";
+      let completionTask = task;
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
-        await this.store.moveTask(task.id, "in-progress");
+        /*
+        FNXC:WorkflowLifecycle 2026-07-20-08:42:
+        Advanced-triage recovery reaches this shared seam with completed work, a
+        preserved worktree, and a durable merge pin. The workflow transition map
+        deliberately rejects triage -> in-review, so re-home through the legal
+        triage -> todo -> in-progress path while the recovery ownership set prevents
+        scheduler/executor dispatch. Todo callers retain their existing single hop.
+        */
+        if (originColumn === "triage") {
+          completionTask = await this.store.moveTask(task.id, "todo", {
+            moveSource: "engine",
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+        }
+        completionTask = await this.store.moveTask(task.id, "in-progress");
       }
-      await this.handoffTaskToReview(task, "completed-task-recovered");
-      if (promotedFromTodo) {
+      await this.handoffTaskToReview(completionTask, "completed-task-recovered");
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.delete(task.id);
       }
       this.clearCompletedTaskWatchdog(task.id);
@@ -4781,7 +4777,12 @@ export class TaskExecutor {
         optionalStepRevisionLogOutcome(feedback, revisionKey),
         this.getRunContextFor(taskId),
       );
-      await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      this.workflowLifecycleMovesInFlight.add(taskId);
+      try {
+        await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      } finally {
+        this.workflowLifecycleMovesInFlight.delete(taskId);
+      }
       await this.store.updateTask(taskId, {
         status: "needs-replan",
         error: null,
@@ -5860,13 +5861,18 @@ export class TaskExecutor {
       // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
       clearPin: pinPersistence.clearPin,
       moveTask: async (toColumn, ctx) => {
-        await this.store.moveTask(task.id, toColumn, {
-          moveSource: "engine",
-          workflowMoveSource: "workflow-graph",
-          bypassGuards: true,
-          preserveProgress: true,
-          workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
-        });
+        this.workflowLifecycleMovesInFlight.add(task.id);
+        try {
+          await this.store.moveTask(task.id, toColumn, {
+            moveSource: "engine",
+            workflowMoveSource: "workflow-graph",
+            bypassGuards: true,
+            preserveProgress: true,
+            workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
+          });
+        } finally {
+          this.workflowLifecycleMovesInFlight.delete(task.id);
+        }
       },
       emitAudit: async (event) => {
         await this.store.recordRunAuditEvent?.({
@@ -11897,7 +11903,7 @@ export class TaskExecutor {
         // Agent delegation tools — discover and delegate work to other agents.
         ...(this.options.agentStore ? [
           createListAgentsTool(this.options.agentStore),
-          createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir }),
+          createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgentId }),
           createTaskAssignTool(this.options.agentStore, this.store),
           ...(assignedAgentId ? [
             createGetAgentConfigTool(this.options.agentStore, assignedAgentId),
@@ -12142,6 +12148,10 @@ export class TaskExecutor {
         }
         await this.store.appendAgentLog(task.id, executorModelMarker, "status", undefined, "executor");
 
+        // Capture both executor and session-helper baselines before any task prompt consumes tokens.
+        await this.captureExecutorTokenUsageBaseline(task.id, session);
+        captureSessionTokenBaseline(session);
+
         // Make session available to custom tools
         sessionRef.current = session;
 
@@ -12227,10 +12237,7 @@ export class TaskExecutor {
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
-          await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+          await this.persistTokenUsage(task.id, session);
 
           // Check if proactive context compaction is needed based on token cap setting.
           // This runs after the main prompt completes to avoid interrupting active work.
@@ -12288,10 +12295,7 @@ export class TaskExecutor {
 
             await promptWithFallback(session, resumePrompt);
             checkSessionError(session);
-            await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+            await this.persistTokenUsage(task.id, session);
           }
 
           // If dependency was added during execution, discard worktree and move to triage
@@ -12374,7 +12378,7 @@ export class TaskExecutor {
             const implicitCheck = await this.store.getTask(task.id);
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
-              // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
+              // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
               const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
               if (!refusal.ok) {
                 await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
@@ -12543,6 +12547,8 @@ export class TaskExecutor {
                   taskId: task.id,
                 });
                 retrySession = createdRetrySession.session;
+                await this.captureExecutorTokenUsageBaseline(task.id, retrySession);
+                captureSessionTokenBaseline(retrySession);
                 if (createdRetrySession.sessionFile) {
                   this.store.updateTask(task.id, { sessionFile: createdRetrySession.sessionFile }).catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -12625,10 +12631,7 @@ export class TaskExecutor {
                 stuckDetector?.recordActivity(task.id);
                 await promptWithFallback(retrySession, retryPrompt);
                 checkSessionError(retrySession);
-                await accumulateSessionTokenUsage(this.store, task.id, retrySession, {
-                  agentId: task.assignedAgentId ?? undefined,
-                  role: "executor",
-                });
+                await this.persistTokenUsage(task.id, retrySession);
               } catch (retryError) {
                 this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
@@ -12643,7 +12646,7 @@ export class TaskExecutor {
                 const implicitCheck = await this.store.getTask(task.id);
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
-                  // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
+                  // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
                   const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
                   if (!refusal.ok) {
                     await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
@@ -12762,6 +12765,8 @@ export class TaskExecutor {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${task.id}: failed to persist final single-session token usage before dispose: ${msg}`);
           });
+          this.tokenUsageBaselines.delete(task.id);
+          resetSessionTokenBaseline(session);
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await this.terminateAllChildren(task.id);
@@ -13045,10 +13050,7 @@ export class TaskExecutor {
 
               await promptWithFallback(activeEntry.session, reducedPrompt);
               checkSessionError(activeEntry.session);
-              await accumulateSessionTokenUsage(this.store, task.id, activeEntry.session, {
-                agentId: task.assignedAgentId ?? undefined,
-                role: "executor",
-              });
+              await this.persistTokenUsage(task.id, activeEntry.session);
 
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.
@@ -16731,7 +16733,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         if (timeoutHandle) clearTimeout(timeoutHandle);
         const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
         if (activeWorkflowStepSession === session) {
-          this.deleteActiveWorkflowStepSession(task.id);
+          this.deleteActiveWorkflowStepSession(task.id, worktreePath);
         }
         // Suppress unused-variable warning; `timedOut` documents intent.
         void timedOut;
@@ -16893,14 +16895,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     branch: string,
     tipSha: string,
     count: number,
+    settings: Partial<Settings>,
   ): Promise<void> {
-    await this.store.updateTask(task.id, { worktree: livePath, branch });
+    const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, this.rootDir);
+    const normalizedPath = await this.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
+    await this.store.updateTask(task.id, { worktree: normalizedPath, branch });
     const latestTask = await this.store.getTask(task.id);
-    const baseRef = await this.resolveDiffBaseRef(livePath, latestTask.baseCommitSha);
+    const baseRef = await this.resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
     if (baseRef) {
       await assertCleanBranchAtBase(this.rootDir, branch, baseRef, task.id);
     }
-    const message = `[recovery] reclaimed existing worktree for ${task.id} at ${livePath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
+    const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
     await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
     await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
   }
@@ -16917,6 +16922,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       await this.store.logEntry(task.id, refusalMessage, undefined, this.getRunContextFor(task.id));
       return "sticky";
     }
+    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
 
     const integrationRef = task.mergeDetails?.mergeTargetBranch ?? task.baseBranch ?? task.executionStartBranch ?? await resolveIntegrationBranch(this.rootDir, undefined);
     const inspection = await inspectBranchConflict({
@@ -16967,12 +16973,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     if (inspection.kind === "reclaimable") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, inspection.taskAttributedCommitCount);
+      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, inspection.taskAttributedCommitCount, settings);
       return "reclaimed";
     }
 
     if (inspection.kind === "fully-subsumed") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, 0);
+      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, 0, settings);
       return "reclaimed";
     }
 
@@ -17035,6 +17041,13 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     return "retry";
   }
 
+  /*
+  FNXC:Worktrees 2026-07-19-15:47:
+  Branch-needing task work must be created with `git worktree add` in an isolated checkout. Per the
+  AGENTS.md “Prefer main For Direct Work; Use Worktrees For Branches” standing rule, this.rootDir is
+  never switched with `git checkout` or `git switch` to select a task branch; see the primary-checkout
+  invariant regression test for the executable guard.
+  */
   private async createWorktree(
     branch: string,
     path: string,
@@ -17989,21 +18002,27 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     });
 
     if (inspection.kind === "reclaimable") {
+      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
+        ? inspection.livePath
+        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
       await this.store.logEntry(
         taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
         inspection.tipSha,
       );
-      return { path: inspection.livePath, branch };
+      return { path: livePath, branch };
     }
 
     if (inspection.kind === "fully-subsumed") {
+      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
+        ? inspection.livePath
+        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
       await this.store.logEntry(
         taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (0 commits preserved)`,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (0 commits preserved)`,
         inspection.tipSha,
       );
-      return { path: inspection.livePath, branch };
+      return { path: livePath, branch };
     }
 
     if (shouldGenerateNewName) {
@@ -18051,6 +18070,53 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     return null;
+  }
+
+  private async normalizeReclaimableWorktreePath(
+    sourcePath: string,
+    targetPath: string,
+    taskId: string,
+    settings: Partial<Settings>,
+  ): Promise<string> {
+    const isRelocationActive = async (path: string) =>
+      this.hasActiveWorktreeBinding(taskId, path)
+      || await this.isLiveCleanupRefusal(path, taskId);
+    try {
+      const placement = await relocateReclaimableWorktreeIntoRoot({
+        rootDir: this.rootDir,
+        sourcePath,
+        targetPath,
+        taskId,
+        settings,
+        isPathActive: isRelocationActive,
+      });
+      if (placement.kind === "deferred-live") {
+        await this.store.logEntry(
+          taskId,
+          `[recovery] deferred relocation of active preserved worktree ${sourcePath}`,
+          sourcePath,
+        );
+        return placement.path;
+      }
+      if (placement.relocated) {
+        await this.store.logEntry(
+          taskId,
+          `[recovery] relocated preserved worktree from ${sourcePath} to ${placement.path}`,
+          placement.path,
+        );
+      }
+      return placement.path;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.store.logEntry(
+        taskId,
+        `[recovery] failed to relocate preserved worktree from ${sourcePath} to ${targetPath}: ${detail}`,
+        sourcePath,
+      );
+      throw new NonRetryableWorktreeError(
+        `Could not relocate preserved ${taskId} worktree into the configured worktrees directory: ${detail}`,
+      );
+    }
   }
 
   private async tryFreshWorktreeAfterLiveConflict(input: {

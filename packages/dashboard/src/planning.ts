@@ -222,14 +222,19 @@ async function ensureNtfyHelpersReady(): Promise<void> {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
+/*
+FNXC:PlanningMode 2026-07-20-00:55:
+Planning Mode is user-terminated: each answered turn must produce one consequential, novel question with alternatives and trade-offs.
+The model may update the running plan but must never infer completion; only the visible Validate plan action can make a session terminal.
+*/
 /** Planning system prompt for the AI agent */
 export const PLANNING_SYSTEM_PROMPT = `You are a planning assistant for the fn task board system. First analyze the codebase and active board with the available read tools, fn_task_list, and fn_task_show. Turn a raw idea into an incrementally maintained plan.
 
 Ask exactly one next, high-impact question on every turn. Use every prior answer as context, avoid repeated questions, and never decide that the interview is complete or emit a terminal/complete response. The user alone validates the plan.
 
-Respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["...]},{"id":"other","label":"...","isOther":true}]}}.
+Respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["...]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"]}}}.
 
-Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
+Every turn must include runningPlan: only title, description, suggestedSize, optional priority, suggestedDependencies, and concrete keyDeliverables informed by the idea and answers so far. Never use interview question text as a deliverable. Do not put PROMPT.md sections (Mission, Before → After, Steps, File Scope, Review Level, Completion Criteria, or Do NOT) in runningPlan or free text: triage writes PROMPT.md only after Validate. Validate serializes this lean plan as plan.md without priority; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
 
 
@@ -656,7 +661,13 @@ function buildSessionFromRow(row: AiSessionRow): Session {
   return {
     id: row.id,
     ip: payload.ip ?? "",
-    initialPlan: payload.initialPlan ?? row.title,
+    /*
+    FNXC:PlanningMode 2026-07-20-18:00:
+    FN-8441 must preserve a missing persisted initial request. The create handoff uses
+    missingness to fall back to the validated plan body; replacing it with row.title
+    would falsely persist the session title as an operator's Original Description.
+    */
+    initialPlan: payload.initialPlan ?? "",
     title: row.title,
     projectId: row.projectId ?? undefined,
     draftModelProvider: payload.modelProvider,
@@ -1044,16 +1055,15 @@ export async function createSession(
   session.agent = agentResult;
   session.updatedAt = new Date();
 
-  // Send initial plan to get first question from AI
-  const firstResponse = await getFirstQuestionFromAgent(session, initialPlan);
+  const firstResponse = await getFirstQuestionFromAgent(session, formatInitialPlanRequestForAgent(initialPlan));
 
   const firstQuestion = firstResponse.data;
   session.currentQuestion = firstQuestion;
+  session.summary = mergeRunningSummary(session, firstResponse);
   session.updatedAt = new Date();
   await persistSession(session, "awaiting_input");
   void maybeNotifyPlanningAwaitingInput(session, firstQuestion, true);
 
-  session.summary = buildRunningSummary(initialPlan, session.history);
   return { sessionId, firstQuestion, summary: session.summary, validated: false };
 }
 
@@ -1065,7 +1075,7 @@ export async function createSession(
 async function getFirstQuestionFromAgent(
   session: Session,
   message: string,
-): Promise<{ type: "question"; data: PlanningQuestion }> {
+): Promise<Extract<PlanningResponse, { type: "question" }>> {
   if (!session.agent) {
     throw new InvalidSessionStateError("AI agent not initialized");
   }
@@ -1137,7 +1147,7 @@ async function getFirstQuestionFromAgent(
         try {
           await session.agent.session.prompt(
             "Your previous response could not be parsed as JSON. " +
-            'Please respond with ONLY a valid JSON object: {"type":"question","data":{...}}. ' +
+            'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
             "No markdown, no explanation, just the JSON."
           );
 
@@ -1189,16 +1199,22 @@ async function getFirstQuestionFromAgent(
   }
 
   if (parsed.type === "question") {
-    return { type: "question", data: normalizePlanningQuestion(parsed.data, session.initialPlan) };
+    return {
+      type: "question",
+      data: {
+        ...normalizePlanningQuestion(parsed.data, session.initialPlan),
+        ...(parsed.data.runningPlan ? { runningPlan: parsed.data.runningPlan } : {}),
+      },
+    };
   }
 
   /*
-  FNXC:PlanningMode 2026-07-18-11:36:
-  FN-8331 makes the first planning turn an interview invariant: a completion cannot become a
-  deepening checkpoint until the user has answered a real clarifying question. Re-prompt once
-  for the required protocol shape, then use a safe local question if the model still refuses.
+  FNXC:PlanningMode 2026-07-20-00:00:
+  FN-8434 preserves a legacy complete payload's plan as a running-plan update while still
+  coercing its control flow into a question. Only the user Validate action may terminalize.
   */
-  return requestMandatoryFirstPlanningQuestion(session);
+  const mandatoryQuestion = await requestMandatoryFirstPlanningQuestion(session);
+  return { type: "question", data: { ...mandatoryQuestion.data, runningPlan: parsed.data } };
 }
 
 function buildMandatoryFirstPlanningQuestion(userInput = ""): PlanningQuestion {
@@ -1318,6 +1334,25 @@ export async function createDraftSession(
  * Returns the resolved title (existing or freshly generated) or null if the
  * session was not eligible for summarization.
  */
+/*
+FNXC:PlanningMode 2026-07-19-12:00:
+User session names are an explicit Planning Mode control, unlike AI draft summarization. Keep the
+planning-type predicate beside the persistence seam so a by-id dashboard route can never rename chat sessions.
+*/
+export async function updatePlanningSessionTitle(sessionId: string, title: string): Promise<boolean> {
+  if (!_aiSessionStore) return false;
+
+  const row = await _aiSessionStore.get(sessionId);
+  if (!row || row.type !== "planning") return false;
+
+  const changed = await _aiSessionStore.updateTitle(sessionId, title);
+  if (changed) {
+    const session = sessions.get(sessionId);
+    if (session) session.title = title;
+  }
+  return changed;
+}
+
 export async function summarizeDraftTitle(
   sessionId: string,
   rootDir: string,
@@ -1357,7 +1392,7 @@ export async function summarizeDraftTitle(
   // Re-check status (not title) so a concurrent Start Planning or a later
   // edit-then-blur cycle doesn't overwrite a real generating/complete title.
   const latest = await _aiSessionStore.get(sessionId);
-  if (!latest || latest.status !== "draft") {
+  if (!latest || latest.type !== "planning" || latest.status !== "draft") {
     return latest?.title ?? null;
   }
 
@@ -1635,8 +1670,7 @@ async function initializeAgent(
       session.updatedAt = new Date();
     });
 
-    // Send initial message to get first question
-    await continueAgentConversation(session, session.initialPlan);
+    await continueAgentConversation(session, formatInitialPlanRequestForAgent(session.initialPlan));
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       return;
@@ -1804,6 +1838,11 @@ async function maybeNotifyPlanningAwaitingInput(
   Proactive planner questions use an inbox message independently of ntfy. The
   inbox lookup is authoritative because a process can die after sendMessage but
   before the persisted marker write; ntfy remains best-effort and separately deduped.
+
+  FNXC:MailboxRelatedWork 2026-07-20-09:30:
+  FN-8428 relies on this stable kind/sessionId/questionId tuple to deduplicate clarification
+  notices and open the exact Planning session from mailbox detail. Keep the readable question in
+  the body, but never replace these metadata fields with a markdown-only navigation link.
   */
   if (proactiveClarification && session.clarificationEnabled && session.messageStore
     && session.lastMailboxNotifiedQuestionKey !== questionKey) {
@@ -2000,21 +2039,110 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   }
 }
 
-/**
- * FNXC:PlanningMode 2026-07-18-16:00:
- * Planning is an infinite, user-gated interview. A running plan is derived after every
- * turn and only validateSession may mark it final; model completion payloads are coerced
- * into another question rather than terminating the session.
- */
-function buildRunningSummary(initialPlan: string, history: PlanningHistoryEntry[]): PlanningSummary {
-  const answers = history.map((entry) => `${entry.question.question}: ${JSON.stringify(entry.response)}`);
+/*
+FNXC:PlanningMode 2026-07-20-00:00:
+FN-8434 makes the Running plan an evolving work product, not an interview transcript.
+Fallback text may acknowledge answer choices, but interview questions must never become
+key deliverables because task creation and breakdown consume those as implementation work.
+*/
+function describePlanningAnswer(entry: PlanningHistoryEntry): string {
+  const response = entry.response && typeof entry.response === "object" && !Array.isArray(entry.response)
+    ? entry.response as Record<string, unknown>
+    : {};
+  const optionLabels = new Map((entry.question.options ?? []).map((option) => [option.id, option.label]));
+  const values = Object.entries(response)
+    .filter(([key]) => key !== "_comment")
+    .flatMap(([, value]) => Array.isArray(value) ? value : [value])
+    .filter((value): value is string | number | boolean => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    .map((value) => typeof value === "string" ? optionLabels.get(value) ?? value : String(value));
+  const comment = typeof response._comment === "string" ? response._comment.trim() : "";
+  return [...values, ...(comment ? [comment] : [])].join(", ") || "a response";
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-14:30:
+FN-8438 requires the first Planning Mode turn to author a plan from the operator idea, and every
+following answer to refine that work product. Repeat this contract at the user-message boundary
+for both agent entry points because system instructions alone can be displaced by tool context.
+*/
+export function formatInitialPlanRequestForAgent(initialPlan: string): string {
+  return [
+    "Create the initial running plan from this operator idea before asking the first interview question.",
+    "Return only type:\"question\" JSON with a full runningPlan: a work-product title, a concise implementation description, and concrete work-item keyDeliverables derived from the idea.",
+    "Then ask exactly one high-impact clarifying question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
+    "Operator idea:",
+    initialPlan,
+  ].join("\n\n");
+}
+
+function buildFallbackDeliverables(initialPlan: string): string[] {
+  const subject = initialPlan.trim() || "the requested work";
+  return [
+    `Define scope and acceptance criteria for ${subject}`,
+    `Implement the agreed approach for ${subject}`,
+    `Verify delivery and operational readiness for ${subject}`,
+  ];
+}
+
+function buildRunningSummary(
+  initialPlan: string,
+  history: PlanningHistoryEntry[],
+  previousSummary?: PlanningSummary,
+): PlanningSummary {
+  const subject = initialPlan.trim() || "the requested work";
+  const initialDescription = `Plan and deliver ${subject}. Establish scope, implementation approach, and acceptance criteria through the planning interview.`;
+  const decisions = history.map(describePlanningAnswer).filter(Boolean);
+  const incorporatedDecisions = decisions.join("; ");
+  const priorDescription = previousSummary?.description
+    ?.replace(/\n\nPlanning decisions incorporated: [\s\S]*$/, "")
+    .replace(/\. Refine scope and implementation around the confirmed planning decisions: [\s\S]*$/, ".");
+  const description = decisions.length === 0
+    ? initialDescription
+    : priorDescription
+      ? `${priorDescription}\n\nPlanning decisions incorporated: ${incorporatedDecisions}.`
+      : `Plan and deliver ${subject}. Refine scope and implementation around the confirmed planning decisions: ${incorporatedDecisions}.`;
   return normalizePlanningSummaryPayload({
-    title: initialPlan.slice(0, 80) || "Untitled planning task",
-    description: [initialPlan, ...answers].filter(Boolean).join("\n\n"),
-    suggestedSize: "M",
-    suggestedDependencies: [],
-    keyDeliverables: history.map((entry) => entry.question.question),
-  }, { title: initialPlan, description: initialPlan });
+    title: previousSummary?.title || `Plan: ${subject.slice(0, 74)}`,
+    description,
+    suggestedSize: previousSummary?.suggestedSize ?? "M",
+    priority: previousSummary?.priority,
+    suggestedDependencies: previousSummary?.suggestedDependencies ?? [],
+    keyDeliverables: previousSummary?.keyDeliverables?.length ? previousSummary.keyDeliverables : buildFallbackDeliverables(subject),
+  }, { title: `Plan: ${subject}`, description: initialDescription });
+}
+
+function hasPlanContent(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const plan = value as Record<string, unknown>;
+  return (typeof plan.title === "string" && plan.title.trim().length > 0)
+    || (typeof plan.description === "string" && plan.description.trim().length > 0)
+    || (Array.isArray(plan.keyDeliverables) && plan.keyDeliverables.some((item) => typeof item === "string" && item.trim().length > 0));
+}
+
+function getModelRunningPlan(response: PlanningResponse): unknown {
+  if (response.type === "complete") return response.data;
+  return response.data.runningPlan;
+}
+
+function mergeRunningSummary(session: Session, response?: PlanningResponse): PlanningSummary {
+  const modelPlan = response ? getModelRunningPlan(response) : undefined;
+  if (hasPlanContent(modelPlan)) {
+    /*
+    FNXC:PlanningMode 2026-07-20-00:00:
+    FN-8434 permits a question to carry a partial running-plan update. Merge that patch over
+    the prior work product before normalization so an update to one field cannot reset the
+    model's previously established title, deliverables, dependencies, size, or priority.
+    */
+    const priorPlan = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
+    return normalizePlanningSummaryPayload({
+      ...priorPlan,
+      ...(modelPlan as Record<string, unknown>),
+    }, {
+      title: session.initialPlan,
+      description: session.initialPlan,
+    });
+  }
+  return buildRunningSummary(session.initialPlan, session.history, session.summary);
 }
 
 function planningFallbackCopy(input: string): { question: string; option: (n: number) => string; pro: string; con: string; other: string } {
@@ -2078,7 +2206,8 @@ export async function validateSession(sessionId: string): Promise<PlanningSummar
     activeGenerations.delete(session.id);
   }
 
-  session.summary = buildRunningSummary(session.initialPlan, session.history);
+  // Keep the last model-authored running plan intact; validation only finalizes it.
+  session.summary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
   session.currentQuestion = undefined;
   session.editingQuestionId = undefined;
   session.validated = true;
@@ -2183,8 +2312,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
             }
             await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
               "Your previous response could not be parsed as JSON. " +
-                'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
-                'or {"type":"complete","data":{...}}. No markdown, no explanation, just the JSON.',
+                'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
+                'No markdown, no explanation, just the JSON.',
               { signal: abortSignal },
             );
             if (abortSignal.aborted) {
@@ -2239,28 +2368,18 @@ async function continueAgentConversation(session: Session, message: string): Pro
       return;
     }
 
-      if (parsed.type === "question") {
-        session.currentQuestion = coerceQuestionResponse(parsed, session);
-        session.summary = buildRunningSummary(session.initialPlan, session.history);
-        session.error = undefined;
-        session.lastGeneratedThinking = session.thinkingOutput;
-        session.updatedAt = new Date();
-        // Persist after deriving the plan: reloads must see the running summary on every turn.
-        persistSession(session, "awaiting_input");
-        void maybeNotifyPlanningAwaitingInput(session, session.currentQuestion, true);
-        planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
-        planningStreamManager.broadcast(session.id, { type: "question", data: session.currentQuestion });
-      } else {
-        // A generic engine completion is never terminal in Planning Mode.
-        session.currentQuestion = coerceQuestionResponse(parsed, session);
-        session.summary = buildRunningSummary(session.initialPlan, session.history);
-        session.error = undefined;
-        session.lastGeneratedThinking = session.thinkingOutput;
-        session.updatedAt = new Date();
-        persistSession(session, "awaiting_input");
-        planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
-        planningStreamManager.broadcast(session.id, { type: "question", data: session.currentQuestion });
-      }
+      // A generic engine completion is never terminal in Planning Mode. Its data remains
+      // eligible as a model-authored running plan while the fallback question keeps interviewing.
+      session.currentQuestion = coerceQuestionResponse(parsed, session);
+      session.summary = mergeRunningSummary(session, parsed);
+      session.error = undefined;
+      session.lastGeneratedThinking = session.thinkingOutput;
+      session.updatedAt = new Date();
+      // Persist after deriving the plan: reloads must see the running summary on every turn.
+      persistSession(session, "awaiting_input");
+      void maybeNotifyPlanningAwaitingInput(session, session.currentQuestion, true);
+      planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+      planningStreamManager.broadcast(session.id, { type: "question", data: session.currentQuestion });
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
@@ -2528,7 +2647,8 @@ function formatRefineRequestForAgent(summary: PlanningSummary): string {
   return [
     "The user clicked Refine Further on the planning summary.",
     "Continue the planning interview from the existing context.",
-    "Either ask one focused follow-up question or return an updated completion summary if sufficient.",
+    "Ask exactly one focused, high-impact follow-up question with alternatives and pros/cons.",
+    "Do not return a completion response: only the user can validate a plan.",
     "Current summary:",
     JSON.stringify(summary),
   ].join("\n\n");
@@ -2635,6 +2755,8 @@ export async function submitResponse(
     if (isEditingPriorAnswer) {
       session.history[editIndex] = historyEntry;
       session.editingQuestionId = undefined;
+      // Rebuild from history before the next turn so stale pre-edit plan prose cannot survive.
+      session.summary = buildRunningSummary(session.initialPlan, session.history);
       // Existing agent context contains the old answer; rebuild it from the preserved history.
       disposeSessionAgentForRetry(session);
     } else {
@@ -2728,7 +2850,7 @@ export async function retrySession(
 
   if (session.history.length === 0) {
     await ensureSessionAgent(session, rootDir, [], promptOverrides, store);
-    await continueAgentConversation(session, session.initialPlan);
+    await continueAgentConversation(session, formatInitialPlanRequestForAgent(session.initialPlan));
     return;
   }
 
@@ -2784,7 +2906,7 @@ export async function rewindSession(
 
   session.currentQuestion = rewindEntry.question;
   session.editingQuestionId = questionId ? questionId : undefined;
-  // Keep the plan available while the user edits; it is re-derived after submit.
+  // Re-derive from retained answers so an edit cannot revive a prior question as a deliverable.
   session.summary = buildRunningSummary(session.initialPlan, session.history);
   session.error = undefined;
   session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
@@ -2796,6 +2918,7 @@ export async function rewindSession(
   }
 
   persistSession(session, "awaiting_input");
+  planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
   planningStreamManager.broadcast(session.id, { type: "question", data: rewindEntry.question });
 
   return {
@@ -2891,7 +3014,13 @@ export function formatResponseForAgent(
       break;
   }
 
-  return comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
+  const answerContext = comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
+  /*
+  FNXC:PlanningMode 2026-07-20-00:55:
+  System prompts can be displaced by long tool/context turns. Repeat the per-answer contract at the invocation boundary
+  so every submitted answer steers the following high-impact question instead of inviting a model-generated completion.
+  */
+  return `${answerContext}\n\nUpdate only the lean runningPlan fields (title, description, suggestedSize, optional priority, suggestedDependencies, and concrete keyDeliverables) informed by this answer; never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Then ask exactly one new, high-impact question that does not repeat a prior question. Offer alternatives with pros and cons. Do not complete or validate the plan; only the user can validate it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {

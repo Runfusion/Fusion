@@ -230,8 +230,6 @@ describe("SettingsModal Node Routing section", () => {
     fireEvent.change(screen.getByLabelText("Default Execution Node"), { target: { value: "node-remote-1" } });
     fireEvent.change(screen.getByLabelText("Unavailable Node Policy"), { target: { value: "fallback-local" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
     await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledTimes(1));
     const payload = mockUpdateSettings.mock.calls[0][0];
     expect(payload).toMatchObject({

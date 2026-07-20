@@ -3,6 +3,7 @@ FNXC:DashboardBanners 2026-06-24-00:00:
 DashboardBanners is the conditional banner cluster rendered above the dashboard-project-shell, extracted verbatim from AppInner's main return JSX. It is a pure render of the same gated banners (every condition, prop, FNXC comment, and the TaskIdIntegrityBanner setDashboardHealth updater preserved byte-for-byte); the banner components are imported directly from their siblings.
 */
 import type { DashboardBannersProps } from "./types";
+import type { DashboardHealthResponse } from "../../api/health";
 import type { SectionId } from "../SettingsModal";
 import { TestModeBanner } from "../TestModeBanner";
 import { MigrationInProgressBanner } from "../MigrationInProgressBanner";
@@ -21,6 +22,19 @@ import { DbCorruptionBanner } from "../DbCorruptionBanner";
 import { SetupWarningBanner } from "../SetupWarningBanner";
 import { ApprovalNotificationBanner } from "../ApprovalNotificationBanner";
 import { GitHubStarPrompt } from "../GitHubStarPrompt";
+
+/*
+FNXC:MigrationStatusDashboard 2026-07-19-12:35:
+Boot-window progress reports migrating, while a real listener reports durable
+running/failed migration as degraded. Keep this pure predicate as the single
+banner authority so neither incomplete cutover state becomes invisible.
+*/
+export function isMigrationStatusBannerActive(health: DashboardHealthResponse | null | undefined): boolean {
+  if (!health) return false;
+  if (health.status === "migrating") return true;
+  const durable = health.migration?.durableStatus;
+  return durable === "failed" || durable === "running";
+}
 
 function isMailboxApprovalCandidate(candidate: DashboardBannersProps["approvalBannerCandidate"]): boolean {
   return candidate?.dedupeKey.startsWith("approval:") === true;
@@ -83,7 +97,7 @@ export function DashboardBanners({
           must still explain the outage. Clears on the next health poll of the
           real server. */}
       <MigrationInProgressBanner
-        isActive={dashboardHealth?.status === "migrating"}
+        isActive={isMigrationStatusBannerActive(dashboardHealth)}
         progressLabel={dashboardHealth?.migration?.label}
       />
       {viewMode === "project" && currentProject && (
@@ -123,7 +137,7 @@ export function DashboardBanners({
       )}
       {viewMode === "project" && currentProject && (
         <>
-          {/* FNXC:PostgresMigrationNotice 2026-07-14-18:36: The PostgreSQL cutover is complete, so the dashboard must not advertise it as a future release. Active migration failures remain visible through SqliteMigrationBanner above. */}
+          {/* FNXC:PostgresMigrationNotice 2026-07-19-12:35: SqliteMigrationBanner is success-only. Incomplete cutover state is owned by MigrationInProgressBanner above, including durable degraded health. */}
           <CliBinaryInstallBanner
             onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
           />
@@ -174,7 +188,7 @@ export function DashboardBanners({
           }}
         />
       )}
-      {viewMode === "project" && currentProject && dashboardHealth?.database?.corruptionDetected === true && (
+      {viewMode === "project" && currentProject && dashboardHealth?.database?.healthy === false && (
         <DbCorruptionBanner
           errors={dashboardHealth.database.corruptionErrors}
           lastCheckedAt={dashboardHealth.database.lastCheckedAt}

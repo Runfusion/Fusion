@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseChangesetBody } from "./lib/changeset-schema.mjs";
+import { parseChangesetChangelogEntries } from "./lib/changeset-schema.mjs";
 import { distillReleaseNotes } from "./lib/distill-release-notes.mjs";
 import { extractVersionNotes, replaceVersionSection } from "./lib/extract-version-notes.mjs";
 
@@ -43,34 +43,14 @@ if (!existsSync(CHANGELOG_PATH)) {
  */
 function extractVersionEntries(ver) {
   const cliChangelogPath = join("packages", "cli", "CHANGELOG.md");
-  const entries = [];
 
   if (!existsSync(cliChangelogPath)) {
-    return entries;
+    return [];
   }
 
   const raw = readFileSync(cliChangelogPath, "utf8");
   const notes = extractVersionNotes(raw, ver);
-
-  for (const line of notes.split(/\r?\n/)) {
-    const bulletMatch = line.match(/^-\s+(.*)/);
-    if (!bulletMatch) continue;
-
-    const body = bulletMatch[1].trim();
-
-    if (body.includes("summary:") || body.includes("category:")) {
-      const parsed = parseChangesetBody(body);
-      if (parsed) entries.push(parsed);
-    } else {
-      entries.push({
-        summary: body.split("\n")[0].trim(),
-        category: "internal",
-        legacy: true,
-      });
-    }
-  }
-
-  return entries;
+  return parseChangesetChangelogEntries(notes);
 }
 
 const entries = extractVersionEntries(version);

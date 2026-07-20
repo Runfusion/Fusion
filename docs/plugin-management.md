@@ -83,7 +83,7 @@ Expected outcome: You have a terminal view of installed plugins for scripting/re
 
 Expected outcome: Plugin is registered and appears with an initial state (typically `installed` then `started` when enabled/loaded).
 
-> WhatsApp Chat plugin note: Pair it directly to WhatsApp Web (multi-device) via QR (`/api/plugins/fusion-plugin-whatsapp-chat/qr`) or pairing code (`/api/plugins/fusion-plugin-whatsapp-chat/pair-code`). No public webhook endpoint or Meta Cloud credentials are required. Keep `allowedSenders` populated (empty list blocks all inbound messages), and use `/logout` to force re-pairing.
+> WhatsApp Chat plugin note: After installing, open the **WhatsApp Chat** settings detail in **Settings → Plugins → Fusion Plugins**. Its pairing panel shows live status and the scannable QR for WhatsApp Web (multi-device), or lets you request a pairing code after setting a phone number. Set `allowedSenders` before relying on inbound messages—an empty list blocks all inbound senders. Use **Logout / re-pair** in the same panel to start a fresh QR/code session. The `/qr`, `/pair-code`, `/status`, and `/logout` routes remain available for advanced troubleshooting; no public webhook endpoint or Meta Cloud credentials are required.
 
 ### Install from local path (dashboard)
 
