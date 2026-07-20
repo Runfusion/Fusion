@@ -7,6 +7,10 @@ import { render, screen, fireEvent, within, waitFor, act } from "@testing-librar
 import { CommandCenter } from "../CommandCenter";
 
 const apiMock = vi.fn();
+const subscribeSseMock = vi.fn(() => () => undefined);
+vi.mock("../../../sse-bus", () => ({
+  subscribeSse: (...args: unknown[]) => subscribeSseMock(...args),
+}));
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
   fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 42_000, sourceFileCount: 10, sourceByteCount: 100, diskBytes: 1024, diskFileCount: 12, method: "local", truncated: false }),
@@ -314,11 +318,14 @@ function signalsFixture(open = 2) {
   };
 }
 
-function liveFixture(columns: Array<{ column: string; count: number }> = [{ column: "in-progress", count: 3 }]) {
+function liveFixture(
+  columns: Array<{ column: string; count: number }> = [{ column: "in-progress", count: 3 }],
+  { activeSessions = 1, activeRuns = 1 }: { activeSessions?: number; activeRuns?: number } = {},
+) {
   return {
     capturedAt: "2026-06-18T00:00:00.000Z",
-    activeSessions: 0,
-    activeRuns: 0,
+    activeSessions,
+    activeRuns,
     activeNodes: 0,
     sessions: [],
     runs: [],
@@ -457,6 +464,8 @@ function expectDailyActivityLineBeforeTrend() {
 
 beforeEach(() => {
   apiMock.mockReset();
+  subscribeSseMock.mockReset();
+  subscribeSseMock.mockImplementation(() => () => undefined);
   mockEmptyOverviewApi();
 });
 
@@ -550,7 +559,7 @@ describe("CommandCenter shell", () => {
       tools: toolsFixture(0),
       activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 1, agentRuns: 5, doneInRange: 0 }),
       signals: signalsFixture(0),
-      live: liveFixture([{ column: "in-progress", count: 0 }]),
+      live: liveFixture([{ column: "in-progress", count: 0 }], { activeSessions: 0, activeRuns: 1 }),
     });
     render(<CommandCenter />);
 
@@ -843,16 +852,47 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-overview-chart-tokens")).toBeTruthy();
   });
 
-  it("sources live tasks in progress from current column counts instead of funnel entered", async () => {
+  it("sources live tasks in progress from current aliased columns instead of funnel entered", async () => {
     mockOverviewApi({
       activity: activityFixture({ inProgress: 12 }),
-      live: liveFixture([{ column: "in-progress", count: 2 }]),
+      live: liveFixture([
+        { column: "in-progress", count: 2 },
+        { column: "in progress", count: 1 },
+        { column: "doing", count: 3 },
+      ]),
     });
     render(<CommandCenter />);
 
     await screen.findByTestId("command-center-live-tasks-in-progress");
-    await waitFor(() => expect(liveMetricValue()).toBe("2"));
+    await waitFor(() => expect(liveMetricValue()).toBe("6"));
     expect(liveMetricValue()).not.toBe("12");
+  });
+
+  it("refreshes the live strip after a task SSE update without remounting", async () => {
+    let snapshot = liveFixture([{ column: "in-progress", count: 1 }], { activeSessions: 1, activeRuns: 0 });
+    mockOverviewApi({ live: undefined });
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/command-center/live") return Promise.resolve(snapshot);
+      if (path.startsWith("/command-center/tokens")) return Promise.resolve(tokenFixture());
+      if (path.startsWith("/command-center/tools")) return Promise.resolve(toolsFixture());
+      if (path.startsWith("/command-center/activity")) return Promise.resolve(activityFixture());
+      if (path.startsWith("/command-center/signals")) return Promise.resolve(signalsFixture());
+      if (path.startsWith("/command-center/github")) return Promise.resolve(githubFixture());
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
+    render(<CommandCenter />);
+
+    await waitFor(() => expect(liveMetricValue()).toBe("1"));
+    expect(screen.getByTestId("command-center-live-agents-working").textContent).toContain("1");
+    const subscription = subscribeSseMock.mock.calls[0]?.[1] as { events: Record<string, () => void> };
+    snapshot = liveFixture([{ column: "doing", count: 4 }], { activeSessions: 1, activeRuns: 1 });
+    await act(async () => {
+      subscription.events["task:moved"]();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(liveMetricValue()).toBe("4"));
+    expect(screen.getByTestId("command-center-live-agents-working").textContent).toContain("2");
   });
 
   it("renders zero when the live in-progress column count is zero", async () => {
@@ -889,13 +929,29 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("command-center-overview-error")).toBeNull();
   });
 
-  it("keeps the live in-progress count range-independent while tasks done follows the range", async () => {
+  it("keeps live work range-independent across every preset while range analytics refetch", async () => {
+    const boundedRanges = new Map<string, number>();
+    let nextBoundedDone = 7;
+    const activityRequests: string[] = [];
     apiMock.mockImplementation((path: string) => {
-      const allTime = typeof path === "string" && !path.includes("from=");
       if (path.startsWith("/command-center/tokens")) return Promise.resolve(tokenFixture());
       if (path.startsWith("/command-center/tools")) return Promise.resolve(toolsFixture());
       if (path.startsWith("/command-center/activity")) {
-        return Promise.resolve(activityFixture({ doneInRange: allTime ? 21 : 7, inProgress: allTime ? 99 : 12 }));
+        activityRequests.push(path);
+        const params = new URL(path, "http://fusion.test").searchParams;
+        const from = params.get("from");
+        let doneInRange = 21;
+        if (from) {
+          const existing = boundedRanges.get(from);
+          if (existing !== undefined) {
+            doneInRange = existing;
+          } else {
+            doneInRange = nextBoundedDone;
+            boundedRanges.set(from, doneInRange);
+            nextBoundedDone = nextBoundedDone === 7 ? 24 : 30;
+          }
+        }
+        return Promise.resolve(activityFixture({ doneInRange, inProgress: 99 }));
       }
       if (path.startsWith("/command-center/signals")) return Promise.resolve(signalsFixture(2));
       if (path.startsWith("/command-center/github")) return Promise.resolve(githubFixture());
@@ -908,11 +964,18 @@ describe("CommandCenter shell", () => {
     await waitFor(() => expect(liveMetricValue()).toBe("4"));
     expect(statValue("command-center-stat-tasksDone")).toBe("7");
 
-    fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
-    fireEvent.click(screen.getByTestId("cc-date-range-preset-all"));
+    for (const [preset, expectedDone] of [["24h", "24"], ["30d", "30"], ["all", "21"]] as const) {
+      fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
+      fireEvent.click(screen.getByTestId(`cc-date-range-preset-${preset}`));
+      await waitFor(() => expect(statValue("command-center-stat-tasksDone")).toBe(expectedDone));
+      expect(liveMetricValue()).toBe("4");
+    }
 
-    await waitFor(() => expect(statValue("command-center-stat-tasksDone")).toBe("21"));
-    expect(liveMetricValue()).toBe("4");
+    const activityQueries = [...new Set(activityRequests)].map((path) => new URL(path, "http://fusion.test").searchParams);
+    const boundedFroms = activityQueries.map((params) => params.get("from")).filter((from): from is string => from !== null);
+    expect(new Set(boundedFroms)).toHaveLength(3);
+    const allTimeQuery = activityQueries.find((params) => params.get("from") === null);
+    expect(allTimeQuery?.get("to")).toEqual(expect.any(String));
   });
 
   it("renders cards for partially populated analytics instead of the empty state", async () => {

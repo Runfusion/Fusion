@@ -4,7 +4,9 @@ import { AlertCircle, Loader2, Radio } from "lucide-react";
 import type { LiveSnapshot, LiveSession, ColumnCount } from "@fusion/core";
 import { api, withProjectId } from "../../api/legacy";
 import { subscribeSse } from "../../sse-bus";
+import { useProjectContextGuard } from "../../hooks/useProjectContextGuard";
 import { Funnel, type FunnelStage } from "./charts/Funnel";
+import { isInProgressColumn } from "./liveSnapshotMetrics";
 import "./MissionControlPanel.css";
 
 /** Poll cadence while work is in-flight (KTD5). */
@@ -43,7 +45,7 @@ const LIVE_REFETCH_EVENTS = [
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
   { id: "triage", match: (c) => c === "triage" || c === "signal" || c === "backlog" },
   { id: "todo", match: (c) => c === "todo" || c === "to-do" || c === "to do" || c === "ready" },
-  { id: "in-progress", match: (c) => c === "in-progress" || c === "in progress" || c === "doing" },
+  { id: "in-progress", match: isInProgressColumn },
   { id: "in-review", match: (c) => c === "in-review" || c === "in review" || c === "review" },
   { id: "done", match: (c) => c === "done" || c === "complete" || c === "completed" || c === "shipped" },
 ];
@@ -87,8 +89,9 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
 
   const snapshotRef = useRef<LiveSnapshot | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const inFlightRef = useRef(false);
-  const mountedRef = useRef(true);
+  const noRequest = useRef(Symbol("no-live-snapshot-request"));
+  const inFlightProjectRef = useRef<string | undefined | symbol>(noRequest.current);
+  const { capture } = useProjectContextGuard(projectId, "useLiveSnapshot");
 
   // Stable callbacks below close over only refs + setState, so `load` (and the
   // SSE subscription / poll interval that call it) never need to be recreated.
@@ -102,21 +105,26 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
   }, []);
 
   const load = useCallback(async () => {
-    // Coalesce overlapping fetches (a poll tick and an SSE push racing).
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+    const context = capture();
+    const requestProjectId = context.projectIdAtStart;
+    // Coalesce only same-project fetches. A project switch must start its own
+    // request rather than waiting for a prior project's response.
+    if (inFlightProjectRef.current === requestProjectId) return;
+    inFlightProjectRef.current = requestProjectId;
     try {
-      const result = await api<LiveSnapshot>(withProjectId("/command-center/live", projectId));
-      if (!mountedRef.current) return;
+      const result = await api<LiveSnapshot>(withProjectId("/command-center/live", requestProjectId));
+      if (context.isStale()) return;
       snapshotRef.current = result;
       setSnapshot(result);
       setError(null);
     } catch (loadError: unknown) {
-      if (!mountedRef.current) return;
+      if (context.isStale()) return;
       setError(loadError instanceof Error ? loadError.message : "Failed to load live snapshot");
     } finally {
-      inFlightRef.current = false;
-      if (mountedRef.current) {
+      if (inFlightProjectRef.current === requestProjectId) {
+        inFlightProjectRef.current = noRequest.current;
+      }
+      if (!context.isStale()) {
         setIsLoading(false);
         // Re-evaluate polling against the freshest snapshot after every fetch.
         // "In-flight" = any active session or run. Idle → no interval exists.
@@ -135,10 +143,19 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
         }
       }
     }
-  }, [stopPolling, projectId]);
+  }, [capture, stopPolling]);
 
   useEffect(() => {
-    mountedRef.current = true;
+    /*
+    FNXC:LiveActivity 2026-07-20-09:30:
+    FN-8429 requires a project-scoped live strip. Clear the prior snapshot on a
+    project switch and reject stale responses so another project's board counts
+    cannot briefly inflate Overview or Mission Control.
+    */
+    snapshotRef.current = null;
+    setSnapshot(null);
+    setIsLoading(true);
+    setError(null);
     void load();
 
     const unsubscribe = subscribeSse("/api/events", {
@@ -151,11 +168,10 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
     });
 
     return () => {
-      mountedRef.current = false;
       unsubscribe();
       stopPolling();
     };
-  }, [load, stopPolling]);
+  }, [load, projectId, stopPolling]);
 
   const reload = useCallback(() => {
     void load();

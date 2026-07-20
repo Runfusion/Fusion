@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Gauge } from "lucide-react";
-import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics, TaskVerificationRequest } from "@fusion/core";
+import type { ActivityAnalytics, ColorTheme, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics, TaskVerificationRequest } from "@fusion/core";
 import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
 import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
@@ -21,7 +21,8 @@ import { SignalsArea } from "./areas/SignalsArea";
 import { SystemStatsArea } from "./areas/SystemStatsArea";
 import { SystemControlsArea } from "./areas/SystemControlsArea";
 import { PluginManager } from "../PluginManager";
-import { MissionControlPanel } from "./MissionControlPanel";
+import { MissionControlPanel, useLiveSnapshot } from "./MissionControlPanel";
+import { countLiveAgentsWorking, countLiveInProgressTasks } from "./liveSnapshotMetrics";
 import { CommandCenterControls } from "./CommandCenterControls";
 import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
@@ -169,8 +170,7 @@ function OverviewTab({
   const tools = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range, { projectId });
   const activity = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range, { projectId });
   const signals = useAnalyticsArea<SignalsAnalytics>("/command-center/signals", range, { projectId });
-  const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot | null>(null);
-  const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(true);
+  const { snapshot: liveSnapshot, isLoading: liveSnapshotLoading } = useLiveSnapshot(projectId);
   const [codebaseMetrics, setCodebaseMetrics] = useState<CodebaseMetrics | null>(null);
   const [verificationRequests, setVerificationRequests] = useState<TaskVerificationRequest[]>([]);
 
@@ -182,30 +182,6 @@ function OverviewTab({
     refresh();
     const timer = window.setInterval(refresh, OVERVIEW_TOKEN_REFRESH_MS);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [projectId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLiveSnapshotLoading(true);
-    void (async () => {
-      try {
-        const result = await api<LiveSnapshot>(withProjectId("/command-center/live", projectId));
-        if (!cancelled) {
-          setLiveSnapshot(result);
-        }
-      } catch {
-        if (!cancelled) {
-          setLiveSnapshot(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setLiveSnapshotLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [projectId]);
 
   useEffect(() => {
@@ -223,14 +199,17 @@ function OverviewTab({
   const toolCalls = tools.data?.toolCalls ?? 0;
   const activeNodes = activity.data?.activeNodes ?? 0;
   const activeAgents = activity.data?.activeAgents ?? 0;
+  const liveAgentsWorking = countLiveAgentsWorking(liveSnapshot);
   const sessionsCount = activity.data?.sessions ?? 0;
   const agentRunsTotal = activity.data?.agentRuns?.total ?? 0;
   const tasksDone = activity.data?.funnel?.doneInRange ?? 0;
   /*
-  FNXC:CommandCenter 2026-06-18-00:00:
-  The Live activity snapshot "tasks in progress" metric must reflect current board state from /command-center/live columns, not the date-range SDLC funnel entered count, because cumulative transitions inflate with history and do not decrease when tasks leave in-progress.
+  FNXC:LiveActivity 2026-08-03-00:00:
+  FN-8429 requires the Overview's live metrics to share Mission Control's
+  SSE-plus-poll snapshot and in-progress aliases. Date-range analytics remain
+  historical; they must not overwrite current board work with funnel entries.
   */
-  const inProgressTasks = liveSnapshot?.columns.find((column) => column.column === "in-progress")?.count ?? 0;
+  const inProgressTasks = countLiveInProgressTasks(liveSnapshot?.columns);
   const uniqueModels = tokens.data?.groups?.length ?? 0;
   const tokensByModelData = useMemo<BarDatum[]>(
     () =>
@@ -478,7 +457,7 @@ function OverviewTab({
             <span className="cc-live-metric-label">{t("commandCenter.overview.tasksInProgress", "tasks in progress")}</span>
           </span>
           <span className="cc-live-metric" data-testid="command-center-live-agents-working">
-            <span className="cc-live-metric-value">{formatCount(activeAgents)}</span>
+            <span className="cc-live-metric-value">{liveSnapshotLoading ? "—" : formatCount(liveAgentsWorking)}</span>
             <span className="cc-live-metric-label">{t("commandCenter.overview.agentsWorking", "agents working")}</span>
           </span>
           <span className="cc-live-metric" data-testid="command-center-live-tokens">
