@@ -2424,7 +2424,8 @@ export class GitHubClient {
 
   /** Run a read-only GraphQL query (gh CLI when available, else token/REST). */
   private async runGraphqlQuery<T>(query: string, variables: Record<string, string | number | null>): Promise<T | undefined> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli" || (this.forceMode === undefined && this.hasGhAuth())) {
+      if (this.forceMode === "gh-cli") this.requireGh();
       const args = ["api", "graphql", "-f", `query=${query}`];
       for (const [key, value] of Object.entries(variables)) {
         if (value === null) continue;
@@ -2436,6 +2437,7 @@ export class GitHubClient {
       if (payload.errors?.length) throw new Error(payload.errors[0].message);
       return payload.data;
     }
+    if (this.forceMode === "token") this.requireToken();
     if (this.token) {
       const response = await fetch(`${this.baseUrl}/graphql`, {
         method: "POST",
@@ -2480,7 +2482,8 @@ export class GitHubClient {
   }
 
   private async runGraphqlMutation(query: string, variables: Record<string, string>): Promise<void> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli" || (this.forceMode === undefined && this.hasGhAuth())) {
+      if (this.forceMode === "gh-cli") this.requireGh();
       const args = ["api", "graphql", "-f", `query=${query}`];
       for (const [key, value] of Object.entries(variables)) {
         args.push("-F", `${key}=${value}`);
@@ -2490,6 +2493,7 @@ export class GitHubClient {
       if (payload.errors?.length) throw new Error(payload.errors[0].message);
       return;
     }
+    if (this.forceMode === "token") this.requireToken();
     if (this.token) {
       const response = await fetch(`${this.baseUrl}/graphql`, {
         method: "POST",
