@@ -230,6 +230,23 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("Test task description");
   });
 
+  it("expands stored plan.md while preserving original request and edited description context", () => {
+    const prompt = buildSpecificationPrompt(
+      { ...baseTask, description: "Operator edited context" },
+      ".fusion/tasks/FN-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { plan: "# Validated plan\n\nPlan detail\n\n## Size\nM\n\n## Suggested dependencies\n_None_\n\n## Key deliverables\n- Deliver it\n", originalDescription: "Raw operator request" },
+    );
+    expect(prompt).toContain("## Planning Mode plan.md");
+    expect(prompt).toContain("Plan detail");
+    expect(prompt).toContain("Operator edited context");
+    expect(prompt).toContain("Raw operator request");
+    expect(prompt).toContain("never use plan.md");
+  });
+
   describe("task-definition input language setting", () => {
     const languageSettings: Settings = {
       maxConcurrent: 2,

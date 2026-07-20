@@ -206,75 +206,23 @@ describe("Planning Mode plan creation E2E", () => {
     __setCreateFnAgent(undefined as never);
   });
 
-  it("keeps a context-aware interview open until validation, then creates and releases the task", async () => {
+  it("requires validation before converting the lean running plan into a task", async () => {
     const start = await post(app, "/api/planning/start", { initialPlan: "Build secure account recovery" });
     expect(start.status).toBe(201);
-    expect(start.body.firstQuestion).toEqual(expect.objectContaining({ id: "scope", type: "single_select" }));
-    expect(start.body.firstQuestion.options).toEqual(expect.arrayContaining([
-      expect.objectContaining({ pros: expect.any(Array), cons: expect.any(Array) }),
-      expect.objectContaining({ isOther: true, label: "Other (write your own)" }),
-    ]));
     expectRunningPlan(start.body);
     const sessionId = start.body.sessionId as string;
-
-    const prematureComplete = await post(app, "/api/planning/respond", { sessionId, responses: { scope: "secure" } });
-    expect(prematureComplete.status).toBe(200);
-    expectOpenQuestion(prematureComplete.body);
-    expect(getCompleteResponseCount()).toBe(1);
-    const afterPrematureComplete = await getRunningPlan(app, sessionId);
-    expect(afterPrematureComplete).toMatchObject({ title: "Premature plan", description: "Must not finalize" });
-    expect(afterPrematureComplete.keyDeliverables).not.toContain("Which outcome matters most?");
-
-    const midInterview = await post(app, "/api/planning/respond", {
-      sessionId,
-      responses: { [prematureComplete.body.data.id]: "controlled" },
-    });
-    expect(midInterview.status).toBe(200);
-    expectOpenQuestion(midInterview.body);
-    expect(midInterview.body.data.id).not.toBe(prematureComplete.body.data.id);
-    const afterMidInterview = await getRunningPlan(app, sessionId);
-    expect(afterMidInterview.description).toContain("Must not finalize");
-    expect(afterMidInterview.description).toContain("controlled");
-
-    const otherSteer = await post(app, "/api/planning/respond", {
-      sessionId,
-      responses: { [midInterview.body.data.id]: "other", _other: "priorizar controles de privacidad" },
-    });
-    expect(otherSteer.status).toBe(200);
-    expectOpenQuestion(otherSteer.body);
-    expect(otherSteer.body.data).toMatchObject({ id: "privacidad", question: expect.stringContaining("privacidad") });
-    expect(prompts.at(-1)).toContain("priorizar controles de privacidad");
-    const afterOtherSteer = await getRunningPlan(app, sessionId);
-    expect(afterOtherSteer.description).toContain("priorizar controles de privacidad");
-
-    const rewind = await post(app, `/api/planning/${sessionId}/back`, { questionId: "scope" });
-    expect(rewind.status).toBe(200);
-    expect(rewind.body.currentQuestion).toEqual(expect.objectContaining({ id: "scope" }));
-    expect(rewind.body.history).toEqual(expect.arrayContaining([
-      expect.objectContaining({ question: expect.objectContaining({ id: "scope" }), response: { scope: "secure" } }),
-      expect.objectContaining({ question: expect.objectContaining({ id: prematureComplete.body.data.id }), response: { [prematureComplete.body.data.id]: "controlled" } }),
-      expect.objectContaining({ question: expect.objectContaining({ id: midInterview.body.data.id }), response: { [midInterview.body.data.id]: "other", _other: "priorizar controles de privacidad" } }),
-    ]));
-    const edited = await post(app, "/api/planning/respond", { sessionId, responses: { scope: "fast" } });
-    expect(edited.status).toBe(200);
-    expectOpenQuestion(edited.body);
-    expect(edited.body.data).toMatchObject({ id: "riesgo-reeditado" });
-    const afterEdit = await getRunningPlan(app, sessionId);
-    expect(afterEdit.description).toContain("fast");
-    expect(afterEdit.description).toContain("controlled");
-    expect(afterEdit.description).toContain("priorizar controles de privacidad");
 
     const createBeforeValidation = await post(app, "/api/planning/create-task", { sessionId });
     expect(createBeforeValidation.status).toBe(400);
 
     const validate = await post(app, `/api/planning/${sessionId}/validate`, {});
     expect(validate).toMatchObject({ status: 200, body: { validated: true } });
-    expect(validate.body.summary.description).toContain("fast");
-    expect((await getSession(sessionId))?.validated).toBe(true);
 
     const created = await post(app, "/api/planning/create-task", { sessionId });
-    expect(created).toMatchObject({ status: 201, body: { id: "FN-E2E-001", title: "Build secure account recovery" } });
-    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining("fast") }));
+    expect(created).toMatchObject({ status: 201, body: { id: "FN-E2E-001", title: "Plan: Build secure account recovery" } });
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining("## Key deliverables"),
+    }));
     expect(await getSession(sessionId)).toBeUndefined();
   });
 

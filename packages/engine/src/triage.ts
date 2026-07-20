@@ -47,6 +47,7 @@ import {
   deriveFallbackTaskTitle,
   detectContentLanguage,
   localeDisplayName,
+  parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -1667,6 +1668,10 @@ export class TriageProcessor {
             );
           }
 
+          const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+          const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
+            ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
+            : [null, null];
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -1674,6 +1679,10 @@ export class TriageProcessor {
             attachmentContents,
             existingPrompt,
             feedback,
+            {
+              plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
+              originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+            },
           );
           await promptWithFallback(
             session,
@@ -2636,13 +2645,20 @@ export class TriageProcessor {
 
     if (!options.preservePromptContent) {
       /*
-      FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
-      After the planner writes PROMPT.md, inject the operator's original description near
-      the top (verbatim) so Mission/Steps rewrites never hide the source request. Runs
-      before Frontend UX injection. Skipped when preservePromptContent (plan-review retry)
-      so an already-approved draft is not rewritten for this hygiene pass alone.
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 keeps the operator request separate from plan.md. Finalization must inject
+      original-description when present; a plan-shaped description falls back to its body.
       */
-      let nextPrompt = applyOriginalDescription(written, task.description ?? "");
+      const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+      const originalDescriptionDocument = typeof getTaskDocument === "function"
+        ? await getTaskDocument.call(this.store, task.id, "original-description").catch(() => null)
+        : null;
+      const storedOriginalDescription = typeof originalDescriptionDocument?.content === "string"
+        ? originalDescriptionDocument.content.trim()
+        : "";
+      const parsedDescriptionPlan = parsePlanningPlanMd(task.description ?? "");
+      const originalDescription = storedOriginalDescription || parsedDescriptionPlan?.description || task.description || "";
+      let nextPrompt = applyOriginalDescription(written, originalDescription);
       nextPrompt = applyFrontendUxCriteria(nextPrompt, parsedFileScope);
       if (nextPrompt !== written) {
         const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
@@ -3188,8 +3204,14 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
+  planningContext?: { plan?: string; originalDescription?: string },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
+  const planDocument = planningContext?.plan?.trim();
+  const descriptionIsPlan = Boolean(parsePlanningPlanMd(task.description ?? ""));
+  const planInput = planDocument || (descriptionIsPlan ? task.description : undefined);
+  const originalDescription = planningContext?.originalDescription?.trim()
+    || (!descriptionIsPlan ? task.description : parsePlanningPlanMd(task.description ?? "")?.description || task.description);
   const isRevision = Boolean(existingPrompt && hasFeedback);
   const isFreshRespecification = Boolean(!existingPrompt && hasFeedback);
 
@@ -3401,12 +3423,17 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
 ## Task
 - **ID:** ${task.id}
 - **Title:** ${task.title || "(none)"}
-- **Description:** ${task.description}
+- **Description (current user context):** ${task.description}
+${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as the primary specification input. Expand it into the full executor-ready PROMPT.md; plan.md is not PROMPT.md.\n\n\`\`\`markdown\n${planInput}\n\`\`\`\n` : ""}
+## Original Request
+\`\`\`text
+${originalDescription}
+\`\`\`
 ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : ""}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

@@ -116,6 +116,7 @@ export * from "./overseer-advice.js";
 export * from "./overseer-emission-guard.js";
 export * from "./frontend-ux-policy.js";
 export * from "./original-description-policy.js";
+export * from "./planning-plan-md.js";
 export * from "./file-scope-classification.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";
 export {

@@ -234,7 +234,7 @@ Ask exactly one next, high-impact question on every turn. Use every prior answer
 
 Respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["...]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"]}}}.
 
-Every turn must include runningPlan: a concise work-product title, description, and concrete deliverables informed by the idea and answers so far. Never use interview question text as a deliverable. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
+Every turn must include runningPlan: only title, description, suggestedSize, optional priority, suggestedDependencies, and concrete keyDeliverables informed by the idea and answers so far. Never use interview question text as a deliverable. Do not put PROMPT.md sections (Mission, Before → After, Steps, File Scope, Review Level, Completion Criteria, or Do NOT) in runningPlan or free text: triage writes PROMPT.md only after Validate. Validate serializes this lean plan as plan.md without priority; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
 
 
@@ -661,7 +661,13 @@ function buildSessionFromRow(row: AiSessionRow): Session {
   return {
     id: row.id,
     ip: payload.ip ?? "",
-    initialPlan: payload.initialPlan ?? row.title,
+    /*
+    FNXC:PlanningMode 2026-07-20-18:00:
+    FN-8441 must preserve a missing persisted initial request. The create handoff uses
+    missingness to fall back to the validated plan body; replacing it with row.title
+    would falsely persist the session title as an operator's Original Description.
+    */
+    initialPlan: payload.initialPlan ?? "",
     title: row.title,
     projectId: row.projectId ?? undefined,
     draftModelProvider: payload.modelProvider,
@@ -3014,7 +3020,7 @@ export function formatResponseForAgent(
   System prompts can be displaced by long tool/context turns. Repeat the per-answer contract at the invocation boundary
   so every submitted answer steers the following high-impact question instead of inviting a model-generated completion.
   */
-  return `${answerContext}\n\nRefine the running plan so far from this answer. Update the runningPlan object with a concise title, description, and concrete work-item deliverables; never list interview questions as deliverables. Then ask exactly one new, high-impact question that does not repeat a prior question. Offer alternatives with pros and cons. Do not complete or validate the plan; only the user can validate it.`;
+  return `${answerContext}\n\nUpdate only the lean runningPlan fields (title, description, suggestedSize, optional priority, suggestedDependencies, and concrete keyDeliverables) informed by this answer; never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Then ask exactly one new, high-impact question that does not repeat a prior question. Offer alternatives with pros and cons. Do not complete or validate the plan; only the user can validate it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {

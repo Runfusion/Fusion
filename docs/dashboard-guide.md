@@ -534,6 +534,9 @@ Planning Mode keeps the running plan visible beside answered-question history an
 
 Choose **Validate plan** when the running plan is ready for task creation. Validation is durable and is required before **Create task**, **Create tasks**, or **Start breakdown**; those actions reject unvalidated sessions.
 
+<!-- FNXC:PlanningMode 2026-07-20-12:00: FN-8441 separates the lean Planning Mode artifact from triage's executor specification. -->
+On creation, the validated running plan becomes **plan.md**: its title, description, size, suggested dependencies, and key deliverables are stored as the task description and task document `plan` (priority remains a task field, not a plan.md section). The original request that started the session is stored separately as `original-description`. The task planning agent later expands plan.md into the executor-ready **PROMPT.md**; PROMPT.md's **Original Description** preserves that original request verbatim.
+
 - **Branch strategy** options mirror Subtask Breakdown semantics:
   - `Use project/default branch`
   - `Create auto-named branch per task`
