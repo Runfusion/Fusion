@@ -270,6 +270,11 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const idempotent = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
     expect(idempotent.updatedAt).toBe(firstUpdatedAt);
     expect(idempotent).toEqual(reconciled);
+
+    const duplicate = await m.addFeature(slice.id, { title: "Corrupt duplicate" });
+    await m.updateFeature(duplicate.id, { taskId: task.id });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id)).rejects.toMatchObject({ code: "TASK_FEATURE_CONFLICT" });
+    expect(await m.getFeature(feature.id)).toEqual(reconciled);
   });
 
   it("accepts a supported archived tombstone without resurrecting or back-linking it", async () => {

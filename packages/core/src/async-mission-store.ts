@@ -98,6 +98,7 @@ import {
   updateFeature,
   deleteFeature,
   getFeatureByTaskId,
+  getConflictingFeatureByTaskId,
   unlinkFeatureFromTaskId,
   getTerminalTaskEvidence,
   getMaxEventSeq,
@@ -968,8 +969,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
-      const taskFeature = await getFeatureByTaskId(tx, taskId);
-      if (taskFeature && taskFeature.id !== featureId) {
+      const taskFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
+      if (taskFeature) {
         throw new TerminalTaskReconciliationError(
           "TASK_FEATURE_CONFLICT",
           `Delivery task ${taskId} is already linked to feature ${taskFeature.id}`,

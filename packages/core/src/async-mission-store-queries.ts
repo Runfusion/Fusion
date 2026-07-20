@@ -42,7 +42,7 @@
  *   These helpers are the production MissionStore persistence path and program
  *   against AsyncDataLayer rather than a synchronous SQLite database.
  */
-import { and, asc, desc, eq, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import { normalizeMissionAssertionType } from "./mission-types.js";
@@ -1048,6 +1048,24 @@ export async function deleteFeature(handle: QueryHandle, id: string): Promise<bo
     .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, id)))
     .returning({ id: schema.project.missionFeatures.id });
   return result.length > 0;
+}
+
+/** Return a different feature already using the task, if one exists. */
+export async function getConflictingFeatureByTaskId(
+  handle: QueryHandle,
+  taskId: string,
+  featureId: string,
+): Promise<MissionFeature | undefined> {
+  const rows = await handle
+    .select(featureColumns)
+    .from(schema.project.missionFeatures)
+    .where(and(
+      missionProjectScope(schema.project.missionFeatures.projectId),
+      eq(schema.project.missionFeatures.taskId, taskId),
+      ne(schema.project.missionFeatures.id, featureId),
+    ))
+    .limit(1);
+  return rows[0] ? rowToFeature(rows[0] as FeatureRow) : undefined;
 }
 
 /** Get a feature by its linked taskId (null if no feature is linked). */
