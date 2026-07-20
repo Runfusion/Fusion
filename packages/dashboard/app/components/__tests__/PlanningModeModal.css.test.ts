@@ -112,5 +112,10 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const footerRule = findRule(mobileShellCss, ".planning-modal-body--show-list .planning-sidebar-footer");
     expect(footerRule).toBeTruthy();
     expect(footerRule).toMatch(/flex-shrink\s*:\s*0\s*;/);
+
+    expect(mobileShellCss).toMatch(/\.planning-modal-body--show-list \.planning-running-plan[\s\S]*?display\s*:\s*none\s*;/);
+    const mobileBackRule = findRule(mobileShellCss, ".planning-mobile-back");
+    expect(mobileBackRule).toMatch(/display\s*:\s*inline-flex\s*;/);
+    expect(mobileBackRule).toMatch(/min-height\s*:\s*calc\(var\(--space-md\) \* 2\.25\)\s*;/);
   });
 });

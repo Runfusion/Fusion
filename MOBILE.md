@@ -101,7 +101,7 @@ gesture delivery enabled across `cap sync` regenerations.
 
 ### Planning Mode
 
-Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. Desktop keeps its three-pane interview (answered history, current question, and running plan) when there is room. Mobile, phone-class short landscape, and tablet use a progressive interview: **Question** is the default full-width surface, while labeled **Running plan** and **Answered questions** controls switch to those surfaces without stacking three panes. **Sessions** and the mobile back control always return to the saved-session list; **Validate plan** remains on the Running plan surface. Once sessions are saved, mobile shows the session list as usual and the user can navigate between list and detail panes.
+Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. Desktop keeps its three-pane interview (answered history, current question, and running plan) when there is room. Mobile, phone-class short landscape, and tablet use a progressive interview: **Question** is the default full-width surface, while labeled **Running plan** and **Answered questions** controls switch to those surfaces without stacking three panes. **Sessions** and the mobile back control always return to the saved-session list; this is a full-pane, scrollable list with **New session** as its footer and no Running plan stacked beneath it. The same escape is available from interview, summary, breakdown, and a new-session composer when saved sessions exist; **Validate plan** remains on the Running plan surface.
 
 ### Chat and Quick Chat mobile scroll/readability behavior
 

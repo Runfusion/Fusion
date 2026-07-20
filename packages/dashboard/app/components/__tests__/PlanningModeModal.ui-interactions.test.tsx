@@ -946,6 +946,84 @@ describe("PlanningModeModal", () => {
     });
   });
 
+  describe("mobile session-list navigation (FN-8427)", () => {
+    const sessions = [
+      { id: "session-active", type: "planning", status: "awaiting_input", title: "Active planning session", projectId: null, updatedAt: "2026-07-20T00:00:00.000Z" },
+      { id: "session-other", type: "planning", status: "complete", title: "Other planning session", projectId: null, updatedAt: "2026-07-20T00:00:00.000Z" },
+    ];
+
+    function mockActiveSession() {
+      mockFetchAiSessions.mockResolvedValue(sessions);
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-active",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Active planning session",
+        inputPayload: JSON.stringify({ initialPlan: "Restore navigation" }),
+        conversationHistory: "[]",
+        currentQuestion: JSON.stringify(mockQuestion),
+        result: JSON.stringify(mockSummary),
+        thinkingOutput: "",
+        projectId: null,
+      });
+    }
+
+    it("returns an active mobile interview to usable session rows without a running plan", async () => {
+      mockViewport("mobile");
+      mockActiveSession();
+      const { container } = render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId="session-active" initialSessions={sessions} />);
+
+      await screen.findByText("What is the scope?");
+      expect(screen.getByLabelText("Running plan")).toBeInTheDocument();
+      const back = await screen.findByLabelText("Back to sessions");
+      expect(back).toBeEnabled();
+      fireEvent.click(back);
+
+      expect(container.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--show-list");
+      expect(screen.getByRole("button", { name: /Other planning session/ })).toBeVisible();
+      expect(screen.queryByLabelText("Running plan")).toBeNull();
+      expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
+    });
+
+    it("keeps desktop running-plan interview chrome without mobile back navigation", async () => {
+      mockViewport("desktop");
+      mockActiveSession();
+      const { container } = render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId="session-active" initialSessions={sessions} />);
+
+      await screen.findByText("What is the scope?");
+      expect(screen.getByLabelText("Running plan")).toBeInTheDocument();
+      expect(container.querySelector(".planning-mobile-back")).toBeNull();
+    });
+
+    it("keeps a mobile list escape from summary and new-session compose when sessions exist", async () => {
+      mockViewport("mobile");
+      mockFetchAiSessions.mockResolvedValue(sessions);
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-active",
+        type: "planning",
+        status: "complete",
+        title: "Active planning session",
+        inputPayload: JSON.stringify({ initialPlan: "Restore navigation", validated: true }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        thinkingOutput: "",
+        projectId: null,
+      });
+      const { container } = render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId="session-active" initialSessions={sessions} />);
+
+      await screen.findByText("Planning Complete!");
+      fireEvent.click(screen.getByLabelText("Back to sessions"));
+      expect(screen.getByRole("button", { name: /Other planning session/ })).toBeVisible();
+
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      expect(screen.getByPlaceholderText(/e.g., Build a user authentication/)).toBeVisible();
+      fireEvent.click(screen.getByLabelText("Back to sessions"));
+      expect(container.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--show-list");
+      expect(screen.getByRole("button", { name: /Other planning session/ })).toBeVisible();
+    });
+  });
+
   /*
   FNXC:Planning 2026-06-23-02:00:
   The embedded Planning sidebar is resizable like Missions: a desktop-only drag handle (role=separator) drives an inline width on .planning-sidebar that persists to localStorage and is clamped to the PLANNING_SIDEBAR_MIN/MAX range. These tests assert the handle exists on desktop, persists a clamped width on arrow-key resize, restores from localStorage, and is absent on mobile (where the sidebar stacks full-width).

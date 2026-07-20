@@ -521,6 +521,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   temporary while a keyboard is open, rather than a global viewport-mode change.
   */
   const isCompactInterview = viewportMode !== "desktop" || isShortViewport();
+  /*
+  FNXC:PlanningModeMobile 2026-07-20-10:30:
+  FN-8427 makes the saved-session list a real compact destination. Both Back and Sessions
+  enter this one mode, which must unmount the active interview plan so it cannot consume
+  flex height beneath session rows. Desktop preserves its three-pane interview until its
+  explicit Sessions toggle requests the same list destination.
+  */
+  const isSessionListMode = showSessionList || (isCompactInterview && !mobileShowDetail);
+  // FNXC:PlanningModeMobile 2026-07-20-10:30: Empty mobile state opens the composer because no saved destination exists; once sessions exist, every compact detail surface gets this single Back-to-list escape.
+  const canReturnToSessionList = isCompactInterview && mobileShowDetail && planningSessions.length > 0;
   const [compactInterviewPane, setCompactInterviewPane] = useState<"question" | "plan" | "history">("question");
   const { addToast } = useToast();
   const { pushNav } = useNavigationHistoryContext();
@@ -1192,6 +1202,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       liveGenerationSessionIdRef.current = sessionId;
       setSelectedSessionId(sessionId);
       setShowSessionList(false);
+      setMobileShowDetail(true);
 
       connectToPlanningStream(sessionId);
       setResponseHistory([]);
@@ -2215,7 +2226,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         */}
         <div className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}>
           <div className="detail-title-row">
-            {mobileShowDetail && (
+            {canReturnToSessionList && (
               <button
                 className="modal-back planning-mobile-back"
                 onClick={handleBackToList}
@@ -2257,7 +2268,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               type="button"
               className="btn"
               onClick={() => {
-                const showList = !showSessionList;
+                const showList = !isSessionListMode;
                 setShowSessionList(showList);
                 if (isCompactInterview) setMobileShowDetail(!showList);
               }}
@@ -2276,14 +2287,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
         <div
           className={`planning-modal-body planning-modal-body--split ${
-            mobileShowDetail ? "planning-modal-body--show-detail" : "planning-modal-body--show-list"
+            isSessionListMode ? "planning-modal-body--show-list" : "planning-modal-body--show-detail"
           } ${
-            selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview
+            selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview
               ? `planning-modal-body--compact-interview planning-modal-body--compact-${compactInterviewPane}`
               : ""
           }`}
         >
-          {selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") ? (
+          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") ? (
             <AnsweredQuestionHistory
               entries={conversationHistory}
               selectedQuestionId={editingQuestionId ?? (view.type === "question" ? view.session.currentQuestion?.id : undefined)}
@@ -2327,7 +2338,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             />
           )}
 
-          {selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview && (
+          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview && (
             <nav className="planning-compact-pane-switcher" aria-label={t("planning.interviewPanels", "Planning interview panels")}>
               <button type="button" className={`btn ${compactInterviewPane === "question" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "question"} onClick={() => setCompactInterviewPane("question")}>
                 {t("planning.question", "Question")}
@@ -2653,12 +2664,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           </div>
 
           {/*
-          FNXC:PlanningMode 2026-07-19-15:45:
-          Keep the running-plan pane mounted for an active session while a question is loading or an
-          error is recoverable. A session selection is the stable identity across those view states;
-          tying this pane to only the question view recreated the old dead-end interface.
+          FNXC:PlanningModeMobile 2026-07-20-10:30:
+          FN-8427 keeps the running plan through question, loading, and recoverable-error detail
+          states, but unmounts it in session-list mode. The list must own the entire compact body;
+          leaving this pane mounted reduced rows to the New session footer on mobile.
           */}
-          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && (
+          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && (
             <RunningPlanPane
               summary={runningSummary}
               fallbackDescription={activePlanPrompt}

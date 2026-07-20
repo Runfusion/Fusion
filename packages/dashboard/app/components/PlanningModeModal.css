@@ -469,6 +469,7 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   cursor: pointer;
   padding: var(--space-xs);
   border-radius: var(--radius-sm);
+  flex-shrink: 0;
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -620,13 +621,24 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   .planning-modal-body--show-detail .planning-sidebar {
     display: none;
   }
-  .planning-modal-body--show-list .planning-detail {
+  /*
+  FNXC:PlanningModeMobile 2026-07-20-10:30:
+  FN-8427 gives session-list mode exclusive ownership of the compact body. JS unmounts
+  RunningPlanPane; this selector is a layout backstop for future render paths so session
+  rows stay scrollable above the New session footer instead of sharing height with a plan.
+  */
+  .planning-modal-body--show-list .planning-detail,
+  .planning-modal-body--show-list .planning-running-plan,
+  .planning-modal-body--show-list .planning-compact-pane-switcher {
     display: none;
   }
-  /* Show back button on mobile whenever it's rendered (the React component
-     only renders it when `mobileShowDetail` is true). */
+  /* The rendered Back control needs a full touch target and must not be squeezed out of the title row. */
   .planning-mobile-back {
     display: inline-flex;
+    min-width: calc(var(--space-md) * 2.25);
+    min-height: calc(var(--space-md) * 2.25);
+    align-items: center;
+    justify-content: center;
   }
   /* Always keep action buttons visible on mobile (no hover) */
   .planning-sidebar-item-delete,
@@ -1533,6 +1545,44 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
   .planning-modal-body--compact-history .planning-detail,
   .planning-modal-body--compact-history .planning-running-plan {
     display: none;
+  }
+
+  /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
+  .planning-modal-body--show-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar-footer {
+    flex-shrink: 0;
+  }
+
+  .planning-modal-body--show-list .planning-detail,
+  .planning-modal-body--show-list .planning-running-plan,
+  .planning-modal-body--show-list .planning-compact-pane-switcher {
+    display: none;
+  }
+
+  .planning-mobile-back {
+    display: inline-flex;
+    min-width: calc(var(--space-md) * 2.25);
+    min-height: calc(var(--space-md) * 2.25);
+    align-items: center;
+    justify-content: center;
   }
 
   .planning-summary-actions {
