@@ -32,6 +32,10 @@ import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
 import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async-persistence.js";
 import {
+  TaskDocumentPreconditionFailedError,
+  taskDocumentContentHash,
+} from "../../task-document-concurrency.js";
+import {
   upsertArchivedTaskEntry,
   findArchivedTaskEntry,
   listArchivedTaskEntries,
@@ -345,6 +349,103 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     // List shows the document.
     const docs = await listTaskDocuments(ctx.layer.db, "KB-DOC-RT", TEST_PROJECT_ID);
     expect(docs).toHaveLength(1);
+  });
+
+  it("enforces task-document CAS atomically for creates and updates", async () => {
+    ctx = await setupCtx();
+    await insertTaskRow(ctx.layer, makeMinimalTask("KB-DOC-CAS"), { lineageId: null });
+
+    expect(taskDocumentContentHash("line 1\r\nline 2")).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(taskDocumentContentHash("line 1\r\nline 2")).not.toBe(taskDocumentContentHash("line 1\nline 2"));
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "invalid",
+      content: "x",
+      expectedRevision: -1,
+    })).rejects.toThrow(/non-negative integer/);
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "invalid",
+      content: "x",
+      expectedContentHash: "sha256:ABC",
+    })).rejects.toThrow(/64 lowercase hex/);
+
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "missing", content: "x", expectedRevision: 1,
+    })).rejects.toBeInstanceOf(TaskDocumentPreconditionFailedError);
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "missing", content: "x", expectedContentHash: taskDocumentContentHash("x"),
+    })).rejects.toBeInstanceOf(TaskDocumentPreconditionFailedError);
+
+    const createRace = await Promise.allSettled([
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", { key: "evidence", content: "create-a", expectedRevision: 0 }),
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", { key: "evidence", content: "create-b", expectedRevision: 0 }),
+    ]);
+    expect(createRace.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const createLoser = createRace.find((result) => result.status === "rejected");
+    expect(createLoser).toMatchObject({ reason: expect.any(TaskDocumentPreconditionFailedError) });
+
+    const created = await getTaskDocument(ctx.layer.db, "KB-DOC-CAS", "evidence", TEST_PROJECT_ID);
+    expect(created).not.toBeNull();
+    expect(created?.contentHash).toBe(taskDocumentContentHash(created!.content));
+    let history = await ctx.layer.db.select().from(schema.project.taskDocumentRevisions).where(eq(schema.project.taskDocumentRevisions.taskId, "KB-DOC-CAS"));
+    expect(history).toHaveLength(0);
+
+    const baseRevision = created!.revision;
+    const baseHash = created!.contentHash;
+    const updateRace = await Promise.allSettled([
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+        key: "evidence", content: "winner-a", expectedRevision: baseRevision, expectedContentHash: baseHash,
+      }),
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+        key: "evidence", content: "winner-b", expectedRevision: baseRevision, expectedContentHash: baseHash,
+      }),
+    ]);
+    expect(updateRace.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const updateLoser = updateRace.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(updateLoser.reason).toBeInstanceOf(TaskDocumentPreconditionFailedError);
+    expect((updateLoser.reason as TaskDocumentPreconditionFailedError).toDetails()).toMatchObject({
+      code: "TASK_DOCUMENT_PRECONDITION_FAILED",
+      projectId: TEST_PROJECT_ID,
+      taskId: "KB-DOC-CAS",
+      key: "evidence",
+      expectedRevision: baseRevision,
+      expectedContentHash: baseHash,
+      currentRevision: baseRevision + 1,
+    });
+    expect((updateLoser.reason as TaskDocumentPreconditionFailedError).toDetails()).not.toHaveProperty("content");
+
+    const current = await getTaskDocument(ctx.layer.db, "KB-DOC-CAS", "evidence", TEST_PROJECT_ID);
+    expect(current?.revision).toBe(baseRevision + 1);
+    expect(["winner-a", "winner-b"]).toContain(current?.content);
+    history = await ctx.layer.db.select().from(schema.project.taskDocumentRevisions).where(eq(schema.project.taskDocumentRevisions.taskId, "KB-DOC-CAS"));
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ revision: baseRevision, content: created!.content });
+
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "evidence", content: "stale-revision", expectedRevision: baseRevision,
+    })).rejects.toBeInstanceOf(TaskDocumentPreconditionFailedError);
+    await expect(upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "evidence", content: "stale-hash", expectedContentHash: baseHash,
+    })).rejects.toBeInstanceOf(TaskDocumentPreconditionFailedError);
+    let unchangedHistory = await ctx.layer.db.select().from(schema.project.taskDocumentRevisions).where(eq(schema.project.taskDocumentRevisions.taskId, "KB-DOC-CAS"));
+    expect(unchangedHistory).toHaveLength(1);
+
+    const revisionOnly = await upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "evidence", content: "revision-only", expectedRevision: current!.revision,
+    });
+    const hashOnly = await upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+      key: "evidence", content: "hash-only", expectedContentHash: revisionOnly.contentHash,
+    });
+    const identicalRace = await Promise.allSettled([
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+        key: "evidence", content: "same-content", expectedRevision: hashOnly.revision, expectedContentHash: hashOnly.contentHash,
+      }),
+      upsertTaskDocument(ctx.layer, "KB-DOC-CAS", {
+        key: "evidence", content: "same-content", expectedRevision: hashOnly.revision, expectedContentHash: hashOnly.contentHash,
+      }),
+    ]);
+    expect(identicalRace.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    unchangedHistory = await ctx.layer.db.select().from(schema.project.taskDocumentRevisions).where(eq(schema.project.taskDocumentRevisions.taskId, "KB-DOC-CAS"));
+    expect(unchangedHistory).toHaveLength(4);
   });
 
   it("artifacts round-trip on active tasks (register + read)", async () => {

@@ -31,6 +31,7 @@ import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
 import { projectPartition } from "./async-lifecycle.js";
+import { assertTaskDocumentPreconditions, taskDocumentContentHash } from "../task-document-concurrency.js";
 import type {
   Artifact,
   ArtifactCreateInput,
@@ -60,6 +61,7 @@ function rowToTaskDocument(row: TaskDocumentRow): TaskDocument {
     key: row.key,
     content: row.content,
     revision: row.revision,
+    contentHash: taskDocumentContentHash(row.content),
     author: row.author,
     metadata: metadata ?? undefined,
     createdAt: row.createdAt,
@@ -157,6 +159,7 @@ export async function getTaskDocument(
     .from(schema.project.taskDocuments)
     .where(
       and(
+        eq(schema.project.taskDocuments.projectId, projectPartition(projectId)),
         eq(schema.project.taskDocuments.taskId, taskId),
         eq(schema.project.taskDocuments.key, key),
       ),
@@ -186,24 +189,36 @@ export async function upsertTaskDocument(
   input: TaskDocumentCreateInput,
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
-    // Gate: reject writes against archived/soft-deleted/absent tasks.
-    const column = await getLiveTaskColumn(tx, taskId, layer.projectId);
-    if (column === "archived") {
+    const projectId = projectPartition(layer.projectId);
+    /*
+    FNXC:TaskDocumentCAS 2026-07-20-11:06:
+    Every writer locks the active project's parent task row before reading a document. This serializes both existing-row updates and absent-row creates for every (project_id, task_id, key), so a precondition check, prior-snapshot archive, and replacement are one PostgreSQL transaction. A mismatch throws before history/current mutation; the facade consequently emits no task update and performs no citation scan.
+    */
+    const taskRows = await tx
+      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
+      .from(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, taskId),
+      ))
+      .limit(1)
+      .for("update");
+    const task = taskRows[0];
+    if (task?.column === "archived" || task?.deletedAt != null) {
       throw new Error(`Task ${taskId} is archived — documents are read-only`);
     }
-    if (column === null) {
-      throw new Error(`Task ${taskId} not found`);
-    }
+    if (!task) throw new Error(`Task ${taskId} not found`);
 
     const now = new Date().toISOString();
     const author = input.author ?? "user";
 
-    // Read the existing document (if any).
+    // Read after taking the parent lock, then compare before any mutation.
     const existingRows = await tx
       .select()
       .from(schema.project.taskDocuments)
       .where(
         and(
+          eq(schema.project.taskDocuments.projectId, projectId),
           eq(schema.project.taskDocuments.taskId, taskId),
           eq(schema.project.taskDocuments.key, input.key),
         ),
@@ -211,9 +226,16 @@ export async function upsertTaskDocument(
       .limit(1);
     const existing = existingRows[0] as TaskDocumentRow | undefined;
 
+    assertTaskDocumentPreconditions(
+      { projectId, taskId, key: input.key },
+      { expectedRevision: input.expectedRevision, expectedContentHash: input.expectedContentHash },
+      existing ? { revision: existing.revision, content: existing.content } : null,
+    );
+
     if (existing) {
       // Archive the previous revision.
       await tx.insert(schema.project.taskDocumentRevisions).values({
+        projectId,
         taskId,
         key: input.key,
         content: existing.content,
@@ -235,6 +257,7 @@ export async function upsertTaskDocument(
         })
         .where(
           and(
+            eq(schema.project.taskDocuments.projectId, projectId),
             eq(schema.project.taskDocuments.taskId, taskId),
             eq(schema.project.taskDocuments.key, input.key),
           ),
@@ -242,6 +265,7 @@ export async function upsertTaskDocument(
     } else {
       // Insert a new document.
       await tx.insert(schema.project.taskDocuments).values({
+        projectId,
         id: randomUUID(),
         taskId,
         key: input.key,
@@ -260,6 +284,7 @@ export async function upsertTaskDocument(
       .from(schema.project.taskDocuments)
       .where(
         and(
+          eq(schema.project.taskDocuments.projectId, projectId),
           eq(schema.project.taskDocuments.taskId, taskId),
           eq(schema.project.taskDocuments.key, input.key),
         ),
@@ -289,7 +314,10 @@ export async function listTaskDocuments(
   const rows = await db
     .select()
     .from(schema.project.taskDocuments)
-    .where(eq(schema.project.taskDocuments.taskId, taskId));
+    .where(and(
+      eq(schema.project.taskDocuments.projectId, projectPartition(projectId)),
+      eq(schema.project.taskDocuments.taskId, taskId),
+    ));
   return (rows as TaskDocumentRow[]).map((row) => rowToTaskDocument(row));
 }
 
@@ -311,6 +339,7 @@ export async function getTaskDocumentRevisions(
     .from(schema.project.taskDocumentRevisions)
     .where(
       and(
+        eq(schema.project.taskDocumentRevisions.projectId, projectPartition(projectId)),
         eq(schema.project.taskDocumentRevisions.taskId, taskId),
         eq(schema.project.taskDocumentRevisions.key, key),
       ),

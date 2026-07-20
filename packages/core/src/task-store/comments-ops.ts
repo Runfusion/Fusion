@@ -13,6 +13,7 @@ import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateDocumentKey} from "../types.js";
+import {validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
 import {toJsonNullable} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
@@ -208,6 +209,8 @@ export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, i
         `Invalid document key: "${input.key}". Must be 1-64 alphanumeric characters, hyphens, or underscores.`,
       );
     }
+
+    validateTaskDocumentPreconditions(input);
 
     // FNXC:RuntimeWorkflowAsync 2026-06-24-17:00:
     // Backend mode: delegate the core upsert (revision archive + update) to

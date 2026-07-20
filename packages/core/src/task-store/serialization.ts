@@ -20,6 +20,7 @@ import type {
   Task,
   TaskAttachment,
 } from "../types.js";
+import { taskDocumentContentHash } from "../task-document-concurrency.js";
 import type {
   ArtifactRow,
   BranchGroupRow,
@@ -444,6 +445,7 @@ export function rowToTaskDocument(row: TaskDocumentRow): import("../types.js").T
     key: row.key,
     content: row.content,
     revision: row.revision,
+    contentHash: taskDocumentContentHash(row.content),
     author: row.author,
     metadata: fromJson<Record<string, unknown>>(row.metadata),
     createdAt: row.createdAt,
