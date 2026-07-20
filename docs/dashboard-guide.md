@@ -15,6 +15,12 @@ The Fusion dashboard is the main control plane for tasks, agents, missions, sett
 
 When Fusion detects a newer `@runfusion/fusion` release, the Settings modal footer shows the available version with **Learn more** and **Update now** actions. **Update now** installs the latest global package with npm; after it succeeds, both the Settings update-success state and dashboard update banner offer a one-click **Restart Fusion** action because the already-running dashboard server is unchanged until restart. When Fusion is unsupervised (for example, started with `--no-supervise`), either action remains disabled and explains that Fusion must be restarted manually.
 
+### Supervised source-checkout rebuilds
+
+For a capability that has just merged, rebuild only after its commit is present in the fixed source checkout reported by `GET /api/system` as `sourceWorkspaceRoot`. Confirm `rebuildSupported` and supervision, then send authenticated `POST /api/system/rebuild` with `{ "scope": "app", "restart": true }`. Poll `GET /api/system/rebuild/current` until the build succeeds and restart is scheduled; expect the connection to drop, reconnect to the supervised process, and verify `GET /api/health` before capability probes.
+
+Never copy worktree files into the reported checkout, rebuild an unmerged branch, kill port 4040, use `nohup`, or replace the daemon with a raw detached process. An implementation task running inside Fusion cannot continue after stopping its own host, so post-merge restart and live verification belong to a separate operator-run/dependent task with the deployed commit, source workspace, health response, and probe evidence recorded.
+
 ## Settings discovery
 
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->

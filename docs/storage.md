@@ -87,13 +87,20 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - For forensic reads, soft-deleted parents remain accessible through `readTaskFromDb(id, { includeDeleted: true })`.
 - Agent-facing tool layer (FN-7661): the `fn_task_archive` and `fn_task_delete` pi/CLI tools (`packages/cli/src/extension.ts`) both accept an optional `removeLineageReferences` boolean and forward it to `store.archiveTask` / `store.deleteTask`, so an agent that hits `TaskHasLineageChildrenError` can retry with `{ removeLineageReferences: true }` to clear the block — matching the recovery path the error message already advertises.
 
-### Documents under soft-deleted tasks (FN-5140)
+### Documents under soft-deleted tasks (FN-5140, FX-005)
 
-- Soft-deleting a task preserves its `task_documents` and `task_document_revisions` rows; document storage is not hard-deleted as part of `TaskStore.deleteTask`.
-- Normal live-reader APIs must hide those rows by enforcing the parent-task active filter through `ACTIVE_TASKS_WHERE`: `getAllDocuments`, `getTaskDocuments`, `getTaskDocument`, and `getTaskDocumentRevisions` all treat a soft-deleted parent as out of scope for ordinary reads.
-- The HTTP surface inherits the same contract: `GET /api/documents` excludes documents whose parent task is soft-deleted, while per-task document GET routes behave like "task not found" (`[]` for list/revisions and `404 Document not found` for the single-document read).
-- No public forensic flag is exposed on document read methods or routes. Forensic access remains an internal/operator concern via `readTaskFromDb(id, { includeDeleted: true })` plus direct SQL against the preserved document tables.
-- Write semantics stay intentionally asymmetric: `upsertTaskDocument` still refuses soft-deleted parents, while `deleteTaskDocument` remains allowed so forensic cleanup can scrub preserved document rows when needed.
+- Soft-deleting a task preserves its project-scoped `task_documents` and `task_document_revisions` rows; document storage is not hard-deleted as part of `TaskStore.deleteTask`.
+- Editable registries remain live-only: `getAllDocuments`, `getTaskDocuments`, `GET /api/documents`, and `GET /api/tasks/:id/documents` hide rows whose parent is archived or soft-deleted. Archived documents therefore do not reappear in dashboard desktop/mobile editors.
+- Direct named evidence reads include retained archived rows: `getTaskDocument` / `GET /api/tasks/:id/documents/:key` return the current document, and `getTaskDocumentRevisions` / `GET .../:key/revisions` return immutable history. Missing parents/keys remain `404` for current and `[]` for history; every predicate includes `project_id`.
+- Ordinary writes remain forbidden: `upsertTaskDocument`, `deleteTaskDocument`, comments, artifacts, task moves/updates, and agent `fn_task_document_write` tools cannot mutate an archived parent.
+
+A single PostgreSQL-only exception, `publishArchivedTaskDocumentAddition` and `POST /api/tasks/:id/documents/:key/archived-publications`, appends an operator correction. It requires an existing project-scoped task tombstone with `column=archived` and non-null `deleted_at`, the matching `archive.archived_tasks` snapshot, and an existing current document. The request supplies non-empty `appendContent`, `author`, and `reason`, plus mandatory positive `expectedRevision` and canonical `expectedContentHash`; replacement `content`, metadata, and bypass fields are rejected.
+
+Under one transaction Fusion locks the composite parent and current document, checks both FX-004 expectations, archives the exact previous current row, and writes `priorContent + "\\n\\n" + appendContent` without trimming or normalizing either content string. Creation identity and metadata remain intact, revision advances exactly once, and one concurrent publisher wins. A stale or duplicate retry returns `TASK_DOCUMENT_PRECONDITION_FAILED` with safe revision/hash details and creates no row or side effect.
+
+The transaction changes only `task_documents`, `task_document_revisions`, and one `task-document:archived-addition-published` run-audit row. Audit metadata is ids/outcomes-only (`projectId`, `key`, previous/new revision, `reasonProvided`, `outcome`) and stores neither reason nor document content. Task timestamps/state, archive snapshots, mission/slice/feature/link state, comments, artifacts, citations, task events, workflow state, and scheduler wakeups are unchanged.
+
+The HTTP publication route is available only when daemon bearer authentication is active and is never auth-exempt. `--no-auth` fails closed with `403`; malformed input is `400`, missing parent/document is `404`, non-archived or inconsistent retained state is `409`, and stale CAS is structured `409`. Server bearer middleware rejects absent/invalid credentials before the route. The API returns `201` only after the transaction commits.
 
 ### Conditional task-document writes
 
