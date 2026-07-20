@@ -3073,7 +3073,11 @@ export class SelfHealingManager {
             && !current.error
             && current.worktree === live.worktree
             && current.workflowIrPinNodeId === live.workflowIrPinNodeId
-            && current.workflowIrPinColumnId === resumeColumn,
+            && current.workflowIrPinColumnId === resumeColumn
+            && !(this.options.getExecutingTaskIds?.() ?? new Set<string>()).has(current.id)
+            && !(this.options.getPlanningTaskIds?.() ?? new Set<string>()).has(current.id)
+            && this.options.isTaskActive?.(current.id) !== true
+            && !(current.worktree && activeSessionRegistry.isPathActive(current.worktree)),
           {
             moveSource: "engine",
             workflowMoveSource: "self-healing-advanced-triage",

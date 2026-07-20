@@ -107,4 +107,22 @@ describe("advanced workflow tasks stranded in triage", () => {
     expect(await manager.recoverAdvancedTriageTasks()).toBe(0);
     expect(store.moveTaskIf).not.toHaveBeenCalled();
   });
+
+  it("does not rehome a task claimed after discovery but before the atomic move", async () => {
+    const stranded = task("FN-RACING-CLAIM");
+    const store = storeFor([stranded]);
+    let claimed = false;
+    const moveTaskIf = (store.moveTaskIf as ReturnType<typeof vi.fn>).getMockImplementation()!;
+    (store.moveTaskIf as ReturnType<typeof vi.fn>).mockImplementation(async (...args: unknown[]) => {
+      claimed = true;
+      return moveTaskIf(...args);
+    });
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      getExecutingTaskIds: () => claimed ? new Set([stranded.id]) : new Set<string>(),
+    });
+
+    expect(await manager.recoverAdvancedTriageTasks()).toBe(0);
+    expect(store.moveTaskIf).toHaveBeenCalledOnce();
+  });
 });
