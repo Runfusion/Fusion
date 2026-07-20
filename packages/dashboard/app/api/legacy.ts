@@ -1,16 +1,7 @@
 import type { SubtaskItem, PlanningSubtaskDraft } from "./ai-text.js";
-import type { Agent, AgentCapability, AgentStats, OrgTreeNode } from "@fusion/core";
+import type { AgentCapability } from "@fusion/core";
 import type {
   Task,
-  TaskDetail,
-  TaskReviewData,
-  AgentLogEntry,
-  GlobalSettings,
-  ProjectSettings,
-  BatchStatusResult,
-  BatchStatusResponse,
-  PrConflictDiagnostics,
-  PrInfo,
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
 // Consumers import backfill report types from the legacy API barrel.
@@ -21,7 +12,6 @@ import type {
 } from "@fusion/core";
 import type { MissionInterviewDraftSummary } from "../components/mission-types";
 import { withTokenHeader } from "../auth";
-import { dedupe } from "./dedupe";
 
 /* FNXC:DashboardApi 2026-07-15-13:25: Preserve the legacy API barrel while consumers migrate to focused modules. */
 export {
@@ -286,7 +276,6 @@ export type {
 } from "./memory.js";
 
 import { api, buildApiUrl } from "./client.js";
-import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
 
 // Import + re-export skills types so legacy monofile bodies can reference them
@@ -337,11 +326,6 @@ export function refineTask(id: string, feedback: string, projectId?: string): Pr
   });
 }
 
-function withRepoPath(path: string, repoPath?: string): string {
-  if (!repoPath) return path;
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}repoPath=${encodeURIComponent(repoPath)}`;
-}
 
 // --- Models API ---
 
@@ -407,2089 +391,273 @@ export function fetchUsageData(): Promise<{ providers: ProviderUsage[] }> {
   return api<{ providers: ProviderUsage[] }>("/usage");
 }
 
-// --- Auth API ---
-
-/** OAuth provider with current authentication status */
-export interface AuthProvider {
-  id: string;
-  name: string;
-  authenticated: boolean;
-  /** True when the server currently has an active OAuth login flow for this provider. */
-  loginInProgress?: boolean;
-  /** True when an OAuth credential is stored locally but its expires timestamp is in the past — prompt the user to re-login. */
-  expired?: boolean;
-  /** True when the redirect cannot reach this dashboard host and the user must paste the URL/code back manually. */
-  requiresManualCode?: boolean;
-  /**
-   * Reason the most recent background OAuth login attempt failed, if any.
-   * Interactive logins resolve the auth URL immediately and finish in the
-   * background; when that background flow rejects (bad/expired code, token
-   * exchange rejection, redirect_uri mismatch) this carries the cause so the
-   * UI can show why login failed instead of a generic error. Cleared when a
-   * fresh login for the provider starts.
-   */
-  loginError?: string;
-  /**
-   * How this provider authenticates / is activated.
-   * - "oauth": OAuth flow (user clicks Login → redirect)
-   * - "api_key": API key stored locally
-   * - "cli": a locally-installed CLI binary is the backing transport
-   *   (e.g. the synthetic `claude-cli` provider). Cards should render a
-   *   one-click Enable/Disable + Test button rather than login/key inputs.
-   */
-  type?: "oauth" | "api_key" | "cli";
-  /** Masked hint of the stored API key (first 3 + bullets + last 4 chars) */
-  keyHint?: string;
-}
-
-export interface ManualOAuthCodeInfo {
-  prompt: string;
-  placeholder?: string;
-  helpText?: string;
-}
-
-export interface OAuthDeviceCodeInfo {
-  userCode: string;
-  verificationUri: string;
-}
-
-/**
- * Snapshot of the Claude-CLI-via-pi health state. Powers the
- * "Anthropic — via Claude CLI" provider card.
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `provider-status` imports while implementations live in provider-status.ts.
  */
-export interface ClaudeCliStatus {
-  binary: {
-    available: boolean;
-    version?: string;
-    binaryPath?: string;
-    reason?: string;
-    probeDurationMs: number;
-  };
-  enabled: boolean;
-  extension: {
-    status: "ok" | "not-installed" | "missing-entry" | "error";
-    path?: string;
-    packageVersion?: string;
-    reason?: string;
-  } | null;
-  ready: boolean;
-  /** Route A ACP transport state (Claude CLI via the claude-code-cli-acp bridge). */
-  acp?: {
-    /** experimentalFeatures.claudeCliAcp (default ON). */
-    enabled: boolean;
-    /** The acp-runtime plugin published a bundled bridge path. */
-    bridgeAvailable: boolean;
-    /** Claude CLI is actually routing through the bridge (enabled + flag + bridge). */
-    active: boolean;
-    /** The bridged `claude` returned "Not logged in" — needs fallback or re-auth (R17). */
-    authFailed: boolean;
-    authReason?: string;
-  };
-}
-
-export interface DroidCliStatus {
-  binary: {
-    available: boolean;
-    version?: string;
-    binaryPath?: string;
-    reason?: string;
-    probeDurationMs: number;
-  };
-  enabled: boolean;
-  extension: {
-    status: "ok" | "not-installed" | "missing-entry" | "error";
-    path?: string;
-    packageVersion?: string;
-    reason?: string;
-  } | null;
-  ready: boolean;
-}
-
-export interface CursorCliStatus {
-  binary: {
-    available: boolean;
-    version?: string;
-    binaryPath?: string;
-    configuredBinaryPath?: string;
-    usingConfiguredBinaryPath?: boolean;
-    diagnostics?: string[];
-    reason?: string;
-    probeDurationMs: number;
-  };
-  enabled: boolean;
-  binaryPath?: string;
-  extension: null;
-  ready: boolean;
-}
-
-export interface GrokCliStatus {
-  binary: {
-    available: boolean;
-    /** FNXC:GrokCli 2026-07-09-00:00: FN-7716 — "ready" (binary available), not "key present"; the grok CLI owns auth. */
-    authenticated?: boolean;
-    /** FNXC:GrokCli 2026-07-09-00:00: FN-7716 — non-blocking informational hint that Fusion detected a Grok API key. Never gates readiness. */
-    apiKeyDetected?: boolean;
-    version?: string;
-    binaryPath?: string;
-    configuredBinaryPath?: string;
-    usingConfiguredBinaryPath?: boolean;
-    diagnostics?: string[];
-    reason?: string;
-    probeDurationMs: number;
-  };
-  enabled: boolean;
-  binaryPath?: string;
-  extension: null;
-  ready: boolean;
-}
+export {
+  addCustomProvider,
+  cancelProviderLogin,
+  clearApiKey,
+  createCustomProvider,
+  deleteCustomProvider,
+  fetchAuthStatus,
+  fetchClaudeCliStatus,
+  fetchCursorCliStatus,
+  fetchCustomProviders,
+  fetchDroidCliStatus,
+  fetchFnBinaryStatus,
+  fetchGrokCliStatus,
+  fetchHermesProfiles,
+  fetchHermesStatus,
+  fetchLlamaCppStatus,
+  fetchOmpCliStatus,
+  fetchOpenClawStatus,
+  fetchPaperclipAgents,
+  fetchPaperclipCliAgents,
+  fetchPaperclipCliCompanies,
+  fetchPaperclipCliDiscovery,
+  fetchPaperclipCliStatus,
+  fetchPaperclipCompanies,
+  fetchPaperclipStatus,
+  installFnBinary,
+  loginProvider,
+  logoutProvider,
+  mintPaperclipApiKey,
+  probeProviderModels,
+  refreshProviderModels,
+  saveApiKey,
+  setClaudeCliEnabled,
+  setCursorCliBinaryPath,
+  setCursorCliEnabled,
+  setDroidCliEnabled,
+  setGrokCliBinaryPath,
+  setGrokCliEnabled,
+  setLlamaCppEnabled,
+  setOmpCliBinaryPath,
+  setOmpCliEnabled,
+  submitProviderManualCode,
+  updateCustomProvider,
+} from "./provider-status.js";
+export type {
+  AuthProvider,
+  ClaudeCliStatus,
+  CursorCliStatus,
+  CustomProvider,
+  CustomProviderConfig,
+  CustomProviderModelInput,
+  DroidCliStatus,
+  FnBinaryInstallResponse,
+  FnBinaryInstallResult,
+  FnBinaryStatus,
+  GitCliStatus,
+  GrokCliStatus,
+  HermesProfileSummary,
+  HermesProviderStatus,
+  LlamaCppStatus,
+  ManualOAuthCodeInfo,
+  OAuthDeviceCodeInfo,
+  OmpCliStatus,
+  OpenClawProviderStatus,
+  PaperclipAgentSummary,
+  PaperclipCliDiscoveryFailure,
+  PaperclipCliDiscoveryResult,
+  PaperclipCliDiscoverySuccess,
+  PaperclipCompanySummary,
+  PaperclipConnectionStatus,
+  PaperclipMintKeyRequest,
+  PaperclipMintKeyResult,
+  PaperclipProviderStatus,
+  ProbeModelResult,
+  ProbeModelsParams,
+  ProbeModelsResponse,
+  RefreshProviderModelsResponse,
+  RuntimeBinaryStatus,
+} from "./provider-status.js";
 
 /*
-FNXC:OmpAcp 2026-07-13-22:50:
-Status shape for Settings → Oh My Pi (omp) ACP card. ready = enabled + binary available; auth under ~/.omp.
-*/
-export interface OmpCliStatus {
-  binary: {
-    available: boolean;
-    authenticated?: boolean;
-    version?: string;
-    binaryPath?: string;
-    configuredBinaryPath?: string;
-    usingConfiguredBinaryPath?: boolean;
-    diagnostics?: string[];
-    reason?: string;
-    probeDurationMs: number;
-  };
-  enabled: boolean;
-  binaryPath?: string;
-  extension: null;
-  ready: boolean;
-}
-
-export interface LlamaCppStatus {
-  enabled: boolean;
-  extension: {
-    status: "ok" | "not-installed" | "missing-entry" | "error";
-    path?: string;
-    packageVersion?: string;
-    reason?: string;
-  } | null;
-  ready: boolean;
-  server: {
-    available: boolean;
-    url: string;
-    hasApiKey: boolean;
-    reason?: string;
-  };
-}
-
-/** Probe the local Claude CLI binary + setting + extension state. */
-export function fetchClaudeCliStatus(): Promise<ClaudeCliStatus> {
-  return api<ClaudeCliStatus>("/providers/claude-cli/status");
-}
-
-/**
- * Status snapshot for the Fusion CLI binary (`fn` / `fusion`). Used by
- * Settings → General → CLI Binary and the first-launch banner.
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `github-import` imports while implementations live in github-import.ts.
  */
-export interface FnBinaryStatus {
-  binary: {
-    installed: boolean;
-    binary?: "fn" | "fusion";
-    path?: string;
-    version?: string;
-    invocation: string;
-  };
-  expectedVersion: string;
-  state: "installed" | "missing" | "version-mismatch" | "skipped";
-  install: { npm: string; curl: string; package: string };
-}
+export {
+  apiAddGitHubIssueComment,
+  apiBatchImportGitHubIssues,
+  apiCloseGitHubIssue,
+  apiFetchGitHubIssueDetail,
+  apiFetchGitHubIssues,
+  apiFetchGitHubPullDetail,
+  apiFetchGitHubPulls,
+  apiImportGitHubComment,
+  apiImportGitHubIssue,
+  apiImportGitHubPull,
+} from "./github-import.js";
+export type {
+  BatchImportResult,
+  GitHubCommentDetail,
+  GitHubIssue,
+  GitHubIssueDetail,
+  GitHubPull,
+  GitHubPullDetail,
+} from "./github-import.js";
 
-export interface FnBinaryInstallResult {
-  success: boolean;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  command: string;
-  durationMs: number;
-  permissionsHint?: string;
-}
-
-export interface FnBinaryInstallResponse extends FnBinaryStatus {
-  installResult: FnBinaryInstallResult;
-}
-
-/** Read CLI binary install state. */
-export function fetchFnBinaryStatus(): Promise<FnBinaryStatus> {
-  return api<FnBinaryStatus>("/system/fn-binary/status");
-}
-
-/** Trigger `npm install -g runfusion.ai`. Returns install log + new status. */
-export function installFnBinary(): Promise<FnBinaryInstallResponse> {
-  return api<FnBinaryInstallResponse>("/system/fn-binary/install", { method: "POST" });
-}
-
-/** Probe the local Droid CLI binary + setting + extension state. */
-export function fetchDroidCliStatus(): Promise<DroidCliStatus> {
-  return api<DroidCliStatus>("/providers/droid-cli/status");
-}
-
-export function fetchCursorCliStatus(): Promise<CursorCliStatus> {
-  return api<CursorCliStatus>("/providers/cursor-cli/status");
-}
-
-export function fetchGrokCliStatus(): Promise<GrokCliStatus> {
-  return api<GrokCliStatus>("/providers/grok-cli/status");
-}
-
-export function fetchOmpCliStatus(): Promise<OmpCliStatus> {
-  return api<OmpCliStatus>("/providers/omp-cli/status");
-}
-
-/** Probe llama.cpp server + setting + extension state. */
-export function fetchLlamaCppStatus(): Promise<LlamaCppStatus> {
-  return api<LlamaCppStatus>("/providers/llama-cpp/status");
-}
-
-// --- Runtime Provider Status Types ---
-
-export interface RuntimeBinaryStatus {
-  available: boolean;
-  binaryPath?: string;
-  version?: string;
-  reason?: string;
-  probeDurationMs: number;
-}
-
-export interface PaperclipConnectionStatus {
-  available: boolean;
-  apiUrl: string;
-  identity?: {
-    agentId: string;
-    agentName: string;
-    role?: string;
-    companyId: string;
-    companyName?: string;
-  };
-  reason?: string;
-  probeDurationMs: number;
-}
-
-export interface HermesProviderStatus {
-  binary: RuntimeBinaryStatus;
-  ready: boolean;
-}
-
-export interface OpenClawProviderStatus {
-  binary: RuntimeBinaryStatus;
-  ready: boolean;
-}
-
-export interface PaperclipProviderStatus {
-  connection: PaperclipConnectionStatus;
-  ready: boolean;
-}
-
-/** Probe the local Hermes binary. */
-export async function fetchHermesStatus(opts?: {
-  binaryPath?: string;
-}): Promise<HermesProviderStatus> {
-  const qs = opts?.binaryPath
-    ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}`
-    : "";
-  return api<HermesProviderStatus>(`/providers/hermes/status${qs}`);
-}
-
-export interface HermesProfileSummary {
-  name: string;
-  model?: string;
-  gateway?: string;
-  alias?: string;
-  isDefault: boolean;
-}
-
-/** List Hermes profiles from `hermes profile list`. Returns empty array on error. */
-export async function fetchHermesProfiles(opts?: {
-  binaryPath?: string;
-}): Promise<HermesProfileSummary[]> {
-  const qs = opts?.binaryPath ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}` : "";
-  const r = await api<{ profiles: HermesProfileSummary[]; error?: string }>(
-    `/providers/hermes/profiles${qs}`,
-  );
-  return r.profiles ?? [];
-}
-
-/** Probe the local OpenClaw binary. */
-export async function fetchOpenClawStatus(opts?: {
-  binaryPath?: string;
-}): Promise<OpenClawProviderStatus> {
-  const qs = opts?.binaryPath
-    ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}`
-    : "";
-  return api<OpenClawProviderStatus>(`/providers/openclaw/status${qs}`);
-}
-
-/** Probe the Paperclip API connection. */
-export async function fetchPaperclipStatus(opts: {
-  apiUrl: string;
-  apiKey?: string;
-}): Promise<PaperclipProviderStatus> {
-  const params = new URLSearchParams({ apiUrl: opts.apiUrl });
-  if (opts.apiKey) params.set("apiKey", opts.apiKey);
-  return api<PaperclipProviderStatus>(
-    `/providers/paperclip/status?${params.toString()}`,
-  );
-}
-
-export interface PaperclipCompanySummary {
-  id: string;
-  name: string;
-  urlKey?: string;
-}
-
-export interface PaperclipAgentSummary {
-  id: string;
-  name: string;
-  role?: string;
-  companyId: string;
-  status?: string;
-  isCurrent?: boolean;
-}
-
-export interface PaperclipCliDiscoverySuccess {
-  ok: true;
-  apiUrl: string;
-  apiKey?: string;
-  configPath: string;
-  deploymentMode?: string;
-}
-
-export interface PaperclipCliDiscoveryFailure {
-  ok: false;
-  reason: string;
-  configPath?: string;
-}
-
-export type PaperclipCliDiscoveryResult =
-  | PaperclipCliDiscoverySuccess
-  | PaperclipCliDiscoveryFailure;
-
-/** List Paperclip companies visible to the bearer. Empty array on failure. */
-export async function fetchPaperclipCompanies(opts: {
-  apiUrl: string;
-  apiKey?: string;
-}): Promise<PaperclipCompanySummary[]> {
-  const params = new URLSearchParams({ apiUrl: opts.apiUrl });
-  if (opts.apiKey) params.set("apiKey", opts.apiKey);
-  const r = await api<{ companies: PaperclipCompanySummary[] }>(
-    `/providers/paperclip/companies?${params.toString()}`,
-  );
-  return r.companies ?? [];
-}
-
-/** List agents in a Paperclip company. Empty array on failure. */
-export async function fetchPaperclipAgents(opts: {
-  apiUrl: string;
-  apiKey?: string;
-  companyId: string;
-}): Promise<PaperclipAgentSummary[]> {
-  const params = new URLSearchParams({
-    apiUrl: opts.apiUrl,
-    companyId: opts.companyId,
-  });
-  if (opts.apiKey) params.set("apiKey", opts.apiKey);
-  const r = await api<{ agents: PaperclipAgentSummary[] }>(
-    `/providers/paperclip/agents?${params.toString()}`,
-  );
-  return r.agents ?? [];
-}
-
-export interface PaperclipMintKeyRequest {
-  cliBinaryPath?: string;
-  agentRef: string;
-  /** Required by paperclipai agent local-cli (`-C/--company-id`). */
-  companyId: string;
-  keyName?: string;
-  configPath?: string;
-  dataDir?: string;
-}
-export type PaperclipMintKeyResult =
-  | { ok: true; key: { apiKey: string; apiBase?: string; agentId?: string; companyId?: string } }
-  | { ok: false; reason: string };
-
-/**
- * Mints a Paperclip agent API key via the local `paperclipai` CLI.
- * Always resolves (never rejects); on failure the result has `ok: false`.
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `gitlab-import` imports while implementations live in gitlab-import.ts.
  */
-export async function mintPaperclipApiKey(
-  body: PaperclipMintKeyRequest,
-): Promise<PaperclipMintKeyResult> {
-  return api<PaperclipMintKeyResult>(`/providers/paperclip/cli-mint-key`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
+export {
+  apiBatchImportGitLab,
+  apiFetchGitLabGroupIssues,
+  apiFetchGitLabMergeRequests,
+  apiFetchGitLabProjectIssues,
+  apiImportGitLabGroupIssue,
+  apiImportGitLabMergeRequest,
+  apiImportGitLabProjectIssue,
+} from "./gitlab-import.js";
+export type {
+  GitLabImportItem,
+} from "./gitlab-import.js";
 
-/**
- * Probe Paperclip via the local `paperclipai` CLI (Local CLI tab). Carries the
- * user's onboarded CLI context (profile / api-base / api-key) instead of having
- * the dashboard server make the HTTP call directly.
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `git` imports while implementations live in git.ts.
  */
-export async function fetchPaperclipCliStatus(opts: {
-  cliBinaryPath?: string;
-  cliConfigPath?: string;
-}): Promise<PaperclipProviderStatus> {
-  const params = new URLSearchParams();
-  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
-  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
-  const qs = params.toString();
-  return api<PaperclipProviderStatus>(
-    `/providers/paperclip/cli-status${qs ? `?${qs}` : ""}`,
-  );
-}
-
-/** List companies via `paperclipai company list --json`. Empty array on failure. */
-export async function fetchPaperclipCliCompanies(opts: {
-  cliBinaryPath?: string;
-  cliConfigPath?: string;
-}): Promise<PaperclipCompanySummary[]> {
-  const params = new URLSearchParams();
-  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
-  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
-  const qs = params.toString();
-  const r = await api<{ companies: PaperclipCompanySummary[] }>(
-    `/providers/paperclip/cli-companies${qs ? `?${qs}` : ""}`,
-  );
-  return r.companies ?? [];
-}
-
-/** List agents in a company via `paperclipai agent list -C <id> --json`. */
-export async function fetchPaperclipCliAgents(opts: {
-  cliBinaryPath?: string;
-  cliConfigPath?: string;
-  companyId: string;
-}): Promise<PaperclipAgentSummary[]> {
-  const params = new URLSearchParams({ companyId: opts.companyId });
-  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
-  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
-  const r = await api<{ agents: PaperclipAgentSummary[] }>(
-    `/providers/paperclip/cli-agents?${params.toString()}`,
-  );
-  return r.agents ?? [];
-}
-
-/** Read the local paperclipai config to discover apiUrl + deploymentMode. */
-export async function fetchPaperclipCliDiscovery(opts: {
-  cliConfigPath?: string;
-} = {}): Promise<PaperclipCliDiscoveryResult> {
-  const params = new URLSearchParams();
-  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
-  const qs = params.toString();
-  return api<PaperclipCliDiscoveryResult>(
-    `/providers/paperclip/cli-discovery${qs ? `?${qs}` : ""}`,
-  );
-}
-
-/** Enable or disable the Claude CLI provider. Refuses enable if binary is missing. */
-export function setClaudeCliEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; restartRequired: boolean }> {
-  return api<{ enabled: boolean; restartRequired: boolean }>("/auth/claude-cli", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-/** Enable or disable the Droid CLI provider. Refuses enable if binary is missing. */
-export function setDroidCliEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; restartRequired: boolean }> {
-  return api<{ enabled: boolean; restartRequired: boolean }>("/auth/droid-cli", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-export function setCursorCliEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/cursor-cli", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-export function setCursorCliBinaryPath(
-  binaryPath: string | null,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/cursor-cli", {
-    method: "POST",
-    body: JSON.stringify({ binaryPath }),
-  });
-}
-
-export function setGrokCliEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-export function setGrokCliBinaryPath(
-  binaryPath: string | null,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
-    method: "POST",
-    body: JSON.stringify({ binaryPath }),
-  });
-}
+export {
+  addGitRemote,
+  applyStash,
+  checkoutBranch,
+  createBranch,
+  createCommit,
+  createPr,
+  createStash,
+  createTerminalSession,
+  deleteBranch,
+  discardChanges,
+  dropStash,
+  execTerminalCommand,
+  fetchAheadCommits,
+  fetchBatchStatus,
+  fetchBranchCommits,
+  fetchCommitDiff,
+  fetchFileChanges,
+  fetchGitBranches,
+  fetchGitCommits,
+  fetchGitFileDiff,
+  fetchGitRemoteBranches,
+  fetchGitRemotes,
+  fetchGitRemotesDetailed,
+  fetchGitStashList,
+  fetchGitStatus,
+  fetchGitWorktrees,
+  fetchIssueStatus,
+  fetchPrChecks,
+  fetchPrOptions,
+  fetchPrPreflight,
+  fetchPrReviews,
+  fetchPrStatus,
+  fetchRemote,
+  fetchRemoteCommits,
+  fetchStashDiff,
+  fetchUnstagedDiff,
+  generatePrMetadata,
+  getTerminalSession,
+  getTerminalStreamUrl,
+  killPtyTerminalSession,
+  killTerminalSession,
+  listTerminalSessions,
+  mergePr,
+  pullBranch,
+  pushBranch,
+  pushPrBranch,
+  reclaimPrConflict,
+  refreshIssueStatus,
+  refreshPrStatus,
+  removeGitRemote,
+  renameGitRemote,
+  resolvePrConflicts,
+  setAutoMergeOnGreen,
+  stageFiles,
+  unlinkPr,
+  unstageFiles,
+  updateGitRemoteUrl,
+} from "./git.js";
+export type {
+  BatchStatusEntry,
+  BatchStatusResult,
+  CreatePrParams,
+  GitBranch,
+  GitCommit,
+  GitFetchResult,
+  GitFileChange,
+  GitPullResult,
+  GitPushResult,
+  GitRemote,
+  GitRemoteDetailed,
+  GitStash,
+  GitStatus,
+  GitWorktree,
+  IssueInfo,
+  PrCheckStatus,
+  PrChecksResponse,
+  PrInfo,
+  PrMergeResponse,
+  PrMetadataResponse,
+  PrOptionsLabel,
+  PrOptionsResponse,
+  PrOptionsUser,
+  PrPreflightChangedFile,
+  PrPreflightCommit,
+  PrPreflightResponse,
+  PrRefreshEntry,
+  PrRefreshResponse,
+  PrReviewThreadItem,
+  PrReviewsResponse,
+  PrStatusResponse,
+  PtyTerminalSession,
+  PtyTerminalSessionInfo,
+  PushPrBranchResponse,
+  PushPrBranchResult,
+  ResolvePrConflictsResponse,
+  ResolvePrConflictsResult,
+  TerminalExecResponse,
+  TerminalExitEvent,
+  TerminalOutputEvent,
+  TerminalSession,
+} from "./git.js";
 
 /*
-FNXC:OmpAcp 2026-07-13-22:50:
-Client helpers for Oh My Pi ACP enable + binary path (mirror Grok/Cursor).
-*/
-export function setOmpCliEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/omp-cli", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-export function setOmpCliBinaryPath(
-  binaryPath: string | null,
-): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
-  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/omp-cli", {
-    method: "POST",
-    body: JSON.stringify({ binaryPath }),
-  });
-}
-
-/** Enable or disable the llama.cpp provider. */
-export function setLlamaCppEnabled(
-  enabled: boolean,
-): Promise<{ enabled: boolean; restartRequired: boolean }> {
-  return api<{ enabled: boolean; restartRequired: boolean }>("/auth/llama-cpp", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-export interface CustomProvider {
-  id: string;
-  name: string;
-  apiType: "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
-  baseUrl: string;
-  apiKey?: string;
-  /**
-   * FNXC:ProviderAuth 2026-07-08-00:00:
-   * FN-7689: dashboard-local mirror of @fusion/core's CustomProvider.anthropicPromptCaching
-   * opt-in. Keep in sync with packages/core/src/types.ts.
-   */
-  anthropicPromptCaching?: boolean;
-  models?: { id: string; name: string }[];
-}
-
-export async function fetchCustomProviders(): Promise<CustomProviderConfig[] & { providers: CustomProviderConfig[] }> {
-  const providers = await api<CustomProvider[]>("/custom-providers");
-  const legacyProviders = providers.map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    baseUrl: provider.baseUrl,
-    api: provider.apiType === "anthropic-compatible" ? "anthropic-messages"
-      : provider.apiType === "google-generative-ai" ? "google-generative-ai"
-      : provider.apiType === "openai-responses" ? "openai-responses"
-      : "openai-completions",
-    apiKey: provider.apiKey,
-    anthropicPromptCaching: provider.anthropicPromptCaching,
-    models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
-  } satisfies CustomProviderConfig));
-  return Object.assign(legacyProviders, { providers: legacyProviders });
-}
-
-export function addCustomProvider(provider: Omit<CustomProvider, "id">): Promise<CustomProvider> {
-  return api<CustomProvider>("/custom-providers", {
-    method: "POST",
-    body: JSON.stringify(provider),
-  });
-}
-
-export function updateCustomProvider(
-  id: string,
-  updates: Partial<Omit<CustomProvider, "id">> | CustomProviderConfig,
-): Promise<CustomProvider> {
-  const legacy = updates as Partial<CustomProviderConfig>;
-  const normalized: Partial<Omit<CustomProvider, "id">> = {
-    ...(typeof legacy.name === "string" ? { name: legacy.name } : {}),
-    ...(typeof legacy.baseUrl === "string" ? { baseUrl: legacy.baseUrl } : {}),
-    ...(typeof legacy.apiKey === "string" ? { apiKey: legacy.apiKey } : {}),
-    ...("anthropicPromptCaching" in (updates as Record<string, unknown>)
-      ? { anthropicPromptCaching: (updates as Partial<Omit<CustomProvider, "id">>).anthropicPromptCaching }
-      : {}),
-    ...(Array.isArray(legacy.models)
-      ? {
-          models: legacy.models.map((model) => ({
-            id: model.id,
-            name: model.name ?? model.id,
-          })),
-        }
-      : {}),
-    ...(legacy.api
-      ? {
-          apiType: legacy.api === "anthropic-messages" ? "anthropic-compatible"
-            : legacy.api === "google-generative-ai" ? "google-generative-ai"
-            : legacy.api === "openai-responses" ? "openai-responses"
-            : "openai-compatible",
-        }
-      : {}),
-    ...("apiType" in (updates as Record<string, unknown>)
-      ? { apiType: (updates as Partial<Omit<CustomProvider, "id">>).apiType }
-      : {}),
-  };
-
-  return api<CustomProvider>(`/custom-providers/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(normalized),
-  });
-}
-
-export function deleteCustomProvider(id: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(`/custom-providers/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-}
-
-export interface RefreshProviderModelsResponse {
-  provider: CustomProvider;
-  modelsRefreshed: number;
-}
-
-export function refreshProviderModels(id: string): Promise<RefreshProviderModelsResponse> {
-  return api<RefreshProviderModelsResponse>(`/custom-providers/${encodeURIComponent(id)}/refresh-models`, {
-    method: "POST",
-  });
-}
-
-// Backward-compatibility exports for existing UI callers; will be removed when
-// custom-provider UI migrates to the new core CustomProvider contract.
-export interface CustomProviderModelInput {
-  id: string;
-  name?: string;
-  reasoning?: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-}
-
-export interface CustomProviderConfig {
-  id: string;
-  name?: string;
-  baseUrl: string;
-  api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
-  apiKey?: string;
-  /** FNXC:ProviderAuth 2026-07-08-00:00: FN-7689 caching opt-in, carried through the legacy shape. */
-  anthropicPromptCaching?: boolean;
-  models: CustomProviderModelInput[];
-}
-
-export function createCustomProvider(config: CustomProviderConfig): Promise<CustomProvider> {
-  const apiType = config.api === "anthropic-messages" ? "anthropic-compatible"
-    : config.api === "google-generative-ai" ? "google-generative-ai"
-    : config.api === "openai-responses" ? "openai-responses"
-    : "openai-compatible";
-  return addCustomProvider({
-    name: config.name?.trim() || config.id,
-    apiType,
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    models: config.models?.map((model) => ({
-      id: model.id,
-      name: model.name ?? model.id,
-    })),
-  });
-}
-
-/**
- * Probe a custom provider's /models endpoint to discover available models.
- * Supports OpenAI-compatible, Anthropic-compatible, and Google Generative AI providers.
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `workspace-files` imports while implementations live in workspace-files.ts.
  */
-export interface ProbeModelResult {
-  id: string;
-  name: string;
-  reasoning?: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-}
-
-export interface ProbeModelsResponse {
-  models: ProbeModelResult[];
-  count: number;
-}
-
-export interface ProbeModelsParams {
-  baseUrl: string;
-  apiKey?: string;
-  apiType: "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
-}
-
-export async function probeProviderModels(params: ProbeModelsParams): Promise<ProbeModelsResponse> {
-  return api<ProbeModelsResponse>("/custom-providers/probe-models", {
-    method: "POST",
-    body: JSON.stringify({
-      baseUrl: params.baseUrl,
-      apiKey: params.apiKey,
-      apiType: params.apiType,
-    }),
-  });
-}
-
-export interface GitCliStatus {
-  available: boolean;
-  version?: string;
-  installUrl?: string;
-}
-
-/** Fetch authentication status for all OAuth providers */
-export function fetchAuthStatus(options?: FetchOptions): Promise<{
-  providers: AuthProvider[];
-  ghCli?: { available: boolean; authenticated: boolean };
-  gitCli?: GitCliStatus;
-}> {
-  return dedupe("/auth/status", () => api<{
-    providers: AuthProvider[];
-    ghCli?: { available: boolean; authenticated: boolean };
-    gitCli?: GitCliStatus;
-  }>("/auth/status"), options);
-}
-
-/** Initiate OAuth login for a provider. Returns the auth URL to open in a new tab. */
-export function loginProvider(provider: string): Promise<{
-  url: string;
-  instructions?: string;
-  manualCode?: ManualOAuthCodeInfo;
-  deviceCode?: OAuthDeviceCodeInfo;
-}> {
-  return api<{
-    url: string;
-    instructions?: string;
-    manualCode?: ManualOAuthCodeInfo;
-    deviceCode?: OAuthDeviceCodeInfo;
-  }>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ provider, origin: window.location.origin }),
-  });
-}
-
-/** Submit a pasted OAuth callback URL or authorization code for an active login. */
-export function submitProviderManualCode(provider: string, code: string): Promise<{ success: boolean; submitted: boolean }> {
-  return api<{ success: boolean; submitted: boolean }>("/auth/manual-code", {
-    method: "POST",
-    body: JSON.stringify({ provider, code }),
-  });
-}
-
-/** Logout from a provider, removing stored credentials. */
-export function logoutProvider(provider: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/auth/logout", {
-    method: "POST",
-    body: JSON.stringify({ provider }),
-  });
-}
-
-/** Cancel an in-progress OAuth login attempt for a provider. */
-export function cancelProviderLogin(provider: string): Promise<{ success: boolean; cancelled: boolean }> {
-  return api<{ success: boolean; cancelled: boolean }>("/auth/cancel", {
-    method: "POST",
-    body: JSON.stringify({ provider }),
-  });
-}
-
-/** Save an API key for an API-key-backed provider. */
-export function saveApiKey(provider: string, apiKey: string): Promise<{
-  success: boolean;
-  modelsRefreshed?: number;
-  refreshReason?: string;
-  refreshError?: string;
-}> {
-  return api<{
-    success: boolean;
-    modelsRefreshed?: number;
-    refreshReason?: string;
-    refreshError?: string;
-  }>("/auth/api-key", {
-    method: "POST",
-    body: JSON.stringify({ provider, apiKey }),
-  });
-}
-
-/** Remove an API key for an API-key-backed provider. */
-export function clearApiKey(provider: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/auth/api-key", {
-    method: "DELETE",
-    body: JSON.stringify({ provider }),
-  });
-}
-
-// --- GitHub Import API ---
-
-/** GitHub issue returned by the fetch endpoint */
-/*
-FNXC:GitHubImport 2026-06-22-18:30:
-The Import Tasks preview pane renders the FULL issue (full body + metadata), so the list response carries the complete body plus author/state.
-The GitHub issue-list endpoint already returns the full (untruncated) `body`; no per-item detail fetch is needed. `author`/`state` are surfaced for the preview metadata row.
-*/
-export interface GitHubIssue {
-  number: number;
-  title: string;
-  body: string | null;
-  html_url: string;
-  labels: Array<{ name: string }>;
-  state?: "open" | "closed";
-  author?: string | null;
-}
-
-/** Fetch open GitHub issues from a repository */
-export function apiFetchGitHubIssues(
-  owner: string,
-  repo: string,
-  limit?: number,
-  labels?: string[]
-): Promise<GitHubIssue[]> {
-  return api<GitHubIssue[]>("/github/issues/fetch", {
-    method: "POST",
-    body: JSON.stringify({ owner, repo, limit, labels }),
-  });
-}
-
-/** Import a specific GitHub issue as a fn task */
-/*
-FNXC:GitHubImportTranslate 2026-07-15-14:10:
-`targetLocale` forwards the panel's ACTIVE locale so an imported task carries the same translation the operator previewed.
-The server also falls back to the global `language` setting, so this argument is not load-bearing for the common case — it exists for the one case the server cannot know: a surface whose locale was browser-detected while global `language` is unset (PR #2141 review, P1).
-*/
-export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string, targetLocale?: string): Promise<Task> {
-  return api<Task>(withProjectId("/github/issues/import", projectId), {
-    method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumber, ...(targetLocale ? { targetLocale } : {}) }),
-  });
-}
-
-/** Result of a batch import operation for a single issue */
-export interface BatchImportResult {
-  issueNumber: number;
-  success: boolean;
-  taskId?: string;
-  error?: string;
-  skipped?: boolean;
-  retryAfter?: number;
-}
-
-/** Batch import multiple GitHub issues as fn tasks with throttling */
-export function apiBatchImportGitHubIssues(
-  owner: string,
-  repo: string,
-  issueNumbers: number[],
-  delayMs?: number,
-  projectId?: string,
-  /** See apiImportGitHubIssue: batch import must carry translations identically. */
-  targetLocale?: string,
-): Promise<{ results: BatchImportResult[] }> {
-  return api<{ results: BatchImportResult[] }>(withProjectId("/github/issues/batch-import", projectId), {
-    method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumbers, delayMs, ...(targetLocale ? { targetLocale } : {}) }),
-  });
-}
-
-// --- GitHub Pull Request Import API ---
-
-/*
-FNXC:GitHubImport 2026-06-22-18:30:
-The PR-list endpoint already returns the full (untruncated) `body`; the import preview renders it in full with no per-item detail fetch. `state`/`author` surface PR metadata in the preview.
-*/
-export interface GitHubPull {
-  number: number;
-  title: string;
-  body: string | null;
-  html_url: string;
-  headBranch: string;
-  baseBranch: string;
-  state?: "open" | "closed" | "merged";
-  author?: string | null;
-}
-
-/** Fetch open GitHub pull requests from a repository */
-export function apiFetchGitHubPulls(
-  owner: string,
-  repo: string,
-  limit?: number
-): Promise<GitHubPull[]> {
-  return api<GitHubPull[]>("/github/pulls/fetch", {
-    method: "POST",
-    body: JSON.stringify({ owner, repo, limit }),
-  });
-}
-
-/*
-FNXC:GitHubImport 2026-06-23-01:00:
-Per-PR detail for the Import Tasks PR preview pane. `gh pr list` (apiFetchGitHubPulls) returns only comment COUNT + no per-check status, so the preview fetches the FULL comment thread + per-check status ON SELECTION via this client fn (never for the whole list — too expensive).
-`status` is the gh CheckRun status (queued/in_progress/completed) or StatusContext state; `conclusion` (success/failure/neutral/...) is present once a check completes.
-*/
-/*
-FNXC:GitHubImport 2026-06-23-03:30:
-Comment shape carries `authorAvatarUrl?` (optional, backward-compatible) and `authorIsBot` so the preview renders an avatar + human/bot badge per comment. `authorIsBot` is derived server-side (author type is a GitHub Bot OR login ends in `[bot]`); `authorAvatarUrl` is omitted for bots whose synthetic login does not resolve to a real avatar.
-*/
-export interface GitHubCommentDetail {
-  author: string;
-  body: string;
-  createdAt: string;
-  authorAvatarUrl?: string;
-  authorIsBot: boolean;
-}
-
-export interface GitHubPullDetail {
-  comments: GitHubCommentDetail[];
-  checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>;
-}
-
-/** Fetch the full comment thread + per-check status for a single GitHub PR (called on selection in the import preview). */
-export function apiFetchGitHubPullDetail(repo: string, number: number): Promise<GitHubPullDetail> {
-  return api<GitHubPullDetail>("/github/pulls/detail", {
-    method: "POST",
-    body: JSON.stringify({ repo, number }),
-  });
-}
-
-/*
-FNXC:GitHubImport 2026-06-23-03:15:
-Per-issue detail for the Import Tasks issue preview pane. Mirrors apiFetchGitHubPullDetail: `gh issue list` has no comment thread, so the preview fetches the FULL comment thread ON SELECTION (never for the whole list).
-Issues have no checks rollup, so only `comments` is returned.
-*/
-export interface GitHubIssueDetail {
-  comments: GitHubCommentDetail[];
-}
-
-/** Fetch the full comment thread for a single GitHub issue (called on selection in the import preview). */
-export function apiFetchGitHubIssueDetail(repo: string, number: number): Promise<GitHubIssueDetail> {
-  return api<GitHubIssueDetail>("/github/issues/detail", {
-    method: "POST",
-    body: JSON.stringify({ repo, number }),
-  });
-}
-
-/** Close a GitHub issue (Close issue button in the import preview). */
-export async function apiCloseGitHubIssue(repo: string, number: number): Promise<void> {
-  await api<{ ok: boolean }>("/github/issues/close", {
-    method: "POST",
-    body: JSON.stringify({ repo, number }),
-  });
-}
-
-
-/*
-FNXC:GitHubImport 2026-07-17-12:00:
-Posts a new comment to the upstream GitHub issue. This is deliberately separate from
-apiImportGitHubComment, which creates a Fusion resolve-feedback task from an existing comment.
-*/
-export async function apiAddGitHubIssueComment(repo: string, number: number, body: string): Promise<void> {
-  await api<{ ok: boolean }>("/github/issues/comment", {
-    method: "POST",
-    body: JSON.stringify({ repo, number, body }),
-  });
-}
-
-/** Import a specific GitHub pull request as a fn review task */
-export function apiImportGitHubPull(owner: string, repo: string, prNumber: number, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId("/github/pulls/import", projectId), {
-    method: "POST",
-    body: JSON.stringify({ owner, repo, prNumber }),
-  });
-}
-
-/**
- * FNXC:GitHubImport 2026-07-16-18:05:
- * Comment imports preserve the comment payload and issue/PR source context so the server can create a separately auditable resolve-feedback task without closing the detail window.
- */
-export function apiImportGitHubComment(
-  params: {
-    owner: string;
-    repo: string;
-    number: number;
-    type: "issue" | "pull";
-    comment: Pick<GitHubCommentDetail, "author" | "body" | "createdAt">;
-  },
-  projectId?: string,
-): Promise<Task> {
-  return api<Task>(withProjectId("/github/comments/import", projectId), {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
-}
-
-// --- GitLab Import API ---
-
-export interface GitLabImportItem {
-  resourceKind: "project_issue" | "group_issue" | "merge_request";
-  id?: number;
-  iid: number;
-  projectId?: number;
-  projectPath?: string;
-  groupId?: number | string;
-  groupPath?: string;
-  title: string;
-  description: string | null;
-  webUrl: string;
-  state: string;
-  author?: { username?: string; name?: string } | null;
-  labels: string[];
-  createdAt?: string;
-  updatedAt?: string;
-  commentsCount?: number;
-  sourceBranch?: string;
-  targetBranch?: string;
-  draft?: boolean;
-}
-
-export function apiFetchGitLabProjectIssues(project: string, limit?: number, labels?: string[], state?: string): Promise<GitLabImportItem[]> {
-  return api<GitLabImportItem[]>("/gitlab/project/issues/fetch", { method: "POST", body: JSON.stringify({ project, limit, labels, state }) });
-}
-
-export function apiFetchGitLabGroupIssues(group: string, limit?: number, labels?: string[], state?: string): Promise<GitLabImportItem[]> {
-  return api<GitLabImportItem[]>("/gitlab/group/issues/fetch", { method: "POST", body: JSON.stringify({ group, limit, labels, state }) });
-}
-
-export function apiFetchGitLabMergeRequests(project: string, limit?: number, labels?: string[], state?: string): Promise<GitLabImportItem[]> {
-  return api<GitLabImportItem[]>("/gitlab/merge-requests/fetch", { method: "POST", body: JSON.stringify({ project, limit, labels, state }) });
-}
-
-export function apiImportGitLabProjectIssue(project: string, iid: number, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId("/gitlab/project/issues/import", projectId), { method: "POST", body: JSON.stringify({ project, iid }) });
-}
-
-export function apiImportGitLabGroupIssue(issue: GitLabImportItem, group?: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId("/gitlab/group/issues/import", projectId), { method: "POST", body: JSON.stringify({ issue, group }) });
-}
-
-export function apiImportGitLabMergeRequest(project: string, iid: number, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId("/gitlab/merge-requests/import", projectId), { method: "POST", body: JSON.stringify({ project, iid }) });
-}
-
-export function apiBatchImportGitLab(items: Array<Record<string, unknown>>, projectId?: string): Promise<{ results: Array<{ success: boolean; taskId?: string; error?: string; iid?: number }> }> {
-  return api<{ results: Array<{ success: boolean; taskId?: string; error?: string; iid?: number }> }>(withProjectId("/gitlab/batch-import", projectId), { method: "POST", body: JSON.stringify({ items }) });
-}
-
-// --- Git Remote Detection API ---
-
-/** Git remote info returned by the remotes endpoint */
-export interface GitRemote {
-  name: string;
-  owner: string;
-  repo: string;
-  url: string;
-}
-
-/** Fetch GitHub remotes from the current git repository */
-export function fetchGitRemotes(projectId?: string, repoPath?: string): Promise<GitRemote[]> {
-  return api<GitRemote[]>(withRepoPath(withProjectId("/git/remotes", projectId), repoPath));
-}
-
-/** Detailed git remote info with fetch and push URLs */
-export interface GitRemoteDetailed {
-  name: string;
-  fetchUrl: string;
-  pushUrl: string;
-}
-
-/** Fetch all git remotes with their fetch and push URLs */
-export function fetchGitRemotesDetailed(projectId?: string, repoPath?: string): Promise<GitRemoteDetailed[]> {
-  return api<GitRemoteDetailed[]>(withRepoPath(withProjectId("/git/remotes/detailed", projectId), repoPath));
-}
-
-/** Add a new git remote */
-export function addGitRemote(name: string, url: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId("/git/remotes", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ name, url }),
-  });
-}
-
-/** Remove a git remote */
-export function removeGitRemote(name: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), repoPath), {
-    method: "DELETE",
-  });
-}
-
-/** Rename a git remote */
-export function renameGitRemote(name: string, newName: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), repoPath), {
-    method: "PATCH",
-    body: JSON.stringify({ newName }),
-  });
-}
-
-/** Update the URL for a git remote */
-export function updateGitRemoteUrl(name: string, url: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}/url`, projectId), repoPath), {
-    method: "PUT",
-    body: JSON.stringify({ url }),
-  });
-}
-
-// --- PR Management API ---
-
-export interface PrCheckStatus {
-  name: string;
-  required: boolean;
-  state: string;
-  detailsUrl?: string;
-  startedAt?: string;
-  completedAt?: string;
-}
-
-export interface PrStatusResponse {
-  prInfo: PrInfo;
-  prInfos?: PrInfo[];
-  stale: boolean;
-  automationStatus?: string | null;
-}
-
-export interface PrRefreshEntry {
-  prInfo: PrInfo;
-  conflictDiagnostics?: PrConflictDiagnostics;
-  mergeReady: boolean;
-  mergeable?: PrInfo["mergeable"];
-  blockingReasons: string[];
-  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-  checks: PrCheckStatus[];
-  automationStatus?: string | null;
-  conflictReclaimQueued?: boolean;
-}
-
-export interface PrRefreshResponse extends PrRefreshEntry {
-  primary: PrRefreshEntry;
-  all: PrRefreshEntry[];
-}
-
-export interface PrMergeResponse {
-  prInfo: PrInfo;
-  alreadyMerged?: boolean;
-}
-
-export interface PrChecksResponse {
-  prInfos?: PrInfo[];
-  checks: PrCheckStatus[];
-  rollup: "success" | "pending" | "failure" | "unknown";
-  lastCheckedAt: string;
-}
-
-export interface PrReviewThreadItem {
-  id: string;
-  author: string;
-  text: string;
-  source?: "github-review" | "github-review-comment";
-  externalId?: string;
-  reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
-  createdAt: string;
-}
-
-export interface PrReviewsResponse {
-  prInfos?: PrInfo[];
-  snapshot: {
-    decision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-    items: Array<{
-      id: string;
-      author: { login: string };
-      body: string;
-      state?: string;
-      htmlUrl?: string;
-      createdAt: string;
-    }>;
-  };
-  comments: PrReviewThreadItem[];
-}
-
-export interface PrMetadataResponse {
-  title: string;
-  body: string;
-  templateUsed: boolean;
-}
-
-export interface PrPreflightCommit {
-  sha: string;
-  subject: string;
-  author: string;
-}
-
-export interface PrPreflightChangedFile {
-  path: string;
-  additions: number;
-  deletions: number;
-  status: "added" | "modified" | "deleted" | "renamed";
-}
-
-export interface PrPreflightResponse {
-  branchOnRemote: boolean;
-  commitsPresent: boolean;
-  conflictsWithBase: boolean;
-  ghAuthOk: boolean;
-  defaultBaseBranch: string;
-  head: string;
-  commits: PrPreflightCommit[];
-  changedFiles: PrPreflightChangedFile[];
-}
-
-export interface ResolvePrConflictsResult {
-  resolved: boolean;
-  pushed: boolean;
-  conflictedFiles: string[];
-  message: string;
-}
-
-export interface ResolvePrConflictsResponse {
-  result: ResolvePrConflictsResult;
-  preflight: PrPreflightResponse;
-}
-
-export interface PushPrBranchResult {
-  pushed: boolean;
-  head: string;
-  message: string;
-}
-
-export interface PushPrBranchResponse {
-  result: PushPrBranchResult;
-  preflight: PrPreflightResponse;
-}
-
-export interface PrOptionsUser {
-  login: string;
-  name?: string;
-}
-
-export interface PrOptionsLabel {
-  name: string;
-  color: string;
-}
-
-export interface PrOptionsResponse {
-  baseBranches: string[];
-  reviewers: PrOptionsUser[];
-  assignees: PrOptionsUser[];
-  labels: PrOptionsLabel[];
-}
-
-export interface CreatePrParams {
-  title: string;
-  body?: string;
-  base?: string;
-  draft?: boolean;
-  reviewers?: string[];
-  assignees?: string[];
-  labels?: string[];
-}
-
-/** Generate AI metadata for creating a GitHub PR for a task */
-export function generatePrMetadata(id: string, projectId?: string): Promise<PrMetadataResponse> {
-  return api<PrMetadataResponse>(withProjectId(`/tasks/${id}/pr/generate-metadata`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Fetch PR preflight diagnostics for a task */
-export function fetchPrPreflight(id: string, projectId?: string, base?: string): Promise<PrPreflightResponse> {
-  const baseParam = base ? `?base=${encodeURIComponent(base)}` : "";
-  return api<PrPreflightResponse>(withProjectId(`/tasks/${id}/pr/preflight${baseParam}`, projectId));
-}
-
-/** Ask Fusion to resolve Create-PR merge conflicts for a task branch */
-export function resolvePrConflicts(id: string, base?: string, projectId?: string): Promise<ResolvePrConflictsResponse> {
-  return api<ResolvePrConflictsResponse>(withProjectId(`/tasks/${id}/pr/resolve-conflicts`, projectId), {
-    method: "POST",
-    ...(base ? { body: JSON.stringify({ base }) } : {}),
-  });
-}
-
-/** Push the Create-PR task branch to origin and refresh preflight state */
-export function pushPrBranch(id: string, base?: string, projectId?: string): Promise<PushPrBranchResponse> {
-  return api<PushPrBranchResponse>(withProjectId(`/tasks/${id}/pr/push-branch`, projectId), {
-    method: "POST",
-    ...(base ? { body: JSON.stringify({ base }) } : {}),
-  });
-}
-
-/** Fetch PR creation options (branches/reviewers/assignees/labels) for a task */
-export function fetchPrOptions(id: string, projectId?: string): Promise<PrOptionsResponse> {
-  return api<PrOptionsResponse>(withProjectId(`/tasks/${id}/pr/options`, projectId));
-}
-
-/** Create a GitHub PR for a task */
-export function createPr(
-  id: string,
-  params: CreatePrParams,
-  projectId?: string,
-): Promise<PrInfo> {
-  return api<PrInfo>(withProjectId(`/tasks/${id}/pr/create`, projectId), {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
-}
-
-/** Fetch cached PR status for a task */
-export function fetchPrStatus(id: string, projectId?: string): Promise<PrStatusResponse> {
-  return api<PrStatusResponse>(withProjectId(`/tasks/${id}/pr/status`, projectId));
-}
-
-/** Force refresh PR status from GitHub */
-export function refreshPrStatus(id: string, projectId?: string): Promise<PrRefreshResponse> {
-  return api<PrRefreshResponse>(withProjectId(`/tasks/${id}/pr/refresh`, projectId), {
-    method: "POST",
-  });
-}
-
-export function unlinkPr(taskId: string, number: number, projectId?: string): Promise<{ task: TaskDetail; prInfos: PrInfo[] }> {
-  return api<{ task: TaskDetail; prInfos: PrInfo[] }>(withProjectId(`/tasks/${taskId}/pr/${number}/unlink`, projectId), {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export function reclaimPrConflict(id: string, projectId?: string): Promise<{ queued: boolean; reason?: string }> {
-  return api<{ queued: boolean; reason?: string }>(withProjectId(`/tasks/${id}/pr/reclaim-conflict`, projectId), {
-    method: "POST",
-  });
-}
-
-export function mergePr(id: string, method?: "merge" | "squash" | "rebase", projectId?: string, prNumber?: number): Promise<PrMergeResponse> {
-  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
-  return api<PrMergeResponse>(withProjectId(`/tasks/${id}/pr/merge${search}`, projectId), {
-    method: "POST",
-    body: JSON.stringify(method ? { method } : {}),
-  });
-}
-
-export function setAutoMergeOnGreen(
-  id: string,
-  enabled: boolean,
-  strategy?: "merge" | "squash" | "rebase",
-  projectId?: string,
-  prNumber?: number,
-): Promise<{ prInfo: PrInfo }> {
-  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
-  return api<{ prInfo: PrInfo }>(withProjectId(`/tasks/${id}/pr/auto-merge${search}`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ enabled, strategy }),
-  });
-}
-
-/** Fetch all PR checks for a task */
-export function fetchPrChecks(id: string, projectId?: string, prNumber?: number): Promise<PrChecksResponse> {
-  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
-  return api<PrChecksResponse>(withProjectId(`/tasks/${id}/pr/checks${search}`, projectId));
-}
-
-export function fetchPrReviews(id: string, projectId?: string, prNumber?: number): Promise<PrReviewsResponse> {
-  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
-  return api<PrReviewsResponse>(withProjectId(`/tasks/${id}/pr/reviews${search}`, projectId));
-}
-
-// --- Issue Management API ---
-
-/** Re-export GitHub badge-related types for convenience */
-export type { IssueInfo, BatchStatusResult, BatchStatusEntry, PrInfo } from "@fusion/core";
-
-/** Fetch cached issue status for a task */
-export function fetchIssueStatus(id: string, projectId?: string): Promise<{ issueInfo: import("@fusion/core").IssueInfo; stale: boolean }> {
-  return api<{ issueInfo: import("@fusion/core").IssueInfo; stale: boolean }>(withProjectId(`/tasks/${id}/issue/status`, projectId));
-}
-
-/** Force refresh issue status from GitHub */
-export function refreshIssueStatus(id: string, projectId?: string): Promise<import("@fusion/core").IssueInfo> {
-  return api<import("@fusion/core").IssueInfo>(withProjectId(`/tasks/${id}/issue/refresh`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Batch-refresh cached GitHub badge status for multiple tasks. */
-export async function fetchBatchStatus(taskIds: string[], projectId?: string): Promise<BatchStatusResult> {
-  const response = await api<BatchStatusResponse>(withProjectId("/github/batch/status", projectId), {
-    method: "POST",
-    body: JSON.stringify({ taskIds }),
-  });
-
-  return response.results;
-}
-
-// --- Terminal API ---
-
-/** Terminal exec response - returns sessionId for streaming output via SSE */
-export interface TerminalExecResponse {
-  sessionId: string;
-}
-
-/** Terminal session status and output */
-export interface TerminalSession {
-  id: string;
-  command: string;
-  running: boolean;
-  exitCode: number | null;
-  output: string;
-  startTime: string;
-}
-
-/** Terminal SSE event types */
-export interface TerminalOutputEvent {
-  type: "stdout" | "stderr";
-  data: string;
-}
-
-/** Terminal exit event from SSE */
-export interface TerminalExitEvent {
-  type: "exit";
-  exitCode: number;
-}
-
-/** Execute a shell command and get a session ID for streaming output */
-export function execTerminalCommand(command: string, projectId?: string): Promise<TerminalExecResponse> {
-  return api<TerminalExecResponse>(withProjectId("/terminal/exec", projectId), {
-    method: "POST",
-    body: JSON.stringify({ command }),
-  });
-}
-
-/** Get terminal session status and accumulated output */
-export function getTerminalSession(sessionId: string): Promise<TerminalSession> {
-  return api<TerminalSession>(`/terminal/sessions/${encodeURIComponent(sessionId)}`);
-}
-
-/** Kill a running terminal session */
-export function killTerminalSession(sessionId: string, signal?: "SIGTERM" | "SIGKILL" | "SIGINT"): Promise<{ killed: boolean; sessionId: string }> {
-  return api<{ killed: boolean; sessionId: string }>(`/terminal/sessions/${encodeURIComponent(sessionId)}/kill`, {
-    method: "POST",
-    body: JSON.stringify({ signal: signal ?? "SIGTERM" }),
-  });
-}
-
-/** Get the SSE stream URL for a terminal session */
-export function getTerminalStreamUrl(sessionId: string): string {
-  return `/api/terminal/sessions/${encodeURIComponent(sessionId)}/stream`;
-}
-
-// --- PTY Terminal API (WebSocket-based) ---
-
-/** PTY Terminal session response */
-export interface PtyTerminalSession {
-  sessionId: string;
-  shell: string;
-  cwd: string;
-}
-
-/** PTY Terminal session info for listing */
-export interface PtyTerminalSessionInfo {
-  id: string;
-  cwd: string;
-  shell: string;
-  createdAt: string;
-}
-
-/** Create a new PTY terminal session */
-export function createTerminalSession(
-  cwd?: string,
-  cols?: number,
-  rows?: number,
-  projectId?: string
-): Promise<PtyTerminalSession> {
-  return api<PtyTerminalSession>(withProjectId("/terminal/sessions", projectId), {
-    method: "POST",
-    body: JSON.stringify({ cwd, cols, rows }),
-  });
-}
-
-/** Kill a PTY terminal session */
-export function killPtyTerminalSession(sessionId: string, projectId?: string): Promise<{ killed: boolean }> {
-  return api<{ killed: boolean }>(withProjectId(`/terminal/sessions/${encodeURIComponent(sessionId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-/** List active PTY terminal sessions */
-export function listTerminalSessions(projectId?: string): Promise<PtyTerminalSessionInfo[]> {
-  return api<PtyTerminalSessionInfo[]>(withProjectId("/terminal/sessions", projectId));
-}
-
-// --- Git Management API ---
-
-/** Current git status */
-export interface GitStatus {
-  branch: string;
-  commit: string;
-  isDirty: boolean;
-  ahead: number;
-  behind: number;
-  // Returned only when `?extended=1` is passed to GET /api/git/status.
-  headSha?: string;
-  integrationBranch?: string;
-  integrationBranchSource?: "settings" | "origin-head" | "fallback";
-  isOnIntegrationBranch?: boolean;
-  /** True when `git branch --show-current` failed (transient git error,
-   *  permission, etc.). Distinct from detached HEAD (command succeeds with
-   *  empty stdout). UI surfaces "branch detection unavailable" rather than
-   *  silently hiding the wrong-branch warning. */
-  currentBranchDetectionFailed?: boolean;
-  integrationTipSha?: string | null;
-  /** "local" = `refs/heads/<branch>` exists; "remote-only" = only
-   *  `refs/remotes/origin/<branch>` exists and was used as fallback;
-   *  "missing" = neither ref exists. */
-  integrationTipSource?: "local" | "remote-only" | "missing";
-  originIntegrationTipSha?: string | null;
-  /** HEAD vs the **local** integration tip. Undefined when the branch
-   *  exists only as a remote-tracking ref. */
-  aheadOfIntegration?: number;
-  behindIntegration?: number;
-  /** HEAD vs `origin/<integrationBranch>`. Defined whenever the remote
-   *  tracking ref exists, regardless of whether the local ref does. */
-  aheadOfIntegrationRemote?: number;
-  behindIntegrationRemote?: number;
-  /** Local integration tip vs `origin/<integrationBranch>`. Defined only
-   *  when both refs exist. */
-  aheadOfOriginIntegration?: number;
-  behindOriginIntegration?: number;
-  dirtyDetails?: {
-    staged: number;
-    modified: number;
-    untracked: number;
-    conflicted: number;
-    sample: string[];
-  };
-  indexStaleVsHead?: boolean;
-  stashCount?: number;
-  recentMergeAdvances?: Array<{
-    taskId: string;
-    fromSha: string | null;
-    toSha: string;
-    advancedAt: string;
-    autoSyncOutcome?: string;
-    needsAction: boolean;
-    resolution: "reachable" | "orphaned" | "subsumed" | "superseded" | "pending";
-  }>;
-}
-
-/** Git commit info */
-export interface GitCommit {
-  hash: string;
-  shortHash: string;
-  message: string;
-  body?: string;
-  author: string;
-  date: string;
-  parents: string[];
-}
-
-/** Git branch info */
-export interface GitBranch {
-  name: string;
-  isCurrent: boolean;
-  remote?: string;
-  lastCommitDate?: string;
-}
-
-/** Git worktree info */
-export interface GitWorktree {
-  path: string;
-  branch?: string;
-  isMain: boolean;
-  isBare: boolean;
-  taskId?: string;
-}
-
-/** Result of a fetch operation */
-export interface GitFetchResult {
-  fetched: boolean;
-  message: string;
-}
-
-/** Result of a pull operation */
-export interface GitPullResult {
-  success: boolean;
-  message: string;
-  conflict?: boolean;
-  autostashed?: boolean;
-  stashReapplied?: boolean;
-  stashConflict?: boolean;
-}
-
-/** Result of a push operation */
-export interface GitPushResult {
-  success: boolean;
-  message: string;
-}
-
-/** Fetch current git status. Pass `extended` to also get integration-branch
- *  resolution, ahead/behind vs both local and origin integration tip, dirty
- *  breakdown, stash count, index-stale detection, and recent merge-advance
- *  audit events for the project-root worktree. */
-export function fetchGitStatus(projectId?: string, opts?: { extended?: boolean }, repoPath?: string): Promise<GitStatus> {
-  const base = withRepoPath(withProjectId("/git/status", projectId), repoPath);
-  if (!opts?.extended) return api<GitStatus>(base);
-  const sep = base.includes("?") ? "&" : "?";
-  return api<GitStatus>(`${base}${sep}extended=1`);
-}
-
-/** Append the read-only commit worktree target query param used only by commit list/diff endpoints. */
-function withCommitWorktreePath(path: string, worktreePath?: string): string {
-  if (!worktreePath) return path;
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}worktreePath=${encodeURIComponent(worktreePath)}`;
-}
-
-/** Fetch recent commits */
-export function fetchGitCommits(limit?: number, projectId?: string, repoPath?: string, worktreePath?: string): Promise<GitCommit[]> {
-  const query = limit ? `?limit=${limit}` : "";
-  return api<GitCommit[]>(withCommitWorktreePath(withRepoPath(withProjectId(`/git/commits${query}`, projectId), repoPath), worktreePath));
-}
-
-/** Fetch diff for a specific commit */
-export function fetchCommitDiff(hash: string, projectId?: string, repoPath?: string, worktreePath?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withCommitWorktreePath(withRepoPath(withProjectId(`/git/commits/${hash}/diff`, projectId), repoPath), worktreePath));
-}
-
-/** Fetch local commits ahead of the upstream tracking branch (commits to push) */
-export function fetchAheadCommits(projectId?: string, repoPath?: string): Promise<GitCommit[]> {
-  return api<GitCommit[]>(withRepoPath(withProjectId("/git/commits/ahead", projectId), repoPath));
-}
-
-/** Fetch recent commits for a specific remote */
-export function fetchRemoteCommits(remote: string, ref?: string, limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
-  const params = new URLSearchParams();
-  if (ref) params.set("ref", ref);
-  if (limit) params.set("limit", String(limit));
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(remote)}/commits${query}`, projectId), repoPath));
-}
-
-/** Fetch branch names known on a specific remote (from local remote-tracking refs). */
-export function fetchGitRemoteBranches(remote: string, projectId?: string, repoPath?: string): Promise<string[]> {
-  return api<string[]>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(remote)}/branches`, projectId), repoPath));
-}
-
-/** Fetch all local branches */
-export function fetchGitBranches(projectId?: string, repoPath?: string): Promise<GitBranch[]> {
-  return api<GitBranch[]>(withRepoPath(withProjectId("/git/branches", projectId), repoPath));
-}
-
-/** Fetch recent commits for a specific branch */
-export function fetchBranchCommits(branchName: string, limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
-  const query = limit ? `?limit=${limit}` : "";
-  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(branchName)}/commits${query}`, projectId), repoPath));
-}
-
-/** Fetch all worktrees */
-export function fetchGitWorktrees(projectId?: string, repoPath?: string): Promise<GitWorktree[]> {
-  return api<GitWorktree[]>(withRepoPath(withProjectId("/git/worktrees", projectId), repoPath));
-}
-
-/** Create a new branch */
-export function createBranch(name: string, base?: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId("/git/branches", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ name, base }),
-  });
-}
-
-/** Checkout an existing branch */
-export function checkoutBranch(name: string, projectId?: string, repoPath?: string): Promise<void> {
-  return api<void>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(name)}/checkout`, projectId), repoPath), {
-    method: "POST",
-  });
-}
-
-/** Delete a branch */
-export function deleteBranch(name: string, force?: boolean, projectId?: string, repoPath?: string): Promise<void> {
-  const query = force ? "?force=true" : "";
-  return api<void>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(name)}${query}`, projectId), repoPath), {
-    method: "DELETE",
-  });
-}
-
-/** Fetch from remote */
-export function fetchRemote(remote?: string, projectId?: string, repoPath?: string): Promise<GitFetchResult> {
-  return api<GitFetchResult>(withRepoPath(withProjectId("/git/fetch", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ remote }),
-  });
-}
-
-/** Pull current branch */
-export function pullBranch(options?: { rebase?: boolean }, projectId?: string, repoPath?: string): Promise<GitPullResult>;
-export function pullBranch(projectId?: string, repoPath?: string): Promise<GitPullResult>;
-export function pullBranch(
-  optionsOrProjectId?: { rebase?: boolean } | string,
-  projectId?: string,
-  repoPath?: string,
-): Promise<GitPullResult> {
-  // FNXC:DashboardGitApi 2026-06-24-00:00:
-  // pullBranch has two overloads. In the string-arg style pullBranch(projectId, repoPath),
-  // the second positional carries repoPath (not the 3rd parameter), so resolve it from `projectId`
-  // to avoid dropping repoPath; otherwise multi-repo workspace pulls hit the wrong repo.
-  const isStringForm = typeof optionsOrProjectId === "string";
-  const options = isStringForm ? undefined : optionsOrProjectId;
-  const resolvedProjectId = isStringForm ? optionsOrProjectId : projectId;
-  const resolvedRepoPath = isStringForm ? projectId : repoPath;
-
-  return api<GitPullResult>(withRepoPath(withProjectId("/git/pull", resolvedProjectId), resolvedRepoPath), {
-    method: "POST",
-    body: JSON.stringify({ rebase: options?.rebase ?? false }),
-  });
-}
-
-/** Push current branch */
-export function pushBranch(projectId?: string, repoPath?: string): Promise<GitPushResult> {
-  return api<GitPushResult>(withRepoPath(withProjectId("/git/push", projectId), repoPath), {
-    method: "POST",
-  });
-}
-
-/** Git stash entry */
-export interface GitStash {
-  index: number;
-  message: string;
-  date: string;
-  branch: string;
-}
-
-/** Individual file change with staging status */
-export interface GitFileChange {
-  file: string;
-  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked";
-  staged: boolean;
-  oldFile?: string;
-}
-
-/** Fetch stash list */
-export function fetchGitStashList(projectId?: string, repoPath?: string): Promise<GitStash[]> {
-  return api<GitStash[]>(withRepoPath(withProjectId("/git/stashes", projectId), repoPath));
-}
-
-/** Create a new stash */
-export function createStash(message?: string, projectId?: string, repoPath?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withRepoPath(withProjectId("/git/stashes", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
-}
-
-/** Apply a stash entry */
-export function applyStash(index: number, drop?: boolean, projectId?: string, repoPath?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withRepoPath(withProjectId(`/git/stashes/${index}/apply`, projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ drop }),
-  });
-}
-
-/** Drop a stash entry */
-export function dropStash(index: number, projectId?: string, repoPath?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withRepoPath(withProjectId(`/git/stashes/${index}`, projectId), repoPath), {
-    method: "DELETE",
-  });
-}
-
-/** Fetch stash diff (stat + patch) */
-export function fetchStashDiff(index: number, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/stashes/${index}/diff`, projectId), repoPath));
-}
-
-/** Fetch unstaged diff (working directory changes) */
-export function fetchUnstagedDiff(projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId("/git/diff", projectId), repoPath));
-}
-
-/** Fetch diff for a specific file in staged or unstaged mode */
-export function fetchGitFileDiff(path: string, staged: boolean, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
-  const params = new URLSearchParams();
-  params.set("path", path);
-  params.set("staged", String(staged));
-  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/diff/file?${params.toString()}`, projectId), repoPath));
-}
-
-/** Fetch file changes (staged and unstaged) */
-export function fetchFileChanges(projectId?: string, repoPath?: string): Promise<GitFileChange[]> {
-  return api<GitFileChange[]>(withRepoPath(withProjectId("/git/changes", projectId), repoPath));
-}
-
-/** Stage specific files */
-export function stageFiles(files: string[], projectId?: string, repoPath?: string): Promise<{ staged: string[] }> {
-  return api<{ staged: string[] }>(withRepoPath(withProjectId("/git/stage", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ files }),
-  });
-}
-
-/** Unstage specific files */
-export function unstageFiles(files: string[], projectId?: string, repoPath?: string): Promise<{ unstaged: string[] }> {
-  return api<{ unstaged: string[] }>(withRepoPath(withProjectId("/git/unstage", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ files }),
-  });
-}
-
-/** Create a commit */
-export function createCommit(message: string, projectId?: string, repoPath?: string): Promise<{ hash: string; message: string }> {
-  return api<{ hash: string; message: string }>(withRepoPath(withProjectId("/git/commit", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
-}
-
-/** Discard changes in working directory for specific files */
-export function discardChanges(files: string[], projectId?: string, repoPath?: string): Promise<{ discarded: string[] }> {
-  return api<{ discarded: string[] }>(withRepoPath(withProjectId("/git/discard", projectId), repoPath), {
-    method: "POST",
-    body: JSON.stringify({ files }),
-  });
-}
-
-// --- File Browser API ---
-
-/** File node in directory listing */
-export interface FileNode {
-  name: string;
-  type: "file" | "directory";
-  size?: number;
-  mtime?: string;
-}
-
-/** File listing response */
-export interface FileListResponse {
-  path: string;
-  entries: FileNode[];
-}
-
-/** File content response */
-export interface FileContentResponse {
-  content: string;
-  mtime: string;
-  size: number;
-}
-
-/** Save file response */
-export interface SaveFileResponse {
-  success: true;
-  mtime: string;
-  size: number;
-}
-
-/** List files in task directory */
-export function fetchFileList(taskId: string, path?: string, projectId?: string): Promise<FileListResponse> {
-  const query = path ? `?path=${encodeURIComponent(path)}` : "";
-  return api<FileListResponse>(withProjectId(`/tasks/${taskId}/files${query}`, projectId));
-}
-
-/** Fetch file content */
-export function fetchFileContent(taskId: string, filePath: string, projectId?: string): Promise<FileContentResponse> {
-  return api<FileContentResponse>(withProjectId(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, projectId));
-}
-
-/** Save file content */
-export function saveFileContent(taskId: string, filePath: string, content: string, projectId?: string): Promise<SaveFileResponse> {
-  return api<SaveFileResponse>(withProjectId(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-}
-
-// --- Workspace File Browser API ---
-
-export interface WorkspaceTaskInfo {
-  id: string;
-  title?: string;
-  worktree: string;
-}
-
-export interface WorkspaceListResponse {
-  project: string;
-  tasks: WorkspaceTaskInfo[];
-}
-
-/** Fetch available file browser workspaces. */
-export function fetchWorkspaces(projectId?: string): Promise<WorkspaceListResponse> {
-  return api<WorkspaceListResponse>(withProjectId("/workspaces", projectId));
-}
-
-/** List files in a workspace (project root or task worktree). */
-export function fetchWorkspaceFileList(workspace: string, path?: string, projectId?: string): Promise<FileListResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (path) {
-    query.set("path", path);
-  }
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileListResponse>(`/files?${query.toString()}`);
-}
-
-/** Fetch file content from a workspace. */
-export function fetchWorkspaceFileContent(workspace: string, filePath: string, projectId?: string): Promise<FileContentResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileContentResponse>(`/files/${encodeURIComponent(filePath)}?${query.toString()}`);
-}
-
-/** Save file content to a workspace. */
-export function saveWorkspaceFileContent(workspace: string, filePath: string, content: string, projectId?: string): Promise<SaveFileResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<SaveFileResponse>(`/files/${encodeURIComponent(filePath)}?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-}
-
-/** File search result. */
-export interface FileSearchResult {
-  files: Array<{ path: string; name: string }>;
-}
-
-export interface IssueMentionItem {
-  number: number;
-  title: string;
-  state: "open" | "closed";
-  htmlUrl: string;
-  repository: string;
-  updatedAt?: string;
-}
-
-export function fetchRecentIssues(projectId?: string, query?: string): Promise<IssueMentionItem[]> {
-  const params = new URLSearchParams();
-  if (query && query.trim()) {
-    params.set("q", query.trim());
-  }
-  if (projectId) {
-    params.set("projectId", projectId);
-  }
-  const search = params.toString();
-  return api<IssueMentionItem[]>(`/github/issues/recent${search ? `?${search}` : ""}`);
-}
-
-/** Search for files matching a query in a workspace. */
-export function searchFiles(query: string, workspace?: string, projectId?: string): Promise<FileSearchResult> {
-  const params = new URLSearchParams({ q: query });
-  if (workspace) {
-    params.set("workspace", workspace);
-  }
-  if (projectId) {
-    params.set("projectId", projectId);
-  }
-  return api<FileSearchResult>(`/files/search?${params.toString()}`);
-}
-
-// --- Workspace File Operations API (Create, Copy, Move, Delete, Rename, Download) ---
-
-/** File operation response for create/copy/move/delete/rename operations */
-export interface FileOperationResponse {
-  success: true;
-  message?: string;
-  path?: string;
-}
-
-/** Create a directory within a workspace. */
-export function createWorkspaceDirectory(workspace: string, dirPath: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/mkdir?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ path: dirPath }),
-  });
-}
-
-/** Create an empty file within a workspace. */
-export function createWorkspaceFile(workspace: string, filePath: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ content: "" }),
-  });
-}
-
-/** Copy a file or directory to a new location within a workspace. */
-export function copyFile(workspace: string, filePath: string, destination: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/copy?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ destination }),
-  });
-}
-
-/** Move a file or directory to a new location within a workspace. */
-export function moveFile(workspace: string, filePath: string, destination: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/move?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ destination }),
-  });
-}
-
-/** Delete a file or directory within a workspace. */
-export function deleteFile(workspace: string, filePath: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/delete?${query.toString()}`, {
-    method: "POST",
-  });
-}
-
-/** Rename a file or directory within a workspace. */
-export function renameFile(workspace: string, filePath: string, newName: string, projectId?: string): Promise<FileOperationResponse> {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/rename?${query.toString()}`, {
-    method: "POST",
-    body: JSON.stringify({ newName }),
-  });
-}
-
-/** Get the download URL for a single file in a workspace. */
-export function downloadFileUrl(workspace: string, filePath: string, projectId?: string, options?: { inline?: boolean }): string {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  /**
-   * FNXC:FileBrowser 2026-06-26-00:00:
-   * Browser-native preview consumers request `inline=1` so the shared download route serves renderable MIME types with inline disposition. The explicit Download action intentionally omits this option to preserve attachment downloads.
-   */
-  if (options?.inline === true) {
-    query.set("inline", "1");
-  }
-  return `/api/files/${encodeURIComponent(filePath)}/download?${query.toString()}`;
-}
-
-/** Get the download URL for a folder as ZIP in a workspace. */
-export function downloadZipUrl(workspace: string, filePath: string, projectId?: string): string {
-  const query = new URLSearchParams({ workspace });
-  if (projectId) {
-    query.set("projectId", projectId);
-  }
-  return `/api/files/${encodeURIComponent(filePath)}/download-zip?${query.toString()}`;
-}
+export {
+  copyFile,
+  createWorkspaceDirectory,
+  createWorkspaceFile,
+  deleteFile,
+  downloadFileUrl,
+  downloadZipUrl,
+  fetchFileContent,
+  fetchFileList,
+  fetchRecentIssues,
+  fetchWorkspaceFileContent,
+  fetchWorkspaceFileList,
+  fetchWorkspaces,
+  moveFile,
+  renameFile,
+  saveFileContent,
+  saveWorkspaceFileContent,
+  searchFiles,
+} from "./workspace-files.js";
+export type {
+  FileContentResponse,
+  FileListResponse,
+  FileNode,
+  FileOperationResponse,
+  FileSearchResult,
+  IssueMentionItem,
+  SaveFileResponse,
+  WorkspaceListResponse,
+  WorkspaceTaskInfo,
+} from "./workspace-files.js";
 
 // --- Planning Mode API ---
 
@@ -4013,527 +2181,68 @@ export type {
   ReflectionTrigger,
 } from "./agents.js";
 
-// ── Run-Audit & Timeline API ────────────────────────────────────────────────
-
-/** Valid domain filters for run-audit queries. */
-export type RunAuditDomainFilter = "database" | "git" | "filesystem" | "sandbox";
-
-/** Filter options for run-audit queries. */
-export interface RunAuditFilters {
-  /** Filter by task ID */
-  taskId?: string;
-  /** Filter by domain category */
-  domain?: RunAuditDomainFilter;
-  /** Start of time range (inclusive, ISO-8601) */
-  startTime?: string;
-  /** End of time range (inclusive, ISO-8601) */
-  endTime?: string;
-  /** Maximum number of events to return */
-  limit?: number;
-}
-
-/** Normalized run-audit event for UI consumption. */
-export interface NormalizedRunAuditEvent {
-  id: string;
-  timestamp: string;
-  taskId?: string;
-  domain: "database" | "git" | "filesystem" | "sandbox";
-  mutationType: string;
-  target: string;
-  summary: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Response shape for run-audit endpoint. */
-export interface RunAuditResponse {
-  runId: string;
-  events: NormalizedRunAuditEvent[];
-  filters: {
-    taskId?: string;
-    domain?: RunAuditDomainFilter;
-    startTime?: string;
-    endTime?: string;
-  };
-  totalCount: number;
-  hasMore: boolean;
-}
-
-/** Unified timeline entry that can represent either an audit event or an agent log entry. */
-export interface TimelineEntry {
-  timestamp: string;
-  type: "audit" | "log";
-  sortKey: string;
-  audit?: NormalizedRunAuditEvent;
-  log?: AgentLogEntry;
-}
-
-/** Response shape for run-timeline endpoint. */
-export interface RunTimelineResponse {
-  run: {
-    id: string;
-    agentId: string;
-    startedAt: string;
-    endedAt?: string;
-    status: string;
-    taskId?: string;
-  };
-  auditByDomain: {
-    database: NormalizedRunAuditEvent[];
-    git: NormalizedRunAuditEvent[];
-    filesystem: NormalizedRunAuditEvent[];
-    sandbox: NormalizedRunAuditEvent[];
-  };
-  counts: {
-    auditEvents: number;
-    logEntries: number;
-  };
-  timeline: TimelineEntry[];
-}
-
-/**
- * Fetch normalized run-audit events for a specific agent run.
- *
- * @param agentId - The agent ID
- * @param runId - The run ID
- * @param filters - Optional filter parameters
- * @param projectId - Optional project ID for multi-project workspaces
- * @returns Promise resolving to RunAuditResponse with normalized events
- * @throws Error if runId is blank or whitespace-only
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `run-audit` imports while implementations live in run-audit.ts.
  */
-export function fetchAgentRunAudit(
-  agentId: string,
-  runId: string,
-  filters?: RunAuditFilters,
-  projectId?: string,
-): Promise<RunAuditResponse> {
-  // Validate runId before making API call
-  if (!runId || runId.trim().length === 0) {
-    throw new Error("runId is required");
-  }
+export {
+  acceptTaskReview,
+  addressPrFeedback,
+  assignTask,
+  assignTaskToUser,
+  fetchAgentChildren,
+  fetchAgentEmployees,
+  fetchAgentRunAudit,
+  fetchAgentRunTimeline,
+  fetchAgentStats,
+  fetchAgentTasks,
+  fetchChainOfCommand,
+  fetchOrgTree,
+  fetchTaskReview,
+  fetchTaskReviewData,
+  refreshTaskReview,
+  refreshTaskReviewData,
+  resolveAgent,
+  returnTaskToAgent,
+  reviseTaskReviewItems,
+} from "./run-audit.js";
+export type {
+  NormalizedRunAuditEvent,
+  RunAuditDomainFilter,
+  RunAuditFilters,
+  RunAuditResponse,
+  RunTimelineResponse,
+  TimelineEntry,
+} from "./run-audit.js";
 
-  const params = new URLSearchParams();
-  if (filters?.taskId) params.set("taskId", filters.taskId);
-  if (filters?.domain) params.set("domain", filters.domain);
-  if (filters?.startTime) params.set("startTime", filters.startTime);
-  if (filters?.endTime) params.set("endTime", filters.endTime);
-  if (filters?.limit !== undefined) params.set("limit", String(filters.limit));
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<RunAuditResponse>(
-    withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/audit${query}`, projectId),
-  );
-}
-
-/**
- * Fetch a correlated timeline combining run-audit events and agent logs for a specific run.
- *
- * @param agentId - The agent ID
- * @param runId - The run ID
- * @param options - Optional parameters
- * @param options.taskId - Override task ID for audit filtering (defaults to run's contextSnapshot.taskId)
- * @param options.domain - Filter audit events by domain
- * @param options.startTime - Start of time range (ISO-8601)
- * @param options.endTime - End of time range (ISO-8601)
- * @param options.includeLogs - Whether to include agent logs (default true)
- * @param options.limit - Maximum audit events to return
- * @param projectId - Optional project ID for multi-project workspaces
- * @returns Promise resolving to RunTimelineResponse with merged timeline
- * @throws Error if runId is blank or whitespace-only
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `agent-import-generation` imports while implementations live in agent-import-generation.ts.
  */
-export function fetchAgentRunTimeline(
-  agentId: string,
-  runId: string,
-  options?: {
-    taskId?: string;
-    domain?: RunAuditDomainFilter;
-    startTime?: string;
-    endTime?: string;
-    includeLogs?: boolean;
-    limit?: number;
-  },
-  projectId?: string,
-): Promise<RunTimelineResponse> {
-  // Validate runId before making API call
-  if (!runId || runId.trim().length === 0) {
-    throw new Error("runId is required");
-  }
-
-  const params = new URLSearchParams();
-  if (options?.taskId) params.set("taskId", options.taskId);
-  if (options?.domain) params.set("domain", options.domain);
-  if (options?.startTime) params.set("startTime", options.startTime);
-  if (options?.endTime) params.set("endTime", options.endTime);
-  if (options?.includeLogs !== undefined) params.set("includeLogs", String(options.includeLogs));
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<RunTimelineResponse>(
-    withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/timeline${query}`, projectId),
-  );
-}
-
-/** Fetch aggregate agent stats */
-export function fetchAgentStats(projectId?: string, options?: FetchOptions): Promise<AgentStats> {
-  const path = withProjectId("/agents/stats", projectId);
-  return dedupe(path, () => api<AgentStats>(path), options);
-}
-
-/** Fetch the chain of command for an agent (self → manager → grand-manager → ...) */
-export function fetchChainOfCommand(agentId: string, projectId?: string): Promise<Agent[]> {
-  return api<Agent[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/chain-of-command`, projectId));
-}
-
-/** Fetch the full org tree as nested nodes */
-export function fetchOrgTree(projectId?: string, options?: { includeEphemeral?: boolean }): Promise<OrgTreeNode[]> {
-  const params = new URLSearchParams();
-  if (projectId) params.set("projectId", projectId);
-  if (options?.includeEphemeral) params.set("includeEphemeral", "true");
-  const query = params.toString();
-  return api<OrgTreeNode[]>(`/agents/org-tree${query ? `?${query}` : ""}`);
-}
-
-/** Resolve an agent by shortname or ID */
-export function resolveAgent(shortname: string, projectId?: string): Promise<{ agent: Agent }> {
-  return api<{ agent: Agent }>(withProjectId(`/agents/resolve/${encodeURIComponent(shortname)}`, projectId));
-}
-
-/** Fetch employees (agents that report to a given parent agent) */
-export function fetchAgentChildren(agentId: string, projectId?: string): Promise<Agent[]> {
-  return api<Agent[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/children`, projectId)).catch((err: Error) => {
-    // Return empty array for 404 (agent may have been deleted)
-    if (err.message.includes("not found")) return [];
-    throw err;
-  });
-}
-
-/** Alias for fetchAgentChildren with employee-focused naming */
-export const fetchAgentEmployees = fetchAgentChildren;
-
-/** Assign or unassign a task to an explicit agent */
-export function assignTask(taskId: string, agentId: string | null, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/assign`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify({ agentId }),
-  });
-}
-
-/** Assign or unassign a task to a user (for review handoff) */
-export function assignTaskToUser(taskId: string, userId: string | null, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/assign-user`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify({ userId }),
-  });
-}
-
-/** Accept review - clear assignee and awaiting-user-review status, keep in in-review */
-export function acceptTaskReview(taskId: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/accept-review`, projectId), {
-    method: "POST",
-  });
-}
-
-function mapTaskReviewDataToLegacy(data: TaskReviewData): TaskReviewResponse {
-  const fetchedAt = data.fetchedAt ?? undefined;
-  const canonicalItems = data.items.map((item) => ({
-    id: item.itemId,
-    body: item.body,
-    author: { login: item.author },
-    createdAt: item.createdAt ?? new Date(0).toISOString(),
-    updatedAt: item.updatedAt ?? undefined,
-    path: item.filePath,
-    threadId: item.threadId,
-    htmlUrl: item.url,
-    state: item.reviewState ?? undefined,
-    summary: item.title ?? undefined,
-    isResolved: item.isResolved,
-    ...(typeof item.line === "number" ? { line: item.line } : {}),
-  }));
-
-  return {
-    reviewState: {
-      source: data.mode,
-      summary: data.summary ?? undefined,
-      items: canonicalItems,
-      addressing: data.items
-        .filter((item) => item.progressStatus != null)
-        .map((item) => ({
-          itemId: item.itemId,
-          status: item.progressStatus ?? "queued",
-          selectedAt: item.createdAt ?? fetchedAt ?? new Date(0).toISOString(),
-          snapshot: {
-            itemId: item.itemId,
-            sourceMode: item.sourceMode,
-            source: item.sourceMode === "pull-request" ? "pr-review" : "reviewer-agent",
-            summary: item.title || item.body.slice(0, 120),
-            body: item.body,
-            authorLogin: item.author,
-            filePath: item.filePath,
-            lineNumber: item.line,
-            threadId: item.threadId,
-            url: item.url,
-          },
-        })),
-      lastRefreshedAt: fetchedAt,
-      refreshStatus: "ready",
-      refreshSource: "initial-load",
-    },
-    automationStatus: null,
-  };
-}
-
-/** Fetch normalized task review data (PR mode or direct mode) */
-export async function fetchTaskReview(taskId: string, projectId?: string): Promise<TaskReviewResponse> {
-  const data = await api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review`, projectId));
-  return mapTaskReviewDataToLegacy(data);
-}
-
-/** Fetch canonical review payload for future review-tab rendering. */
-export function fetchTaskReviewData(taskId: string, projectId?: string): Promise<TaskReviewData> {
-  return api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review`, projectId));
-}
-
-/** Refresh normalized task review data (PR mode or direct mode) */
-export async function refreshTaskReview(taskId: string, projectId?: string): Promise<RefreshTaskReviewResponse> {
-  const data = await api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/refresh`, projectId), {
-    method: "POST",
-  });
-  return mapTaskReviewDataToLegacy(data);
-}
-
-/** Refresh canonical review payload for future review-tab rendering. */
-export function refreshTaskReviewData(taskId: string, projectId?: string): Promise<TaskReviewData> {
-  return api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/refresh`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Request an in-place revision pass for selected review items */
-export function reviseTaskReviewItems(taskId: string, selectedItems: SelectedReviewItem[], projectId?: string): Promise<ReviseTaskReviewResponse> {
-  return api<ReviseTaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/address`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ selectedItems, tab: "review" }),
-  });
-}
-
-/** Request an AI pass that addresses open pull-request feedback for the task's primary PR. */
-export function addressPrFeedback(taskId: string, projectId?: string): Promise<AddressPrFeedbackResponse> {
-  return api<AddressPrFeedbackResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/pr/address-feedback`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Return task to agent - clear assignee and status, move to todo */
-export function returnTaskToAgent(taskId: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/return-to-agent`, projectId), {
-    method: "POST",
-  });
-}
-
-/** Fetch tasks explicitly assigned to an agent */
-export function fetchAgentTasks(agentId: string, projectId?: string): Promise<Task[]> {
-  return api<Task[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/tasks`, projectId));
-}
-
-// ── Agent Import API ────────────────────────────────────────────────────────
-
-/** Company entry from companies.sh catalog */
-export interface CompanyEntry {
-  slug: string;
-  name: string;
-  tagline?: string;
-  repo?: string;
-  website?: string;
-  installs?: number;
-}
-
-/** Response from companies.sh catalog API */
-export interface CompaniesCatalogResponse {
-  companies: CompanyEntry[];
-  error?: string;
-}
-
-/** Result of importing agents from an Agent Companies source */
-export interface AgentImportResult {
-  companyName?: string;
-  companySlug?: string;
-  agents?: Array<{ name: string; role: string; title?: string; skills?: string[] }>;
-  /** In dry-run mode: agent name strings. In live mode: agent objects with id and name. */
-  created: string[] | Array<{ id: string; name: string }>;
-  skipped: string[];
-  errors: Array<{ name: string; error: string }>;
-  dryRun?: boolean;
-}
-
-/**
- * Fetch companies from companies.sh catalog.
- * Returns both companies and optional error message for proper error surfacing.
- */
-export function fetchCompanies(): Promise<CompaniesCatalogResponse> {
-  return api<CompaniesCatalogResponse>("/agents/companies");
-}
-
-/**
- * Import agents from an Agent Companies source via the API.
- * Uses dryRun for preview, then actual import.
- *
- * Supports four input modes:
- * - { manifest: string } - raw AGENTS.md content
- * - { source: string } - server directory path
- * - { agents: unknown[] } - parsed agent manifests
- * - { importSource: "companies.sh", companySlug: string } - companies.sh catalog entry
- */
-export function importAgents(
-  input:
-    | { manifest: string }
-    | { source: string }
-    | { agents: unknown[] }
-    | { importSource: "companies.sh"; companySlug: string },
-  options?: { dryRun?: boolean; skipExisting?: boolean },
-  projectId?: string,
-): Promise<AgentImportResult> {
-  return api<AgentImportResult>(withProjectId("/agents/import", projectId), {
-    method: "POST",
-    body: JSON.stringify({
-      ...input,
-      dryRun: options?.dryRun ?? false,
-      skipExisting: options?.skipExisting ?? true,
-    }),
-  });
-}
-
-// ── Agent Generation API ────────────────────────────────────────────────────
-
-/** Generated agent specification returned by the AI */
-export interface AgentGenerationSpec {
-  /** Display name for the agent */
-  title: string;
-  /** Single emoji icon */
-  icon: string;
-  /** Agent capability/role */
-  role: string;
-  /** Brief description of the agent's purpose */
-  description: string;
-  /** Detailed system prompt in markdown */
-  systemPrompt: string;
-  /** Suggested thinking level */
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  /** Suggested max turns (1-500) */
-  maxTurns: number;
-}
-
-/** State of an agent generation session */
-export interface AgentGenerationSession {
-  id: string;
-  roleDescription: string;
-  spec?: AgentGenerationSpec;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Start an agent generation session with a role description */
-export function startAgentGeneration(role: string, projectId?: string): Promise<{ sessionId: string; roleDescription: string }> {
-  return api<{ sessionId: string; roleDescription: string }>(withProjectId("/agents/generate/start", projectId), {
-    method: "POST",
-    body: JSON.stringify({ role }),
-  });
-}
-
-/** Generate the agent specification for an existing session */
-export function generateAgentSpec(sessionId: string, projectId?: string): Promise<{ spec: AgentGenerationSpec }> {
-  return api<{ spec: AgentGenerationSpec }>(withProjectId("/agents/generate/spec", projectId), {
-    method: "POST",
-    body: JSON.stringify({ sessionId }),
-  });
-}
-
-/** Get the current state of an agent generation session */
-export function getAgentGenerationSession(sessionId: string, projectId?: string): Promise<{ session: AgentGenerationSession }> {
-  return api<{ session: AgentGenerationSession }>(withProjectId(`/agents/generate/${encodeURIComponent(sessionId)}`, projectId));
-}
-
-/** Cancel and clean up an agent generation session */
-export function cancelAgentGeneration(sessionId: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId(`/agents/generate/${encodeURIComponent(sessionId)}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-// --- Backup API ---
-
-/** Backup metadata from the API */
-export interface BackupInfo {
-  filename: string;
-  createdAt: string;
-  size: number;
-  path: string;
-}
-
-/** Result of listing backups */
-export interface BackupListResponse {
-  backups: BackupInfo[];
-  count: number;
-  totalSize: number;
-}
-
-/** Result of creating a backup */
-export interface BackupCreateResponse {
-  success: boolean;
-  backupPath?: string;
-  output?: string;
-  deletedCount?: number;
-  error?: string;
-}
-
-/** Fetch all database backups */
-export function fetchBackups(projectId?: string): Promise<BackupListResponse> {
-  return api<BackupListResponse>(withProjectId("/backups", projectId));
-}
-
-/** Create a new database backup immediately */
-export function createBackup(projectId?: string): Promise<BackupCreateResponse> {
-  return api<BackupCreateResponse>(withProjectId("/backups", projectId), { method: "POST" });
-}
-
-// --- Settings Export/Import API ---
-
-/** Exported settings data structure */
-export interface SettingsExportData {
-  version: 1;
-  exportedAt: string;
-  source?: string;
-  global?: GlobalSettings;
-  project?: Partial<ProjectSettings>;
-}
-
-/** Result of importing settings */
-export interface SettingsImportResponse {
-  success: boolean;
-  globalCount: number;
-  projectCount: number;
-  workflowSettingsCount: number;
-  error?: string;
-}
-
-/** Export settings as JSON */
-export function exportSettings(scope?: 'global' | 'project' | 'both', projectId?: string): Promise<SettingsExportData> {
-  const path = withProjectId("/settings/export", projectId);
-  const scopedPath = scope ? `${path}${path.includes("?") ? "&" : "?"}scope=${encodeURIComponent(scope)}` : path;
-  return api<SettingsExportData>(scopedPath);
-}
-
-/** Import settings from JSON data */
-export function importSettings(
-  data: SettingsExportData,
-  options?: { scope?: 'global' | 'project' | 'both'; merge?: boolean },
-  projectId?: string
-): Promise<SettingsImportResponse> {
-  return api<SettingsImportResponse>(withProjectId("/settings/import", projectId), {
-    method: "POST",
-    body: JSON.stringify({
-      data,
-      scope: options?.scope ?? "both",
-      merge: options?.merge ?? true,
-    }),
-  });
-}
+export {
+  cancelAgentGeneration,
+  createBackup,
+  exportSettings,
+  fetchBackups,
+  fetchCompanies,
+  generateAgentSpec,
+  getAgentGenerationSession,
+  importAgents,
+  importSettings,
+  startAgentGeneration,
+} from "./agent-import-generation.js";
+export type {
+  AgentGenerationSession,
+  AgentGenerationSpec,
+  AgentImportResult,
+  BackupCreateResponse,
+  BackupInfo,
+  BackupListResponse,
+  CompaniesCatalogResponse,
+  CompanyEntry,
+  SettingsExportData,
+  SettingsImportResponse,
+} from "./agent-import-generation.js";
 
 // --- AI Summarization API ---
 
@@ -4701,66 +2410,21 @@ export type {
   TaskStatsSnapshot,
 } from "./projects.js";
 
-// ── Task Diff API ──────────────────────────────────────────────────────────
-
-/** Task diff information */
-export interface TaskDiff {
-  files: Array<{
-    path: string;
-    status: "added" | "modified" | "deleted";
-    additions: number;
-    deletions: number;
-    patch: string;
-  }>;
-  stats: {
-    filesChanged: number;
-    additions: number;
-    deletions: number;
-  };
-}
-
-/** Fetch diff for a task's changes */
-export function fetchTaskDiff(taskId: string, worktree?: string, projectId?: string): Promise<TaskDiff> {
-  const params = new URLSearchParams();
-  if (worktree) params.set("worktree", worktree);
-  if (projectId) params.set("projectId", projectId);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<TaskDiff>(`/tasks/${encodeURIComponent(taskId)}/diff${query}`);
-}
-
-export interface TaskCommitAssociationRow {
-  commitSha: string;
-  commitSubject: string;
-  authoredAt: string;
-  matchedBy: "canonical-lineage-trailer" | "legacy-task-id-trailer" | "legacy-subject" | "manual-reconciliation";
-  confidence: "canonical" | "legacy" | "ambiguous";
-  taskIdSnapshot: string;
-  note?: string;
-}
-
-export interface TaskCommitAssociationsResponse {
-  taskId: string;
-  lineageId: string | null;
-  associations: TaskCommitAssociationRow[];
-}
-
-/** Fetch lineage commit associations for a task */
-export function fetchTaskCommitAssociations(taskId: string, projectId?: string): Promise<TaskCommitAssociationsResponse> {
-  return api<TaskCommitAssociationsResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/commit-associations`, projectId));
-}
-
-/** Individual file diff */
-export interface TaskFileDiff {
-  path: string;
-  status: "added" | "modified" | "deleted" | "renamed";
-  diff: string;
-  oldPath?: string;
-}
-
-/** Fetch file diffs for a task */
-export function fetchTaskFileDiffs(taskId: string, projectId?: string): Promise<TaskFileDiff[]> {
-  return api<TaskFileDiff[]>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/file-diffs`, projectId));
-}
+/*
+ * FNXC:CodeOrganization 2026-07-20-10:00:
+ * Preserve legacy `task-diff` imports while implementations live in task-diff.ts.
+ */
+export {
+  fetchTaskCommitAssociations,
+  fetchTaskDiff,
+  fetchTaskFileDiffs,
+} from "./task-diff.js";
+export type {
+  TaskCommitAssociationRow,
+  TaskCommitAssociationsResponse,
+  TaskDiff,
+  TaskFileDiff,
+} from "./task-diff.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:

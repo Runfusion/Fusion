@@ -5767,162 +5767,47 @@ export interface PluginActivationInput {
   activatedAt?: string;
 }
 
-// ── Run Audit Types ───────────────────────────────────────────────────────────
+// ── run-audit ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-20-10:00: Peels live in types/run-audit.ts
 
-/** Domain categories for run-audit events.
- *  - "database": TaskStore mutations (task updates, comments, etc.)
- *  - "git": Git operations (commits, branches, merges)
- *  - "filesystem": File system mutations (file reads/writes, attachments)
- *  - "sandbox": Sandbox backend lifecycle events for user-configured command execution */
-export type RunAuditDomain = "database" | "git" | "filesystem" | "sandbox";
+import type {
+  RunAuditDomain,
+  RunAuditEvent,
+  RunAuditEventFilter,
+  RunAuditEventInput,
+  RunAuditMutationType,
+} from "./types/run-audit.js";
+export type {
+  RunAuditDomain,
+  RunAuditEvent,
+  RunAuditEventFilter,
+  RunAuditEventInput,
+  RunAuditMutationType,
+};
 
-export type RunAuditMutationType =
-  | "mergeQueue:enqueue"
-  | "mergeQueue:lease-acquired"
-  | "mergeQueue:lease-released"
-  | "mergeQueue:lease-expired"
-  | "task:handoff"
-  | "task:handoff-invariant-violation"
-  | "overseer:intervention"
-  | (string & {});
+// ── planner-intervention ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-20-10:00: Peels live in types/planner-intervention.ts
 
-/** Input for recording a run-audit event. */
-export interface RunAuditEventInput {
-  /** ISO-8601 timestamp when the event occurred. Defaults to current time if not provided. */
-  timestamp?: string;
-  /** Task ID associated with this event (if applicable). */
-  taskId?: string;
-  /** Agent ID that performed the mutation. */
-  agentId: string;
-  /** Heartbeat run ID that initiated this mutation. */
-  runId: string;
-  /** The domain/category of the mutation. */
-  domain: RunAuditDomain;
-  /** Type of mutation (for example "task:update", "task:move", "task:handoff", "task:handoff-invariant-violation", "mergeQueue:enqueue", "git:commit", or "file:write"). */
-  mutationType: RunAuditMutationType;
-  /** Target of the mutation (e.g., task ID, file path, branch name). */
-  target: string;
-  /** Optional structured metadata about the mutation (compact, actionable data). */
-  metadata?: Record<string, unknown>;
-}
-
-/** A persisted run-audit event record. */
-export interface RunAuditEvent {
-  /** Unique event identifier */
-  id: string;
-  /** ISO-8601 timestamp when the event occurred */
-  timestamp: string;
-  /** Task ID associated with this event (if applicable) */
-  taskId?: string;
-  /** Agent ID that performed the mutation */
-  agentId: string;
-  /** Heartbeat run ID that initiated this mutation */
-  runId: string;
-  /** The domain/category of the mutation */
-  domain: RunAuditDomain;
-  /** Type of mutation (e.g., "task:update", "git:commit", "file:write") */
-  mutationType: RunAuditMutationType;
-  /** Target of the mutation (e.g., task ID, file path, branch name) */
-  target: string;
-  /** Optional structured metadata about the mutation */
-  metadata?: Record<string, unknown>;
-}
-
-/** Filter options for querying run-audit events. */
-export interface RunAuditEventFilter {
-  /** Filter by heartbeat run ID. */
-  runId?: string;
-  /** Filter by task ID. */
-  taskId?: string;
-  /** Filter by agent ID. */
-  agentId?: string;
-  /** Filter by domain. */
-  domain?: RunAuditDomain;
-  /** Filter by mutation type. */
-  mutationType?: RunAuditMutationType;
-  /** Start of time range (inclusive). */
-  startTime?: string;
-  /** End of time range (inclusive). */
-  endTime?: string;
-  /** Maximum number of events to return. */
-  limit?: number;
-}
-
-// ── Planner Intervention Timeline Types ─────────────────────────────────────
-
-/**
- * FNXC:PlannerOversight 2026-07-04-18:00:
- * FN-7519 introduces a structured intervention-timeline entry so operators can
- * see, per task, exactly why and how the planner overseer stepped in. Each
- * entry records six field groups: the watched STAGE (executor / reviewer /
- * merger / pull-request / workflow-gate), the REASON for intervention, the
- * ACTION taken, the OUTCOME, the bounded-recovery ATTEMPT count/limit, and
- * SOURCE LINKS to supporting evidence (agent logs, review comments, failed
- * checks, merge errors, or PR state). Entries persist as run-audit events
- * under the canonical `overseer:intervention` mutation type (see
- * `OVERSEER_INTERVENTION_MUTATION` and `packages/core/src/planner-intervention.ts`)
- * so no parallel audit store is introduced. This task owns the entry SHAPE
- * and its record/read helpers only — FN-7511/FN-7512 produce interventions
- * and FN-7520 wires the emission call-sites at overseer decision points.
- */
-export type PlannerOversightStage = "executor" | "reviewer" | "merger" | "pull-request" | "workflow-gate";
-
-export type PlannerInterventionAction =
-  | "observe"
-  | "inject-guidance"
-  | "retry"
-  | "request-fix"
-  | "escalate"
-  | "request-confirmation";
-
-export type PlannerInterventionOutcome = "succeeded" | "failed" | "pending" | "awaiting-confirmation" | "skipped";
-
-/** A single piece of evidence backing an intervention entry (agent log, review comment, failed check, merge error, or PR state; `url` is a generic fallback). */
-export interface PlannerInterventionSourceLink {
-  kind: "agent-log" | "review-comment" | "failed-check" | "merge-error" | "pr-state" | "url";
-  /** Human-readable label for the link (e.g. "Agent log", "Review comment #3"). */
-  label: string;
-  /** Opaque identifier for the target evidence (run ID, comment ID, check name, etc). Optional — the UI degrades gracefully when absent. */
-  target?: string;
-  /** Direct URL to the evidence, when available. Optional. */
-  url?: string;
-}
-
-/** A single planner-overseer intervention timeline entry (see FNXC note above for the six field groups). */
-export interface PlannerInterventionEntry {
-  id: string;
-  taskId: string;
-  /** ISO-8601 timestamp when the intervention occurred. */
-  timestamp: string;
-  stage: PlannerOversightStage;
-  /** Why the overseer intervened (free-text, operator-facing). */
-  reason: string;
-  action: PlannerInterventionAction;
-  outcome: PlannerInterventionOutcome;
-  /** Current attempt count for bounded recovery. Present only for recovery-style actions (e.g. retry/request-fix). */
-  attemptCount?: number;
-  /** Attempt limit for bounded recovery. Present only alongside `attemptCount`. */
-  attemptLimit?: number;
-  /** Evidence links supporting this intervention (agent logs, review comments, failed checks, merge errors, PR state). */
-  sourceLinks?: PlannerInterventionSourceLink[];
-  /** Heartbeat run ID that produced this intervention, if applicable. */
-  runId?: string;
-  /** Agent ID that produced this intervention, if applicable. */
-  agentId?: string;
-  /*
-  FNXC:PlannerOversight 2026-07-13-22:45:
-  Session-advisor parity: optional severity (nit/concern/blocker) and provenance
-  source so the intervention timeline distinguishes lifecycle canned guidance
-  from live session-advisor notes and manual operator nudges. Absent on
-  pre-existing rows — parsers must tolerate missing fields.
-  */
-  severity?: "nit" | "concern" | "blocker";
-  source?: "lifecycle" | "session-advisor" | "manual";
-  advisorSlug?: string;
-}
-
-/** Canonical run-audit mutation type used to persist planner-intervention entries. Single writer: `recordPlannerIntervention` (see `packages/core/src/planner-intervention.ts`); FN-7520 reuses this helper rather than emitting `overseer:intervention` events directly. */
-export const OVERSEER_INTERVENTION_MUTATION = "overseer:intervention" as const;
+import {
+  OVERSEER_INTERVENTION_MUTATION,
+} from "./types/planner-intervention.js";
+export {
+  OVERSEER_INTERVENTION_MUTATION,
+};
+import type {
+  PlannerInterventionAction,
+  PlannerInterventionEntry,
+  PlannerInterventionOutcome,
+  PlannerInterventionSourceLink,
+  PlannerOversightStage,
+} from "./types/planner-intervention.js";
+export type {
+  PlannerInterventionAction,
+  PlannerInterventionEntry,
+  PlannerInterventionOutcome,
+  PlannerInterventionSourceLink,
+  PlannerOversightStage,
+};
 
 // ── Agent Permission / Entity Types ─────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-18-14:00: Peels live in types/agents.ts; keep stable re-exports here.
@@ -6173,6 +6058,7 @@ export interface MigrationResult {
   /** Errors encountered during migration */
   errors: Array<{ path: string; error: string }>;
 }
+
 
 // ── Messaging Types ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-18-00:35: Keep stable re-exports after main

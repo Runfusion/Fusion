@@ -8,7 +8,7 @@
  * task data layer. The runtime TaskStore now delegates ALL archive data
  * access to PostgreSQL via the async `AsyncDataLayer` (Drizzle, archive
  * schema) — see `async-archive-lineage.ts`. The SQLite path is only reachable
- * in the sync else-branch of `TaskStore.archiveDb` (remaining-ops-5.ts),
+ * in the sync else-branch of `TaskStore.archiveDb` (task-id-integrity.ts),
  * which throws in backend mode and is never constructed in production.
  *
  * This module provides a stub `ArchiveDatabase` class whose methods throw.
@@ -32,7 +32,7 @@ function throwSqliteRemoved(): never {
  *
  * FNXC:SqliteFinalRemoval 2026-06-26-09:50:
  * The SQLite ArchiveDatabase body is DELETED. This stub preserves the public
- * method signatures so consumers (remaining-ops-5.ts sync else-branch,
+ * method signatures so consumers (task-id-integrity.ts sync else-branch,
  * self-healing archive FTS calls — all gated behind backend-mode early
  * returns, and quarantined tests) continue to type-check. Every data method
  * throws because the SQLite runtime is gone.
