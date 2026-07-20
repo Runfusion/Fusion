@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { runReportPipeline, type ReportPipelineDeps, type ReportScreenshot } from "../report-pipeline.js";
 
-const settings = { reportMode: "auto-file" as const, reportRoadmapDedupeEnabled: false, githubTrackingDefaultRepo: "Runfusion/Fusion", githubAuthMode: "token", githubAuthToken: "test" };
+const settings = { reportMode: "auto-file" as const, reportDiscussionCategory: "general", reportRoadmapDedupeEnabled: false, githubTrackingDefaultRepo: "Runfusion/Fusion", githubAuthMode: "token", githubAuthToken: "test" };
 const screenshot: ReportScreenshot = { artifactId: "f1e2d3c4-b5a6-4789-8abc-def012345678", filename: "/Users/alice/private-project/evil[alt](break)!../capture.png", mimeType: "image/png", bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) };
 
 function client() {
@@ -10,6 +10,7 @@ function client() {
     searchIssues: vi.fn().mockResolvedValue([]), searchDiscussions: vi.fn().mockResolvedValue([]),
     commentOnIssue: vi.fn().mockResolvedValue({ url: "issue-comment" }), commentOnDiscussion: vi.fn().mockResolvedValue({ url: "discussion-comment" }),
     addIssueReaction: vi.fn(), addDiscussionReaction: vi.fn(),
+    listDiscussionCategories: vi.fn().mockResolvedValue([{ id: "DC_1", name: "General", slug: "general" }]),
     uploadImageAsset: vi.fn().mockResolvedValue({ rawUrl: "https://raw.githubusercontent.com/Runfusion/Fusion/main/.fusion-reports/safe/screenshot.png" }),
   };
 }
