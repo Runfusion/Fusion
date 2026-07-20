@@ -77,7 +77,7 @@ export function DbCorruptionBanner({
           defaults="Back up the project, check <cmd>database logs</cmd> and PostgreSQL connectivity and permissions, then refresh health. See <docsLink>docs/storage.md</docsLink> for storage and recovery guidance."
           components={{
             cmd: <code />,
-            docsLink: <a href="docs/storage.md" />,
+            docsLink: <a href="/docs/storage.md" />,
           }}
         />
       </p>

@@ -5360,8 +5360,8 @@ export class SelfHealingManager {
             ntfyBaseUrl: settings.ntfyBaseUrl,
             ntfyAccessToken: settings.ntfyAccessToken,
             topic: settings.ntfyTopic!,
-            title: "Database health check failed",
-            message: `PostgreSQL health check reported a failure. Errors: ${errors.join(" | ") || "unknown"}.`,
+            title: "Database corruption detected",
+            message: `Background SQLite integrity check detected corruption. Errors: ${errors.join(" | ") || "unknown"}.`,
             priority: "urgent",
             clickUrl,
           });

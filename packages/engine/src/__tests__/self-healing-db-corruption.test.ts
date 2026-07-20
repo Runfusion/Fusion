@@ -183,7 +183,7 @@ describe("FN-5284: self-healing DB corruption surfacing", () => {
     );
   });
 
-  it("uses PostgreSQL health wording for the fallback ntfy notification", async () => {
+  it("uses SQLite corruption wording for the fallback ntfy notification", async () => {
     const store = createMockStore({
       getDatabaseHealth: vi.fn().mockReturnValue({
         healthy: false,
@@ -200,8 +200,8 @@ describe("FN-5284: self-healing DB corruption surfacing", () => {
 
     expect(notifierModule.sendNtfyNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Database health check failed",
-        message: "PostgreSQL health check reported a failure. Errors: connection refused.",
+        title: "Database corruption detected",
+        message: "Background SQLite integrity check detected corruption. Errors: connection refused.",
       }),
     );
   });

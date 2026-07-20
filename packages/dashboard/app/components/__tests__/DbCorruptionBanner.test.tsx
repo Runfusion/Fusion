@@ -22,7 +22,7 @@ describe("DbCorruptionBanner", () => {
     expect(screen.getByText("bad index")).toBeInTheDocument();
     expect(screen.getByText(/PostgreSQL health check reported a failure/)).toBeInTheDocument();
     expect(screen.getByText("database logs")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "docs/storage.md" })).toHaveAttribute("href", "docs/storage.md");
+    expect(screen.getByRole("link", { name: "docs/storage.md" })).toHaveAttribute("href", "/docs/storage.md");
     expect(screen.queryByText(/\[object Object\]|\{\{link\}\}/)).not.toBeInTheDocument();
   });
 
