@@ -684,6 +684,11 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Validate plan" })).toBeDefined();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
+
+      await waitFor(() => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
 
@@ -1048,6 +1053,15 @@ describe("PlanningModeModal", () => {
         target: { value: "Build auth system" },
       });
       fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Validate plan" })).toBeDefined();
+      });
+      mockValidatePlanningSession.mockResolvedValueOnce({
+        summary: { ...mockSummary, description },
+        validated: true,
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
 
       await waitFor(() => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();

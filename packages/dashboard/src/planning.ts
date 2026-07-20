@@ -222,6 +222,11 @@ async function ensureNtfyHelpersReady(): Promise<void> {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
+/*
+FNXC:PlanningMode 2026-07-20-00:55:
+Planning Mode is user-terminated: each answered turn must produce one consequential, novel question with alternatives and trade-offs.
+The model may update the running plan but must never infer completion; only the visible Validate plan action can make a session terminal.
+*/
 /** Planning system prompt for the AI agent */
 export const PLANNING_SYSTEM_PROMPT = `You are a planning assistant for the fn task board system. First analyze the codebase and active board with the available read tools, fn_task_list, and fn_task_show. Turn a raw idea into an incrementally maintained plan.
 
@@ -2547,7 +2552,8 @@ function formatRefineRequestForAgent(summary: PlanningSummary): string {
   return [
     "The user clicked Refine Further on the planning summary.",
     "Continue the planning interview from the existing context.",
-    "Either ask one focused follow-up question or return an updated completion summary if sufficient.",
+    "Ask exactly one focused, high-impact follow-up question with alternatives and pros/cons.",
+    "Do not return a completion response: only the user can validate a plan.",
     "Current summary:",
     JSON.stringify(summary),
   ].join("\n\n");
@@ -2910,7 +2916,13 @@ export function formatResponseForAgent(
       break;
   }
 
-  return comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
+  const answerContext = comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
+  /*
+  FNXC:PlanningMode 2026-07-20-00:55:
+  System prompts can be displaced by long tool/context turns. Repeat the per-answer contract at the invocation boundary
+  so every submitted answer steers the following high-impact question instead of inviting a model-generated completion.
+  */
+  return `${answerContext}\n\nIncorporate this answer into the running plan, then ask exactly one new, high-impact question that does not repeat a prior question. Offer alternatives with pros and cons. Do not complete or validate the plan; only the user can validate it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {

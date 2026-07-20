@@ -151,6 +151,8 @@ describe("reactive Planning Mode question contract", () => {
     }, "/tmp/project", undefined, MOCK_TASK_STORE);
     expect(next).toEqual(expect.objectContaining({ type: "question", data: expect.objectContaining({ id: "rollout" }) }));
     expect(prompts.at(-1)).toContain("Ask about audit-log security before anything else.");
+    expect(prompts.at(-1)).toContain("exactly one new, high-impact question");
+    expect(prompts.at(-1)).toContain("only the user can validate it");
     expect(events.filter((type) => type === "summary")).toHaveLength(2);
 
     await validateSession(sessionId);

@@ -273,7 +273,7 @@ describe("PlanningModeModal", () => {
   });
 
   describe("Planning flow", () => {
-    it.each(["desktop", "mobile"] as const)("FN-6977 renders malformed live summary without generic error on %s", async (viewportMode) => {
+    it.each(["desktop", "mobile"] as const)("FN-6977 keeps malformed live running plans non-terminal on %s", async (viewportMode) => {
       mockViewport(viewportMode);
       mockStartPlanningStreaming.mockResolvedValueOnce({ sessionId: `session-fn-6977-live-${viewportMode}` });
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
@@ -307,13 +307,53 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
-        expect(screen.getByText("Planning Complete!")).toBeDefined();
+        expect(screen.getByRole("complementary", { name: "Running plan" })).toBeDefined();
       });
 
       expect(screen.getByText("Live Planning Mode summary omitted deliverable arrays")).toBeDefined();
-      expect(screen.queryByText(/Something went wrong/i)).toBeNull();
-      expect(screen.getByRole("button", { name: "Create Single Task" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeEnabled();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Validate plan" })).toBeEnabled();
+    });
+
+    it("keeps the interview open when running-plan summaries arrive before and after questions", async () => {
+      let streamHandlers: Record<string, ((value: any) => void) | undefined> = {};
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        queuePlanningStreamEvent(() => {
+          handlers.onSummary?.({ ...mockSummary, title: "Before question running plan" });
+          handlers.onQuestion?.(mockQuestion);
+        });
+        return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Keep the interview open" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      expect(await screen.findByText(mockQuestion.question)).toBeDefined();
+      expect(screen.getByText("Before question running plan")).toBeDefined();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+
+      await act(async () => {
+        streamHandlers.onSummary?.({ ...mockSummary, title: "After question running plan" });
+      });
+
+      expect(screen.getByText(mockQuestion.question)).toBeDefined();
+      expect(screen.getByText("After question running plan")).toBeDefined();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();
     });
 
     it("starts planning and shows question view", async () => {
@@ -1328,7 +1368,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-spinner-single-task",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -1394,7 +1434,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-spinner-isolation-single-task",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create a single task" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create a single task" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -1463,7 +1503,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-spinner-breakdown-start",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and break down" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and break down" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -1529,7 +1569,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-spinner-isolation-breakdown",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and break down into tasks" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and break down into tasks" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -1598,7 +1638,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-spinner-breakdown-create",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create tasks" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create tasks" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -1669,7 +1709,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Malformed summary without arrays",
-        inputPayload: JSON.stringify({ initialPlan: "Recover malformed summary" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover malformed summary" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(malformedSummary),
@@ -1713,7 +1753,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Malformed summary create task",
-        inputPayload: JSON.stringify({ initialPlan: "Recover malformed summary and create" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover malformed summary and create" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(malformedSummary),
@@ -1779,7 +1819,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Malformed summary breakdown",
-        inputPayload: JSON.stringify({ initialPlan: "Recover malformed summary and break down" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover malformed summary and break down" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(malformedSummary),
@@ -1931,7 +1971,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-ready planning output",
-        inputPayload: JSON.stringify({ initialPlan: "Build resilient planning resume" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Build resilient planning resume" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2100,7 +2140,7 @@ describe("PlanningModeModal", () => {
             type: "planning",
             status: "complete",
             title: completedSummary.title,
-            inputPayload: JSON.stringify({ initialPlan: "Recover completed session" }),
+            inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover completed session" }),
             conversationHistory: "[]",
             currentQuestion: null,
             result: JSON.stringify(completedSummary),
@@ -2392,7 +2432,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Malformed result session",
-        inputPayload: JSON.stringify({ initialPlan: "Recover malformed result" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover malformed result" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: "{",
@@ -2453,7 +2493,7 @@ describe("PlanningModeModal", () => {
           type: "planning",
           status: "complete",
           title: "Reopen recover session",
-          inputPayload: JSON.stringify({ initialPlan: "Reopen recover session" }),
+          inputPayload: JSON.stringify({ validated: true, initialPlan: "Reopen recover session" }),
           conversationHistory: "[]",
           currentQuestion: null,
           result: JSON.stringify(reopenedSummary),
@@ -2468,7 +2508,7 @@ describe("PlanningModeModal", () => {
           type: "planning",
           status: "complete",
           title: "Reopen recover session",
-          inputPayload: JSON.stringify({ initialPlan: "Reopen recover session" }),
+          inputPayload: JSON.stringify({ validated: true, initialPlan: "Reopen recover session" }),
           conversationHistory: "[]",
           currentQuestion: null,
           result: "{",
@@ -2611,7 +2651,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-task",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2685,7 +2725,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-task-priority",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create with priority" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create with priority" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2742,7 +2782,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-branch-controls",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create with branch controls" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create with branch controls" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2833,7 +2873,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-branch-breakdown",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and create breakdown with branch controls" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and create breakdown with branch controls" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2920,7 +2960,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-breakdown-priority",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and break down with priority" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and break down with priority" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -2994,7 +3034,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-breakdown-compact",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and break down compactly" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and break down compactly" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -3084,7 +3124,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-breakdown-add-subtask",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and add a subtask" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and add a subtask" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -3172,7 +3212,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: "Resume-to-breakdown-remove-subtask",
-        inputPayload: JSON.stringify({ initialPlan: "Recover and remove a subtask" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Recover and remove a subtask" }),
         conversationHistory: "[]",
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -3268,7 +3308,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: resumedSummary.title,
-        inputPayload: JSON.stringify({ initialPlan: "Build planning history restore" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Build planning history restore" }),
         conversationHistory: JSON.stringify(restoredHistory),
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -3330,7 +3370,7 @@ describe("PlanningModeModal", () => {
         type: "planning",
         status: "complete",
         title: resumedSummary.title,
-        inputPayload: JSON.stringify({ initialPlan: "Build planning history restore" }),
+        inputPayload: JSON.stringify({ validated: true, initialPlan: "Build planning history restore" }),
         conversationHistory: JSON.stringify(restoredHistory),
         currentQuestion: null,
         result: JSON.stringify(resumedSummary),
@@ -3580,6 +3620,7 @@ describe("PlanningModeModal", () => {
       await screen.findByText("What is the scope?");
       expect(screen.getAllByRole("button", { name: "Next question" })).toHaveLength(1);
       expect(screen.getByRole("radio", { name: "Other (write your own)" })).toBeDefined();
+      expect(screen.queryByLabelText(/follow-up clarification questions/i)).toBeNull();
       expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
       expect(screen.queryByRole("button", { name: /Copy prompt/i })).toBeNull();
       expect(screen.queryByText(/Question .* of ~3/i)).toBeNull();
@@ -3613,6 +3654,8 @@ describe("PlanningModeModal", () => {
       render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId={`session-${status}`} />);
 
       expect(await screen.findByRole("complementary", { name: "Running plan" })).toHaveTextContent(mockSummary.title);
+      expect(screen.getByRole("complementary", { name: "Answered questions" })).toBeDefined();
+      expect(screen.queryByRole("complementary", { name: "Planning sessions" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
       await waitFor(() => expect(mockValidatePlanningSession).toHaveBeenCalledWith(`session-${status}`, undefined));
     });

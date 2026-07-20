@@ -35,7 +35,6 @@ import {
   summarizePlanningDraftTitle,
   updatePlanningSessionTitle,
   updateGlobalSettings,
-  fetchGlobalSettings,
   type PlanningSession,
   type SubtaskItem,
   type PlanningSubtaskDraft,
@@ -106,6 +105,27 @@ type ViewState =
   | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
   | { type: "loading" };
+
+/**
+ * FNXC:PlanningMode 2026-07-20-00:00:
+ * A persisted planning `result` is an evolving running plan, not proof that the interview ended.
+ * Only the explicit Validate action writes this durable marker, so reload and poll paths must use
+ * it before exposing terminal summary/create-task UI.
+ */
+function isValidatedPlanningSession(session: { inputPayload?: string | null }): boolean {
+  try {
+    const payload: unknown = JSON.parse(session.inputPayload ?? "");
+    /*
+    FNXC:PlanningMode 2026-07-20-01:15:
+    Terminal Planning UI is an explicit user-validation privilege, not a legacy-session inference.
+    Missing or malformed persistence may contain a running plan, so only a durable `validated: true`
+    marker can reveal SummaryView and task-creation actions after reload, polling, or SSE updates.
+    */
+    return typeof payload === "object" && payload !== null && (payload as { validated?: unknown }).validated === true;
+  } catch {
+    return false;
+  }
+}
 
 function getExamplePlans(t: TFunction<"app">): string[] {
   return [
@@ -446,8 +466,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const [planningThinkingLevel, setPlanningThinkingLevel] = useState<ThinkingLevel | "">("");
-  const [clarificationEnabled, setClarificationEnabled] = useState(true);
-  const [clarificationSettingsLoading, setClarificationSettingsLoading] = useState(true);
+  /*
+  FNXC:PlanningMode 2026-07-20-00:45:
+  An active interview keeps answered history in the left pane during question, generation, and recoverable-error states.
+  Session navigation is an explicit header action so a transient turn cannot replace the three-pane workspace.
+  */
+  const [showSessionList, setShowSessionList] = useState(false);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -662,14 +686,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
-          resetPlanningAutoRetryBudget();
           const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
-          setView({
-            type: "summary",
-            session: { sessionId, currentQuestion: null, summary },
-            summary,
-          });
-          setEditedSummary(summary);
+          setRunningSummary(summary);
+          if (isValidatedPlanningSession(session)) {
+            resetPlanningAutoRetryBudget();
+            setView({
+              type: "summary",
+              session: { sessionId, currentQuestion: null, summary },
+              summary,
+            });
+            setEditedSummary(summary);
+          } else {
+            setView({
+              type: "error",
+              session: { sessionId, currentQuestion: null, summary },
+              errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+            });
+          }
           setStreamingOutput("");
         } else if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
@@ -883,13 +916,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             });
           }
 
-          setView({
-            type: "summary",
-            session: { sessionId, currentQuestion: null, summary: normalizedSummary },
-            summary: normalizedSummary,
-          });
-          setEditedSummary(normalizedSummary);
+          /*
+          FNXC:PlanningMode 2026-07-20-00:00:
+          The server broadcasts `summary` on every interview turn before or after its next
+          question. It refreshes the right running-plan pane only; Validate is the sole action
+          allowed to enter terminal SummaryView, preventing a first-answer SSE race from ending
+          the interview.
+          */
           setRunningSummary(normalizedSummary);
+          setView((previous) => previous.type === "question"
+            ? {
+                ...previous,
+                session: { ...previous.session, summary: normalizedSummary },
+              }
+            : previous);
           setStreamingOutput("");
         },
         onError: (message) => {
@@ -1024,15 +1064,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               if (!session.result) {
                 throw new Error("Planning session is complete but has no result.");
               }
-              resetPlanningAutoRetryBudget();
               const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
-              clearPlanningDescription(projectId);
-              setView({
-                type: "summary",
-                session: { sessionId: session.id, currentQuestion: null, summary },
-                summary,
-              });
-              setEditedSummary(summary);
+              setRunningSummary(summary);
+              if (isValidatedPlanningSession(session)) {
+                resetPlanningAutoRetryBudget();
+                clearPlanningDescription(projectId);
+                setView({
+                  type: "summary",
+                  session: { sessionId: session.id, currentQuestion: null, summary },
+                  summary,
+                });
+                setEditedSummary(summary);
+              } else {
+                setView({
+                  type: "error",
+                  session: { sessionId: session.id, currentQuestion: null, summary },
+                  errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+                });
+              }
             } else if (session.status === "error") {
               setView({
                 type: "error",
@@ -1098,7 +1147,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   startPlanningAutoRetryRef.current = startPlanningAutoRetry;
 
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
-    if (clarificationSettingsLoading) return;
     const plan = planOverride ?? initialPlan;
     const startedPlan = plan.trim();
     if (!startedPlan) return;
@@ -1126,13 +1174,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         startedPlan,
         projectId,
         modelOverride,
-        { clarificationEnabled },
+        { clarificationEnabled: true },
         draftSessionId ?? undefined,
       );
       draftSessionIdRef.current = null;
       currentSessionIdRef.current = sessionId;
       liveGenerationSessionIdRef.current = sessionId;
       setSelectedSessionId(sessionId);
+      setShowSessionList(false);
 
       connectToPlanningStream(sessionId);
       setResponseHistory([]);
@@ -1143,8 +1192,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       currentSessionIdRef.current = null;
     }
   }, [
-    clarificationEnabled,
-    clarificationSettingsLoading,
     connectToPlanningStream,
     initialPlan,
     planningModelId,
@@ -1153,18 +1200,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     projectId,
     resetPlanningAutoRetryBudget,
   ]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    let active = true;
-    setClarificationSettingsLoading(true);
-    void fetchGlobalSettings()
-      .then((settings) => { if (active) setClarificationEnabled(settings.agentClarificationEnabled !== false); })
-      // A missing settings response keeps the default full interview; disabled only limits follow-ups.
-      .catch(() => { if (active) setClarificationEnabled(true); })
-      .finally(() => { if (active) setClarificationSettingsLoading(false); });
-    return () => { active = false; };
-  }, [isOpen]);
 
   /*
   FNXC:PlanningFocus 2026-06-23-00:00:
@@ -1180,7 +1215,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   // Auto-start planning when initialPlan prop is provided
   useEffect(() => {
-    if (isOpen && initialPlanProp && !clarificationSettingsLoading && !hasAutoStartedRef.current && view.type === "initial") {
+    if (isOpen && initialPlanProp && !hasAutoStartedRef.current && view.type === "initial") {
       setInitialPlan(initialPlanProp);
       // Use a small timeout to allow state update to propagate before starting
       const timer = setTimeout(() => {
@@ -1206,7 +1241,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setInitialPlan(persisted);
       }
     }
-  }, [isOpen, initialPlanProp, clarificationSettingsLoading, view.type, handleStartPlanning, projectId]);
+  }, [isOpen, initialPlanProp, view.type, handleStartPlanning, projectId]);
 
   // Load a specific persisted session into the right pane.
   const loadSession = useCallback(
@@ -1360,11 +1395,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           }
           connectToPlanningStream(sessionId);
         } else if (session.status === "complete" && session.result) {
-          resetPlanningAutoRetryBudget();
-          clearPlanningDescription(projectId);
           const summary = persistedRunningSummary ?? normalizePlanningSummary(JSON.parse(session.result));
-          setView({ type: "summary", session: { sessionId, currentQuestion: null, summary }, summary });
-          setEditedSummary(summary);
+          setRunningSummary(summary);
+          if (isValidatedPlanningSession(session)) {
+            resetPlanningAutoRetryBudget();
+            clearPlanningDescription(projectId);
+            setView({ type: "summary", session: { sessionId, currentQuestion: null, summary }, summary });
+            setEditedSummary(summary);
+          } else {
+            setView({
+              type: "error",
+              session: { sessionId, currentQuestion: null, summary },
+              errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+            });
+          }
         } else if (session.status === "generating") {
           setView({ type: "loading" });
           if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
@@ -1504,10 +1548,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       if (selectedSessionId === sessionId) {
+        setShowSessionList(false);
         setMobileShowDetail(true);
         return;
       }
       setSelectedSessionId(sessionId);
+      setShowSessionList(false);
       setMobileShowDetail(true);
       void loadSession(sessionId);
     },
@@ -1528,11 +1574,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const preserveActiveDraft = selectedSessionId === null && viewRef.current.type === "initial";
     resetDetailState({ preserveInitialPlan: preserveActiveDraft });
     setSelectedSessionId(null);
+    setShowSessionList(false);
     setMobileShowDetail(true);
     setNewSessionFocusSignal((signal) => signal + 1);
   }, [resetDetailState, resumeSessionId, selectedSessionId]);
 
   const handleBackToList = useCallback(() => {
+    setShowSessionList(true);
     setMobileShowDetail(false);
   }, []);
 
@@ -2172,7 +2220,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             Header icon mirrors MissionManager's <Target size={20} className="mission-manager__header-icon" />: same size (20) and same var(--todo) tint + flex-shrink:0, applied via the scoped .planning-modal--embedded .modal-header--embedded .detail-title-row > svg rule (it overrides the shared icon-triage brown so the two headers read as siblings).
             */}
             <Lightbulb size={20} className="icon-triage" />
-            {view.type === "question" && activeSessionTitle && isRenamingSession ? (
+            {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
               <input
                 className="input planning-session-title-input"
                 aria-label={t("planning.renameSession", "Rename session")}
@@ -2183,10 +2231,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 autoFocus
               />
             ) : (
-              <><h3>{view.type === "question" && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</h3>
-              {view.type === "question" && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
+              <><h3>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</h3>
+              {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
             )}
           </div>
+          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && !isMobile && (
+            <button type="button" className="btn" onClick={() => setShowSessionList((current) => !current)}>
+              {t("planning.sessions", "Sessions")}
+            </button>
+          )}
           {!isEmbedded && (
             <div className="modal-header-actions">
               <button className="modal-close" onClick={handleClose} aria-label={t("common.close", "Close")}>
@@ -2201,10 +2254,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             mobileShowDetail ? "planning-modal-body--show-detail" : "planning-modal-body--show-list"
           }`}
         >
-          {view.type === "question" ? (
+          {selectedSessionId && !showSessionList && (view.type === "question" || view.type === "loading" || view.type === "error") ? (
             <AnsweredQuestionHistory
               entries={conversationHistory}
-              selectedQuestionId={editingQuestionId ?? view.session.currentQuestion?.id}
+              selectedQuestionId={editingQuestionId ?? (view.type === "question" ? view.session.currentQuestion?.id : undefined)}
               isPending={isHistoryEditPending}
               onSelect={(entry) => void handleSelectAnsweredQuestion(entry)}
             />
@@ -2416,12 +2469,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     </div>
                   </div>
 
-                    <div className="planning-advanced-section">
-                      <label className="checkbox-label" htmlFor="planning-clarification-enabled">
-                        <input id="planning-clarification-enabled" type="checkbox" checked={clarificationEnabled} disabled={clarificationSettingsLoading} onChange={(event) => setClarificationEnabled(event.target.checked)} />
-                        {t("planning.agentClarification", " Allow follow-up clarification questions")}
-                      </label>
-                    </div>
                   </div>
                 </OnboardingDisclosure>
               </div>
@@ -2430,7 +2477,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <button
                   className="btn btn-primary planning-start-btn"
                   onClick={() => handleStartPlanning()}
-                  disabled={!initialPlan.trim() || clarificationSettingsLoading}
+                  disabled={!initialPlan.trim()}
                 >
                   <Lightbulb size={16} className="icon-mr-8" />
                   {t("planning.startPlanning", "Start Planning")}

@@ -529,7 +529,7 @@ When an active Planning AI generation appears stuck, Planning Mode automatically
 Use **New session** to restart planning with a different idea.
 
 <!-- FNXC:PlanningMode 2026-07-18-16:00: Planning Mode is an infinite, user-controlled interview. Each answer updates the running plan and produces another context-aware high-impact question; only Validate plan finalizes it. -->
-Planning Mode keeps the running plan visible beside answered-question history and the current question; you can rename a session and keep asking high-impact, context-aware questions until you choose **Validate plan**. The running title, description, and deliverables are available throughout the interview; the AI never ends it on its own. Selection questions provide alternatives with pros and cons plus an **Other** free-text choice, whose wording follows your input language and whose answer steers the next question. You may edit an earlier answer by question ID without losing later answers; Planning re-derives the running plan and appends a fresh next question.
+Planning Mode keeps the running plan visible beside answered-question history and the current question; you can rename a session and keep asking high-impact, context-aware questions until you choose **Validate plan**. The running title, description, and deliverables are available throughout the interview—including while the next question is generating or a recoverable error is shown; use **Sessions** to return to the saved-session list. The AI never ends an interview on its own. Selection questions provide alternatives with pros and cons plus an **Other** free-text choice, whose wording follows your input language and whose answer steers the next question. You may edit an earlier answer by question ID without losing later answers; Planning re-derives the running plan and appends a fresh next question.
 
 Choose **Validate plan** when the running plan is ready for task creation. Validation is durable and is required before **Create task**, **Create tasks**, or **Start breakdown**; those actions reject unvalidated sessions.
 
@@ -2124,9 +2124,9 @@ If the endpoint is unavailable on the running dashboard build, the response will
 
 ### Planner clarification notifications
 
-Planning Mode always asks and waits for at least one clarifying question before producing a plan. The advanced **follow-up clarification questions** setting is a per-session override initialized from the global preference: when disabled, Planning Mode still asks one mandatory question, then requests a final summary after the answer; when enabled, it may ask further proactive questions. The final summary deepening checkpoint is unchanged.
+<!-- FNXC:PlanningMode 2026-07-20-01:00: Planning interviews are always infinite and user-validated. The former follow-up toggle cannot suppress questions or produce a final summary; the dashboard starts each interview in the full questioning mode. -->
 
-When enabled, a proactive question holds the planner at `awaiting_input`, sends the configured `planning-awaiting-input` ntfy event, and delivers a dashboard mailbox message that links the operator back to planner chat. Mailbox delivery does not depend on ntfy configuration and is deduplicated by session/question across restarts.
+Planning Mode asks another focused question after every answer until you select **Validate plan**. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event and delivers a dashboard mailbox message that links the operator back to the Planning view. Mailbox delivery does not depend on ntfy configuration and is deduplicated by session/question across restarts.
 
 ### Mobile footer quick actions
 
