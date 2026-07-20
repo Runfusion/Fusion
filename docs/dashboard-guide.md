@@ -976,6 +976,7 @@ Features:
 - Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
 - Toggle between raw text and rendered markdown using the **Markdown/Plain** button
 - Highlight text in raw or rendered project-file previews or the selected Task Document's right pane, choose **Add comment**, and send the source path/key, selected snippet, and your comment to the **New Task** dialog
+- Task Detail creates documents with an absence precondition and edits using the revision/hash loaded with the draft. The global **Artifacts → Task Documents** editor uses the same conditional save. If another writer wins first, Fusion keeps the editor open and preserves the exact draft on desktop and mobile, refreshes the visible current revision, and asks the operator to review/rebase; it never silently retries or overwrites the newer document.
 
 Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
 

@@ -95,6 +95,20 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - No public forensic flag is exposed on document read methods or routes. Forensic access remains an internal/operator concern via `readTaskFromDb(id, { includeDeleted: true })` plus direct SQL against the preserved document tables.
 - Write semantics stay intentionally asymmetric: `upsertTaskDocument` still refuses soft-deleted parents, while `deleteTaskDocument` remains allowed so forensic cleanup can scrub preserved document rows when needed.
 
+### Conditional task-document writes
+
+Current `TaskDocument` responses include `contentHash`, the SHA-256 digest of the exact UTF-8 content formatted as `sha256:<64 lowercase hex>`. Whitespace and line endings are significant; Fusion does not normalize either before hashing.
+
+`TaskDocumentCreateInput`, `PUT /api/tasks/:id/documents/:key`, and the runtime document tools accept optional compare-and-swap expectations:
+
+- omitted expectations preserve legacy unconditional writes;
+- `expectedRevision: 0` requires the document not to exist;
+- a positive `expectedRevision` requires an existing equal revision;
+- `expectedContentHash` requires an existing document with an equal canonical hash;
+- when both are present, both must match. Negative/fractional revisions and non-canonical hashes are validation errors.
+
+The PostgreSQL writer locks the active `(project_id, task_id)` parent row before reading `(project_id, task_id, key)`. The comparison, exact prior-snapshot archive, and current-row replacement occur in one transaction. Thus concurrent creates or updates from the same baseline have exactly one conditional winner. A stale writer receives `TASK_DOCUMENT_PRECONDITION_FAILED` with safe identity, supplied expectations, and current revision/hash (or `null` for absence); it creates no revision, current mutation, task event, citation scan, or success response. Document content is never included in conflict details.
+
 ### Artifact registry (FN-6777)
 
 - `artifacts` is the first-class PostgreSQL metadata registry for generated or uploaded task artifacts. Rows store ID, `type` (`document`, `image`, `video`, `audio`, or `other`), title/description, MIME type, size, author identity/type, optional task linkage, metadata JSON, textual `content`, a relative `uri`, and timestamps; binary bytes stay on disk.
