@@ -1,6 +1,10 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { startFusionToolBridge } from "../tool-bridge.js";
+import { fusionToolsMcpServerPath, startFusionToolBridge } from "../tool-bridge.js";
 
 function bridgeEnv(bridge: NonNullable<Awaited<ReturnType<typeof startFusionToolBridge>>>, name: string): string {
   if (!("env" in bridge.mcpServer)) throw new Error("custom tool bridge must use stdio MCP");
@@ -37,6 +41,33 @@ async function post(url: string, body: string, token?: string): Promise<{ status
 }
 
 describe("startFusionToolBridge", () => {
+  it("serves MCP initialize from the co-located schema server", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "fusion-mcp-smoke-"));
+    const schemaPath = join(directory, "schemas.json");
+    await writeFile(schemaPath, "[]");
+    const child = spawn(process.execPath, [fusionToolsMcpServerPath(), schemaPath], {
+      env: { ...process.env, FUSION_GROK_TOOL_BRIDGE_URL: "http://127.0.0.1:1", FUSION_TOOL_BRIDGE_CAPABILITY: "test" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let output = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          output += chunk;
+          const line = output.split("\n")[0];
+          if (line) resolve(JSON.parse(line) as Record<string, unknown>);
+        });
+        child.once("error", reject);
+        child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+      });
+      expect((response.result as { serverInfo?: { name?: string } }).serverInfo?.name).toBe("fusion-custom-tools");
+    } finally {
+      child.kill();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("requires a session capability and action-gate authorization before executing a custom tool", async () => {
     const execute = vi.fn().mockResolvedValue({ text: "done" });
     const bridge = await startFusionToolBridge(

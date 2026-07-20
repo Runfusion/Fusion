@@ -692,6 +692,43 @@ describe("createResolvedAgentSession", () => {
     });
   });
 
+  it("records an ids-only bridge failure outcome in session:runtime-resolved", async () => {
+    const auditDatabaseMock = vi.fn().mockResolvedValue(undefined);
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "grok",
+        name: "Grok Runtime",
+        createSession: vi.fn().mockResolvedValue({
+          session: { fusionToolBridgeError: { reasonCode: "mcp-schema-server-missing" } },
+        }),
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "grok/grok-4.5"),
+      },
+      runtimeId: "grok",
+      wasConfigured: true,
+    });
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+
+    await createResolvedAgentSession({
+      sessionPurpose: "triage",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      defaultProvider: "xai",
+      defaultModelId: "grok-4.5",
+      customTools: [{ name: "fn_task_list", description: "", parameters: {}, execute: async () => ({}) }] as any,
+      runAuditor: { database: auditDatabaseMock } as any,
+    });
+
+    expect(auditDatabaseMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "session:runtime-resolved",
+      metadata: expect.objectContaining({
+        fusionToolBridgeFailed: true,
+        fusionToolBridgeReasonCode: "mcp-schema-server-missing",
+        expectedToolCount: 1,
+      }),
+    }));
+  });
+
   it("succeeds when runAuditor is omitted", async () => {
     const mockSession = { prompt: vi.fn() } as any;
     const createSessionMock = vi.fn().mockResolvedValue({
