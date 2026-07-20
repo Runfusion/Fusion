@@ -649,8 +649,17 @@ export class TriageProcessor {
    * still completing Plan Review → todo after a stuck-kill of the main session.
    */
   getProcessingTaskIds(): Set<string> {
-    const ids = new Set(this.processing);
+    const ids = this.getPlanningTaskIds();
     for (const taskId of this.advancedRecoveryReservations) ids.add(taskId);
+    return ids;
+  }
+
+  /**
+   * Return tasks owned by actual planner work, excluding recovery reservations.
+   * Recovery uses this narrower view when revalidating its own reserved task.
+   */
+  getPlanningTaskIds(): Set<string> {
+    const ids = new Set(this.processing);
     for (const taskId of this.finalizing) ids.add(taskId);
     for (const taskId of this.activeSubagentSessions.keys()) {
       const sessions = this.activeSubagentSessions.get(taskId);

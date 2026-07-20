@@ -1541,6 +1541,7 @@ describe("TriageProcessor", () => {
     const release = processor.tryReserveAdvancedRecovery(task.id);
     expect(release).toBeTypeOf("function");
     expect(processor.getProcessingTaskIds()).toContain(task.id);
+    expect(processor.getPlanningTaskIds()).not.toContain(task.id);
 
     await processor.specifyTask(task);
     expect(store.getTask).not.toHaveBeenCalled();
