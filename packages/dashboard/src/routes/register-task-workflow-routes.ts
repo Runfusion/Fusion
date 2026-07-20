@@ -50,6 +50,8 @@ import {
   resolveReboundTarget,
   resolveColumnFlags,
   TransitionRejectionError,
+  TaskDocumentPreconditionFailedError,
+  validateTaskDocumentPreconditions,
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
   type NearDuplicateCandidate,
@@ -3924,7 +3926,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("Invalid document key. Must be 1-64 alphanumeric characters, hyphens, or underscores.");
       }
 
-      const { content, author, metadata } = req.body;
+      const { content, author, metadata, expectedRevision, expectedContentHash } = req.body;
 
       // Validate content
       if (content === undefined || content === null) {
@@ -3935,6 +3937,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       if (content.length < 1 || content.length > 100000) {
         throw badRequest("content must be between 1 and 100000 characters");
+      }
+
+      try {
+        validateTaskDocumentPreconditions({ expectedRevision, expectedContentHash });
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
       }
 
       // Validate author (optional, defaults to "user")
@@ -3952,6 +3960,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         content,
         author: author?.trim() || "user",
         metadata: metadata as Record<string, unknown> | undefined,
+        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+        ...(expectedContentHash !== undefined ? { expectedContentHash } : {}),
       });
 
       // Return 201 for new documents (revision === 1), 200 for updates
@@ -3960,6 +3970,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
+      }
+      if (err instanceof TaskDocumentPreconditionFailedError) {
+        throw new ApiError(409, err.message, { ...err.toDetails() });
       }
       const errorWithCode = err as NodeJS.ErrnoException;
       const status = errorWithCode.code === "ENOENT" ? 404 : 500;

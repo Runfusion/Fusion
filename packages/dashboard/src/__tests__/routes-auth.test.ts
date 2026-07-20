@@ -177,7 +177,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
+import { AgentStore, Database, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -4220,6 +4220,51 @@ describe("Pause/Unpause endpoints", () => {
         );
         expect(res.status).toBe(201);
         expect(store.upsertTaskDocument).toHaveBeenCalledWith("KB-001", { key: "plan", content: "My plan", author: "user", metadata: undefined });
+      });
+
+      it("forwards valid document preconditions", async () => {
+        const hash = `sha256:${"a".repeat(64)}`;
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "d1", taskId: "KB-001", key: "plan", content: "Updated", revision: 2,
+          contentHash: hash, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z",
+        });
+        const res = await REQUEST(buildApp(), "PUT", "/api/tasks/KB-001/documents/plan", JSON.stringify({
+          content: "Updated", expectedRevision: 1, expectedContentHash: hash,
+        }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(200);
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("KB-001", expect.objectContaining({
+          expectedRevision: 1, expectedContentHash: hash,
+        }));
+      });
+
+      it("returns structured 409 details for a stale document writer", async () => {
+        const expectedHash = `sha256:${"a".repeat(64)}`;
+        const currentHash = `sha256:${"b".repeat(64)}`;
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new TaskDocumentPreconditionFailedError({
+          projectId: "project-1", taskId: "KB-001", key: "plan", expectedRevision: 1,
+          expectedContentHash: expectedHash, currentRevision: 2, currentContentHash: currentHash,
+        }));
+        const res = await REQUEST(buildApp(), "PUT", "/api/tasks/KB-001/documents/plan", JSON.stringify({
+          content: "Stale", expectedRevision: 1, expectedContentHash: expectedHash,
+        }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(409);
+        expect(res.body.details).toEqual(expect.objectContaining({
+          code: "TASK_DOCUMENT_PRECONDITION_FAILED", currentRevision: 2, currentContentHash: currentHash,
+        }));
+        expect(res.body.details).not.toHaveProperty("content");
+      });
+
+      it.each([
+        [{ expectedRevision: -1 }, "non-negative integer"],
+        [{ expectedRevision: 1.5 }, "non-negative integer"],
+        [{ expectedContentHash: "sha256:ABC" }, "64 lowercase hex"],
+      ])("returns 400 for malformed preconditions %#", async (precondition, message) => {
+        const res = await REQUEST(buildApp(), "PUT", "/api/tasks/KB-001/documents/plan", JSON.stringify({
+          content: "Updated", ...precondition,
+        }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain(message);
+        expect(store.upsertTaskDocument).not.toHaveBeenCalled();
       });
 
       it("updates existing document with 200", async () => {

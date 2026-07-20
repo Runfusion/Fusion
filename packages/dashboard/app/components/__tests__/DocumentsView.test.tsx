@@ -81,6 +81,7 @@ const mockTaskDocuments: TaskDocumentWithTask[] = [
     key: "plan",
     content: "Alpha document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T12:00:00.000Z",
@@ -93,6 +94,7 @@ const mockTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Beta document content",
     revision: 2,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T09:00:00.000Z",
     updatedAt: "2026-04-19T11:00:00.000Z",
@@ -108,6 +110,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "plan",
     content: "Done document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T16:00:00.000Z",
@@ -120,6 +123,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Todo document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T15:00:00.000Z",
@@ -132,6 +136,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "summary",
     content: "Archived document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T14:00:00.000Z",
@@ -144,6 +149,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "handoff",
     content: "Custom column document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T13:00:00.000Z",
@@ -156,6 +162,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "legacy",
     content: "Legacy document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T12:00:00.000Z",
@@ -167,6 +174,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Second done document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T11:00:00.000Z",
@@ -573,6 +581,7 @@ describe("DocumentsView", () => {
         key: index === 0 ? "plan" : "notes",
         content: `Document content ${taskNumber}`,
         revision: index + 1,
+        contentHash: `sha256:${"a".repeat(64)}`,
         author: "agent",
         createdAt: `2026-04-19T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
         updatedAt: `2026-04-19T12:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -586,6 +595,7 @@ describe("DocumentsView", () => {
       key: "notes",
       content: "Second document content",
       revision: 2,
+      contentHash: `sha256:${"a".repeat(64)}`,
       author: "agent",
       createdAt: "2026-04-19T09:00:00.000Z",
       updatedAt: "2026-04-19T11:59:00.000Z",
@@ -1385,12 +1395,29 @@ describe("DocumentsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(mockPutTaskDocument).toHaveBeenCalledWith("KB-001", "plan", "Updated document content", {}, undefined);
+      expect(mockPutTaskDocument).toHaveBeenCalledWith("KB-001", "plan", "Updated document content", {
+        expectedRevision: 1,
+        expectedContentHash: `sha256:${"a".repeat(64)}`,
+      }, undefined);
     });
     await waitFor(() => {
       expect(screen.queryByLabelText("file editor")).not.toBeInTheDocument();
     });
     expect(addToast).toHaveBeenCalledWith("Document saved", "success");
+  });
+
+  it("preserves the editor draft and refreshes after a task-document conflict", async () => {
+    mockPutTaskDocument.mockRejectedValue(Object.assign(new Error("stale"), { status: 409 }));
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    fireEvent.click(screen.getByRole("button", { name: /edit task document/i }));
+    fireEvent.change(screen.getByLabelText("file editor"), { target: { value: "Preserved stale draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.stringContaining("draft is preserved"), "error"));
+    expect(screen.getByLabelText("file editor")).toHaveValue("Preserved stale draft");
   });
 
   it("cancels task document editing without saving and suppresses select-to-comment while editing", async () => {

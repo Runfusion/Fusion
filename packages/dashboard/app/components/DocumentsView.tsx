@@ -246,8 +246,13 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   FNXC:DocumentsView 2026-07-11-13:40:
   Operator requirement: task documents in the Artifacts view must be editable in place with the same CodeMirror FileEditor used for workspace files and artifact docs — the FN-7811 read-only pane is not enough. Editing state is scoped to the selected document ID so switching documents, tabs, or projects can never save a draft against the wrong document; the draft lives here (not in FileEditor) so Save can PUT it via putTaskDocument and refresh the SWR document list.
   */
+  /*
+  FNXC:TaskDocumentCAS 2026-07-20-11:06:
+  The global Artifacts editor pins the selected task document's loaded revision/hash for the lifetime of its draft. Conflict refreshes may reveal the newer revision, but must leave the shared FileEditor open with the user's draft on desktop and mobile and must not auto-retry.
+  */
   const [editingTaskDocumentId, setEditingTaskDocumentId] = useState<string | null>(null);
   const [taskDocDraft, setTaskDocDraft] = useState("");
+  const [taskDocPrecondition, setTaskDocPrecondition] = useState<{ revision: number; contentHash: string } | null>(null);
   const [taskDocSaving, setTaskDocSaving] = useState(false);
   const [artifactDocContent, setArtifactDocContent] = useState<string | null>(null);
   const [artifactDocLoading, setArtifactDocLoading] = useState(false);
@@ -611,28 +616,39 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     if (!selectedTaskDocument) return;
     setTaskDocDraft(selectedTaskDocument.content);
     setEditingTaskDocumentId(selectedTaskDocument.id);
+    setTaskDocPrecondition({ revision: selectedTaskDocument.revision, contentHash: selectedTaskDocument.contentHash });
   }, [selectedTaskDocument]);
 
   const handleCancelTaskDocEdit = useCallback(() => {
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setTaskDocPrecondition(null);
   }, []);
 
   const handleSaveTaskDocEdit = useCallback(async () => {
-    if (!selectedTaskDocument) return;
+    if (!selectedTaskDocument || !taskDocPrecondition) return;
     setTaskDocSaving(true);
     try {
-      await putTaskDocument(selectedTaskDocument.taskId, selectedTaskDocument.key, taskDocDraft, {}, projectId);
+      await putTaskDocument(selectedTaskDocument.taskId, selectedTaskDocument.key, taskDocDraft, {
+        expectedRevision: taskDocPrecondition.revision,
+        expectedContentHash: taskDocPrecondition.contentHash,
+      }, projectId);
       await refreshDocuments();
       setEditingTaskDocumentId(null);
       setTaskDocDraft("");
+      setTaskDocPrecondition(null);
       addToast(t("documents.taskDocumentSaved", "Document saved"), "success");
     } catch (err) {
-      addToast(err instanceof Error ? err.message : String(err), "error");
+      if (typeof err === "object" && err !== null && "status" in err && err.status === 409) {
+        await refreshDocuments();
+        addToast(t("documents.taskDocumentStale", "This document changed since you opened it. Your draft is preserved; review the latest revision and save again after rebasing."), "error");
+      } else {
+        addToast(err instanceof Error ? err.message : String(err), "error");
+      }
     } finally {
       setTaskDocSaving(false);
     }
-  }, [selectedTaskDocument, taskDocDraft, projectId, refreshDocuments, addToast, t]);
+  }, [selectedTaskDocument, taskDocDraft, taskDocPrecondition, projectId, refreshDocuments, addToast, t]);
 
   useEffect(() => {
     if (!selectedTaskArtifact || getArtifactCategory(selectedTaskArtifact) !== "doc") {
