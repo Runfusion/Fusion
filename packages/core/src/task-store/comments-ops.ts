@@ -11,13 +11,13 @@ import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, Column, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, Task, Column, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateDocumentKey} from "../types.js";
-import {validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
+import {ArchivedTaskDocumentPublicationRejectedError, validateArchivedTaskDocumentAddition, validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
 import {toJsonNullable} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
-import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
+import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
 import type {TaskDocumentRow} from "../task-store/row-types.js";
 
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
@@ -200,6 +200,32 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
 
     return task;
   }
+
+export async function publishArchivedTaskDocumentAdditionImpl(
+  store: TaskStore,
+  taskId: string,
+  input: ArchivedTaskDocumentAdditionInput,
+): Promise<ArchivedTaskDocumentAdditionResult> {
+  try {
+    validateDocumentKey(input.key);
+  } catch {
+    throw new Error(`Invalid document key: "${input.key}". Must be 1-64 alphanumeric characters, hyphens, or underscores.`);
+  }
+  validateArchivedTaskDocumentAddition(input);
+  if (!store.backendMode || !store.asyncLayer) {
+    throw new ArchivedTaskDocumentPublicationRejectedError(
+      "postgres-required",
+      store.asyncLayer?.projectId ?? "__legacy_unscoped__",
+      taskId,
+      input.key,
+    );
+  }
+  /*
+  FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
+  The dedicated facade deliberately returns the atomic PostgreSQL result directly. Unlike ordinary upsert it emits no task event and performs no citation scan, keeping archived parent, workflow, mission, and scheduler state inert.
+  */
+  return publishArchivedTaskDocumentAdditionAsync(store.asyncLayer, taskId, input);
+}
 
 export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, input: TaskDocumentCreateInput): Promise<TaskDocument> {
     try {

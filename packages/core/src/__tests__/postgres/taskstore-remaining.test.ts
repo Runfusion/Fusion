@@ -32,6 +32,7 @@ import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
 import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async-persistence.js";
 import {
+  ArchivedTaskDocumentPublicationRejectedError,
   TaskDocumentPreconditionFailedError,
   taskDocumentContentHash,
 } from "../../task-document-concurrency.js";
@@ -73,6 +74,8 @@ import {
 } from "../../task-store/async-audit.js";
 import {
   getTaskDocument,
+  getTaskDocumentRevisions,
+  publishArchivedTaskDocumentAddition,
   upsertTaskDocument,
   listTaskDocuments,
   insertArtifactRow,
@@ -485,6 +488,122 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
         content: "content",
       }),
     ).rejects.toThrow(/archived|not found/);
+  });
+
+  it("reads retained archived documents and serializes exactly one additive CAS publisher", async () => {
+    ctx = await setupCtx();
+    const taskId = "KB-ARCH-PUBLISH";
+    const task = makeMinimalTask(taskId);
+    await insertTaskRow(ctx.layer, task, { lineageId: null });
+    await upsertTaskDocument(ctx.layer, taskId, { key: "docs", content: "original", author: "author-1" });
+    const prior = await upsertTaskDocument(ctx.layer, taskId, {
+      key: "docs",
+      content: "original\r\ncurrent ",
+      author: "author-2",
+      metadata: { retained: true },
+    });
+    const archivedAt = new Date().toISOString();
+    await softDeleteTaskRow(ctx.layer, taskId, archivedAt);
+    await upsertArchivedTaskEntry(ctx.layer.db, {
+      id: taskId,
+      title: "Archived publisher",
+      description: "test task",
+      archivedAt,
+      createdAt: String(task.createdAt),
+      updatedAt: String(task.updatedAt),
+    }, TEST_PROJECT_ID);
+
+    const taskBefore = await ctx.layer.db.select().from(schema.project.tasks).where(eq(schema.project.tasks.id, taskId));
+    const archiveBefore = await ctx.layer.db.select().from(schema.archive.archivedTasks).where(eq(schema.archive.archivedTasks.id, taskId));
+    expect(await getTaskDocument(ctx.layer.db, taskId, "docs", TEST_PROJECT_ID)).toMatchObject({
+      content: prior.content,
+      revision: prior.revision,
+    });
+    expect(await getTaskDocumentRevisions(ctx.layer.db, taskId, "docs", TEST_PROJECT_ID)).toMatchObject([
+      { content: "original", revision: 1 },
+    ]);
+    expect(await listTaskDocuments(ctx.layer.db, taskId, TEST_PROJECT_ID)).toEqual([]);
+
+    const input = {
+      key: "docs",
+      appendContent: "correction\nbytes",
+      expectedRevision: prior.revision,
+      expectedContentHash: prior.contentHash,
+      author: "operator",
+      reason: "Correct retained evidence",
+    };
+    const race = await Promise.allSettled([
+      publishArchivedTaskDocumentAddition(ctx.layer, taskId, input),
+      publishArchivedTaskDocumentAddition(ctx.layer, taskId, input),
+    ]);
+    const winners = race.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof publishArchivedTaskDocumentAddition>>> => result.status === "fulfilled");
+    expect(winners).toHaveLength(1);
+    expect(race.find((result) => result.status === "rejected")).toMatchObject({
+      reason: expect.any(TaskDocumentPreconditionFailedError),
+    });
+    const expectedContent = prior.content + "\n\n" + input.appendContent;
+    expect(winners[0]?.value).toMatchObject({
+      document: { content: expectedContent, revision: prior.revision + 1, author: "operator", metadata: { retained: true } },
+      previousRevision: prior.revision,
+      previousContentHash: prior.contentHash,
+      appendedContentHash: taskDocumentContentHash(expectedContent),
+    });
+
+    const history = await getTaskDocumentRevisions(ctx.layer.db, taskId, "docs", TEST_PROJECT_ID);
+    expect(history).toHaveLength(2);
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: prior.content, revision: prior.revision, author: prior.author, metadata: { retained: true } }),
+      expect.objectContaining({ content: "original", revision: 1 }),
+    ]));
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, input)).rejects.toBeInstanceOf(TaskDocumentPreconditionFailedError);
+    expect(await getTaskDocumentRevisions(ctx.layer.db, taskId, "docs", TEST_PROJECT_ID)).toHaveLength(2);
+    expect(await ctx.layer.db.select().from(schema.project.tasks).where(eq(schema.project.tasks.id, taskId))).toEqual(taskBefore);
+    expect(await ctx.layer.db.select().from(schema.archive.archivedTasks).where(eq(schema.archive.archivedTasks.id, taskId))).toEqual(archiveBefore);
+
+    const audit = await queryRunAuditEvents(ctx.layer.db, { taskId });
+    const publicationEvents = audit.filter((event) => event.mutationType === "task-document:archived-addition-published");
+    expect(publicationEvents).toHaveLength(1);
+    expect(publicationEvents[0]?.metadata).toMatchObject({
+      projectId: TEST_PROJECT_ID,
+      key: "docs",
+      previousRevision: prior.revision,
+      revision: prior.revision + 1,
+      reasonProvided: true,
+      outcome: "published",
+    });
+    expect(JSON.stringify(publicationEvents[0])).not.toContain(input.reason);
+    expect(JSON.stringify(publicationEvents[0])).not.toContain(input.appendContent);
+  });
+
+  it("rejects malformed, live, missing, and inconsistent archived publication parents", async () => {
+    ctx = await setupCtx();
+    const taskId = "KB-ARCH-REJECT";
+    const task = makeMinimalTask(taskId);
+    await insertTaskRow(ctx.layer, task, { lineageId: null });
+    const document = await upsertTaskDocument(ctx.layer, taskId, { key: "docs", content: "base" });
+    const valid = {
+      key: "docs",
+      appendContent: "addition",
+      expectedRevision: document.revision,
+      expectedContentHash: document.contentHash,
+      author: "operator",
+      reason: "reason",
+    };
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, valid)).rejects.toMatchObject({
+      reason: "parent-not-archived",
+    });
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, "KB-MISSING", valid)).rejects.toMatchObject({
+      reason: "parent-not-found",
+    });
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, { ...valid, appendContent: "" })).rejects.toThrow(/non-empty/);
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, { ...valid, expectedRevision: 0 })).rejects.toThrow(/positive integer/);
+    await softDeleteTaskRow(ctx.layer, taskId, new Date().toISOString());
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, valid)).rejects.toBeInstanceOf(ArchivedTaskDocumentPublicationRejectedError);
+    await expect(publishArchivedTaskDocumentAddition(ctx.layer, taskId, valid)).rejects.toMatchObject({
+      reason: "archived-state-inconsistent",
+    });
+    expect(await getTaskDocument(ctx.layer.db, taskId, "missing", TEST_PROJECT_ID)).toBeNull();
+    expect(await getTaskDocumentRevisions(ctx.layer.db, "KB-MISSING", "docs", TEST_PROJECT_ID)).toEqual([]);
   });
 
   // ── Audit mutations and run-audit events commit/roll back together ──

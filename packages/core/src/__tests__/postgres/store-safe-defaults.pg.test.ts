@@ -76,6 +76,28 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     })).rejects.toThrow(/archived.*read-only/);
     expect(await store.getTaskDocuments(task.id)).toEqual([]);
     expect(await store.getArtifacts(task.id)).toEqual([]);
+
+    const retained = await store.getTaskDocument(task.id, "spec");
+    expect(retained).toMatchObject({ content: "before archive", revision: 1 });
+    expect(await store.getTaskDocumentRevisions(task.id, "spec")).toEqual([]);
+    const published = await store.publishArchivedTaskDocumentAddition(task.id, {
+      key: "spec",
+      appendContent: "operator correction",
+      expectedRevision: retained!.revision,
+      expectedContentHash: retained!.contentHash,
+      author: "operator",
+      reason: "Correct retained evidence",
+    });
+    expect(published.document).toMatchObject({
+      content: "before archive\n\noperator correction",
+      revision: 2,
+      author: "operator",
+    });
+    expect(await store.getTaskDocumentRevisions(task.id, "spec")).toMatchObject([
+      { content: "before archive", revision: 1 },
+    ]);
+    expect(await store.getTaskDocuments(task.id)).toEqual([]);
+    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "still rejected" })).rejects.toThrow(/archived.*read-only/);
   });
 
   it("runs plugin schema initialization through the PostgreSQL executor without opening SQLite", async () => {
