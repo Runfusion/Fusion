@@ -201,8 +201,13 @@ export {
 export {
   stampMigratedProjectRows,
   lookupRegisteredProjectIdByPath,
+  rekeyFallbackProjectPartition,
+  ProjectPartitionRekeyError,
+  selectDegradedBindTarget,
   type StampMigratedProjectRowsInput,
   type StampMigratedProjectRowsResult,
+  type ProjectPartitionOwnership,
+  type ProjectPartitionRekeyReason,
 } from "./migration-stamping.js";
 
 /**

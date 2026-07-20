@@ -2336,7 +2336,10 @@ async function main() {
     }
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    const { isPostgresUniqueError, ProjectPartitionRekeyError, FUSION_NON_RETRYABLE_EXIT_CODE } = await import("@fusion/core");
+    process.exit(isPostgresUniqueError(err) || err instanceof ProjectPartitionRekeyError
+      ? FUSION_NON_RETRYABLE_EXIT_CODE
+      : 1);
   }
 }
 
