@@ -9171,6 +9171,9 @@
       "title": "已在路線圖中",
       "message": "此報告與已規劃的功能相符。"
     },
+    "roadmapDuplicate": {
+      "title": "已在路線圖中 — 新增您的資料點？"
+    },
     "targetLabel": "提交目標",
     "targetInherit": "使用設定的操作目標",
     "targetIssue": "GitHub 議題",
