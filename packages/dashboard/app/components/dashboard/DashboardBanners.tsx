@@ -188,7 +188,7 @@ export function DashboardBanners({
           }}
         />
       )}
-      {viewMode === "project" && currentProject && dashboardHealth?.database?.corruptionDetected === true && (
+      {viewMode === "project" && currentProject && dashboardHealth?.database?.healthy === false && (
         <DbCorruptionBanner
           errors={dashboardHealth.database.corruptionErrors}
           lastCheckedAt={dashboardHealth.database.lastCheckedAt}

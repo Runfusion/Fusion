@@ -2009,12 +2009,12 @@
     "title": "Panel del proyecto"
   },
   "dbBanner": {
-    "body": "La verificación de integridad de SQLite de Fusion en segundo plano informó de corrupción. Revise los objetos con error a continuación antes de continuar con operaciones críticas.",
-    "instructions": "Haga copia de seguridad del proyecto, intente {{cmd}} si la base de datos aún se abre correctamente, y restaure desde una copia de seguridad conocida si la corrupción persiste. Consulte {{link}} para conocer la disposición del almacenamiento y la orientación de recuperación.",
+    "body": "La comprobación de estado de PostgreSQL de Fusion informó de un fallo. Revise los detalles antes de continuar con operaciones críticas.",
+    "instructions": "Haga una copia de seguridad del proyecto, revise los <cmd>registros de la base de datos</cmd> y la conectividad y los permisos de PostgreSQL, y después actualice el estado. Consulte <docsLink>docs/storage.md</docsLink> para obtener orientación sobre almacenamiento y recuperación.",
     "lastChecked": "Última comprobación: {{checkedAtLabel}}",
     "refreshHealth": "Actualizar estado",
     "refreshing": "Actualizando…",
-    "title": "Corrupción de base de datos detectada",
+    "title": "Falló la comprobación de estado de la base de datos",
     "whatToDo": "Qué hacer:"
   },
   "deepLink": {

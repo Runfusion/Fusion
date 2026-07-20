@@ -2009,12 +2009,12 @@
     "title": "项目仪表板"
   },
   "dbBanner": {
-    "body": "Fusion 的后台 SQLite 完整性检查报告有损坏。继续关键操作之前，请查看下面的失败对象。",
-    "instructions": "备份项目，如果数据库仍然可以干净地打开，请尝试 {{cmd}}，如果损坏仍然存在，请从已知的良好备份中恢复。有关存储布局和恢复指导，请参阅 {{link}}。",
+    "body": "Fusion 的 PostgreSQL 健康检查报告失败。在继续关键操作之前，请检查下面的详细信息。",
+    "instructions": "请备份项目，检查<cmd>数据库日志</cmd>以及 PostgreSQL 连接和权限，然后刷新健康状态。有关存储和恢复指南，请参阅 <docsLink>docs/storage.md</docsLink>。",
     "lastChecked": "上次检查：{{checkedAtLabel}}",
     "refreshHealth": "刷新健康状态",
     "refreshing": "正在刷新…",
-    "title": "检测到数据库损坏",
+    "title": "数据库健康检查失败",
     "whatToDo": "该怎么做："
   },
   "deepLink": {

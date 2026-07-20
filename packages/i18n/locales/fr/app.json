@@ -2009,12 +2009,12 @@
     "title": "Tableau de bord du projet"
   },
   "dbBanner": {
-    "body": "La vérification d'intégrité SQLite en arrière-plan de Fusion a signalé une corruption. Veuillez examiner les objets défaillants ci-dessous avant de continuer les opérations critiques.",
-    "instructions": "Sauvegardez le projet, essayez {{cmd}} si la base de données s'ouvre toujours correctement, et restaurez à partir d'une sauvegarde connue bonne si la corruption persiste. Consultez {{link}} pour la disposition du stockage et les conseils de récupération.",
+    "body": "La vérification de l'état de PostgreSQL par Fusion a signalé un échec. Examinez les détails avant de poursuivre les opérations critiques.",
+    "instructions": "Sauvegardez le projet, consultez les <cmd>journaux de la base de données</cmd> ainsi que la connectivité et les autorisations PostgreSQL, puis actualisez l'état. Consultez <docsLink>docs/storage.md</docsLink> pour les conseils de stockage et de récupération.",
     "lastChecked": "Dernier contrôle : {{checkedAtLabel}}",
     "refreshHealth": "Actualiser la santé",
     "refreshing": "Actualisation…",
-    "title": "Corruption de base de données détectée",
+    "title": "Échec de la vérification de l'état de la base de données",
     "whatToDo": "Que faire :"
   },
   "deepLink": {

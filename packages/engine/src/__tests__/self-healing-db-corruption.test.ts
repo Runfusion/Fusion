@@ -183,6 +183,29 @@ describe("FN-5284: self-healing DB corruption surfacing", () => {
     );
   });
 
+  it("uses PostgreSQL health wording for the fallback ntfy notification", async () => {
+    const store = createMockStore({
+      getDatabaseHealth: vi.fn().mockReturnValue({
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["connection refused"],
+        lastCheckedAt: new Date("2026-05-20T00:05:00.000Z"),
+        isRunning: false,
+      }),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    stubMaintenance(manager);
+
+    await (manager as any).runMaintenance();
+
+    expect(notifierModule.sendNtfyNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Database health check failed",
+        message: "PostgreSQL health check reported a failure. Errors: connection refused.",
+      }),
+    );
+  });
+
   it("respects the cooldown and avoids duplicate dispatches and audits", async () => {
     const dispatch = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(notifierModule, "getActiveNotificationService").mockReturnValue({ dispatch } as unknown as NotificationService);

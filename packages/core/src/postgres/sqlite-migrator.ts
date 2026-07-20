@@ -472,12 +472,18 @@ export interface SqliteMigrationState {
  * Dashboard health reads the authoritative per-project cutover marker after
  * listen. A running or failed marker is never aged out here: progress ticks do
  * not update updated_at, and post-listen running means completion was missed.
+ * Reads must not create the marker table: dashboard and startup connections can
+ * use a runtime role that intentionally lacks CREATE permission in public.
  */
 export async function getSqliteMigrationState(
   db: PostgresJsDatabase<Record<string, never>>,
   migrationKey: string,
 ): Promise<SqliteMigrationState | null> {
-  await ensureMigrationStateTable(db);
+  const tableRows = (await db.execute(sql`
+    SELECT to_regclass('public.${sql.raw(SQLITE_MIGRATION_STATE_TABLE)}') IS NOT NULL AS exists
+  `)) as unknown as Array<{ exists: boolean }>;
+  if (!tableRows[0]?.exists) return null;
+
   const rows = (await db.execute(sql`
     SELECT migration_key, project_id, status, last_error, updated_at
     FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
@@ -507,12 +513,7 @@ export async function isSqliteMigrationComplete(
   db: PostgresJsDatabase<Record<string, never>>,
   migrationKey: string,
 ): Promise<boolean> {
-  await ensureMigrationStateTable(db);
-  const rows = (await db.execute(sql`
-    SELECT status FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
-    WHERE migration_key = ${migrationKey}
-  `)) as unknown as Array<{ status: string }>;
-  return rows[0]?.status === "complete";
+  return (await getSqliteMigrationState(db, migrationKey))?.status === "complete";
 }
 
 /** Mark caller-side stamping and verification complete for a durable cutover. */

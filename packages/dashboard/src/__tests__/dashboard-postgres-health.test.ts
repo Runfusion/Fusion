@@ -106,7 +106,7 @@ describe("evaluateDashboardPostgresHealth", () => {
     expect(healthMocks.checkPostgresHealth).not.toHaveBeenCalled();
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: ["PostgreSQL health layer unavailable"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
@@ -123,12 +123,29 @@ describe("evaluateDashboardPostgresHealth", () => {
 
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: ["PostgreSQL task-ID integrity check failed: integrity query timed out"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
       status: "error",
       error: "PostgreSQL task-ID integrity check failed: integrity query timed out",
     });
+  });
+
+  it("keeps advisory migration-status failures from degrading proven database health", async () => {
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    healthMocks.getSqliteMigrationState.mockRejectedValue(
+      new Error("Failed query: SELECT migration marker", { cause: new Error("permission denied") }),
+    );
+
+    const result = await evaluateDashboardPostgresHealth(store);
+
+    expect(result.database).toMatchObject({
+      healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
+    });
+    expect(result.taskIdIntegrity).toMatchObject({ status: "ok", anomalies: [] });
+    expect(result.migration).toBeUndefined();
   });
 });

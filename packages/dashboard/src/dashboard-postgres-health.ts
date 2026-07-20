@@ -75,19 +75,26 @@ export async function evaluateDashboardPostgresHealth(
   ]);
   if (errors.length > 0) return failedHealth(checkedAt, ...errors);
 
+  let taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   try {
-    const taskIdIntegrity = await detectTaskIdIntegrityAnomaliesAsync(layer.db);
+    taskIdIntegrity = await detectTaskIdIntegrityAnomaliesAsync(layer.db);
+  } catch (error) {
+    return failedHealth(
+      checkedAt,
+      `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
+    );
+  }
+
+  try {
     const migration = await resolveDashboardMigrationHealth(store, layer, context);
     return {
       database: healthyDatabase(checkedAt),
       taskIdIntegrity,
       ...(migration ? { migration } : {}),
     };
-  } catch (error) {
-    return failedHealth(
-      checkedAt,
-      `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
-    );
+  } catch {
+    // Migration status is advisory after connectivity and task-ID queries pass.
+    return { database: healthyDatabase(checkedAt), taskIdIntegrity };
   }
 }
 
@@ -147,7 +154,7 @@ function failedHealth(
   return {
     database: {
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: visibleErrors,
       lastCheckedAt: checkedAt,
       isRunning: false,

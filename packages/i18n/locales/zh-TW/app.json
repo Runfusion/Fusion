@@ -2009,12 +2009,12 @@
     "title": "專案儀表板"
   },
   "dbBanner": {
-    "body": "Fusion 的背景 SQLite 完整性檢查報告有損毀。繼續重要操作之前，請查看下面的失敗物件。",
-    "instructions": "備份專案，如果資料庫仍然可以乾淨地開啟，請嘗試 {{cmd}}，如果損毀仍然存在，請從已知的良好備份中恢復。有關儲存配置和恢復指導，請參閱 {{link}}。",
+    "body": "Fusion 的 PostgreSQL 健康檢查回報失敗。在繼續關鍵操作前，請檢查下方詳細資訊。",
+    "instructions": "請備份專案，檢查<cmd>資料庫記錄</cmd>以及 PostgreSQL 連線與權限，然後重新整理健康狀態。關於儲存與復原指南，請參閱 <docsLink>docs/storage.md</docsLink>。",
     "lastChecked": "上次檢查：{{checkedAtLabel}}",
     "refreshHealth": "重新整理健康狀態",
     "refreshing": "正在重新整理…",
-    "title": "偵測到資料庫損毀",
+    "title": "資料庫健康檢查失敗",
     "whatToDo": "該怎麼做："
   },
   "deepLink": {

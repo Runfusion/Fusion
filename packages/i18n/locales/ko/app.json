@@ -2009,12 +2009,12 @@
     "title": "프로젝트 대시보드"
   },
   "dbBanner": {
-    "body": "Fusion의 백그라운드 SQLite 무결성 검사에서 손상이 발견되었습니다. 중요한 작업을 계속하기 전에 아래의 실패한 개체를 검토하세요.",
-    "instructions": "프로젝트를 백업하고, 데이터베이스가 정상적으로 열리면 {{cmd}}를 시도해 보세요. 손상이 지속될 경우 알려진 정상 백업에서 복원하세요. 저장소 레이아웃 및 복구 안내는 {{link}}를 참고하세요.",
+    "body": "Fusion의 PostgreSQL 상태 검사에서 오류가 보고되었습니다. 중요한 작업을 계속하기 전에 아래 세부 정보를 검토하세요.",
+    "instructions": "프로젝트를 백업하고 <cmd>데이터베이스 로그</cmd>와 PostgreSQL 연결 및 권한을 확인한 다음 상태를 새로 고치세요. 저장소 및 복구 지침은 <docsLink>docs/storage.md</docsLink>를 참조하세요.",
     "lastChecked": "마지막 확인: {{checkedAtLabel}}",
     "refreshHealth": "상태 새로 고침",
     "refreshing": "새로 고치는 중…",
-    "title": "데이터베이스 손상 감지됨",
+    "title": "데이터베이스 상태 검사 실패",
     "whatToDo": "조치 방법:"
   },
   "deepLink": {
