@@ -295,6 +295,8 @@ export interface SelfHealingOptions {
    * Used to avoid recovering active triage sessions.
    */
   getPlanningTaskIds?: () => Set<string>;
+  /** Atomically fence planner ownership while advanced triage recovery runs. */
+  reserveAdvancedTriageRecovery?: (taskId: string) => (() => void) | undefined;
   /**
    * Evict tasks from the triage processor's `processing` set that have been
    * there longer than the staleness threshold (hung promises from stuck kills).
@@ -3040,6 +3042,8 @@ export class SelfHealingManager {
 
       let recovered = 0;
       for (const snapshot of candidates) {
+        const releaseReservation = this.options.reserveAdvancedTriageRecovery?.(snapshot.id);
+        if (this.options.reserveAdvancedTriageRecovery && !releaseReservation) continue;
         try {
           const live = await this.store.getTask(snapshot.id);
           if (
@@ -3056,8 +3060,9 @@ export class SelfHealingManager {
             continue;
           }
 
-          const complete = live.steps.length > 0
-            && live.steps.every((step) => step.status === "done" || step.status === "skipped");
+          const steps = live.steps ?? [];
+          const complete = steps.length > 0
+            && steps.every((step) => step.status === "done" || step.status === "skipped");
           if (complete) {
             if (!this.options.recoverCompletedTask) continue;
             if (await this.options.recoverCompletedTask(live)) recovered++;
@@ -3100,6 +3105,8 @@ export class SelfHealingManager {
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to recover advanced triage task ${snapshot.id}: ${errorMessage}`);
+        } finally {
+          releaseReservation?.();
         }
       }
       return recovered;

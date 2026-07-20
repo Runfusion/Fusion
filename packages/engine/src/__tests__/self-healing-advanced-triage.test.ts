@@ -125,4 +125,42 @@ describe("advanced workflow tasks stranded in triage", () => {
     expect(await manager.recoverAdvancedTriageTasks()).toBe(0);
     expect(store.moveTaskIf).toHaveBeenCalledOnce();
   });
+
+  it("does not promote completed work when planning wins the ownership reservation", async () => {
+    const stranded = task("FN-COMPLETED-RACING-CLAIM", {
+      workflowIrPinNodeId: "merge",
+      workflowIrPinColumnId: undefined,
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    const store = storeFor([stranded]);
+    const recoverCompletedTask = vi.fn(async () => true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      recoverCompletedTask,
+      getExecutingTaskIds: () => new Set<string>(),
+      reserveAdvancedTriageRecovery: () => undefined,
+    });
+
+    expect(await manager.recoverAdvancedTriageTasks()).toBe(0);
+    expect(recoverCompletedTask).not.toHaveBeenCalled();
+  });
+
+  it("releases the planning fence after completed recovery", async () => {
+    const stranded = task("FN-COMPLETED-RESERVED", {
+      workflowIrPinNodeId: "merge",
+      workflowIrPinColumnId: undefined,
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    const store = storeFor([stranded]);
+    const release = vi.fn();
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      recoverCompletedTask: vi.fn(async () => true),
+      getExecutingTaskIds: () => new Set<string>(),
+      reserveAdvancedTriageRecovery: () => release,
+    });
+
+    expect(await manager.recoverAdvancedTriageTasks()).toBe(1);
+    expect(release).toHaveBeenCalledOnce();
+  });
 });

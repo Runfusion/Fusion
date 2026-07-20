@@ -215,6 +215,8 @@ export class TriageProcessor {
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
   private processing = new Set<string>();
+  /** Synchronous ownership fence shared with advanced-triage self-healing. */
+  private advancedRecoveryReservations = new Set<string>();
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
   private processingSince = new Map<string, number>();
   private wasGlobalPaused = false;
@@ -648,12 +650,30 @@ export class TriageProcessor {
    */
   getProcessingTaskIds(): Set<string> {
     const ids = new Set(this.processing);
+    for (const taskId of this.advancedRecoveryReservations) ids.add(taskId);
     for (const taskId of this.finalizing) ids.add(taskId);
     for (const taskId of this.activeSubagentSessions.keys()) {
       const sessions = this.activeSubagentSessions.get(taskId);
       if (sessions && sessions.size > 0) ids.add(taskId);
     }
     return ids;
+  }
+
+  /**
+   * Reserve a task for advanced-state recovery unless planning already owns it.
+   * The check-and-add is synchronous, as is specifyTask's reciprocal guard, so
+   * neither side can slip between ownership inspection and acquisition.
+   */
+  tryReserveAdvancedRecovery(taskId: string): (() => void) | undefined {
+    if (
+      this.advancedRecoveryReservations.has(taskId)
+      || this.processing.has(taskId)
+      || this.hasLivePlanningWork(taskId)
+    ) {
+      return undefined;
+    }
+    this.advancedRecoveryReservations.add(taskId);
+    return () => this.advancedRecoveryReservations.delete(taskId);
   }
 
   /** True when this processor still owns live work for `taskId` (main, subagent, or finalize). */
@@ -1043,6 +1063,7 @@ export class TriageProcessor {
 
       const eligibleTriageTasks = allTasks.filter(
         (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+          && !this.advancedRecoveryReservations.has(t.id)
           && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
@@ -1198,7 +1219,11 @@ export class TriageProcessor {
     `processing` was cleared by a stuck-kill eviction race. Concurrent claim is
     what leaves `status:"planning"` on a todo card after Plan Review APPROVE.
     */
-    if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
+    if (
+      this.advancedRecoveryReservations.has(task.id)
+      || this.processing.has(task.id)
+      || this.hasLivePlanningWork(task.id)
+    ) return;
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 

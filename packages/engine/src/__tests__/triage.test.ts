@@ -1536,6 +1536,19 @@ describe("TriageProcessor", () => {
     expect(processor).toBeInstanceOf(TriageProcessor);
   });
 
+  it("uses a synchronous reservation to keep planning and advanced recovery mutually exclusive", async () => {
+    const task = createTriageTask({ id: "FN-RECOVERY-RESERVED" });
+    const release = processor.tryReserveAdvancedRecovery(task.id);
+    expect(release).toBeTypeOf("function");
+    expect(processor.getProcessingTaskIds()).toContain(task.id);
+
+    await processor.specifyTask(task);
+    expect(store.getTask).not.toHaveBeenCalled();
+
+    release?.();
+    expect(processor.getProcessingTaskIds()).not.toContain(task.id);
+  });
+
   /*
   FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
   finalizeApprovedTask must inject ## Original Description with the task description
