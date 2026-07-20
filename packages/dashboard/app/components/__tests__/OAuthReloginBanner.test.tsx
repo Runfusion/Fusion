@@ -129,39 +129,130 @@ describe("OAuthReloginBanner", () => {
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
-  it("keeps dismissed state scoped to currently expired provider ids", async () => {
+  it("keeps a dismissed GitHub Copilot banner hidden across refresh and re-expiry", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: true, expired: false }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      });
+
+    const firstRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot");
+    fireEvent.click(screen.getByLabelText("Dismiss OAuth re-login banner"));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("github-copilot");
+
+    firstRender.unmount();
+    const refreshedRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(2));
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("github-copilot");
+
+    refreshedRender.unmount();
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("keeps multiple dismissed providers suppressed while showing newly expired providers", async () => {
     mockFetchAuthStatus
       .mockResolvedValueOnce({
         providers: [
-          { id: "anthropic-subscription", name: "Anthropic Subscription", type: "oauth", authenticated: false, expired: true },
+          { id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true },
+          { id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true },
         ],
         ghCli: { available: false, authenticated: false },
       })
-      .mockResolvedValueOnce({
-        providers: [],
-        ghCli: { available: false, authenticated: false },
-      })
+      .mockResolvedValueOnce({ providers: [], ghCli: { available: false, authenticated: false } })
       .mockResolvedValueOnce({
         providers: [
           { id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true },
+          { id: "google-gemini", name: "Google Gemini", type: "oauth", authenticated: false, expired: true },
         ],
         ghCli: { available: false, authenticated: false },
       });
 
-    const { unmount } = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Anthropic Subscription");
-
+    const firstRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot, OpenAI Codex");
     fireEvent.click(screen.getByLabelText("Dismiss OAuth re-login banner"));
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    firstRender.unmount();
 
-    unmount();
+    const clearedRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(2));
+    clearedRender.unmount();
+
     render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Google Gemini");
+    expect(screen.getByRole("status")).not.toHaveTextContent("OpenAI Codex");
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("github-copilot");
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("openai-codex");
+  });
+
+  it("re-arms a dismissed provider after its successful OAuth re-login", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: true, expired: false }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      });
+
+    const firstRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot");
+    fireEvent.click(screen.getByLabelText("Dismiss OAuth re-login banner"));
+
     await act(async () => {
+      window.dispatchEvent(new CustomEvent(OAUTH_RELOGIN_SUCCESS_EVENT, { detail: { providerId: "github-copilot" } }));
       await flushPromises();
     });
-    unmount();
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).not.toContain("github-copilot");
 
+    firstRender.unmount();
     render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
+    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot");
+  });
+
+  it("does not clear dismissed providers for an OAuth success event without a provider id", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      });
+
+    const firstRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot");
+    fireEvent.click(screen.getByLabelText("Dismiss OAuth re-login banner"));
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(OAUTH_RELOGIN_SUCCESS_EVENT));
+      await flushPromises();
+    });
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("github-copilot");
+
+    firstRender.unmount();
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
