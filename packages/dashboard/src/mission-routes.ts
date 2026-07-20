@@ -14,7 +14,13 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskStore, resolvePlanningSettingsModel, AgentStore, THINKING_LEVELS } from "@fusion/core";
+import {
+  TaskStore,
+  resolvePlanningSettingsModel,
+  AgentStore,
+  THINKING_LEVELS,
+  TerminalTaskReconciliationError,
+} from "@fusion/core";
 import type { Goal, Settings, ThinkingLevel } from "@fusion/core";
 import { listEligibleExecutorAgents, resolvePlanningThinkingLevel } from "@fusion/engine";
 import {
@@ -2735,48 +2741,30 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const existing = await missionStore.getFeature(featureId);
-      if (!existing) {
-        throw notFound("Feature not found");
-      }
-
       if (typeof taskId !== "string" || !taskId.trim()) {
         throw badRequest("taskId is required and must be a non-empty string");
       }
 
       const normalizedTaskId = taskId.trim();
-
-      if (existing.taskId && existing.taskId !== normalizedTaskId) {
-        throw conflict(
-          `Feature ${featureId} is already linked to ${existing.taskId}; cannot reconcile against ${normalizedTaskId}`
-        );
-      }
-
       const { store: scopedStore } = await getProjectContext(req);
-      let task: Awaited<ReturnType<typeof scopedStore.getTask>>;
+      const scopedMissionStore = scopedStore.getMissionStore();
+      if (!("reconcileFeatureDoneWithTerminalTask" in scopedMissionStore)) {
+        throw internalError("Terminal-task reconciliation requires the PostgreSQL mission store");
+      }
+
+      /*
+      FNXC:MissionReconciliation 2026-07-20-08:34:
+      Route validation stays project-scoped, but all terminal-evidence checks, mismatch guards, linkage, and rollups belong to one store transaction. Never pre-link or move/unarchive a shipped task here because those ordinary lifecycle paths can wake a parked mission.
+      */
       try {
-        task = await scopedStore.getTask(normalizedTaskId);
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("not found")) {
-          throw notFound("Delivery task not found");
-        }
-        throw err;
+        const feature = await scopedMissionStore.reconcileFeatureDoneWithTerminalTask(featureId, normalizedTaskId);
+        res.json(feature);
+      } catch (error: unknown) {
+        if (!(error instanceof TerminalTaskReconciliationError)) throw error;
+        if (error.code === "FEATURE_NOT_FOUND") throw notFound("Feature not found");
+        if (error.code === "TASK_NOT_FOUND") throw notFound("Delivery task not found");
+        throw conflict(error.message);
       }
-
-      if (task.column !== "done" && task.column !== "archived") {
-        throw conflict(
-          `Delivery task ${normalizedTaskId} must be in done or archived to reconcile feature to done. ` +
-          "Use PATCH /api/missions/features/:featureId or triage/link-task endpoints for active work."
-        );
-      }
-
-      if (!existing.taskId) {
-        await missionStore.linkFeatureToTask(featureId, normalizedTaskId);
-      }
-
-      const feature = await missionStore.updateFeatureStatus(featureId, "done");
-      res.json(feature);
     })
   );
 
