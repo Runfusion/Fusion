@@ -49,6 +49,7 @@ const BATCH1_METHODS = [
 const BATCH2_METHODS = [
   "recoverCompletedTasks",
   "recoverStrandedCompletedTodoTasks",
+  "recoverAdvancedTriageTasks",
   "recoverStaleIncompleteReviewTasks",
   "recoverReviewTasksWithFailedPreMergeSteps",
   "recoverInterruptedMergingTasks",

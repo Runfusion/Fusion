@@ -1659,6 +1659,13 @@ export class TaskExecutor {
    *  Prevents the task:moved handler from dispatching execute() before the
    *  bounce finishes its own dispatch. */
   private workflowRerunPending = new Set<string>();
+  /**
+   * Task ids whose current `task:moved` event is being emitted by this
+   * executor's workflow column-boundary hook. The store emits synchronously,
+   * so this narrowly distinguishes a graph's own transition from an external
+   * engine/user move that must still hard-cancel the active run.
+   */
+  private workflowBoundaryMovesInFlight = new Set<string>();
   /** FN-5256: in-flight session-disposal promises keyed by taskId. The
    *  task:moved (away from in-progress) and task:deleted listeners populate
    *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
@@ -3037,6 +3044,12 @@ export class TaskExecutor {
           }),
         );
       } else if (from === "in-progress") {
+        if (this.workflowBoundaryMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
+          executorLog.log(
+            `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
+          );
+          return;
+        }
         this.trackTaskDisposal(
           task.id,
           this.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
@@ -5822,13 +5835,18 @@ export class TaskExecutor {
       // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
       clearPin: pinPersistence.clearPin,
       moveTask: async (toColumn, ctx) => {
-        await this.store.moveTask(task.id, toColumn, {
-          moveSource: "engine",
-          workflowMoveSource: "workflow-graph",
-          bypassGuards: true,
-          preserveProgress: true,
-          workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
-        });
+        this.workflowBoundaryMovesInFlight.add(task.id);
+        try {
+          await this.store.moveTask(task.id, toColumn, {
+            moveSource: "engine",
+            workflowMoveSource: "workflow-graph",
+            bypassGuards: true,
+            preserveProgress: true,
+            workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
+          });
+        } finally {
+          this.workflowBoundaryMovesInFlight.delete(task.id);
+        }
       },
       emitAudit: async (event) => {
         await this.store.recordRunAuditEvent?.({

@@ -1042,7 +1042,8 @@ export class TriageProcessor {
       }
 
       const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+        (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+          && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
           // Skip failed specifications until the user explicitly retries them.

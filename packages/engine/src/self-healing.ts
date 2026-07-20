@@ -1376,6 +1376,7 @@ export class SelfHealingManager {
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
+      { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks().then(() => undefined) },
       { name: "stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks().then(() => undefined) },
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures().then(() => undefined) },
@@ -2671,6 +2672,7 @@ export class SelfHealingManager {
           },
           { name: "recover-completed-tasks", fn: () => this.recoverCompletedTasks() },
           { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks() },
+          { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks() },
           { name: "recover-stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks() },
           { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
           { name: "recover-missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures() },
@@ -3004,6 +3006,102 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Stranded completed todo task recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Re-home workflow-graph tasks stranded in the planner column after the
+   * executor aborted its own column-boundary move. A worktree plus a durable
+   * graph pin is the proof that this is advanced execution state, not an
+   * ordinary triage card. Completed work goes through the normal review
+   * recovery seam; incomplete remediation resumes at its pinned column.
+   */
+  async recoverAdvancedTriageTasks(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const tasks = await this.store.listTasks({ column: "triage", slim: true });
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
+      const candidates = tasks.filter((task) =>
+        task.column === "triage"
+        && task.status == null
+        && !task.paused
+        && !task.error
+        && Boolean(task.worktree)
+        && Boolean(task.workflowIrPinNodeId)
+        && !executingIds.has(task.id)
+        && !planningIds.has(task.id)
+        && this.options.isTaskActive?.(task.id) !== true
+        && !(task.worktree && activeSessionRegistry.isPathActive(task.worktree)),
+      );
+
+      let recovered = 0;
+      for (const snapshot of candidates) {
+        try {
+          const live = await this.store.getTask(snapshot.id);
+          if (
+            live.column !== "triage"
+            || live.status != null
+            || live.paused
+            || live.error
+            || !live.worktree
+            || !live.workflowIrPinNodeId
+            || (this.options.getExecutingTaskIds?.() ?? new Set<string>()).has(live.id)
+            || this.options.isTaskActive?.(live.id) === true
+            || activeSessionRegistry.isPathActive(live.worktree)
+          ) {
+            continue;
+          }
+
+          const complete = live.steps.length > 0
+            && live.steps.every((step) => step.status === "done" || step.status === "skipped");
+          if (complete) {
+            if (!this.options.recoverCompletedTask) continue;
+            if (await this.options.recoverCompletedTask(live)) recovered++;
+            continue;
+          }
+
+          const resumeColumn = live.workflowIrPinColumnId;
+          if (!resumeColumn || resumeColumn === "triage") continue;
+          const moved = await this.store.moveTaskIf(live.id, resumeColumn, (current) =>
+            current.column === "triage"
+            && current.status == null
+            && !current.paused
+            && !current.error
+            && current.worktree === live.worktree
+            && current.workflowIrPinNodeId === live.workflowIrPinNodeId
+            && current.workflowIrPinColumnId === resumeColumn,
+          {
+            moveSource: "engine",
+            workflowMoveSource: "self-healing-advanced-triage",
+            workflowMoveMetadata: {
+              reason: "graph-boundary-self-abort-recovery",
+              pinnedNodeId: live.workflowIrPinNodeId,
+            },
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+          if (!moved.moved) continue;
+          await this.store.logEntry(
+            live.id,
+            `Auto-recovered workflow task stranded in triage — resumed at pinned ${resumeColumn} column`,
+          );
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn(`Failed to recover advanced triage task ${snapshot.id}: ${errorMessage}`);
+        }
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Advanced triage recovery failed: ${errorMessage}`);
       return 0;
     }
   }

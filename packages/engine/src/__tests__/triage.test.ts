@@ -1730,6 +1730,33 @@ Planner rewrote mission without the raw request.
       expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-200" }));
     });
 
+    it("does not repeatedly dispatch a triage row that already has executor advancement evidence", async () => {
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-ADVANCED", worktree: "/tmp/fusion-fn-advanced" }),
+        createTriageTask({ id: "FN-UNPLANNED" }),
+      ];
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).toHaveBeenCalledOnce();
+      expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-UNPLANNED" }));
+    });
+
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
     When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
