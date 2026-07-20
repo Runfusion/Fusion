@@ -523,6 +523,8 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
       { content: "original", revision: 1 },
     ]);
     expect(await listTaskDocuments(ctx.layer.db, taskId, TEST_PROJECT_ID)).toEqual([]);
+    expect(await getTaskDocument(ctx.layer.db, taskId, "docs", "project-other")).toBeNull();
+    expect(await getTaskDocumentRevisions(ctx.layer.db, taskId, "docs", "project-other")).toEqual([]);
 
     const input = {
       key: "docs",

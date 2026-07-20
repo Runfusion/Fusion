@@ -340,7 +340,8 @@ export async function publishArchivedTaskDocumentAddition(
         eq(schema.archive.archivedTasks.projectId, projectId),
         eq(schema.archive.archivedTasks.id, taskId),
       ))
-      .limit(1);
+      .limit(1)
+      .for("key share");
     if (task.column !== "archived" || task.deletedAt == null || !archiveRows[0]) {
       throw new ArchivedTaskDocumentPublicationRejectedError("archived-state-inconsistent", projectId, taskId, input.key);
     }
