@@ -50,7 +50,9 @@ import {
   resolveReboundTarget,
   resolveColumnFlags,
   TransitionRejectionError,
+  ArchivedTaskDocumentPublicationRejectedError,
   TaskDocumentPreconditionFailedError,
+  validateArchivedTaskDocumentAddition,
   validateTaskDocumentPreconditions,
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
@@ -87,6 +89,7 @@ import { computePlanApprovalFingerprint, isWorkspaceTask, type RunAuditEventInpu
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { deriveAutoTaskBranch, derivePerTaskBranch, getBranchSelectionMode, resolveBranchSelection } from "./branch-selection.js";
+import { isDaemonAuthActive } from "../auth-middleware.js";
 
 const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Plan)\s+Review:|$)/gi;
 const REVIEW_VERDICT_RE = /###\s+Verdict:\s*(APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
@@ -3977,6 +3980,71 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const errorWithCode = err as NodeJS.ErrnoException;
       const status = errorWithCode.code === "ENOENT" ? 404 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /**
+   * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
+   * Archived corrections are an operator-only daemon API, not an ordinary editor or agent write. The server-level bearer middleware authenticates requests when daemon auth is active; this route additionally fails closed when Fusion was launched with `--no-auth` or without a daemon token. Only the additive contract is accepted, and conflict details expose hashes/revisions but never document, reason, or credential bytes.
+   */
+  router.post("/tasks/:id/documents/:key/archived-publications", async (req, res) => {
+    if (!isDaemonAuthActive(options)) {
+      throw new ApiError(403, "Archived document publication requires active daemon bearer authentication");
+    }
+    try {
+      if (!DOCUMENT_KEY_REGEX.test(req.params.key)) {
+        throw badRequest("Invalid document key. Must be 1-64 alphanumeric characters, hyphens, or underscores.");
+      }
+      const body = req.body as Record<string, unknown> | undefined;
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw badRequest("request body must be an object");
+      }
+      const allowedFields = new Set(["appendContent", "expectedRevision", "expectedContentHash", "author", "reason"]);
+      const unknownFields = Object.keys(body).filter((field) => !allowedFields.has(field));
+      if (unknownFields.length > 0) {
+        throw badRequest(`Unknown archived publication field: ${unknownFields[0]}`);
+      }
+      if (typeof body.appendContent === "string" && body.appendContent.length > 100000) {
+        throw badRequest("appendContent must be between 1 and 100000 characters");
+      }
+      if (typeof body.author === "string" && body.author.length > 200) {
+        throw badRequest("author must be at most 200 characters");
+      }
+      if (typeof body.reason === "string" && body.reason.length > 2000) {
+        throw badRequest("reason must be at most 2000 characters");
+      }
+      const publication = {
+        appendContent: body.appendContent,
+        expectedRevision: body.expectedRevision,
+        expectedContentHash: body.expectedContentHash,
+        author: body.author,
+        reason: body.reason,
+      };
+      try {
+        validateArchivedTaskDocumentAddition(publication);
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
+      const { store: scopedStore } = await getProjectContext(req);
+      const result = await scopedStore.publishArchivedTaskDocumentAddition(req.params.id, {
+        key: req.params.key,
+        appendContent: publication.appendContent,
+        expectedRevision: publication.expectedRevision,
+        expectedContentHash: publication.expectedContentHash,
+        author: publication.author.trim(),
+        reason: publication.reason.trim(),
+      });
+      res.status(201).json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (err instanceof TaskDocumentPreconditionFailedError) {
+        throw new ApiError(409, err.message, { ...err.toDetails() });
+      }
+      if (err instanceof ArchivedTaskDocumentPublicationRejectedError) {
+        const status = err.reason === "parent-not-found" || err.reason === "document-not-found" ? 404 : 409;
+        throw new ApiError(status, err.message, { ...err.toDetails() });
+      }
+      throw new ApiError(500, "Archived document publication failed");
     }
   });
 

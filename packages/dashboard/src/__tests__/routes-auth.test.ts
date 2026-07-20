@@ -42,6 +42,7 @@ import { resetDiagnosticsSink, setDiagnosticsSink, type LogEntry } from "../ai-s
 import * as updateCheckModule from "../update-check.js";
 import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
 import { parseGitHubCopilotDeviceCode } from "../routes/register-auth-routes.js";
+import { createAuthMiddleware } from "../auth-middleware.js";
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
@@ -177,7 +178,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, Database, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
+import { AgentStore, ArchivedTaskDocumentPublicationRejectedError, Database, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -229,6 +230,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
     getAllDocuments: vi.fn().mockResolvedValue([]),
     upsertTaskDocument: vi.fn(),
+    publishArchivedTaskDocumentAddition: vi.fn(),
     deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
@@ -4143,6 +4145,17 @@ describe("Pause/Unpause endpoints", () => {
       return app;
     }
 
+    const OPERATOR_TOKEN = "fx-005-operator-token";
+    function buildPrivilegedApp(mode: "authenticated" | "no-auth" = "authenticated") {
+      const app = express();
+      app.use(express.json());
+      if (mode === "authenticated") app.use(createAuthMiddleware(OPERATOR_TOKEN));
+      app.use("/api", createApiRoutes(store, mode === "authenticated"
+        ? { daemon: { token: OPERATOR_TOKEN } }
+        : { noAuth: true }));
+      return app;
+    }
+
     describe("GET /tasks/:id/documents", () => {
       it("returns empty array when the store hides documents for a soft-deleted parent", async () => {
         (store.getTaskDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -4341,6 +4354,101 @@ describe("Pause/Unpause endpoints", () => {
         );
         expect(res.status).toBe(201);
         expect(store.upsertTaskDocument).toHaveBeenCalledWith("KB-001", { key: "notes", content: "My notes", author: "agent", metadata: { priority: "high" } });
+      });
+    });
+
+    describe("POST /tasks/:id/documents/:key/archived-publications", () => {
+      const hash = `sha256:${"a".repeat(64)}`;
+      const body = {
+        appendContent: "Correction bytes",
+        expectedRevision: 2,
+        expectedContentHash: hash,
+        author: "operator",
+        reason: "Correct retained evidence",
+      };
+      const requestPublication = (app: express.Express, payload: Record<string, unknown> = body, token = OPERATOR_TOKEN) => REQUEST(
+        app,
+        "POST",
+        "/api/tasks/KB-001/documents/docs/archived-publications",
+        JSON.stringify(payload),
+        { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      );
+
+      it("fails closed when daemon authentication is disabled", async () => {
+        const res = await requestPublication(buildPrivilegedApp("no-auth"));
+        expect(res.status).toBe(403);
+        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
+      });
+
+      it("inherits daemon bearer rejection before invoking the store", async () => {
+        const res = await requestPublication(buildPrivilegedApp(), body, "wrong-token");
+        expect(res.status).toBe(401);
+        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
+      });
+
+      it("publishes an authenticated additive correction with project-scoped context", async () => {
+        const result = {
+          document: { id: "d1", taskId: "KB-001", key: "docs", content: "base\n\nCorrection bytes", revision: 3, contentHash: `sha256:${"b".repeat(64)}`, author: "operator" },
+          previousRevision: 2,
+          previousContentHash: hash,
+          appendedContentHash: `sha256:${"b".repeat(64)}`,
+        };
+        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockResolvedValue(result);
+        const res = await requestPublication(buildPrivilegedApp());
+        expect(res.status).toBe(201);
+        expect(res.body).toEqual(result);
+        expect(store.publishArchivedTaskDocumentAddition).toHaveBeenCalledWith("KB-001", {
+          key: "docs",
+          ...body,
+        });
+      });
+
+      it.each([
+        [{ ...body, appendContent: "" }, "appendContent must be a non-empty string"],
+        [{ ...body, expectedRevision: 0 }, "expectedRevision must be a positive integer"],
+        [{ ...body, expectedRevision: 1.5 }, "expectedRevision must be a positive integer"],
+        [{ ...body, expectedContentHash: "sha256:ABC" }, "64 lowercase hex"],
+        [{ ...body, author: "" }, "author must be a non-empty string"],
+        [{ ...body, reason: "" }, "reason must be a non-empty string"],
+        [{ ...body, content: "replacement" }, "Unknown archived publication field"],
+        [{ ...body, allowArchived: true }, "Unknown archived publication field"],
+      ])("returns 400 without forwarding malformed publication %#", async (payload, message) => {
+        const res = await requestPublication(buildPrivilegedApp(), payload);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain(message);
+        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
+      });
+
+      it("maps stale CAS to a safe structured 409", async () => {
+        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockRejectedValue(new TaskDocumentPreconditionFailedError({
+          projectId: "project-a",
+          taskId: "KB-001",
+          key: "docs",
+          expectedRevision: 2,
+          expectedContentHash: hash,
+          currentRevision: 3,
+          currentContentHash: `sha256:${"c".repeat(64)}`,
+        }));
+        const res = await requestPublication(buildPrivilegedApp());
+        expect(res.status).toBe(409);
+        expect(res.body.details).toMatchObject({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", currentRevision: 3 });
+        expect(JSON.stringify(res.body)).not.toContain(body.appendContent);
+        expect(JSON.stringify(res.body)).not.toContain(body.reason);
+      });
+
+      it.each([
+        ["parent-not-found", 404],
+        ["document-not-found", 404],
+        ["parent-not-archived", 409],
+        ["archived-state-inconsistent", 409],
+      ] as const)("maps %s to %i", async (reason, status) => {
+        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new ArchivedTaskDocumentPublicationRejectedError(reason, "project-a", "KB-001", "docs"),
+        );
+        const res = await requestPublication(buildPrivilegedApp());
+        expect(res.status).toBe(status);
+        expect(res.body.details).toMatchObject({ code: "ARCHIVED_TASK_DOCUMENT_PUBLICATION_REJECTED", reason });
+        expect(JSON.stringify(res.body)).not.toContain(body.appendContent);
       });
     });
 
