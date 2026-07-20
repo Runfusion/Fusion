@@ -436,6 +436,37 @@ describe("MailboxModal", () => {
     });
   });
 
+  it("opens task-only and planning-clarification related work from modal detail", async () => {
+    const taskMessage: Message = {
+      ...mockMessage,
+      id: "msg-modal-task",
+      fromId: "task-agent",
+      metadata: { taskId: "FN-8428" },
+    };
+    const planningMessage: Message = {
+      ...mockMessage,
+      id: "msg-modal-planning",
+      fromId: "planning-agent",
+      metadata: { kind: "planning-clarification", sessionId: "planning-8428", questionId: "question-8428" },
+    };
+    const onOpenTask = vi.fn();
+    const onOpenPlanningSession = vi.fn();
+    mockFetchInbox.mockResolvedValue({ messages: [taskMessage, planningMessage], total: 2, unreadCount: 2 });
+    mockFetchConversation.mockImplementation(async (fromId) => [fromId === taskMessage.fromId ? taskMessage : planningMessage]);
+
+    render(<MailboxModal {...defaultProps} onOpenTask={onOpenTask} onOpenPlanningSession={onOpenPlanningSession} />);
+    await screen.findByTestId("mailbox-item-msg-modal-task");
+
+    fireEvent.click(screen.getByTestId("mailbox-item-msg-modal-task"));
+    fireEvent.click(await screen.findByTestId("mailbox-view-task"));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-8428");
+
+    fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
+    fireEvent.click(screen.getByTestId("mailbox-item-msg-modal-planning"));
+    fireEvent.click(await screen.findByTestId("mailbox-open-planning-session"));
+    expect(onOpenPlanningSession).toHaveBeenCalledWith("planning-8428");
+  });
+
   it("marks message as read when opening unread message", async () => {
     render(<MailboxModal {...defaultProps} />);
     await waitFor(() => {

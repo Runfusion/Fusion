@@ -115,6 +115,41 @@ describe("reactive Planning Mode question contract", () => {
   createSession/submitResponse agent seam so regression coverage proves the running plan,
   Other steering, and explicit-only validation invariant rather than only testing normalization.
   */
+  it("delivers planning-clarification metadata that can reopen the exact session", async () => {
+    installScriptedAgent([payload(FIRST_QUESTION)]);
+    let resolveDelivered: ((message: Record<string, unknown>) => void) | undefined;
+    const delivered = new Promise<Record<string, unknown>>((resolve) => {
+      resolveDelivered = resolve;
+    });
+    const messageStore = {
+      getInbox: vi.fn(async () => []),
+      sendMessage: vi.fn(async (message: Record<string, unknown>) => resolveDelivered?.(message)),
+    };
+    const sessionId = await createSessionWithAgent(
+      "127.0.0.11",
+      "Plan mailbox navigation",
+      "/tmp/project",
+      MOCK_TASK_STORE,
+      undefined,
+      undefined,
+      undefined,
+      { clarificationEnabled: true, messageStore: messageStore as never },
+    );
+
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    const message = await delivered;
+
+    expect(message).toMatchObject({
+      type: "system",
+      content: expect.stringContaining(FIRST_QUESTION.question),
+      metadata: {
+        kind: "planning-clarification",
+        sessionId,
+        questionId: FIRST_QUESTION.id,
+      },
+    });
+  });
+
   it("keeps the streaming agent turn non-terminal after complete, persists its running plan, and validates only on user action", async () => {
     const prompts = installScriptedAgent([
       completePayload(),

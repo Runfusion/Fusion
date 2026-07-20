@@ -83,6 +83,12 @@ export interface MessageMetadata extends Record<string, unknown> {
   wakeRecipient?: boolean;
   /** Structured operator-approved follow-up task proposal. */
   kind?: string;
+  /** Related task for mailbox messages that require an operator response. */
+  taskId?: string;
+  /** Persisted Planning Mode session for a planning-clarification message. */
+  sessionId?: string;
+  /** Planning question that produced a planning-clarification message. */
+  questionId?: string;
   proposedTask?: ProposedTaskMetadata;
   proposalStatus?: "pending" | "creating" | "created" | "dismissed";
   createdTaskId?: string;

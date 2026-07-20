@@ -1828,6 +1828,11 @@ async function maybeNotifyPlanningAwaitingInput(
   Proactive planner questions use an inbox message independently of ntfy. The
   inbox lookup is authoritative because a process can die after sendMessage but
   before the persisted marker write; ntfy remains best-effort and separately deduped.
+
+  FNXC:MailboxRelatedWork 2026-07-20-09:30:
+  FN-8428 relies on this stable kind/sessionId/questionId tuple to deduplicate clarification
+  notices and open the exact Planning session from mailbox detail. Keep the readable question in
+  the body, but never replace these metadata fields with a markdown-only navigation link.
   */
   if (proactiveClarification && session.clarificationEnabled && session.messageStore
     && session.lastMailboxNotifiedQuestionKey !== questionKey) {
