@@ -118,6 +118,8 @@ export const taskDocumentWriteParams = Type.Object({
   }),
   content: Type.String({ description: "Document content to store" }),
   author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
+  expected_revision: Type.Optional(Type.Integer({ minimum: 0, description: "CAS precondition: 0 requires absence; a positive value must match the current revision." })),
+  expected_content_hash: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$", description: "CAS precondition: current exact-content SHA-256 (`sha256:<64 lowercase hex>`) must match." })),
 });
 
 export const taskDocumentReadParams = Type.Object({
@@ -150,6 +152,8 @@ export const chatTaskDocumentWriteParams = Type.Object({
   }),
   content: Type.String({ description: "Document content to store" }),
   author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
+  expected_revision: Type.Optional(Type.Integer({ minimum: 0, description: "CAS precondition: 0 requires absence; a positive value must match the current revision." })),
+  expected_content_hash: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$", description: "CAS precondition: current exact-content SHA-256 (`sha256:<64 lowercase hex>`) must match." })),
 });
 
 export const chatTaskDocumentReadParams = Type.Object({
@@ -1626,6 +1630,32 @@ export function createChatTaskLogsReadTool(store: TaskStore): ToolDefinition {
   };
 }
 
+/*
+FNXC:TaskDocumentCAS 2026-07-20-11:06:
+Task-bound and explicit cross-task publishers share one read-then-CAS contract. They forward optional snake_case expectations without inventing defaults, return revision/hash on success, and expose stale state as a typed error result. Agents must re-read and explicitly rebase; the tool never retries or converts a conflict into success text.
+*/
+function taskDocumentWriteResult(document: TaskDocument) {
+  return {
+    content: [{ type: "text" as const, text: `Saved document "${document.key}" (revision ${document.revision}, ${document.contentHash}).` }],
+    details: { key: document.key, revision: document.revision, contentHash: document.contentHash },
+  };
+}
+
+function taskDocumentWriteError(error: unknown, key: string, taskId?: string) {
+  if (error instanceof fusionCore.TaskDocumentPreconditionFailedError) {
+    return {
+      content: [{ type: "text" as const, text: `ERROR: Document "${key}" changed; re-read it and explicitly rebase before writing.` }],
+      details: { ...error.toDetails() },
+      isError: true,
+    };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    content: [{ type: "text" as const, text: `ERROR: Failed to save document "${key}"${taskId ? ` for task ${taskId}` : ""}: ${message}` }],
+    details: {},
+  };
+}
+
 /**
  * Create a `fn_task_document_write` tool that stores a named task document.
  *
@@ -1638,34 +1668,22 @@ export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): T
     name: "fn_task_document_write",
     label: "Write Document",
     description:
-      "Save a named document for this task (for example plan, notes, or research). " +
-      "Each write creates a new revision so you can update documents over time.",
+      "Save a named document for this task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase.",
     parameters: taskDocumentWriteParams,
     execute: async (_id: string, params: Static<typeof taskDocumentWriteParams>) => {
       const input: TaskDocumentCreateInput = {
         key: params.key,
         content: params.content,
         author: params.author || "agent",
+        ...(params.expected_revision !== undefined ? { expectedRevision: params.expected_revision } : {}),
+        ...(params.expected_content_hash !== undefined ? { expectedContentHash: params.expected_content_hash } : {}),
       };
 
       try {
         const document: TaskDocument = await store.upsertTaskDocument(taskId, input);
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Saved document "${document.key}" (revision ${document.revision}).`,
-          }],
-          details: {},
-        };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `ERROR: Failed to save document "${params.key}": ${err.message}`,
-          }],
-          details: {},
-        };
+        return taskDocumentWriteResult(document);
+      } catch (error: unknown) {
+        return taskDocumentWriteError(error, params.key);
       }
     },
   };
@@ -1806,34 +1824,22 @@ export function createChatTaskDocumentTools(store: TaskStore): ToolDefinition[] 
       name: "fn_task_document_write",
       label: "Write Document",
       description:
-        "Save a named document for a task (for example plan, notes, or research). " +
-        "Each write creates a new revision so you can update documents over time. Requires task_id.",
+        "Save a named document for an explicit task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase. Requires task_id.",
       parameters: chatTaskDocumentWriteParams,
       execute: async (_id: string, params: Static<typeof chatTaskDocumentWriteParams>) => {
         const input: TaskDocumentCreateInput = {
           key: params.key,
           content: params.content,
           author: params.author || "agent",
+          ...(params.expected_revision !== undefined ? { expectedRevision: params.expected_revision } : {}),
+          ...(params.expected_content_hash !== undefined ? { expectedContentHash: params.expected_content_hash } : {}),
         };
 
         try {
           const document: TaskDocument = await store.upsertTaskDocument(params.task_id, input);
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Saved document "${document.key}" (revision ${document.revision}).`,
-            }],
-            details: {},
-          };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (err: any) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `ERROR: Failed to save document "${params.key}" for task ${params.task_id}: ${err.message}`,
-            }],
-            details: {},
-          };
+          return taskDocumentWriteResult(document);
+        } catch (error: unknown) {
+          return taskDocumentWriteError(error, params.key, params.task_id);
         }
       },
     },
