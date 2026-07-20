@@ -3832,17 +3832,22 @@ describe("PlanningModeModal", () => {
     });
   });
 
-  it("uses progressive interview controls on tablet and short-landscape phone sessions", async () => {
-    for (const viewport of ["tablet", "short-landscape"] as const) {
-      if (viewport === "tablet") mockViewport("tablet");
-      else mockShortLandscapePhone();
+  /*
+  FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
+  FN-8445 preserves the mounted compact switcher across all three interview panes and every
+  compact shell. CSS source assertions prove flex order; this test proves each rendered surface.
+  */
+  it("keeps progressive interview controls available across tablet, mobile, and short-landscape panes", async () => {
+    for (const viewport of ["tablet", "mobile", "short-landscape"] as const) {
+      if (viewport === "short-landscape") mockShortLandscapePhone();
+      else mockViewport(viewport);
       mockFetchAiSession.mockResolvedValueOnce({
         id: `session-${viewport}`,
         type: "planning",
         status: "awaiting_input",
         title: "Responsive planning session",
         inputPayload: JSON.stringify({ initialPlan: "Responsive plan prompt" }),
-        conversationHistory: "[]",
+        conversationHistory: JSON.stringify([{ question: mockQuestion, response: { [mockQuestion.id]: "Small" } }]),
         result: JSON.stringify(mockSummary),
         thinkingOutput: "",
         projectId: null,
@@ -3850,8 +3855,9 @@ describe("PlanningModeModal", () => {
       });
 
       const rendered = render(<PlanningModeModal isOpen={true} onClose={mockOnClose} onTaskCreated={mockOnTaskCreated} onTasksCreated={vi.fn()} tasks={mockTasks} resumeSessionId={`session-${viewport}`} />);
-      await screen.findByText("What is the scope?");
+      await screen.findByTestId("planning-question-text");
       expect(screen.getByRole("button", { name: "Question" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("navigation", { name: "Planning interview panels" })).toBeVisible();
       expect(screen.getByRole("button", { name: "Running plan" })).toBeDefined();
       expect(screen.getByRole("button", { name: "Answered questions" })).toBeDefined();
       expect(screen.getByRole("button", { name: "Next question" })).toBeDefined();
@@ -3868,7 +3874,8 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Answered questions" }));
       expect(rendered.container.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--compact-history");
-      expect(screen.getByRole("complementary", { name: "Answered questions" })).toBeVisible();
+      expect(screen.getByRole("navigation", { name: "Planning interview panels" })).toBeVisible();
+      expect(within(screen.getByRole("complementary", { name: "Answered questions" })).getByText(mockQuestion.question)).toBeVisible();
 
       fireEvent.click(screen.getByRole("button", { name: "Question" }));
       expect(rendered.container.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--compact-question");

@@ -75,12 +75,19 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const tabletCss = getMediaBlocks(css, TABLET_SUMMARY_ACTIONS_QUERY).join("\n");
 
     expect(findRule(shortShellCss, ".planning-modal-body--compact-interview")).toMatch(/flex-direction\s*:\s*column\s*;/);
-    expect(findRule(shortShellCss, ".planning-compact-pane-switcher")).toMatch(/display\s*:\s*flex\s*;/);
+    expectSomeRule(shortShellCss, ".planning-compact-pane-switcher", /display\s*:\s*flex\s*;/);
+    /*
+    FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
+    FN-8445 keeps the tabs above Answered questions despite its earlier DOM position. jsdom
+    cannot measure flex layout, so both compact media contracts assert the visual-order pin.
+    */
+    expect(findRule(shortShellCss, ".planning-modal-body--compact-interview .planning-compact-pane-switcher")).toMatch(/order\s*:\s*-1\s*;/);
     expect(findRule(shortShellCss, ".planning-compact-pane-switcher .btn")).toMatch(/min-height\s*:\s*calc\(var\(--space-md\) \* 2\.25\)\s*;/);
     expect(shortShellCss).toContain(".planning-modal-body--compact-question .planning-running-plan");
     expect(shortShellCss).toContain(".planning-modal-body--compact-plan .planning-detail");
     expect(shortShellCss).toContain(".planning-modal-body--compact-history .planning-detail");
     expect(findRule(tabletCss, ".planning-modal-body--compact-interview")).toMatch(/flex-direction\s*:\s*column\s*;/);
+    expect(findRule(tabletCss, ".planning-modal-body--compact-interview .planning-compact-pane-switcher")).toMatch(/order\s*:\s*-1\s*;/);
     expect(tabletCss).toContain(".planning-modal-body--compact-question .planning-running-plan");
 
     expectSomeRule(css, ".planning-running-plan", /flex\s*:\s*0 1 24rem\s*;/);

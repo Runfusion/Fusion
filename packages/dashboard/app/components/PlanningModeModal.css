@@ -550,6 +550,16 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
     flex-direction: column;
   }
 
+  /*
+  FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
+  FN-8445 requires compact interview tabs to remain directly below the Planning header for
+  Question, Running plan, and Answered questions. History renders before the switcher in DOM,
+  so visual flex order pins the shared chrome above its scrollable sibling on mobile and short shells.
+  */
+  .planning-modal-body--compact-interview .planning-compact-pane-switcher {
+    order: -1;
+  }
+
   .planning-compact-pane-switcher {
     display: flex;
     flex: 0 0 auto;
@@ -1511,6 +1521,15 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
   /* FNXC:PlanningModeMobileTablet 2026-07-20-09:30: tablet uses the same one-surface interview switcher rather than compressing three fixed panes beside the project navigation. */
   .planning-modal-body--compact-interview {
     flex-direction: column;
+  }
+
+  /*
+  FNXC:PlanningModeCompactSwitcher 2026-07-20-11:00:
+  FN-8445 keeps every compact interview pane's shared tabs above Answered questions on tablet,
+  where history otherwise grows before the later DOM sibling in the column.
+  */
+  .planning-modal-body--compact-interview .planning-compact-pane-switcher {
+    order: -1;
   }
 
   .planning-compact-pane-switcher {
