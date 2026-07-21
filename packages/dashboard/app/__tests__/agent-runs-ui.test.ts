@@ -11,11 +11,21 @@ const agentDetailViewPath = path.join(__dirname, "../components/AgentDetailView.
 const agentRunHistoryPath = path.join(__dirname, "../components/AgentRunHistory.tsx");
 const apiPath = path.join(__dirname, "../api.ts");
 const apiLegacyPath = path.join(__dirname, "../api/legacy.ts");
+const apiAgentsPath = path.join(__dirname, "../api/agents.ts");
 
 const agentsViewContent = fs.readFileSync(agentsViewPath, "utf-8");
 const agentDetailViewContent = fs.readFileSync(agentDetailViewPath, "utf-8");
 const agentRunHistoryContent = fs.readFileSync(agentRunHistoryPath, "utf-8");
-const apiContent = `${fs.readFileSync(apiPath, "utf-8")}\n${fs.existsSync(apiLegacyPath) ? fs.readFileSync(apiLegacyPath, "utf-8") : ""}`;
+/*
+FNXC:DashboardTests 2026-07-20-23:55:
+Agent run API helpers live in api/agents.ts and are re-exported through legacy/api barrels.
+Include agents.ts so static export checks follow the modular api layout.
+*/
+const apiContent = [
+  fs.readFileSync(apiPath, "utf-8"),
+  fs.existsSync(apiLegacyPath) ? fs.readFileSync(apiLegacyPath, "utf-8") : "",
+  fs.existsSync(apiAgentsPath) ? fs.readFileSync(apiAgentsPath, "utf-8") : "",
+].join("\n");
 
 describe("Agent runs UI — static analysis", () => {
   describe("startAgentRun API function", () => {
@@ -31,7 +41,12 @@ describe("Agent runs UI — static analysis", () => {
     });
 
     it("exports HeartbeatInvocationSource type", () => {
-      expect(apiContent).toMatch(/export type.*HeartbeatInvocationSource/);
+      /*
+      FNXC:DashboardTests 2026-07-20-23:55:
+      Type may be re-exported via `export type { … HeartbeatInvocationSource … }` from agents.ts
+      or a direct `export type HeartbeatInvocationSource = …` declaration.
+      */
+      expect(apiContent).toMatch(/export type[\s{][\s\S]*HeartbeatInvocationSource/);
     });
   });
 

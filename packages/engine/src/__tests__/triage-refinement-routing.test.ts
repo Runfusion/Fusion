@@ -109,6 +109,16 @@ describe("refinement routing from triage", () => {
       }),
       logEntry: vi.fn().mockResolvedValue(undefined),
     });
+    store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (live: any) => boolean) => {
+      const live = typeof store.getTask === "function" ? await store.getTask(id) : undefined;
+      if (live && !predicate(live)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: live ? { ...live, column, status: null } : { id, column, status: null } };
+    });
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+    store.readTaskForMove = vi.fn(async (id: string) => (typeof store.getTask === "function" ? store.getTask(id) : undefined));
+    if (!store.parseFileScopeFromPrompt) store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
+
 
     const processor = new TriageProcessor(store, rootDir);
     const task = createTriageTask({ id: "FN-R2", sourceType: "task_refine", sourceParentTaskId: "FN-001" });
@@ -145,6 +155,16 @@ describe("refinement routing from triage", () => {
       }),
       logEntry: vi.fn().mockResolvedValue(undefined),
     });
+    store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (live: any) => boolean) => {
+      const live = typeof store.getTask === "function" ? await store.getTask(id) : undefined;
+      if (live && !predicate(live)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: live ? { ...live, column, status: null } : { id, column, status: null } };
+    });
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+    store.readTaskForMove = vi.fn(async (id: string) => (typeof store.getTask === "function" ? store.getTask(id) : undefined));
+    if (!store.parseFileScopeFromPrompt) store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
+
 
     const processor = new TriageProcessor(store, rootDir);
 
@@ -203,6 +223,16 @@ describe("refinement routing from triage", () => {
       moveTask: vi.fn().mockResolvedValue(undefined),
       logEntry: vi.fn().mockResolvedValue(undefined),
     });
+    store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (live: any) => boolean) => {
+      const live = typeof store.getTask === "function" ? await store.getTask(id) : undefined;
+      if (live && !predicate(live)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: live ? { ...live, column, status: null } : { id, column, status: null } };
+    });
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+    store.readTaskForMove = vi.fn(async (id: string) => (typeof store.getTask === "function" ? store.getTask(id) : undefined));
+    if (!store.parseFileScopeFromPrompt) store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
+
 
     const processor = new TriageProcessor(store, rootDir);
 

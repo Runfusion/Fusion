@@ -66,12 +66,38 @@ function createDetail(task: Task): TaskDetail {
 }
 
 function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
-    getTask: vi.fn().mockResolvedValue(createDetail(task)),
+  /*
+  FNXC:EngineTests 2026-07-20-23:40:
+  Finalization rewrites PROMPT hygiene under withTaskLock + readTaskForMove (FN-8361).
+  Minimal mocks that omit those methods fail closed inside runIfStillPlanningUnderTaskLock
+  and never reach moveTask(todo). Mirror the production lock surface so planning tests can
+  finish the approve path.
+  */
+  let live = createDetail(task);
+  const store: any = {
+    getTask: vi.fn(async () => live),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
-    moveTask: vi.fn(),
-    updateTask: vi.fn().mockResolvedValue(undefined),
+    moveTask: vi.fn(async (id: string, column: string) => {
+      if (id === live.id) live = { ...live, column, status: null } as typeof live;
+      return live;
+    }),
+    /*
+    FNXC:EngineTests 2026-07-20-23:50:
+    finalizeApprovedTask releases triage→todo only via moveTaskIf + planning-stage predicate
+    (FN-8361 family). A bare moveTask mock never runs; implement moveTaskIf so the approve
+    path can complete and tests can still assert the moveTaskIf/column outcome.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: Task) => boolean) => {
+      if (id !== live.id || !predicate(live as Task)) return { moved: false, task: live };
+      live = { ...live, column, status: null } as typeof live;
+      store.moveTask(id, column);
+      return { moved: true, task: live };
+    }),
+    updateTask: vi.fn(async (id: string, updates: Partial<Task>) => {
+      if (id === live.id) live = { ...live, ...updates } as typeof live;
+      return live;
+    }),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({
@@ -94,10 +120,19 @@ function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Pa
     getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
     getWorkflowSettingValues: vi.fn().mockResolvedValue({}),
     getWorkflowSettingsProjectId: vi.fn().mockReturnValue("default"),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    readTaskForMove: vi.fn(async () => live),
     on: vi.fn(),
     emit: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  if (!(overrides as { withTaskLock?: unknown }).withTaskLock) {
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+  }
+  if (!(overrides as { readTaskForMove?: unknown }).readTaskForMove) {
+    store.readTaskForMove = vi.fn(async () => live);
+  }
+  return store as TaskStore;
 }
 
 function mockSession(capture: { basePrompt?: string; customTools?: any[] } = {}) {

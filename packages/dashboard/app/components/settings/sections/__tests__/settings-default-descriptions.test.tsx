@@ -84,6 +84,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   updateCheckEnabled: "globalGeneral.andShowsUpdateNoticesInTheCLIAnd",
   updateCheckFrequency: "globalGeneral.controlsHowOftenTheDashboardReFetchesThe",
   autoReloadOnVersionChange: "globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen",
+  updateChannel: "globalGeneral.releaseChannelHelp",
   // AppearanceSection
   openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
   openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",
@@ -267,6 +268,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   FN-8335 restores FN-7505 default-value parity for the surfaced reportMode and reportModeByAction
   controls. reportMode states the draft-review default; undefined per-action overrides state that unset actions inherit it.
   */
+  reportTarget: "general.reportTargetHelp",
+  reportTargetByAction: "general.reportTargetByActionHelp",
+  reportDiscussionCategory: "general.reportDiscussionCategoryHelp",
   reportMode: "general.reportModeHelp",
   reportModeByAction: "general.reportModeByActionHelp",
   reportRoadmapDedupeEnabled: "globalGeneral.reportRoadmapDedupeEnabledHelp",

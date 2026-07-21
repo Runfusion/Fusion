@@ -7,14 +7,24 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
+  const store: any = {
     listTasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({ requirePlanApproval: false } as Settings),
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+    parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn(),
     moveTask: vi.fn(),
+    // FNXC:EngineTests 2026-07-20-23:55: finalize releases via moveTaskIf + withTaskLock (FN-8361).
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+      const live = await store.getTask(id);
+      if (!live || !predicate(live)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: { ...live, column, status: null } };
+    }),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    readTaskForMove: vi.fn(async (id: string) => store.getTask(id)),
     logEntry: vi.fn(),
     // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records task:auto-archived-duplicate activity.
     recordActivity: vi.fn().mockResolvedValue(undefined),
@@ -22,7 +32,18 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  if (!overrides.moveTaskIf) {
+    store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+      const live = await store.getTask(id);
+      if (!live || !predicate(live)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: { ...live, column, status: null } };
+    });
+  }
+  if (!overrides.withTaskLock) store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+  if (!overrides.readTaskForMove) store.readTaskForMove = vi.fn(async (id: string) => store.getTask(id));
+  return store as TaskStore;
 }
 
 function createTask(overrides: Partial<Task> = {}): Task {
@@ -56,6 +77,7 @@ describe("triage finalize duplicate lineage", () => {
 
   async function runRecovery(task: Task, prompt: string, store: TaskStore): Promise<void> {
     await writeFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), prompt);
+    vi.mocked(store.getTask).mockResolvedValue(task as any);
     const processor = new TriageProcessor(store, rootDir);
     await processor.recoverApprovedTask(task);
   }

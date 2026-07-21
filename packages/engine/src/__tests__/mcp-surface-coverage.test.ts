@@ -132,8 +132,12 @@ describe("MCP surface coverage", () => {
   });
 
   it("keeps the manual AI-prompt workflow step forwarding resolved MCP", () => {
+    /*
+    FNXC:EngineTests 2026-07-20-23:55:
+    Manual AI-prompt MCP resolution lives in automation-step-execution after the routes split.
+    */
     expectResolvedMcpForwarded(
-      "../dashboard/src/routes.ts",
+      "../dashboard/src/routes/automation-step-execution.ts",
       "const mcpServers = await resolveManualAiPromptMcpServers(taskStore);",
       "const { session } = await createFnAgent({",
       "mcpServers,",

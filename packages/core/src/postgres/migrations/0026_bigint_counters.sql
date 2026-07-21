@@ -20,27 +20,55 @@ Affected columns:
   project.chat_token_usage.cached_tokens
   project.chat_token_usage.cache_write_tokens
   project.chat_token_usage.total_tokens
+
+FNXC:PostgresBigintCounters 2026-07-20-23:55:
+Upgrade paths from early baselines may have project.tasks without the token_usage_*
+columns yet (they land in later migrations). ALTER COLUMN fails hard if the column
+is missing, so only widen columns that already exist. Fresh baselines already declare
+bigint in SCHEMA_BASELINE DDL.
 */
 DO $$
 BEGIN
   IF to_regclass('project.tasks') IS NOT NULL THEN
-    ALTER TABLE project.tasks
-      ALTER COLUMN token_usage_input_tokens TYPE bigint,
-      ALTER COLUMN token_usage_output_tokens TYPE bigint,
-      ALTER COLUMN token_usage_cached_tokens TYPE bigint,
-      ALTER COLUMN token_usage_cache_write_tokens TYPE bigint,
-      ALTER COLUMN token_usage_total_tokens TYPE bigint,
-      ALTER COLUMN cumulative_active_ms TYPE bigint,
-      ALTER COLUMN checkout_lease_epoch TYPE bigint;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_input_tokens'
+    ) THEN
+      ALTER TABLE project.tasks
+        ALTER COLUMN token_usage_input_tokens TYPE bigint,
+        ALTER COLUMN token_usage_output_tokens TYPE bigint,
+        ALTER COLUMN token_usage_cached_tokens TYPE bigint,
+        ALTER COLUMN token_usage_cache_write_tokens TYPE bigint,
+        ALTER COLUMN token_usage_total_tokens TYPE bigint;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'cumulative_active_ms'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN cumulative_active_ms TYPE bigint;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'checkout_lease_epoch'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN checkout_lease_epoch TYPE bigint;
+    END IF;
   END IF;
 
   IF to_regclass('project.chat_token_usage') IS NOT NULL THEN
-    ALTER TABLE project.chat_token_usage
-      ALTER COLUMN input_tokens TYPE bigint,
-      ALTER COLUMN output_tokens TYPE bigint,
-      ALTER COLUMN cached_tokens TYPE bigint,
-      ALTER COLUMN cache_write_tokens TYPE bigint,
-      ALTER COLUMN total_tokens TYPE bigint;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'input_tokens'
+    ) THEN
+      ALTER TABLE project.chat_token_usage
+        ALTER COLUMN input_tokens TYPE bigint,
+        ALTER COLUMN output_tokens TYPE bigint,
+        ALTER COLUMN cached_tokens TYPE bigint,
+        ALTER COLUMN cache_write_tokens TYPE bigint,
+        ALTER COLUMN total_tokens TYPE bigint;
+    END IF;
   END IF;
 END
 $$;

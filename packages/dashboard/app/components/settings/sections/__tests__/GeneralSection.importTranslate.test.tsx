@@ -48,6 +48,8 @@ vi.mock("../../../../api", () => ({
   fetchWorkflows,
   // Pulled in by WorkflowSelector, which GeneralSection renders.
   fetchProjectDefaultWorkflow,
+  // FNXC:DashboardTests 2026-07-20-23:40: GeneralSection now loads Discussion categories for report target settings.
+  listDiscussionCategories: vi.fn().mockResolvedValue({ categories: [] }),
 }));
 
 beforeEach(() => {

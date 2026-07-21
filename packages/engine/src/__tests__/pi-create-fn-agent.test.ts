@@ -783,17 +783,13 @@ describe("wrapToolsWithPermanentAgentGating", () => {
 
     const result = await (wrapped[0] as any).execute("t1", { description: "create" });
     expect((result as any).isError).toBe(true);
+    // FNXC:EngineTests 2026-07-20-23:55: governed fn_task_create without mission_lineage is hard-blocked (FN-8307) rather than approval-gated.
     expect((result as any).details).toEqual(expect.objectContaining({
-      approvalRequestId: "apr-fn-1",
       category: "task_agent_mutation",
-      disposition: "require-approval",
-      requiresApproval: true,
+      disposition: "block",
       toolName: "fn_task_create",
     }));
-    expect(createApprovalRequest).toHaveBeenCalledWith(expect.objectContaining({
-      category: "task_agent_mutation",
-      toolName: "fn_task_create",
-    }));
+    expect(createApprovalRequest).not.toHaveBeenCalled();
     expect(tool.execute).not.toHaveBeenCalled();
   });
 

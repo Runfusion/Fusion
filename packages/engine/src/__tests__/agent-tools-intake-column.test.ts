@@ -27,6 +27,34 @@ pgDescribe("createTaskCreateTool intake-column wiring", () => {
     await harness?.teardown();
   });
 
+/*
+FNXC:EngineTests 2026-07-20-23:55:
+FN-8307 requires every autonomous fn_task_create to prove an active Feature → Slice →
+Milestone → Mission chain. Seed an approved chain on the real PG store so intake-column
+assertions exercise landing behavior rather than the lineage admission gate.
+*/
+async function seedApprovedLineage(store: TaskStore): Promise<{ mission_id: string; slice_id: string; feature_id: string }> {
+  const missions = store.getMissionStore!() as {
+    createMission: (input: { title: string }) => Promise<{ id: string }>;
+    addMilestone: (missionId: string, input: { title: string }) => Promise<{ id: string }>;
+    addSlice: (milestoneId: string, input: { title: string }) => Promise<{ id: string }>;
+    addFeature: (sliceId: string, input: { title: string }) => Promise<{ id: string; status?: string }>;
+    updateFeatureStatus?: (id: string, status: string) => Promise<unknown>;
+  };
+  const mission = await missions.createMission({ title: "Intake lineage mission" });
+  const milestone = await missions.addMilestone(mission.id, { title: "MS" });
+  const slice = await missions.addSlice(milestone.id, { title: "SL" });
+  const feature = await missions.addFeature(slice.id, { title: "F" });
+  // New features start as "defined"; lineage admission requires triaged/in-progress.
+  if (typeof missions.updateFeatureStatus === "function") {
+    await missions.updateFeatureStatus(feature.id, "triaged");
+  } else {
+    await (missions as { updateFeature: (id: string, u: { status: string }) => Promise<unknown> })
+      .updateFeature(feature.id, { status: "triaged" });
+  }
+  return { mission_id: mission.id, slice_id: slice.id, feature_id: feature.id };
+}
+
   function inboxWorkflowIr(name: string): WorkflowIr {
     return {
       version: "v2",
@@ -62,7 +90,7 @@ pgDescribe("createTaskCreateTool intake-column wiring", () => {
     const tool = createTaskCreateTool(store);
     const result = await tool.execute(
       "call-1",
-      { description: "Needs manual release", workflow_id: created.id } as never,
+      { description: "Needs manual release", workflow_id: created.id, mission_lineage: await seedApprovedLineage(store) } as never,
       undefined,
       undefined,
       {} as never,
@@ -77,7 +105,7 @@ pgDescribe("createTaskCreateTool intake-column wiring", () => {
     const tool = createTaskCreateTool(store);
     const result = await tool.execute(
       "call-2",
-      { description: "Default workflow task" } as never,
+      { description: "Default workflow task", mission_lineage: await seedApprovedLineage(store) } as never,
       undefined,
       undefined,
       {} as never,
@@ -98,7 +126,7 @@ pgDescribe("createTaskCreateTool intake-column wiring", () => {
     const tool = createTaskCreateTool(store);
     const result = await tool.execute(
       "call-3",
-      { description: "Explicit default coding workflow task", workflow_id: "builtin:coding" } as never,
+      { description: "Explicit default coding workflow task", workflow_id: "builtin:coding", mission_lineage: await seedApprovedLineage(store) } as never,
       undefined,
       undefined,
       {} as never,
@@ -118,7 +146,7 @@ pgDescribe("createTaskCreateTool intake-column wiring", () => {
     const tool = createTaskCreateTool(store);
     const result = await tool.execute(
       "call-4",
-      { description: "Inbox bootstrap prompt task", workflow_id: created.id } as never,
+      { description: "Inbox bootstrap prompt task", workflow_id: created.id, mission_lineage: await seedApprovedLineage(store) } as never,
       undefined,
       undefined,
       {} as never,
