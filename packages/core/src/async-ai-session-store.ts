@@ -24,7 +24,7 @@
  * Transition context: these helpers live in @fusion/core (where the schema is
  * defined) and are exported so the dashboard's AiSessionStore can import them.
  */
-import { and, desc, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 
@@ -291,6 +291,85 @@ export async function updateAiSessionStatus(
   return result.length > 0;
 }
 
+/*
+FNXC:PlanningMode 2026-07-20-20:15:
+FN-8442 requires a database compare-and-set before Planning Mode creates a task. The
+never-rotated proposalClaimId prevents duplicate task rows, while this conditional
+ai_sessions transition assigns exactly one live creator across dashboard processes.
+*/
+export async function claimPlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+  claimStartedAt: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: claimStartedAt })
+    .where(and(
+      eq(schema.project.aiSessions.id, sessionId),
+      eq(schema.project.aiSessions.type, "planning"),
+      sql`coalesce(${schema.project.aiSessions.inputPayload}->>'createClaimStatus', 'none') = 'none'`,
+    ))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Finalize only the owner that won claimPlanningSessionTaskCreation. */
+export async function finalizePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+  createdTaskId: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Reconcile a task created before a process could finalize its session linkage. */
+export async function reconcilePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  createdTaskId: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), eq(schema.project.aiSessions.type, "planning")))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Release only an expired creator's transient ownership; the stable task key is unchanged. */
+export async function releasePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "none", claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
 export async function updateAiSessionTitle(
   handle: QueryHandle,
   id: string,
@@ -331,7 +410,16 @@ export async function updateDraft(
   const result = await handle
     .update(schema.project.aiSessions)
     .set({ inputPayload: payloadValue as Record<string, unknown>, updatedAt: now })
-    .where(and(eq(schema.project.aiSessions.id, id), eq(schema.project.aiSessions.type, "planning")))
+    /*
+    FNXC:PlanningMode 2026-07-21-00:42:
+    A debounced editor write can arrive after Start Planning changes the row to generating.
+    Restrict the mutation atomically so stale draft text cannot erase the generation timestamp.
+    */
+    .where(and(
+      eq(schema.project.aiSessions.id, id),
+      eq(schema.project.aiSessions.type, "planning"),
+      eq(schema.project.aiSessions.status, "draft"),
+    ))
     .returning({ id: schema.project.aiSessions.id });
   return result.length > 0;
 }

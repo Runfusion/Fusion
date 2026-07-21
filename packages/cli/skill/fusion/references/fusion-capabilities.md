@@ -76,8 +76,8 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_feature_link_task` | Link a feature to a fn task for implementation. Updates the feature status to 'triaged' and associates it with the task. If the target task is not on the active board (for example archived, deleted, or never created), the tool returns a clear validation error indicating that only active tasks can be linked. |
 | `fn_feature_update` | Update an existing feature's title, description, or acceptance criteria. Partial patches leave untouched fields intact. |
 | `fn_milestone_update` | Update an existing milestone's title, description, or acceptance criteria (the structured pass/fail bar, distinct from verification's free-form how-to-confirm notes). Partial patches leave untouched fields intact. |
-| `fn_agent_stop` | Stop a running agent — pauses its execution. Transitions the agent from running/active to paused state. |
-| `fn_agent_start` | Start a stopped agent — resumes its execution. Transitions the agent from paused to active state. |
+| `fn_agent_stop` | Stop a running agent — pauses its execution without changing assigned task pause state. Transitions the agent from running/active to paused state. |
+| `fn_agent_start` | Start a stopped agent — resumes its execution without changing assigned task pause state. Transitions the agent from paused to active state. |
 | `fn_agent_create` | Create a new non-ephemeral agent. |
 | `fn_agent_update` | Update editable configuration for an existing non-ephemeral agent. Agent callers can only update direct or indirect reports inside their management subtree; user/operator calls are privileged. |
 | `fn_agent_set_instructions` | Set the instructionsText and/or instructionsPath of one of the caller's direct or indirect reports. At least one of instructions_text or instructions_path is required; pass an empty string to clear a field. The change is persisted and recorded as a config revision. |

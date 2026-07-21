@@ -11,6 +11,12 @@ interface DbCorruptionBannerProps {
   refreshError: string | null;
 }
 
+/*
+FNXC:PostgresHealth 2026-07-19-17:55:
+The shared degraded-health shape includes connectivity, permissions, and query
+failures, so the banner must not claim corruption or prescribe SQLite recovery.
+Keep operator guidance focused on PostgreSQL diagnostics and the reported error.
+*/
 export function DbCorruptionBanner({
   errors,
   lastCheckedAt,
@@ -33,7 +39,7 @@ export function DbCorruptionBanner({
           <span className="status-dot status-dot--error" aria-hidden="true" />
           <AlertTriangle aria-hidden="true" />
           <div className="db-corruption-banner__headline-copy">
-            <h2 className="db-corruption-banner__headline">{t("dbBanner.title", "Database corruption detected")}</h2>
+            <h2 className="db-corruption-banner__headline">{t("dbBanner.title", "Database health check failed")}</h2>
             {checkedAtLabel ? (
               <p className="db-corruption-banner__meta">{t("dbBanner.lastChecked", "Last checked: {{checkedAtLabel}}", { checkedAtLabel })}</p>
             ) : null}
@@ -53,7 +59,7 @@ export function DbCorruptionBanner({
       </div>
 
       <p className="db-corruption-banner__body">
-        {t("dbBanner.body", "Fusion's database health check reported the backend is unreachable or corrupt. Review the failing objects below before continuing critical operations.")}
+        {t("dbBanner.body", "Fusion's PostgreSQL health check reported a failure. Review the details below before continuing critical operations.")}
       </p>
 
       <ul className="db-corruption-banner__list">
@@ -68,10 +74,10 @@ export function DbCorruptionBanner({
         <strong className="db-corruption-banner__footer-label">{t("dbBanner.whatToDo", "What to do:")}</strong>{" "}
         <Trans
           i18nKey="app:dbBanner.instructions"
-          defaults="Back up the project, run <cmd>fn db vacuum</cmd> to compact and verify the database, and restore from a known-good backup if corruption persists. See <docsLink>docs/storage.md</docsLink> for the storage layout and recovery guidance."
+          defaults="Back up the project, check <cmd>database logs</cmd> and PostgreSQL connectivity and permissions, then refresh health. See <docsLink>docs/storage.md</docsLink> for storage and recovery guidance."
           components={{
             cmd: <code />,
-            docsLink: <a href="docs/storage.md" />,
+            docsLink: <a href="/docs/storage.md" />,
           }}
         />
       </p>

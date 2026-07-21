@@ -133,6 +133,30 @@ describe("ProviderHealthMonitor", () => {
     );
   });
 
+  it("continues scanning healthy project stores when one store cannot list tasks", async () => {
+    const failedStore = createStore([]);
+    failedStore.listTasks.mockRejectedValue(new Error("database unavailable"));
+    const healthyStore = createStore([
+      { id: "FN-6", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+    ]);
+    const logger = createLogger();
+    const probe = vi.fn().mockResolvedValue(providerUsage());
+    const monitor = new ProviderHealthMonitor({
+      getStores: () => [failedStore, healthyStore],
+      logger,
+      probe,
+    });
+
+    await monitor.checkNow();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to list tasks for provider health scan",
+      { error: "database unavailable" },
+    );
+    expect(probe).toHaveBeenCalledWith("anthropic", undefined);
+    expect(healthyStore.pauseTask).toHaveBeenCalledWith("FN-6", false);
+  });
+
   it.each([
     providerUsage({ status: "no-auth", error: "login required" }),
     providerUsage({ status: "error", error: "HTTP 429" }),

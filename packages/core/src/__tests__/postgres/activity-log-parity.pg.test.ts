@@ -23,6 +23,44 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
   afterEach(h.afterEach);
   afterAll(h.afterAll);
 
+  it("records TaskStore lifecycle events after backend initialization", async () => {
+    const store = h.store();
+
+    expect(store.activityListenersWired).toBe(true);
+    for (const event of [
+      "task:created",
+      "task:moved",
+      "task:merged",
+      "task:updated",
+      "task:deleted",
+      "settings:updated",
+    ] as const) {
+      expect(store.listenerCount(event), `${event} activity listener`).toBeGreaterThan(0);
+    }
+
+    const task = await store.createTask({
+      title: "Backend lifecycle activity",
+      description: "Verify PostgreSQL lifecycle activity logging",
+    });
+    await store.moveTask(task.id, "todo", { moveSource: "user" });
+
+    await vi.waitFor(async () => {
+      const entries = await store.getActivityLog({ limit: 10 });
+      expect(entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "task:created",
+          taskId: task.id,
+          taskTitle: task.title,
+        }),
+        expect.objectContaining({
+          type: "task:moved",
+          taskId: task.id,
+          metadata: { from: "triage", to: "todo" },
+        }),
+      ]));
+    });
+  });
+
   it("keeps failed writes best-effort so audit storage cannot break product operations", async () => {
     const layer = h.layer();
     const insert = vi.spyOn(layer.db, "insert").mockImplementation(() => {

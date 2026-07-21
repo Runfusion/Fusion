@@ -64,6 +64,7 @@ function storeWith(
     on: vi.fn(),
     off: vi.fn(),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    renewSymbolLocks: vi.fn(async () => ({ renewed: [], lost: [] })),
     getMissionStore: vi.fn(() => ({
       listMissions: () => [],
       listGoalIdsForMission: () => [],
@@ -110,6 +111,54 @@ describe("Scheduler workflow cutover", () => {
     vi.setSystemTime(new Date("2026-06-25T00:00:30.000Z"));
     await scheduler.schedule();
     expect(store.updateSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("renews active mission symbol locks before their short admission lease expires", async () => {
+    const active = task({
+      id: "FN-symbol-owner",
+      column: "in-progress",
+      missionId: "M-1",
+      sliceId: "SL-1",
+      declaredSymbols: ["pkg/a.ts#A"],
+    });
+    const store = storeWith([active]);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.renewSymbolLocks).toHaveBeenCalledWith(["pkg/a.ts#A"], "FN-symbol-owner", 10 * 60_000);
+  });
+
+  it("renews locks in a custom workflow WIP column", async () => {
+    const active = task({
+      id: "FN-custom-symbol-owner",
+      column: "implementing",
+      missionId: "M-1",
+      sliceId: "SL-1",
+      declaredSymbols: ["pkg/a.ts#A"],
+    });
+    const workflow: WorkflowIr = {
+      version: "v2",
+      name: "custom-wip",
+      columns: [
+        { id: "todo", name: "Todo", traits: [{ trait: "hold" }] },
+        { id: "implementing", name: "Implementing", traits: [{ trait: "wip", config: { limit: 1 } }] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [],
+      edges: [],
+    } as WorkflowIr;
+    const store = storeWith([active], {}, {
+      selections: { "FN-custom-symbol-owner": "custom:wip" },
+      definitions: { "custom:wip": workflow },
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.renewSymbolLocks).toHaveBeenCalledWith(["pkg/a.ts#A"], "FN-custom-symbol-owner", 10 * 60_000);
   });
 
   it("uses the workflow sweep for todo pickup even when stale workflowColumns=false is persisted", async () => {

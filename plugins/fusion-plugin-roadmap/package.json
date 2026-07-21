@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/roadmap",
-  "version": "0.1.49",
+  "version": "0.1.50-beta.0",
   "type": "module",
   "description": "Roadmap plugin package for Fusion",
   "private": true,
@@ -14,6 +14,11 @@
       "types": "./src/server/index.d.ts",
       "source": "./src/server/index.ts",
       "import": "./dist/server/index.js"
+    },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.tsx",
+      "source": "./src/dashboard-view.tsx",
+      "import": "./dist/dashboard-view.js"
     },
     "./roadmap-suggestions": {
       "types": "./src/roadmap-suggestions.d.ts",

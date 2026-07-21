@@ -76,6 +76,18 @@ pgDescribe("TaskStore durable symbol locks", () => {
     expect((await store.releaseSymbolLocks(["pkg/a.ts#A"], "FN-owner")).released).toEqual([]);
   });
 
+  it("releases an active task's symbols when it is failed in place", async () => {
+    const store = h.store();
+    const owner = await store.createTask({ description: "failed symbol lock owner", declaredSymbols: ["pkg/failed.ts#A"] });
+    await store.moveTask(owner.id, "todo");
+    await store.moveTask(owner.id, "in-progress");
+    await store.acquireSymbolLocks(["pkg/failed.ts#A"], { ownerTaskId: owner.id }, 60_000);
+
+    await store.updateTask(owner.id, { status: "failed", error: "terminal execution failure" });
+
+    expect(await store.inspectSymbolLockConflicts(["pkg/failed.ts#A"])).toEqual([]);
+  });
+
   it("allows expired locks to be acquired and reconciles terminal owners", async () => {
     const store = h.store(); const layer = h.layer(); const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
     await store.acquireSymbolLocks(["pkg/expired.ts#A"], { ownerTaskId: "FN-dead" }, 60_000);

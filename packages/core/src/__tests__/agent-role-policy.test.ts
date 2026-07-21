@@ -46,8 +46,13 @@ describe("agent-role-policy", () => {
 
   it("allows durable engineer for explicit routing and opt-in backlog pickup only", () => {
     expect(isEngineerRoleAgent({ role: "engineer" })).toBe(true);
+    // Explicit routing is independent from engineerBacklogAutoClaim: callers
+    // pass this setting only to backlog pickup, never assignment/delegation.
     expect(
-      canAgentTakeImplementationTaskForExplicitRouting({ role: "engineer" }, { column: "todo" }),
+      canAgentTakeImplementationTaskForExplicitRouting({ role: "engineer", runtimeConfig: { engineerBacklogAutoClaim: false } }, { column: "todo" }),
+    ).toBe(true);
+    expect(
+      canAgentTakeImplementationTaskForExplicitRouting({ role: "engineer", runtimeConfig: { engineerBacklogAutoClaim: true } }, { column: "todo" }),
     ).toBe(true);
     expect(
       canAgentTakeImplementationTaskForBacklogPickup({ role: "engineer" }, { column: "todo" }),

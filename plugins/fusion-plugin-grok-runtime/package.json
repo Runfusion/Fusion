@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/grok-runtime",
-  "version": "0.2.8",
+  "version": "0.2.9-beta.0",
   "type": "module",
   "description": "Grok CLI runtime plugin for Fusion (ACP agent stdio)",
   "keywords": [
@@ -24,7 +24,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {

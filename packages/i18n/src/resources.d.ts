@@ -1973,12 +1973,12 @@ export default interface Resources {
       "updatingVersion": "Updating to a new frontend version..."
     },
     "dbBanner": {
-      "body": "Fusion's background SQLite integrity check reported corruption. Review the failing objects below before continuing critical operations.",
-      "instructions": "Back up the project, try {{cmd}} if the database still opens cleanly, and restore from a known-good backup if corruption persists. See {{link}} for the storage layout and recovery guidance.",
+      "body": "Fusion's PostgreSQL health check reported a failure. Review the details below before continuing critical operations.",
+      "instructions": "Back up the project, check <cmd>database logs</cmd> and PostgreSQL connectivity and permissions, then refresh health. See <docsLink>docs/storage.md</docsLink> for storage and recovery guidance.",
       "lastChecked": "Last checked: {{checkedAtLabel}}",
       "refreshHealth": "Refresh health",
       "refreshing": "Refreshing…",
-      "title": "Database corruption detected",
+      "title": "Database health check failed",
       "whatToDo": "What to do:"
     },
     "deepLink": {
@@ -4557,6 +4557,11 @@ export default interface Resources {
       "breakingDown": "Breaking down...",
       "collapse": "Collapse",
       "continue": "Continue",
+      "nextQuestion": "Next question",
+      "answeredQuestions": "Answered questions",
+      "runningPlan": "Running plan",
+      "renameSession": "Rename session",
+      "editAnswer": "Edit answer for {{question}}",
       "createSingleTask": "Create Single Task",
       "createTasks": "Create Tasks",
       "creating": "Creating...",

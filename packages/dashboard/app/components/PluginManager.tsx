@@ -17,6 +17,7 @@ import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw, ExternalLink,
 import { fetchPlugins, fetchPluginRegistry, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin, fetchPluginSetupStatus, installPluginSetup, updatePlugin, rescanPlugin } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { WhatsAppChatPairingPanel } from "./WhatsAppChatPairingPanel";
 import type { PluginInstallation, PluginState, PluginSettingSchema } from "@fusion/core";
 import type { PluginSetupStatusResponse, RegistryPluginEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -792,6 +793,9 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
 
           <div className="plugin-detail-card">
             <h5 className="plugin-detail-section-heading">{t("plugins.settings", "Settings")}</h5>
+            {selectedPlugin.id === "fusion-plugin-whatsapp-chat" && (
+              <WhatsAppChatPairingPanel projectId={projectId} settings={pluginSettings} />
+            )}
             {settingsLoading ? (
               <p className="text-muted"><LoadingSpinner label={t("plugins.loading", "Loading...")} /></p>
             ) : (() => {

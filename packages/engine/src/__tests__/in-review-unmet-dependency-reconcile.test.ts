@@ -61,14 +61,12 @@ describe("executor dependency dispatch gate", () => {
       dependent,
       task({ id: "FN-DEP", column: "todo" }),
     ]);
-    const workflowAuthoritativeDispatch = vi.fn().mockResolvedValue(true);
-    const executor = new TaskExecutor(store, "/tmp/test-project", { workflowAuthoritativeDispatch });
+    const executor = new TaskExecutor(store, "/tmp/test-project", {});
     const graphDispatch = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
     await executor.execute(dependent);
 
     expect(graphDispatch).not.toHaveBeenCalled();
-    expect(workflowAuthoritativeDispatch).not.toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-DISPATCH", "todo", expect.objectContaining({
       preserveProgress: true,
       preserveWorktree: true,

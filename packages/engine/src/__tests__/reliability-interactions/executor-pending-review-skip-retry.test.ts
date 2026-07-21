@@ -24,6 +24,32 @@ function makeTask(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+/*
+FNXC:EngineTests 2026-07-19-04:05 (U10b):
+Requirement unchanged: when the task's STEPS say the work is finished, implicit-done wins over the
+pending-review skip heuristic, even if a stale review log line is still on the row.
+What changed: the workflow graph now owns the run, and its `parse-steps` node RE-DERIVES the step
+list from PROMPT.md on every run and writes every step back as `pending`. A step list marked `done`
+on the fixture literal therefore no longer survives to the implicit-completion check — the only
+thing that can leave a step `done` at that point is the implementation session itself doing the
+work. Simulate exactly that: the session marks its steps complete but never calls fn_task_done,
+which is the precise situation implicit-done exists to cover.
+*/
+function sessionThatCompletesStepsWithoutCallingTaskDone(store: ReturnType<typeof createMockStore>, taskId: string) {
+  mockedCreateFnAgent.mockImplementation(async () => ({
+    session: {
+      prompt: vi.fn(async () => {
+        store._setRow(taskId, { steps: [{ name: "Preflight", status: "done" }] });
+      }),
+      dispose: vi.fn(),
+      subscribe: vi.fn(),
+      on: vi.fn(),
+      sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      state: {},
+    },
+  }) as any);
+}
+
 describe("reliability interactions: FN-5436 executor pending-review skip", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -47,6 +73,7 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
       log: [{ action: "code review Step 0: REVISE", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
+    sessionThatCompletesStepsWithoutCallingTaskDone(store, "FN-5436-RI-A");
 
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(task);
@@ -55,7 +82,13 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
       status: "failed",
       error: "executor-exit-while-review-pending",
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-A", "in-review");
+    /*
+    FNXC:EngineTests 2026-07-19-04:12 (U10b):
+    The in-review handoff is now the graph's merge boundary, so `moveTask` carries the node's move
+    provenance (`workflowMoveSource`/`workflowMoveMetadata`) alongside the column. The contract
+    asserted here is the destination column, which is unchanged.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-A", "in-review", expect.anything());
   });
 
   it("FN-5436 composition: reclaim-abort path takes precedence over pending-review skip", async () => {
@@ -101,17 +134,32 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
       log: [{ action: "code review Step 0: APPROVE", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
+    sessionThatCompletesStepsWithoutCallingTaskDone(store, "FN-5436-RI-D");
 
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(task);
 
-    // FNXC:ExecutorRetry 2026-07-13: Use objectContaining because production now passes additional fields (executeRequeueLoopCount, executeRequeueLoopSignature, branch, worktree, sessionFile) in the same updateTask call.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-5436-RI-D", expect.objectContaining({ workflowStepRetries: undefined, taskDoneRetryCount: null }));
+    /*
+    FNXC:EngineTests 2026-07-19-04:24 (U10b):
+    DELETED assertion: `updateTask({ workflowStepRetries: undefined, taskDoneRetryCount: null })`.
+    That "reset retry counters on success" write exists at exactly three sites in executor.ts, and
+    all three sit AFTER the `if (graphCompletion) { ... return; }` short-circuit — i.e. only on the
+    non-graph completion path. Now that every run is graph-owned, completion hands off at the
+    implementation boundary and that write has no live caller, so the assertion measured deleted
+    machinery rather than this test's subject (approval resolving a step must leave the
+    pending-review skip disabled), which the two assertions below still prove.
+    */
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-RI-D", {
       status: "failed",
       error: "executor-exit-while-review-pending",
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-D", "in-review");
+    /*
+    FNXC:EngineTests 2026-07-19-04:12 (U10b):
+    The in-review handoff is now the graph's merge boundary, so `moveTask` carries the node's move
+    provenance (`workflowMoveSource`/`workflowMoveMetadata`) alongside the column. The contract
+    asserted here is the destination column, which is unchanged.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-D", "in-review", expect.anything());
   });
 
   it("FN-5436 negative: plan-review UNAVAILABLE advisory remains non-blocking", async () => {
@@ -125,7 +173,19 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(task);
 
-    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
+    /*
+    FNXC:EngineTests 2026-07-19-04:33 (U10b):
+    Requirement unchanged: an UNAVAILABLE plan-review advisory is NOT a pending review, so it must
+    not arm the pending-review skip — the executor still spends the full no-fn_task_done retry
+    budget (1 implementation session + 3 retries) and then requeues.
+    What changed: Plan Review and Code Review are now graph NODES with their own agent sessions, so
+    a bare `createFnAgent` call count no longer counts implementation sessions. Count the sessions
+    that carry `fn_task_done` — those and only those are implementation sessions.
+    */
+    const implementationSessions = mockedCreateFnAgent.mock.calls.filter(
+      ([opts]: any[]) => (opts?.customTools ?? []).some((tool: any) => tool?.name === "fn_task_done"),
+    );
+    expect(implementationSessions).toHaveLength(4);
     expect(store.updateTask).toHaveBeenCalledWith("FN-5436-RI-E", {
       status: "queued",
       error: null,

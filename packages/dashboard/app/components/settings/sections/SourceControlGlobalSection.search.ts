@@ -11,6 +11,33 @@ import type { SettingsSearchEntry } from "../search/types";
 export const sourceControlGlobalSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "source-control-global",
+    key: "reportRoadmapDedupeEnabled",
+    labelKey: "settings.globalGeneral.reportRoadmapDedupeEnabled",
+    labelFallback: "Global public-roadmap deduplication",
+    helpKey: "settings.globalGeneral.reportRoadmapDedupeEnabledHelp",
+    helpFallback: "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled).",
+    keywords: ["roadmap", "dedup", "report", "fallback"],
+  },
+  {
+    sectionId: "source-control-global",
+    key: "reportRoadmapLabel",
+    labelKey: "settings.globalGeneral.reportRoadmapLabel",
+    labelFallback: "Global public roadmap label",
+    helpKey: "settings.globalGeneral.reportRoadmapLabelHelp",
+    helpFallback: "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap).",
+    keywords: ["roadmap", "label", "report", "fallback"],
+  },
+  {
+    sectionId: "source-control-global",
+    key: "reportRoadmapRepo",
+    labelKey: "settings.globalGeneral.reportRoadmapRepo",
+    labelFallback: "Global public roadmap repository (optional)",
+    helpKey: "settings.globalGeneral.reportRoadmapRepoHelp",
+    helpFallback: "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset.",
+    keywords: ["roadmap", "repository", "repo", "tracking", "fallback"],
+  },
+  {
+    sectionId: "source-control-global",
     key: "gitlabInstanceUrl",
     labelKey: "settings.globalGeneral.gitLabInstanceUrl",
     labelFallback: "Global GitLab instance URL",

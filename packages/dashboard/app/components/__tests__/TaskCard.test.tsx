@@ -2390,7 +2390,10 @@ describe("TaskCard", () => {
     expect(Boolean(badge)).toBe(shouldRender);
     if (shouldRender) {
       expect(badge).toHaveTextContent("Reviewing");
-      expect(screen.getByText("planning")).toBeDefined();
+      // FNXC:StatusBadge 2026-07-19-04:30: U12 — the status badge prefers the running
+      // workflow step's IR-declared name ("Plan Review") over the raw engine token
+      // ("planning"); this expectation tracks that intentional cutover behavior.
+      expect(screen.getByText("Plan Review")).toBeDefined();
     }
   });
 
@@ -5229,6 +5232,78 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-agent-badge-row")).toBeNull();
   });
 
+  it("FN-8423 keeps only the assigned badge for the same agent ID", () => {
+    seedAgentsCache("fn-8423-same-id", [{ id: "agent-qa", name: "QA Engineer" }]);
+
+    const { container } = render(
+      <TaskCard
+        projectId="fn-8423-same-id"
+        task={makeTask({
+          column: "todo",
+          assignedAgentId: "agent-qa",
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-qa",
+          sourceMetadata: { agentName: "QA Engineer" },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const assignedBadge = container.querySelector(".card-agent-badge");
+    expect(assignedBadge).not.toBeNull();
+    expect(assignedBadge).toHaveAttribute("title", "Assigned to QA Engineer");
+    expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
+  });
+
+  it("FN-8423 retains both badges for different IDs with the same display name", () => {
+    seedAgentsCache("fn-8423-distinct-ids", [
+      { id: "agent-a", name: "QA Engineer" },
+      { id: "agent-b", name: "QA Engineer" },
+    ]);
+
+    const { container } = render(
+      <TaskCard
+        projectId="fn-8423-distinct-ids"
+        task={makeTask({
+          column: "todo",
+          assignedAgentId: "agent-a",
+          sourceType: "automation",
+          sourceAgentId: "agent-b",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-agent-badge")).toHaveAttribute("title", "Assigned to QA Engineer");
+    expect(container.querySelector(".card-agent-created-badge")).toHaveAttribute("title", "Created by agent: QA Engineer");
+    expect(container.querySelector(".card-agent-badge-row")).not.toBeNull();
+  });
+
+  it("FN-8423 falls back to matching names only when source agent ID is unavailable", () => {
+    seedAgentsCache("fn-8423-name-fallback", [{ id: "agent-qa", name: "QA Engineer" }]);
+
+    const { container } = render(
+      <TaskCard
+        projectId="fn-8423-name-fallback"
+        task={makeTask({
+          column: "todo",
+          assignedAgentId: "agent-qa",
+          sourceType: "automation",
+          sourceMetadata: { agentName: " qa engineer " },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-agent-badge")).toHaveAttribute("title", "Assigned to QA Engineer");
+    expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
+  });
+
   it("coexists with GitHub badge and timer metadata", () => {
     const { container } = render(
       <TaskCard
@@ -5747,6 +5822,23 @@ describe("TaskCard", () => {
     expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("6m");
     expect(timer?.getAttribute("title")).toBe("Execution time 6m");
+  });
+
+  it("renders planning-only active duration when execution timing is absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          cumulativeActiveMs: undefined,
+          cumulativePlanningMs: 6 * 60_000,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer?.textContent).toContain("6m");
   });
 
   it("keeps legacy wall-clock timers after firstExecutionAt migration backfill", () => {
@@ -6781,7 +6873,7 @@ describe("TaskCard workflow badges", () => {
           priority: "high",
           executionMode: "fast",
           sourceType: "automation",
-          sourceMetadata: { agentName: "Task Robot" },
+          sourceMetadata: { agentName: "Created Robot" },
           assignedAgentId: "agent-1",
           columnMovedAt: "2026-06-30T12:00:00.000Z",
           updatedAt: "2026-06-30T12:00:00.000Z",

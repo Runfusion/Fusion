@@ -237,6 +237,17 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     console.log(`Staged plugin skills for ${pluginId} to dist/plugins/${pluginId}/skills`);
   }
 
+  /*
+  FNXC:BundledPluginAssets 2026-07-19-09:50:
+  Published plugins must stage persona definitions beside bundled.js so Compound Engineering skills can resolve every reviewer and research agent after an npm install.
+  */
+  const agentsSourceDir = join(srcDir, "src", "agents");
+  if (existsSync(agentsSourceDir)) {
+    const agentsDestDir = join(destDir, "agents");
+    cpSync(agentsSourceDir, agentsDestDir, { recursive: true });
+    console.log(`Staged plugin agents for ${pluginId} to dist/plugins/${pluginId}/agents`);
+  }
+
   if (withMcpAsset) {
     const mcpServerAsset = join(srcDir, "src", "mcp-schema-server.cjs");
     if (!existsSync(mcpServerAsset)) {

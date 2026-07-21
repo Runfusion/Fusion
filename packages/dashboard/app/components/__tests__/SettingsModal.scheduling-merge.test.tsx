@@ -243,7 +243,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
       await settingsModalUser.type(screen.getByPlaceholderText("docs/"), "generated/*");
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -267,7 +267,7 @@ describe("SettingsModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -317,7 +317,7 @@ describe("SettingsModal", () => {
       const inputs = screen.getAllByPlaceholderText("docs/");
       await settingsModalUser.type(inputs[1], "generated/*");
 
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -342,7 +342,7 @@ describe("SettingsModal", () => {
       expect(select.value).toBe("lite");
 
       await settingsModalUser.selectOptions(select, "off");
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -384,7 +384,7 @@ describe("SettingsModal", () => {
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
       await settingsModalUser.click(toggle);
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -408,7 +408,7 @@ describe("SettingsModal", () => {
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(true);
       await settingsModalUser.click(toggle);
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -491,7 +491,7 @@ describe("SettingsModal", () => {
       const input = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
       fireEvent.change(input, { target: { value: "~/.fn-worktrees/{repo}" } });
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
@@ -522,7 +522,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByRole("button", { name: "Add file" }));
       const updatedInputs = screen.getAllByLabelText("File to copy into new worktrees") as HTMLInputElement[];
       await settingsModalUser.type(updatedInputs[2], " README.md ");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
@@ -543,7 +543,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("button", { name: "Remove copied worktree file" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
@@ -810,7 +810,8 @@ describe("SettingsModal", () => {
 
       renderModal({ initialSection: "worktrees" });
       await waitForSettingsModalReady();
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      // FNXC:SettingsAutoSave 2026-06-22-21:52: The removed footer Save action means this persistence assertion needs a real edit; changing the path exercises the same clamp.
+      fireEvent.change(screen.getByLabelText("Worktrunk binary path"), { target: { value: "/missing/worktrunk" } });
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       const payload = mockUpdateSettings.mock.calls[0][0] as {
@@ -841,7 +842,7 @@ describe("SettingsModal", () => {
         await settingsModalUser.selectOptions(onFailureSelect, onFailure);
       }
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       const payload = mockUpdateSettings.mock.calls[0][0] as {
@@ -1268,7 +1269,7 @@ describe("SettingsModal", () => {
         await settingsModalUser.clear(pushRemoteInput);
         await settingsModalUser.type(pushRemoteInput, "  upstream main  ");
 
-        await settingsModalUser.click(screen.getByText("Save"));
+
 
         await waitFor(() => {
           expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -1321,7 +1322,7 @@ describe("SettingsModal", () => {
         expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
         expect(screen.queryByText("Git remote to push to")).not.toBeInTheDocument();
 
-        await settingsModalUser.click(screen.getByText("Save"));
+
 
         await waitFor(() => {
           expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -1337,7 +1338,7 @@ describe("SettingsModal", () => {
         expect(select).toHaveValue("workflow");
 
         await settingsModalUser.selectOptions(select, "require-all");
-        await settingsModalUser.click(screen.getByText("Save"));
+
 
         await waitFor(() => {
           expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -1360,18 +1361,11 @@ describe("SettingsModal", () => {
         expect(screen.queryByLabelText("Verification auto-fix retries")).not.toBeInTheDocument();
       });
 
-      it("never sends verificationFixRetries through the save payload", async () => {
+      it("does not persist anything from a clean merge section", async () => {
         renderModal({ initialSection: "merge" });
         await waitForSettingsModalReady();
 
-        await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalled();
-        });
-
-        const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
-        expect(payload).not.toHaveProperty("verificationFixRetries");
+        expect(mockUpdateSettings).not.toHaveBeenCalled();
       });
 
       it("opens workflow settings from the redirect stub", async () => {
@@ -1415,7 +1409,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.selectOptions(authModeSelect, "token");
       await settingsModalUser.type(screen.getByLabelText("GitHub personal access token"), "ghp_test_token");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1456,7 +1450,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), tokenType);
       await settingsModalUser.type(screen.getByLabelText("GitLab access token"), " glpat_test_token ");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1484,7 +1478,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab access token"));
       await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), "project");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1740,7 +1734,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(devServerToggle);
       expect(devServerToggle).not.toBeChecked();
 
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
@@ -1761,7 +1755,7 @@ describe("SettingsModal", () => {
       await openExperimentalFeaturesSection();
       await settingsModalUser.click(screen.getByLabelText("my-feature"));
 
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
@@ -1795,7 +1789,7 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByLabelText("my-feature"));
 
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
@@ -1843,7 +1837,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(leftSidebarToggle);
       expect(leftSidebarToggle).not.toBeChecked();
 
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
@@ -1928,7 +1922,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(checkbox);
 
       // Save
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
@@ -1982,7 +1976,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(checkboxB);
 
       // Save
-      await settingsModalUser.click(screen.getByText("Save"));
+
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);

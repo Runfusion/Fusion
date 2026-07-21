@@ -63,6 +63,12 @@ export interface TaskRow {
   taskDoneRetryCount: number | null;
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
   bulkCompletionRefusalAt: string | null;
+  // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 durable IR pin + the node entry it belongs to.
+  workflowIrPin: string | null;
+  workflowIrPinNodeId: string | null;
+  workflowIrPinColumnId: string | null;
+  // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp (ISO timestamp / null).
+  legacyAdoptedAt: string | null;
   worktreeSessionRetryCount: number | null;
   completionHandoffLimboRecoveryCount: number | null;
   verificationFailureCount: number | null;
@@ -100,6 +106,8 @@ export interface TaskRow {
   columnMovedAt: string | null;
   firstExecutionAt: string | null;
   cumulativeActiveMs: number | null;
+  cumulativePlanningMs: number | null;
+  planningStartedAt: string | null;
   columnDwellMs: string | null;
   workflowTransitionNotification: string | null;
   plannerOversightLevel: string | null;
@@ -134,6 +142,7 @@ export interface TaskRow {
   noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
+  declaredSymbols: string | null;
   missionId: string | null;
   sliceId: string | null;
   scopeOverride: number | null;
@@ -181,7 +190,7 @@ export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
   "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
-  "modifiedFiles", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
+  "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
 ]);
 
@@ -256,6 +265,13 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
   defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),
+  // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 — the pin must round-trip through persist so
+  // it survives the crash it exists to defend against.
+  defineTaskColumn("workflowIrPin", (task) => task.workflowIrPin ?? null),
+  defineTaskColumn("workflowIrPinNodeId", (task) => task.workflowIrPinNodeId ?? null),
+  defineTaskColumn("workflowIrPinColumnId", (task) => task.workflowIrPinColumnId ?? null),
+  // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp.
+  defineTaskColumn("legacyAdoptedAt", (task) => task.legacyAdoptedAt ?? null),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
   defineTaskColumn("completionHandoffLimboRecoveryCount", (task) => task.completionHandoffLimboRecoveryCount ?? 0),
   defineTaskColumn("verificationFailureCount", (task) => task.verificationFailureCount ?? 0),
@@ -293,6 +309,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("columnMovedAt", (task) => task.columnMovedAt ?? null),
   defineTaskColumn("firstExecutionAt", (task) => task.firstExecutionAt ?? null),
   defineTaskColumn("cumulativeActiveMs", (task) => task.cumulativeActiveMs ?? null),
+  defineTaskColumn("cumulativePlanningMs", (task) => task.cumulativePlanningMs ?? null),
+  defineTaskColumn("planningStartedAt", (task) => task.planningStartedAt ?? null),
   /*
   FNXC:TaskLifecyclePersistence 2026-07-14-13:17:
   Persist the late task lifecycle fields through the shared descriptor seam so both SQLite and PostgreSQL retain per-column timing, workflow transition dedupe, oversight overrides, and manual-plan approval state after migration.
@@ -336,6 +354,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("noCommitsExpected", (task) => task.noCommitsExpected ? 1 : 0),
   defineTaskColumn("enabledWorkflowSteps", (task) => toJson(task.enabledWorkflowSteps || [])),
   defineTaskColumn("modifiedFiles", (task) => toJson(task.modifiedFiles || [])),
+  defineTaskColumn("declaredSymbols", (task) => toJson(task.declaredSymbols || []), "declared_symbols"),
   defineTaskColumn("missionId", (task) => task.missionId ?? null),
   defineTaskColumn("sliceId", (task) => task.sliceId ?? null),
   defineTaskColumn("scopeOverride", (task) => task.scopeOverride ? 1 : null),

@@ -155,6 +155,8 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
     }
 
     try {
+      // FNXC:AgentLifecyclePause 2026-07-19-00:00: CLI stop mutates only the
+      // agent row. It must not cascade to an assigned task's user/system pause.
       await withBoundedTimeout(() => agentStore.updateAgentState(id, "paused"), { id, action: "stop (transition to paused)" });
     } catch (err) {
       console.error(`Failed to stop agent ${id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -207,6 +209,8 @@ export async function runAgentStart(id: string, projectName?: string): Promise<v
     }
 
     try {
+      // FNXC:AgentLifecyclePause 2026-07-19-00:00: CLI start is not task
+      // unpause; assigned-task pause ownership remains independent.
       await withBoundedTimeout(() => agentStore.updateAgentState(id, "active"), { id, action: "start (transition to active)" });
     } catch (err) {
       console.error(`Failed to start agent ${id}: ${err instanceof Error ? err.message : String(err)}`);

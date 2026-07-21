@@ -44,24 +44,44 @@ describe("Workflow Steps Execution", () => {
   });
 
   /**
+   * FNXC:EngineTests 2026-07-19-10:35 (U10b):
+   * Review gates (Plan Review, Code Review, Completion summary) are workflow-graph nodes now, so a
+   * single execute() opens several agent sessions and the implementation session is no longer the
+   * first or the only one. Every assertion in this file that used to count `createFnAgent` calls was
+   * really asserting how many times the IMPLEMENTATION session was (re)opened — its retry loop.
+   * `fn_task_done` is handed only to the implementation session, so filtering on it keeps those
+   * assertions measuring the retry contract instead of the graph's node count.
+   */
+  function implementationSessionCount(): number {
+    return mockedCreateFnAgent.mock.calls.filter((call: any[]) =>
+      ((call[0]?.customTools as any[]) || []).some((tool: any) => tool.name === "fn_task_done"),
+    ).length;
+  }
+
+  /**
    * Create a mock agent that auto-triggers the fn_task_done tool when prompt is called.
    * This simulates a successful task execution where the agent calls fn_task_done().
    */
+  /*
+  FNXC:EngineTests 2026-07-19-11:25 (U10b):
+  Scoped the captured tools to the session that owns them (was a shared outer variable that each
+  new graph session clobbered) and dropped the `subscribe` stub so the shared harness supplies a
+  verdict-shaped stream for review-node sessions. Without both, the graph's review sessions ran
+  with the implementation session's tools / an empty stream and the run never reached the
+  implementation node this helper exists to drive.
+  */
   function createAgentWithTaskDone() {
-    let capturedCustomTools: any[] = [];
-
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
-      capturedCustomTools = opts.customTools || [];
+      const customTools: any[] = opts.customTools || [];
       const session = {
         prompt: vi.fn().mockImplementation(async () => {
           // Find and execute fn_task_done tool to set taskDone = true
-          const taskDoneTool = capturedCustomTools.find((t: any) => t.name === "fn_task_done");
+          const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
           if (taskDoneTool) {
             await taskDoneTool.execute("tool-1", {});
           }
         }),
         dispose: vi.fn(),
-        subscribe: vi.fn(),
         on: vi.fn(),
         sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
         state: {},
@@ -87,10 +107,21 @@ describe("Workflow Steps Execution", () => {
     };
     store.getTask.mockResolvedValue(task as any);
 
+    /*
+    FNXC:EngineTests 2026-07-19-10:20 (U10b):
+    Under graph ownership every execute() runs the whole builtin:coding graph, so several agent
+    sessions are created (plan review, implementation, code review, completion summary). The
+    implementation session is no longer the last one, so overwriting `toolNames` per session
+    measured whichever session happened to run last. The requirement is that the artifact tools
+    are offered to the executor's session at all without an assigned agent — accumulate across
+    sessions so the assertion keeps testing that, not session ordering.
+    Leave `subscribe` to the shared harness default: it streams an APPROVE verdict for review
+    sessions, keeping the graph's review nodes inert for a test about tool exposure.
+    */
     let toolNames: string[] = [];
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
       const customTools = opts.customTools || [];
-      toolNames = customTools.map((tool: any) => tool.name);
+      toolNames = [...toolNames, ...customTools.map((tool: any) => tool.name)];
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
@@ -98,7 +129,6 @@ describe("Workflow Steps Execution", () => {
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
-          subscribe: vi.fn(),
           on: vi.fn(),
           sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
           state: {},
@@ -134,11 +164,13 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
+    // FNXC:EngineTests 2026-07-19-10:35 (U10b): no `subscribe` override — the shared harness streams
+    // an APPROVE verdict for graph review sessions, so Plan Review stays inert and the run reaches
+    // the implementation node whose no-fn_task_done retry budget is what this test asserts.
     mockedCreateFnAgent.mockResolvedValue({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
-        subscribe: vi.fn(),
         on: vi.fn(),
         sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
         state: {},
@@ -162,8 +194,8 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Should have been called four times: initial + 3 retries
-    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
+    // The implementation session should have been opened four times: initial + 3 retries.
+    expect(implementationSessionCount()).toBe(4);
 
     /*
     FNXC:EngineTests 2026-06-18-07:22:
@@ -272,15 +304,28 @@ describe("Workflow Steps Execution", () => {
       return task as any;
     });
 
-    const staleSession = {
-      prompt: vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant")),
-      dispose: vi.fn(),
-      subscribe: vi.fn(),
-      on: vi.fn(),
-      sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
-      state: {},
-    };
-    mockedCreateFnAgent.mockResolvedValue({ session: staleSession } as any);
+    /*
+    FNXC:EngineTests 2026-07-19-10:40 (U10b):
+    The stale-resume recovery this test pins belongs to the IMPLEMENTATION session — that is the
+    only session resumed from `task.sessionFile`. Under graph ownership a review-node session is
+    created first, so rejecting from every session made the run die at Plan Review instead. Reject
+    only from the session that carries `fn_task_done`, and leave `subscribe` to the harness so the
+    review node approves and the graph actually reaches the implementation node.
+    */
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      const isImplementation = ((opts?.customTools as any[]) || []).some((tool: any) => tool.name === "fn_task_done");
+      return {
+        session: {
+          prompt: isImplementation
+            ? vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant"))
+            : vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        },
+      };
+    }) as any);
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
@@ -326,16 +371,23 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     };
     store.getTask.mockResolvedValue(task as any);
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant")),
-        dispose: vi.fn(),
-        subscribe: vi.fn(),
-        on: vi.fn(),
-        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
-        state: {},
-      },
-    } as any);
+    // FNXC:EngineTests 2026-07-19-10:40 (U10b): reject only from the implementation session (the one
+    // resumed from `task.sessionFile`); the graph's review-node session must stay healthy so the run
+    // reaches the implementation node whose exhausted recovery budget is under test.
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      const isImplementation = ((opts?.customTools as any[]) || []).some((tool: any) => tool.name === "fn_task_done");
+      return {
+        session: {
+          prompt: isImplementation
+            ? vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant"))
+            : vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        },
+      };
+    }) as any);
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
@@ -352,70 +404,17 @@ describe("Workflow Steps Execution", () => {
   });
 
   describe("FN-5436: pending-review skip on no-fn_task_done exit", () => {
-    it("does not park in-review when code review REVISE requires more executor work", async () => {
-      const store = createMockStore();
-      const baseTask = {
-        id: "FN-5436-A",
-        title: "Test",
-        description: "Test task",
-        column: "in-progress",
-        dependencies: [],
-        steps: [{ name: "Implement", status: "in-progress" }],
-        currentStep: 0,
-        log: [],
-        prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      store.getTask.mockResolvedValue(baseTask as any);
-
-      mockedReviewStep.mockResolvedValue({
-        verdict: "REVISE",
-        review: "needs changes",
-        summary: "needs changes",
-      });
-
-      mockedCreateFnAgent.mockImplementation((async (opts: any) => {
-        const tools = opts.customTools || [];
-        return {
-          session: {
-            prompt: vi.fn().mockImplementation(async () => {
-              const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
-              if (reviewTool) {
-                await reviewTool.execute("tool-review", { step: 0, type: "code", step_name: "Implement" });
-              }
-            }),
-            dispose: vi.fn(),
-            subscribe: vi.fn(),
-            on: vi.fn(),
-            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
-            state: {},
-          },
-        };
-      }) as any);
-
-      const onError = vi.fn();
-      const executor = new TaskExecutor(store, "/tmp/test", { onError });
-
-      await executor.execute(baseTask as any);
-
-      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-5436-A", expect.objectContaining({
-        status: "queued",
-        error: null,
-        taskDoneRetryCount: 1,
-      }));
-      expect(store.moveTask).toHaveBeenCalledWith("FN-5436-A", "todo", { preserveProgress: true });
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-5436-A", "in-review");
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-A", {
-        status: "failed",
-        error: "executor-exit-while-review-pending",
-      });
-      expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "FN-5436-A" }),
-        expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
-      );
-    });
+    /*
+    FNXC:EngineTests 2026-07-19-10:55 (U10b):
+    DELETED here: "does not park in-review when code review REVISE requires more executor work".
+    It drove a code-review REVISE through the in-session `fn_review_step` tool, and asserted that
+    the resulting in-session verdict suppressed the pending-review park. U10 (R9) deleted that
+    tool and, with it, the in-session verdict source — `detectPendingReviewBlock` no longer reads
+    any code-review verdict map (its parameter is now `_codeReviewVerdicts`). Review verdicts are
+    owned exclusively by workflow-graph nodes, so there is no graph equivalent of the behavior the
+    test described; what remained of it duplicated "keeps existing retry loop when no pending
+    review block is present" below, which still covers the un-blocked retry loop.
+    */
 
     it("parks in-review when review request has no subsequent verdict", async () => {
       const store = createMockStore();
@@ -438,7 +437,6 @@ describe("Workflow Steps Execution", () => {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
           dispose: vi.fn(),
-          subscribe: vi.fn(),
           on: vi.fn(),
           sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
           state: {},
@@ -448,7 +446,10 @@ describe("Workflow Steps Execution", () => {
       const executor = new TaskExecutor(store, "/tmp/test", {});
       await executor.execute(baseTask as any);
 
-      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+      // FNXC:EngineTests 2026-07-19-10:55 (U10b): the pending-review block must skip the retry
+      // session, so the implementation session is opened exactly once. Count implementation
+      // sessions, not total graph sessions.
+      expect(implementationSessionCount()).toBe(1);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-B", {
         status: "failed",
         error: "executor-exit-while-review-pending",
@@ -483,7 +484,6 @@ describe("Workflow Steps Execution", () => {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
           dispose: vi.fn(),
-          subscribe: vi.fn(),
           on: vi.fn(),
           sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
           state: {},
@@ -493,7 +493,10 @@ describe("Workflow Steps Execution", () => {
       const executor = new TaskExecutor(store, "/tmp/test", {});
       await executor.execute(baseTask as any);
 
-      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
+      // FNXC:EngineTests 2026-07-19-10:55 (U10b): no pending-review block means the full retry
+      // budget runs — 4 implementation sessions (initial + 3 retries), independent of the graph's
+      // own review-node sessions.
+      expect(implementationSessionCount()).toBe(4);
       expect(store.updateTask).toHaveBeenCalledWith("FN-5436-C", {
         status: "queued",
         error: null,
@@ -501,7 +504,17 @@ describe("Workflow Steps Execution", () => {
       });
     });
 
-    it("allows implicit done to complete when no in-progress step exists", async () => {
+    /*
+    FNXC:EngineTests 2026-07-19-11:15 (U10b):
+    Requirement (unchanged): an agent that exits WITHOUT calling fn_task_done but leaves every step
+    terminal completes implicitly — no retry sessions are burned and the task reaches the review
+    handoff. Only the way to arrive at that state changed. This test used to seed the step as
+    already `done` and rely on the legacy runner never touching it; the graph's step-execute node
+    now marks its target step `in-progress` (source: "graph") before the implementation pass, so
+    "no in-progress step exists at session start" is unreachable under graph ownership. Drive the
+    same end-state the way the graph reaches it: the session completes the step and exits silently.
+    */
+    it("allows implicit done to complete when the agent leaves every step terminal", async () => {
       const store = createMockStore();
       const baseTask = {
         id: "FN-5436-D",
@@ -518,31 +531,57 @@ describe("Workflow Steps Execution", () => {
       };
       store.getTask.mockResolvedValue(baseTask as any);
 
-      mockedCreateFnAgent.mockResolvedValue({
-        session: {
-          prompt: vi.fn().mockResolvedValue(undefined),
-          dispose: vi.fn(),
-          subscribe: vi.fn(),
-          on: vi.fn(),
-          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
-          state: {},
-        },
-      } as any);
+      mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+        const isImplementation = ((opts?.customTools as any[]) || []).some((tool: any) => tool.name === "fn_task_done");
+        return {
+          session: {
+            // Completes the step but never calls fn_task_done — the implicit-completion path.
+            prompt: vi.fn().mockImplementation(async () => {
+              if (isImplementation) await store.updateStep("FN-5436-D", 0, "done");
+            }),
+            dispose: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }) as any);
 
       const onComplete = vi.fn();
       const onError = vi.fn();
       const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError });
       await executor.execute(baseTask as any);
 
-      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
-      // FNXC:ExecutorRetry 2026-07-13: Use objectContaining because production now passes additional fields (executeRequeueLoopCount, executeRequeueLoopSignature, branch, worktree, sessionFile) in the same updateTask call.
-      expect(store.updateTask).toHaveBeenCalledWith("FN-5436-D", expect.objectContaining({ workflowStepRetries: undefined, taskDoneRetryCount: null }));
+      // FNXC:EngineTests 2026-07-19-10:55 (U10b): implicit done is accepted without a retry, so the
+      // implementation session runs exactly once; the graph's review/summary sessions are separate.
+      expect(implementationSessionCount()).toBe(1);
+      /*
+      FNXC:EngineTests 2026-07-19-11:15 (U10b):
+      The old proof that implicit done was ACCEPTED was the legacy completion path's retry-counter
+      reset (`workflowStepRetries: undefined, taskDoneRetryCount: null`) plus the executor's own
+      `onComplete`. Both belong to the non-graph fallback: a graph-driven run returns at the
+      implementation-complete boundary (executor.ts `if (graphCompletion) { ... return; }`) before
+      either runs, and the graph interpreter owns the rest of the lifecycle. Assert the implicit
+      acceptance directly at its own log line instead — that is the requirement, and it is a
+      stronger statement than the bookkeeping side effect that used to stand in for it.
+      */
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-5436-D",
+        "All steps complete — implicit fn_task_done (agent did not call tool explicitly)",
+        undefined,
+        expect.objectContaining({ agentId: "executor" }),
+      );
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-D", {
         status: "failed",
         error: "executor-exit-while-review-pending",
       });
-      expect(store.moveTask).toHaveBeenCalledWith("FN-5436-D", "in-review");
-      expect(onComplete).toHaveBeenCalled();
+      // FNXC:EngineTests 2026-07-19-11:15 (U10b): the in-review handoff is now the graph's own
+      // move off the implementation node, carrying workflow move provenance.
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-5436-D",
+        "in-review",
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      );
       expect(onError).not.toHaveBeenCalled();
     });
   });
@@ -582,10 +621,20 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Only main agent call
-    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    /*
+    FNXC:EngineTests 2026-07-19-11:25 (U10b):
+    An explicit fn_task_done still completes in one implementation session, and the task still
+    lands in `in-review`. Two things changed shape, not substance: the graph opens its own review
+    sessions alongside the implementation one (so count implementation sessions), and the in-review
+    handoff is now the graph's move off the implementation node, carrying workflow move provenance.
+    */
+    expect(implementationSessionCount()).toBe(1);
     // Task should still move to in-review
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
   });
 
   it("routes exhausted prompt-mode workflow hard failures back to remediation and reopens actionable steps", async () => {
@@ -1491,125 +1540,3 @@ describe("TaskExecutor loop recovery", () => {
 // side effects are byte-identical to the pre-extraction block: git reset to
 // the agent-supplied baseline, session rewind via navigateTree, step→pending,
 // and the RETHINK log entry — all reached through the real executor session.
-describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (characterization)", () => {
-  beforeEach(() => {
-    resetExecutorMocks();
-  });
-
-  function runRethinkScenario(reviewType: "code" | "plan", navigateTree: any) {
-    const store = createMockStore();
-    const baseTask = {
-      id: "FN-RT-1",
-      title: "Test",
-      description: "Test task",
-      column: "in-progress",
-      dependencies: [],
-      steps: [{ name: "Implement", status: "in-progress" }],
-      currentStep: 0,
-      log: [],
-      prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    store.getTask.mockResolvedValue(baseTask as any);
-    // updateStep returns the task with the step persisted in-progress so the
-    // executor's checkpoint-capture path (executor.ts ~6517) populates the
-    // stepCheckpoints map that RETHINK rewinds to.
-    store.updateStep.mockResolvedValue({
-      ...baseTask,
-      steps: [{ name: "Implement", status: "in-progress" }],
-    } as any);
-
-    mockedReviewStep.mockResolvedValue({
-      verdict: "RETHINK",
-      review: "wrong approach",
-      summary: "rejected approach",
-    } as any);
-
-    let reviewToolError: unknown;
-    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
-      const tools = opts.customTools || [];
-      return {
-        session: {
-          prompt: vi.fn().mockImplementation(async () => {
-            // First, flip the step to in-progress via fn_task_update so the
-            // checkpoint map is populated (mirrors the real session lifecycle).
-            const updateTool = tools.find((t: any) => t.name === "fn_task_update");
-            if (updateTool) {
-              try {
-                await updateTool.execute("tool-update", { step: 0, status: "in-progress" });
-              } catch { /* tool param shape varies; ignore */ }
-            }
-            const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
-            if (reviewTool) {
-              try {
-                await reviewTool.execute("tool-review", {
-                  step: 0,
-                  type: reviewType,
-                  step_name: "Implement",
-                  baseline: reviewType === "code" ? "agentBaselineSHA" : undefined,
-                });
-              } catch (e) {
-                reviewToolError = e;
-              }
-            }
-          }),
-          dispose: vi.fn(),
-          subscribe: vi.fn(),
-          on: vi.fn(),
-          navigateTree,
-          sessionManager: {
-            getLeafId: vi.fn().mockReturnValue("leaf-pre-step"),
-            branchWithSummary: vi.fn(),
-          },
-          state: {},
-        },
-      };
-    }) as any);
-
-    const executor = new TaskExecutor(store, "/tmp/test", {});
-    return { store, baseTask, executor, getReviewToolError: () => reviewToolError };
-  }
-
-  it("code RETHINK: git reset to baseline, navigateTree rewind, step→pending, RETHINK log", async () => {
-    const navigateTree = vi.fn().mockResolvedValue(undefined);
-    const { store, baseTask, executor } = runRethinkScenario("code", navigateTree);
-
-    await executor.execute(baseTask as any);
-
-    // git reset --hard <baseline> issued in the worktree (via the mocked exec).
-    const resetIssued = mockedExecSync.mock.calls.some(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("git reset --hard agentBaselineSHA"),
-    );
-    expect(resetIssued).toBe(true);
-    // Session rewound to the captured pre-step checkpoint.
-    expect(navigateTree).toHaveBeenCalledWith("leaf-pre-step", { summarize: false });
-    // Step reset to pending through the projection sink.
-    expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
-    // RETHINK log entry (code-review variant references the git reset).
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-RT-1",
-      expect.stringContaining("git reset to agentBaselineSHA"),
-      "rejected approach",
-    );
-  });
-
-  it("plan RETHINK: no git reset, navigateTree rewind, step→pending, plan-rewound log", async () => {
-    const navigateTree = vi.fn().mockResolvedValue(undefined);
-    const { store, baseTask, executor } = runRethinkScenario("plan", navigateTree);
-
-    await executor.execute(baseTask as any);
-
-    const resetIssued = mockedExecSync.mock.calls.some(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("git reset --hard"),
-    );
-    expect(resetIssued).toBe(false);
-    expect(navigateTree).toHaveBeenCalledWith("leaf-pre-step", { summarize: false });
-    expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-RT-1",
-      expect.stringContaining("Step 0 plan rewound"),
-      "rejected approach",
-    );
-  });
-});

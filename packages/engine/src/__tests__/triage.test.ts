@@ -118,11 +118,18 @@ async function cleanupTriageFixtureRoot(rootDir: string | undefined): Promise<vo
 }
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
+  let store: Partial<TaskStore>;
+  store = {
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     moveTask: vi.fn(),
+    moveTaskIf: vi.fn(async (id, toColumn) => {
+      const task = await store.moveTask?.(id, toColumn);
+      return { task: task as Task, moved: true };
+    }),
+    withTaskLock: vi.fn(async (_id, callback) => callback()),
+    readTaskForMove: vi.fn(async (id) => (await store.getTask?.(id)) ?? ({ id, column: "triage", status: "planning" } as Task)),
     updateTask: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
@@ -155,7 +162,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     on: vi.fn(),
     emit: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  return store as TaskStore;
 }
 
 const mockTaskDetail: TaskDetail = {
@@ -220,6 +228,23 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("## Original Description");
     expect(prompt).toContain("verbatim");
     expect(prompt).toContain("Test task description");
+  });
+
+  it("expands stored plan.md while preserving original request and edited description context", () => {
+    const prompt = buildSpecificationPrompt(
+      { ...baseTask, description: "Operator edited context" },
+      ".fusion/tasks/FN-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { plan: "# Validated plan\n\nPlan detail\n\n## Size\nM\n\n## Suggested dependencies\n_None_\n\n## Key deliverables\n- Deliver it\n", originalDescription: "Raw operator request" },
+    );
+    expect(prompt).toContain("## Planning Mode plan.md");
+    expect(prompt).toContain("Plan detail");
+    expect(prompt).toContain("Operator edited context");
+    expect(prompt).toContain("Raw operator request");
+    expect(prompt).toContain("never use plan.md");
   });
 
   describe("task-definition input language setting", () => {
@@ -1528,6 +1553,20 @@ describe("TriageProcessor", () => {
     expect(processor).toBeInstanceOf(TriageProcessor);
   });
 
+  it("uses a synchronous reservation to keep planning and advanced recovery mutually exclusive", async () => {
+    const task = createTriageTask({ id: "FN-RECOVERY-RESERVED" });
+    const release = processor.tryReserveAdvancedRecovery(task.id);
+    expect(release).toBeTypeOf("function");
+    expect(processor.getProcessingTaskIds()).toContain(task.id);
+    expect(processor.getPlanningTaskIds()).not.toContain(task.id);
+
+    await processor.specifyTask(task);
+    expect(store.getTask).not.toHaveBeenCalled();
+
+    release?.();
+    expect(processor.getProcessingTaskIds()).not.toContain(task.id);
+  });
+
   /*
   FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
   finalizeApprovedTask must inject ## Original Description with the task description
@@ -1583,757 +1622,6 @@ Planner rewrote mission without the raw request.
       const missionIdx = onDisk.indexOf("## Mission");
       expect(originalIdx).toBeGreaterThan(-1);
       expect(missionIdx).toBeGreaterThan(originalIdx);
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it("runs enabled Plan Review in triage before moving to todo", async () => {
-    const task = createTriageTask({
-      id: "FN-PLAN-APPROVE",
-      title: "Plan approve",
-      status: "planning",
-      enabledWorkflowSteps: ["plan-review", "code-review"],
-    } as Partial<Task>);
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
-    mockReviewStep.mockResolvedValue({
-      verdict: "APPROVE",
-      review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-      summary: "Ready.",
-    });
-
-    await (processor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      task,
-      "# Task: FN-PLAN-APPROVE - Plan approve\n\n## Mission\n\nDo it.\n",
-      { requirePlanApproval: false } as Settings,
-    );
-
-    expect(mockReviewStep).toHaveBeenCalledWith(
-      rootDir,
-      "FN-PLAN-APPROVE",
-      0,
-      "PROMPT.md",
-      "spec",
-      expect.any(String),
-      undefined,
-      expect.objectContaining({ taskId: "FN-PLAN-APPROVE" }),
-    );
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-APPROVE", expect.objectContaining({
-      workflowStepResults: expect.arrayContaining([
-        expect.objectContaining({ workflowStepId: "plan-review", status: "passed", verdict: "APPROVE" }),
-      ]),
-    }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-PLAN-APPROVE", "todo");
-  });
-
-  it("passes fresh user comments and legacy steering into enabled Plan Review", async () => {
-    const task = createTriageTask({
-      id: "FN-PLAN-COMMENTS",
-      title: "Plan comments",
-      status: "planning",
-      enabledWorkflowSteps: ["plan-review"],
-      comments: [
-        ...Array.from({ length: 21 }, (_, index) => ({
-          id: `c-old-${index}`,
-          text: `Older reviewer requirement ${index}`,
-          author: "user" as const,
-          createdAt: `2026-06-21T09:${String(index).padStart(2, "0")}:00.000Z`,
-        })),
-        { id: "c-user", text: "Unified reviewer requirement", author: "user", createdAt: "2026-06-21T10:00:00.000Z" },
-        { id: "c-agent", text: "agent-only unified note", author: "agent", createdAt: "2026-06-21T10:01:00.000Z" },
-      ],
-      steeringComments: [
-        { id: "s-user", text: "Legacy steering reviewer requirement", author: "user", createdAt: "2026-06-21T10:02:00.000Z" },
-        { id: "s-agent", text: "agent-only steering note", author: "agent", createdAt: "2026-06-21T10:03:00.000Z" },
-      ],
-    } as Partial<Task>);
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
-    mockReviewStep.mockResolvedValue({
-      verdict: "APPROVE",
-      review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-      summary: "Ready.",
-    });
-
-    await (processor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      task,
-      "# Task: FN-PLAN-COMMENTS - Plan comments\n\n## Mission\n\nDo it.\n",
-      { requirePlanApproval: false } as Settings,
-    );
-
-    const options = mockReviewStep.mock.calls[0]?.[7] as any;
-    expect(options.userComments).toHaveLength(23);
-    expect(options.userComments).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "c-old-0", text: "Older reviewer requirement 0", author: "user" }),
-      expect.objectContaining({ id: "c-user", text: "Unified reviewer requirement", author: "user" }),
-      expect.objectContaining({ id: "s-user", text: "Legacy steering reviewer requirement", author: "user" }),
-    ]));
-    expect(options.userComments).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "c-agent" }),
-      expect.objectContaining({ id: "s-agent" }),
-    ]));
-  });
-
-  it("keeps the task in triage when Plan Review requests revision", async () => {
-    const task = createTriageTask({
-      id: "FN-PLAN-REVISE",
-      title: "Plan revise",
-      status: "planning",
-      enabledWorkflowSteps: ["plan-review", "code-review"],
-    } as Partial<Task>);
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
-    mockReviewStep.mockResolvedValue({
-      verdict: "REVISE",
-      review: "### Verdict: REVISE\n\n### Issues Found\nMissing verification.",
-      summary: "Missing verification.",
-    });
-
-    await (processor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      task,
-      "# Task: FN-PLAN-REVISE - Plan revise\n\n## Mission\n\nDo it.\n",
-      { requirePlanApproval: false } as Settings,
-    );
-
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-REVISE", expect.objectContaining({
-      status: "needs-replan",
-      error: null,
-    }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-REVISE", expect.objectContaining({
-      workflowStepResults: expect.arrayContaining([
-        expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),
-      ]),
-    }));
-    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
-      ([id, action]) => id === "FN-PLAN-REVISE" && action === "[pre-merge] Workflow step failed: Plan Review",
-    )).toBe(false);
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-PLAN-REVISE",
-      "AI spec revision requested",
-      expect.stringContaining("Missing verification."),
-    );
-  });
-
-  it("keeps the task in triage with retry backoff when Plan Review is unavailable", async () => {
-    const task = createTriageTask({
-      id: "FN-PLAN-UNAVAILABLE",
-      title: "Plan unavailable",
-      status: "planning",
-      enabledWorkflowSteps: ["plan-review", "code-review"],
-    } as Partial<Task>);
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
-    mockReviewStep.mockRejectedValue(new Error("runtime unavailable"));
-
-    await (processor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      task,
-      "# Task: FN-PLAN-UNAVAILABLE - Plan unavailable\n\n## Mission\n\nDo it.\n",
-      { requirePlanApproval: false } as Settings,
-    );
-
-    expect(store.moveTask).not.toHaveBeenCalled();
-    // FNXC:PlanReview 2026-07-15-21:30: the park now carries the bounded attempt/delay and the
-    // underlying reviewer error, replacing the old fixed-30s "retrying from triage." copy.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-UNAVAILABLE", expect.objectContaining({
-      status: "plan-review-unavailable",
-      error: expect.stringContaining("retry 1/3 in"),
-      recoveryRetryCount: 1,
-      nextRecoveryAt: expect.any(String),
-    }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-UNAVAILABLE", expect.objectContaining({
-      workflowStepResults: expect.arrayContaining([
-        expect.objectContaining({
-          workflowStepId: "plan-review",
-          status: "failed",
-          output: expect.stringContaining("runtime unavailable"),
-        }),
-      ]),
-    }));
-  });
-
-  it("retries unavailable Plan Review without launching the planning agent", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-");
-    const taskId = "FN-PLAN-RETRY";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = "# Task: FN-PLAN-RETRY - Retry review\n\n## Mission\n\nReuse this existing plan.\n";
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockResolvedValue({
-        verdict: "APPROVE",
-        review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-        summary: "Ready.",
-      });
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).toHaveBeenCalledWith(
-        tempRoot,
-        taskId,
-        0,
-        "PROMPT.md",
-        "spec",
-        prompt,
-        undefined,
-        expect.objectContaining({ taskId }),
-      );
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        workflowStepResults: expect.arrayContaining([
-          expect.objectContaining({ workflowStepId: "plan-review", status: "passed", verdict: "APPROVE" }),
-        ]),
-      }));
-      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  /*
-  FNXC:PlanReview 2026-06-29-23:02:
-  Reviewer-outage retry runs the reviewer lane without the planner, but it still consumes global agent concurrency so outage loops cannot bypass capacity limits.
-  */
-  it("runs unavailable Plan Review retry inside the global agent semaphore", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-semaphore-");
-    const taskId = "FN-PLAN-RETRY-SEMAPHORE";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Retry review\n\n## Mission\n\nReview while holding capacity.\n`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review with semaphore",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-
-      let inSemaphoreSlot = false;
-      const semaphore = {
-        availableCount: 1,
-        snapshot: vi.fn(() => ({ activeCount: 0, waitingCount: 0, availableCount: 1, limit: 1 })),
-        run: vi.fn(async (work: () => Promise<void>, priority?: number) => {
-          expect(priority).toEqual(expect.any(Number));
-          inSemaphoreSlot = true;
-          try {
-            return await work();
-          } finally {
-            inSemaphoreSlot = false;
-          }
-        }),
-      };
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot, { semaphore: semaphore as any });
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockImplementation(async () => {
-        expect(inSemaphoreSlot).toBe(true);
-        return {
-          verdict: "APPROVE",
-          review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-          summary: "Ready.",
-        };
-      });
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(semaphore.run).toHaveBeenCalledTimes(1);
-      expect(semaphore.run).toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).toHaveBeenCalledWith(
-        tempRoot,
-        taskId,
-        0,
-        "PROMPT.md",
-        "spec",
-        prompt,
-        undefined,
-        expect.objectContaining({ taskId }),
-      );
-      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  /*
-  FNXC:PlanReview 2026-06-29-16:00:
-  Reviewer-outage retry must reuse finalizeApprovedTask, including duplicate-marker closure, so the retry path cannot fork lifecycle behavior while avoiding a planner rewrite.
-  */
-  it("uses shared duplicate finalization during unavailable Plan Review retry", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-duplicate-");
-    const taskId = "FN-PLAN-RETRY-DUPLICATE";
-    const canonicalId = "FN-999";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `DUPLICATE: ${canonicalId}\n`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry duplicate review",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const canonicalTask = createTriageTask({ id: canonicalId, column: "todo" } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
-        if (id === taskId) return retryTask;
-        if (id === canonicalId) return canonicalTask;
-        return null;
-      });
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        requirePlanApproval: false,
-        triageDuplicateResolution: "delete",
-      } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockClear();
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).not.toHaveBeenCalled();
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(retryStore.deleteTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        removeLineageReferences: true,
-      }));
-      expect(retryStore.moveTask).not.toHaveBeenCalled();
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it("does not rerun Plan Review when retry already has a passed result", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-passed-");
-    const taskId = "FN-PLAN-RETRY-PASSED";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Retry review\n\n## Mission\n\nAlready reviewed.\n`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review passed",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-        workflowStepResults: [
-          {
-            workflowStepId: "plan-review",
-            workflowStepName: "Plan Review",
-            phase: "pre-merge",
-            status: "passed",
-            verdict: "APPROVE",
-          },
-        ],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockClear();
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).not.toHaveBeenCalled();
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it("restores plan-review-unavailable instead of clearing status when retry persistence fails", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-store-failure-");
-    const taskId = "FN-PLAN-RETRY-STORE-FAILURE";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Retry review\n\n## Mission\n\nPreserve retry status on store failures.\n`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review store failure",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      (retryStore.updateTask as ReturnType<typeof vi.fn>).mockImplementation(async (_id: string, update: Partial<Task>) => {
-        if (Array.isArray(update.workflowStepResults)) {
-          throw new Error("workflow result write failed");
-        }
-      });
-      const onSpecifyError = vi.fn();
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot, { onSpecifyError });
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockResolvedValue({
-        verdict: "APPROVE",
-        review: "Approved after retry.",
-        summary: "Ready.",
-      });
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(onSpecifyError).toHaveBeenCalledWith(retryTask, expect.any(Error));
-      const statusUpdates = (retryStore.updateTask as ReturnType<typeof vi.fn>).mock.calls
-        .filter(([id, update]) => id === taskId && Object.prototype.hasOwnProperty.call(update ?? {}, "status"))
-        .map(([, update]) => update.status);
-      expect(statusUpdates.at(-1)).toBe("plan-review-unavailable");
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it.each([
-    {
-      name: "unavailable verdict",
-      setupReview: () => mockReviewStep.mockResolvedValue({
-        verdict: "UNAVAILABLE",
-        review: "Reviewer capacity exhausted.",
-        summary: "Reviewer unavailable.",
-      }),
-      expectedOutput: "Reviewer capacity exhausted",
-    },
-    {
-      name: "reviewer throw",
-      setupReview: () => mockReviewStep.mockRejectedValue(new Error("reviewer transport unavailable")),
-      expectedOutput: "reviewer transport unavailable",
-    },
-  ])("keeps PROMPT.md and refreshes backoff when Plan Review retry hits $name", async ({ setupReview, expectedOutput }) => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-unavailable-");
-    const taskId = "FN-PLAN-RETRY-UNAVAILABLE";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = "# Task: FN-PLAN-RETRY-UNAVAILABLE - Retry review\n\n## Mission\n\nKeep this plan intact.\n";
-    const staleRecoveryAt = "2026-01-01T00:00:00.000Z";
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review outage",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: staleRecoveryAt,
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      setupReview();
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).toHaveBeenCalledWith(
-        tempRoot,
-        taskId,
-        0,
-        "PROMPT.md",
-        "spec",
-        prompt,
-        undefined,
-        expect.objectContaining({ taskId }),
-      );
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(retryStore.moveTask).not.toHaveBeenCalled();
-      // FNXC:PlanReview 2026-07-15-21:30: bounded backoff copy replaces the old fixed-30s park text.
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        status: "plan-review-unavailable",
-        error: expect.stringContaining("retry 1/3 in"),
-        recoveryRetryCount: 1,
-        nextRecoveryAt: expect.any(String),
-      }));
-      const finalStatusUpdate = (retryStore.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
-        ([id, update]) => id === taskId && update?.status === "plan-review-unavailable",
-      );
-      expect(finalStatusUpdate?.[1].nextRecoveryAt).not.toBe(staleRecoveryAt);
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        workflowStepResults: expect.arrayContaining([
-          expect.objectContaining({
-            workflowStepId: "plan-review",
-            status: "failed",
-            output: expect.stringContaining(expectedOutput),
-          }),
-        ]),
-      }));
-      expect(retryStore.logEntry).toHaveBeenCalledWith(
-        taskId,
-        "[pre-merge] Workflow step unavailable: Plan Review",
-        expect.stringContaining(expectedOutput),
-      );
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it.each([
-    {
-      name: "missing",
-      contents: null,
-      errorPattern: /could not read existing PROMPT\.md/i,
-    },
-    {
-      name: "whitespace-only",
-      contents: " \n\t\n",
-      errorPattern: /PROMPT\.md.*(empty|whitespace)/i,
-    },
-  ])("fails Plan Review retry for $name PROMPT.md without launching the planner", async ({ contents, errorPattern }) => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-invalid-");
-    const taskId = `FN-PLAN-RETRY-${contents === null ? "MISSING" : "BLANK"}`;
-    const taskDir = join(tempRoot, ".fusion", "tasks", taskId);
-    const promptPath = join(taskDir, "PROMPT.md");
-
-    try {
-      if (contents !== null) {
-        await mkdir(taskDir, { recursive: true });
-        await writeFile(promptPath, contents, "utf-8");
-      }
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Invalid retry review",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockClear();
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).not.toHaveBeenCalled();
-      expect(retryStore.moveTask).not.toHaveBeenCalled();
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        status: "failed",
-        error: expect.stringMatching(errorPattern),
-        nextRecoveryAt: null,
-      }));
-      expect(retryStore.logEntry).toHaveBeenCalledWith(taskId, expect.stringMatching(errorPattern));
-      if (contents !== null) {
-        expect(readFileSync(promptPath, "utf-8")).toBe(contents);
-      }
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it("fails Plan Review retry on deterministic PROMPT.md validation errors without launching the planner", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-validation-");
-    const taskId = "FN-PLAN-RETRY-DANGLING";
-    const taskDir = join(tempRoot, ".fusion", "tasks", taskId);
-    const promptPath = join(taskDir, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Dangling retry\n\n## Context to Read First\n\n- .fusion/tasks/${taskId}/missing-notes.md\n`;
-
-    try {
-      await mkdir(taskDir, { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Invalid retry review",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockClear();
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).not.toHaveBeenCalled();
-      expect(retryStore.moveTask).not.toHaveBeenCalled();
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining("failed deterministic validation"),
-        nextRecoveryAt: null,
-      }));
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  it.each(["REVISE", "RETHINK"] as const)("moves Plan Review retry to needs-replan when reviewer returns %s", async (verdict) => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-revise-");
-    const taskId = `FN-PLAN-RETRY-${verdict}`;
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Retry review\n\n## Mission\n\nReviewer may request a real revision.\n`;
-    const feedback = `${verdict} feedback: add acceptance criteria.`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review revision",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore();
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockResolvedValue({
-        verdict,
-        review: feedback,
-        summary: "Needs revision.",
-      });
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(mockReviewStep).toHaveBeenCalledWith(
-        tempRoot,
-        taskId,
-        0,
-        "PROMPT.md",
-        "spec",
-        prompt,
-        undefined,
-        expect.objectContaining({ taskId }),
-      );
-      expect(readFileSync(promptPath, "utf-8")).toBe(prompt);
-      expect(retryStore.moveTask).not.toHaveBeenCalled();
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        status: "needs-replan",
-        error: null,
-        nextRecoveryAt: null,
-      }));
-      expect(retryStore.logEntry).toHaveBeenCalledWith(
-        taskId,
-        "AI spec revision requested",
-        expect.stringContaining(feedback),
-      );
-      expect((retryStore.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([id, action]) => id === taskId && action === "[pre-merge] Workflow step failed: Plan Review",
-      )).toBe(false);
-      expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
-        workflowStepResults: expect.arrayContaining([
-          expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),
-        ]),
-      }));
-    } finally {
-      await cleanupTriageFixtureRoot(tempRoot);
-    }
-  });
-
-  /*
-   * FNXC:PlanApproval 2026-07-04-12:25:
-   * FN-7526 — locks the auto-approve-all invariant on the Plan Review reviewer-outage
-   * retry surface (retryUnavailablePlanReview, dispatched from specifyTask for
-   * status: "plan-review-unavailable"). Plan Review APPROVE clears the independent
-   * Plan Review gate; the manual plan-approval gate must then still honor project
-   * planApprovalMode: "auto-approve-all" over the workflow's stored
-   * requirePlanApproval: true and move the task straight to todo (never
-   * awaiting-approval).
-   */
-  it("moves Plan Review retry to todo when project auto-approve-all overrides stored workflow approval", async () => {
-    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-auto-approve-");
-    const taskId = "FN-PLAN-RETRY-AUTO-APPROVE";
-    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
-    const prompt = `# Task: ${taskId} - Retry review auto-approve\n\n## Mission\n\nReviewer approves; project auto-approve-all must still win.\n`;
-
-    try {
-      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
-      await writeFile(promptPath, prompt, "utf-8");
-
-      const retryTask = createTriageTask({
-        id: taskId,
-        title: "Retry review auto-approve",
-        status: "plan-review-unavailable",
-        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
-        enabledWorkflowSteps: ["plan-review", "code-review"],
-      } as Partial<Task>);
-      const retryStore = createMockStore({
-        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
-        getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
-        getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
-        getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
-      } as Partial<TaskStore>);
-      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        planApprovalMode: "auto-approve-all",
-        requirePlanApproval: false,
-      } as Settings);
-      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
-
-      mockCreateFnAgent.mockClear();
-      mockReviewStep.mockResolvedValue({
-        verdict: "APPROVE",
-        review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-        summary: "Ready.",
-      });
-
-      await retryProcessor.specifyTask(retryTask);
-
-      expect(mockCreateFnAgent).not.toHaveBeenCalled();
-      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
-      expect(retryStore.updateTask).not.toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "awaiting-approval" }));
     } finally {
       await cleanupTriageFixtureRoot(tempRoot);
     }
@@ -2473,6 +1761,33 @@ Planner rewrote mission without the raw request.
       expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-200" }));
     });
 
+    it("does not repeatedly dispatch a triage row that already has executor advancement evidence", async () => {
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-ADVANCED", worktree: "/tmp/fusion-fn-advanced" }),
+        createTriageTask({ id: "FN-UNPLANNED" }),
+      ];
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).toHaveBeenCalledOnce();
+      expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-UNPLANNED" }));
+    });
+
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
     When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
@@ -2522,84 +1837,6 @@ Planner rewrote mission without the raw request.
     FNXC:PlanReview 2026-06-29-15:42:
     Polling must honor Plan Review retry backoff as a dispatch boundary: future `nextRecoveryAt` rows stay parked, elapsed reviewer-outage rows bypass the planner, and ordinary null/needs-replan rows still launch planning.
     */
-    it("keeps future Plan Review backoff parked while elapsed retry uses the review-only path", async () => {
-      const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-poll-retry-");
-      const elapsedTaskId = "FN-PR-ELAPSED";
-      const futureTaskId = "FN-PR-FUTURE";
-      const prompt = `# Task: ${elapsedTaskId} - Elapsed Plan Review retry\n\n## Mission\n\nReuse the accepted prompt.\n`;
-
-      try {
-        await mkdir(join(tempRoot, ".fusion", "tasks", elapsedTaskId), { recursive: true });
-        await writeFile(join(tempRoot, ".fusion", "tasks", elapsedTaskId, "PROMPT.md"), prompt, "utf-8");
-
-        const elapsedTask = createTriageTask({
-          id: elapsedTaskId,
-          title: "Elapsed retry",
-          status: "plan-review-unavailable",
-          nextRecoveryAt: new Date(Date.now() - 1_000).toISOString(),
-          enabledWorkflowSteps: ["plan-review", "code-review"],
-        } as Partial<Task>);
-        const futureTask = createTriageTask({
-          id: futureTaskId,
-          title: "Future retry",
-          status: "plan-review-unavailable",
-          nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
-          enabledWorkflowSteps: ["plan-review", "code-review"],
-        } as Partial<Task>);
-        const tasksById = new Map([elapsedTask, futureTask].map((task) => [task.id, task]));
-        const triageStore = createMockStore({
-          listTasks: vi.fn().mockResolvedValue([futureTask, elapsedTask]),
-          getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
-          getSettings: vi.fn().mockResolvedValue({
-            maxConcurrent: 10,
-            maxTriageConcurrent: 10,
-            pollIntervalMs: 10_000,
-            groupOverlappingFiles: false,
-            autoMerge: true,
-          } as Settings),
-        });
-        const triageProcessor = new TriageProcessor(triageStore, tempRoot);
-
-        mockCreateFnAgent.mockClear();
-        mockReviewStep.mockResolvedValue({
-          verdict: "APPROVE",
-          review: "### Verdict: APPROVE\n\n### Summary\nReady.",
-          summary: "Ready.",
-        });
-
-        (triageProcessor as any).running = true;
-        await (triageProcessor as any).poll();
-
-        await vi.waitFor(() => {
-          expect(mockReviewStep).toHaveBeenCalledWith(
-            tempRoot,
-            elapsedTaskId,
-            0,
-            "PROMPT.md",
-            "spec",
-            prompt,
-            undefined,
-            expect.objectContaining({ taskId: elapsedTaskId }),
-          );
-        });
-        expect(mockCreateFnAgent).not.toHaveBeenCalled();
-        expect(mockReviewStep).not.toHaveBeenCalledWith(
-          tempRoot,
-          futureTaskId,
-          expect.anything(),
-          expect.anything(),
-          expect.anything(),
-          expect.anything(),
-          expect.anything(),
-          expect.anything(),
-        );
-        expect(triageStore.moveTask).toHaveBeenCalledWith(elapsedTaskId, "todo");
-        expect(triageStore.moveTask).not.toHaveBeenCalledWith(futureTaskId, expect.any(String));
-      } finally {
-        await cleanupTriageFixtureRoot(tempRoot);
-      }
-    });
-
     it("continues dispatching unplanned and explicit replan tasks to the planning agent", async () => {
       const tasks = [
         createTriageTask({ id: "FN-PLANNER-UNDEFINED", status: undefined } as Partial<Task>),
@@ -3174,8 +2411,8 @@ describe("requirePlanApproval setting", () => {
    * awaiting-approval a second time; the fix must move straight to todo instead.
    */
   describe("FN-7569: plan approval fingerprint idempotency", () => {
-    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n";
-    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n";
+    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n\n## Steps\n\n### Step 1: Implement\n\nDo the thing.\n";
+    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n\n## Steps\n\n### Step 1: Implement differently\n\nDo the changed thing.\n";
 
     /*
     FNXC:PlanApproval 2026-07-15-14:05:
@@ -3540,40 +2777,6 @@ describe("requirePlanApproval setting", () => {
    * resolvePlanApprovalRequired gate at all), which is distinct from the manual
    * gate's "awaiting-approval" outcome and proves the two gates remain independent.
    */
-  it("Plan Review still blocks execution on REVISE even when auto-approve-all is on", async () => {
-    const task = createTriageTask({
-      id: "FN-PLAN-REVIEW-AUTO-APPROVE",
-      title: "Plan review auto-approve",
-      status: "planning",
-      enabledWorkflowSteps: ["plan-review"],
-    } as Partial<Task>);
-    const store = createMockStore({
-      getTask: vi.fn().mockResolvedValue(task),
-    } as Partial<TaskStore>);
-    const processor = new TriageProcessor(store, rootDir);
-    mockReviewStep.mockReset();
-    mockReviewStep.mockResolvedValue({
-      verdict: "REVISE",
-      review: "### Verdict: REVISE\n\nAdd acceptance criteria.",
-      summary: "Needs revision.",
-    });
-
-    await (processor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      task,
-      "# Task: FN-PLAN-REVIEW-AUTO-APPROVE - Plan review auto-approve\n\n## Mission\n\nDo it.\n",
-      { requirePlanApproval: true, planApprovalMode: "auto-approve-all" } as Settings,
-    );
-
-    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-REVIEW-AUTO-APPROVE", expect.objectContaining({
-      status: "needs-replan",
-    }));
-    expect(store.moveTask).not.toHaveBeenCalled();
-    // The manual gate's own awaiting-approval update must never fire for this path.
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-PLAN-REVIEW-AUTO-APPROVE", { status: "awaiting-approval" });
-  });
-
   it("clears stale workflow step instances when a fresh accepted plan replaces existing steps", async () => {
     const task = createTriageTask({
       id: "FN-7224",
@@ -3668,11 +2871,9 @@ describe("specified triage recovery", () => {
 
     expect(recovered).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
-      status: null,
       error: null,
       dependencies: ["FN-1247"],
       size: "M",
-      reviewLevel: 2,
       noCommitsExpected: true,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
@@ -3682,6 +2883,81 @@ describe("specified triage recovery", () => {
       "FN-001",
       "Auto-recovered specified task stuck in planning — moved to todo",
     );
+  });
+
+  it("does not recover a prose-only partial planning draft into execution", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Refinement: unfinished plan\n\nOperator request.\n\n## Original Description\n\nOperator request.\n",
+    );
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      title: "Refinement: unfinished plan",
+      description: "Operator request.",
+      column: "triage",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected",
+    );
+  });
+
+  it("recovers a structured implementation plan without a no-commits marker", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Task: FN-001 - Implement change\n\n**Size:** M\n\n## Steps\n\n### Step 1: Implement\n\nMake the change.\n",
+    );
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue([{ name: "Implement", status: "pending" }]),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Implement change",
+      column: "triage",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   /*
@@ -3964,6 +3240,12 @@ Forbidden paths / non-goals:
 - Do not edit Atlas files: \`AtlasNotes.xcodeproj/**\`, \`Tests/AtlasNotesMobileUITests/**\`, \`Packages/MobileApp/**\`.
 - Evidence only: \`.fusion/fusion.db\`, \`.fusion/tasks/*/task.json\`, \`Packages/*/Package.resolved\`.
 - Conditional only: \`.changeset/*.md\`.
+
+## Steps
+
+### Step 1: Fix poisoned scope
+
+Apply the scoped implementation changes.
 `,
     );
 
@@ -4025,7 +3307,7 @@ Forbidden paths / non-goals:
   it("updates malformed metadata title from prompt heading when task ID matches", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement onboarding flow\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -4064,7 +3346,7 @@ Forbidden paths / non-goals:
   it("does not overwrite title when heading task ID does not match", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement change\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -4114,7 +3396,7 @@ Forbidden paths / non-goals:
   it("preserves imported GitHub issue titles during planning recovery", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement issue fix\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -5328,7 +4610,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-review", status: "reviewing", worktree: "/tmp/FN-7977-MODEL", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+        planningStartedAt: expect.any(String),
+      });
     });
 
     it("keeps advanced worktree and steps after deterministic validation recovery", async () => {
@@ -5358,7 +4643,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-progress", status: "executing", worktree: "/tmp/FN-7977-VALIDATION", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+        planningStartedAt: expect.any(String),
+      });
     });
 
     it("escalates to error state when triage retries are exhausted via specifyTask", async () => {

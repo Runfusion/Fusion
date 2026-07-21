@@ -1318,6 +1318,7 @@
     "relativeTimeMinutes_one": "{{count}}m ago",
     "relativeTimeMinutes_other": "{{count}}m ago",
     "removeAttachment": "Remove {{name}}",
+    "recent": "Recent",
     "rename": "Rename",
     "renameConversationAria": "Rename conversation {{title}}",
     "renameConversationBody": "Choose a new name for this conversation. Leave it blank to show Untitled.",
@@ -2006,12 +2007,12 @@
     "updatingVersion": "Updating to a new frontend version..."
   },
   "dbBanner": {
-    "body": "Fusion's background SQLite integrity check reported corruption. Review the failing objects below before continuing critical operations.",
-    "instructions": "Back up the project, try {{cmd}} if the database still opens cleanly, and restore from a known-good backup if corruption persists. See {{link}} for the storage layout and recovery guidance.",
+    "body": "Fusion's PostgreSQL health check reported a failure. Review the details below before continuing critical operations.",
+    "instructions": "Back up the project, check <cmd>database logs</cmd> and PostgreSQL connectivity and permissions, then refresh health. See <docsLink>docs/storage.md</docsLink> for storage and recovery guidance.",
     "lastChecked": "Last checked: {{checkedAtLabel}}",
     "refreshHealth": "Refresh health",
     "refreshing": "Refreshing…",
-    "title": "Database corruption detected",
+    "title": "Database health check failed",
     "whatToDo": "What to do:"
   },
   "deepLink": {
@@ -4684,7 +4685,12 @@
     "untitledSession": "Untitled session",
     "usingDefault": "Using default",
     "whatToBuild": "What do you want to build?",
-    "whatToBuildPlaceholder": "e.g., Build a user authentication system with login, signup, and password reset..."
+    "whatToBuildPlaceholder": "e.g., Build a user authentication system with login, signup, and password reset...",
+    "nextQuestion": "Next question",
+    "answeredQuestions": "Answered questions",
+    "runningPlan": "Running plan",
+    "renameSession": "Rename session",
+    "editAnswer": "Edit answer for {{question}}"
   },
   "plugins": {
     "addItem": "Add Item",
@@ -5959,8 +5965,30 @@
       "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.",
       "reportModeHelp": "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).",
       "reportModeByActionHelp": "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.",
+      "reportRoadmapRepo": "Public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset.",
+      "reportRoadmapDedupeEnabled": "Deduplicate reports against public roadmap",
+      "reportRoadmapDedupeEnabledHelp": "Match open, labeled roadmap issues before filing. Default: on.",
+      "reportRoadmapLabel": "Public roadmap label",
+      "reportRoadmapLabelHelp": "Open GitHub Issues with this label are considered roadmap items. Default: roadmap.",
       "reportRoadmapDedup": "Check roadmap before filing reports",
-      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off."
+      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
+      "reportTarget": "Default report target",
+      "reportTargetHelp": "Optional Issue or Discussion target. When unset, Feedback and Help use Discussions while Bug and Idea use Issues.",
+      "reportTargetInherit": "Preserve action default",
+      "reportTargetIssue": "GitHub Issue",
+      "reportTargetDiscussion": "GitHub Discussion",
+      "reportTargetOverride": {
+        "bug": "Bug target override",
+        "feedback": "Feedback target override",
+        "idea": "Idea target override",
+        "help": "Help target override"
+      },
+      "reportDiscussionCategory": "Discussion category",
+      "reportDiscussionCategoryHelp": "Required when filing to GitHub Discussions. Categories are loaded from the configured repository.",
+      "reportDiscussionCategorySelect": "Select a Discussion category",
+      "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
+      "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
@@ -5975,6 +6003,12 @@
       "frequency": "Frequency",
       "general": "General",
       "globalDefaultTrackingRepo": "Global default tracking repo",
+      "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",
+      "reportRoadmapDedupeEnabledHelp": "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled).",
+      "reportRoadmapLabel": "Global public roadmap label",
+      "reportRoadmapLabelHelp": "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap).",
+      "reportRoadmapRepo": "Global public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "leaveBothThinkingTogglesOffToKeepThe": " Leave both thinking toggles off to keep the original default behavior. This only controls persisted ",
       "manualOnlyNeverAutoCheck": "Manual only — never auto-check",
       "onStartupOncePerServerLaunch": "On startup — once per server launch",
@@ -7986,7 +8020,7 @@
     },
     "tokenTotalsAria": "Task token totals",
     "tokenUsage": "Token Usage",
-    "totalExecutionTime": "Total execution time",
+    "totalExecutionTime": "Total active time",
     "totalTokens": "Total",
     "updateFailed": "Failed to update {{id}}: {{error}}",
     "updateSuccess": "Updated {{id}}",
@@ -9142,6 +9176,13 @@
     "roadmapMatch": {
       "title": "Already on the roadmap",
       "message": "This report matches a feature that is already planned."
-    }
+    },
+    "roadmapDuplicate": {
+      "title": "Already on the roadmap — add your data point?"
+    },
+    "targetLabel": "Filing target",
+    "targetInherit": "Use configured action target",
+    "targetIssue": "GitHub Issue",
+    "targetDiscussion": "GitHub Discussion"
   }
 }

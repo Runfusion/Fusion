@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/claude-runtime",
-  "version": "0.1.5",
+  "version": "0.1.6-beta.0",
   "type": "module",
   "description": "Claude Code runtime plugin for Fusion (ACP bridge)",
   "keywords": [
@@ -24,7 +24,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {

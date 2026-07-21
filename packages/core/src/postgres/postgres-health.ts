@@ -175,6 +175,14 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // timestamp column absent from older embedded-PG snapshots, so it must self-heal via
   // ALTER TABLE ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS never upgrades).
   { table: "tasks", column: "bulk_completion_refusal_at", type: "text" },
+  // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 — same self-heal contract as the marker
+  // above; migration 0026 lands these on upgraded clusters, and boot repairs a snapshot that
+  // predates them so the first slim TaskStore SELECT cannot crash on a missing column.
+  { table: "tasks", column: "workflow_ir_pin", type: "text" },
+  { table: "tasks", column: "workflow_ir_pin_node_id", type: "text" },
+  { table: "tasks", column: "workflow_ir_pin_column_id", type: "text" },
+  // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 one-time adoption stamp.
+  { table: "tasks", column: "legacy_adopted_at", type: "text" },
   // distributed_task_id_state
   { table: "distributed_task_id_state", column: "prefix", type: "text" },
   { table: "distributed_task_id_state", column: "next_sequence", type: "integer" },

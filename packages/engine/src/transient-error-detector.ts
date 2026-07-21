@@ -11,7 +11,8 @@
  * being incorrectly marked as failed due to temporary infrastructure issues.
  *
  * Contrast with:
- * - Usage limit errors: provider-local conditions (rate limits, quota) → park the affected task
+ * - FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: usage limit errors are
+ *   provider-local conditions (rate limits, quota) → park the affected task
  * - Permanent errors: Code issues, test failures, logic errors → mark task as failed
  */
 
@@ -103,7 +104,8 @@ export function isSilentTransientError(errorMessage: string): boolean {
 
 /**
  * Comprehensive error classification that distinguishes between:
- * - 'usage-limit': Rate limits, quota exceeded, billing issues → provider-scoped task park
+ * - FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: 'usage-limit' means rate
+ *   limits, quota exceeded, or billing issues → provider-scoped task park
  * - 'transient': Network blips, connection errors → move task to "todo" for retry
  * - 'permanent': Code errors, test failures, logic errors → mark task as failed
  *
@@ -119,7 +121,8 @@ export function classifyError(errorMessage: string): "transient" | "usage-limit"
     return "permanent";
   }
 
-  // Check usage limits first (highest priority — parks the affected provider-routed task).
+  // FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: usage limits have highest
+  // priority and park only the affected provider-routed task.
   if (isUsageLimitError(errorMessage)) {
     return "usage-limit";
   }

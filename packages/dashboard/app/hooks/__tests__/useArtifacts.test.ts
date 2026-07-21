@@ -5,6 +5,7 @@ import { fetchArtifacts } from "../../api";
 import { subscribeSse } from "../../sse-bus";
 import { useArtifacts } from "../useArtifacts";
 import { message } from "./sseTestHelpers";
+import { clearTraces, getTraces } from "../../utils/dashboardTraceBuffer";
 
 const { handlers, unsubscribeMock } = vi.hoisted(() => ({
   handlers: {} as Record<string, (event: MessageEvent) => void>,
@@ -71,6 +72,7 @@ describe("useArtifacts", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     window.localStorage.clear();
+    clearTraces();
     for (const key of Object.keys(handlers)) delete handlers[key];
     unsubscribeMock.mockClear();
     mockFetchArtifacts.mockResolvedValue(mockArtifacts);
@@ -302,6 +304,51 @@ describe("useArtifacts", () => {
     });
 
     await waitFor(() => expect(mockFetchArtifacts).toHaveBeenCalledTimes(1));
+  });
+
+  it("drops a late artifact response after the active project switches", async () => {
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useArtifacts({ projectId }),
+      { initialProps: { projectId: "project-a" } },
+    );
+    await loadInitialArtifacts();
+    await waitFor(() => expect(result.current.artifacts).toEqual(mockArtifacts));
+
+    let resolveOldRequest!: (value: ArtifactWithTask[]) => void;
+    mockFetchArtifacts.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveOldRequest = resolve;
+    }));
+    void result.current.refresh();
+    rerender({ projectId: "project-b" });
+
+    await act(async () => {
+      resolveOldRequest([{ ...mockArtifacts[0], id: "project-a-artifact" }]);
+    });
+
+    expect(result.current.artifacts).not.toContainEqual(expect.objectContaining({ id: "project-a-artifact" }));
+    expect(getTraces()).toContainEqual(expect.objectContaining({ source: "useArtifacts", event: "dropped-stale-event" }));
+  });
+
+  it("drops a late artifact rejection after the active project switches", async () => {
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useArtifacts({ projectId }),
+      { initialProps: { projectId: "project-a" } },
+    );
+    await loadInitialArtifacts();
+
+    let rejectOldRequest!: (reason: Error) => void;
+    mockFetchArtifacts.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectOldRequest = reject;
+    }));
+    void result.current.refresh();
+    rerender({ projectId: "project-b" });
+
+    await act(async () => {
+      rejectOldRequest(new Error("project-a failure"));
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(getTraces()).toContainEqual(expect.objectContaining({ source: "useArtifacts", event: "dropped-stale-event" }));
   });
 
   it("subscribes to project-scoped artifact registration events and unsubscribes on unmount", async () => {

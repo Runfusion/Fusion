@@ -32,13 +32,16 @@ vi.mock("../../../api", () => ({
 vi.mock("../../MailboxView", () => ({
   MailboxView: ({
     onOpenTask,
+    onOpenPlanningSession,
     nativeStructureCandidates = [],
   }: {
     onOpenTask?: (taskId: string) => void;
+    onOpenPlanningSession?: (sessionId: string) => void;
     nativeStructureCandidates?: Array<{ label: string }>;
   }) => (
     <>
       <button type="button" onClick={() => onOpenTask?.("FN-7935")}>Open mailbox artifact task</button>
+      <button type="button" onClick={() => onOpenPlanningSession?.("planning-8428")}>Open mailbox planning session</button>
       <output aria-label="Native structure candidate labels">
         {nativeStructureCandidates.map((candidate) => candidate.label).join(", ")}
       </output>
@@ -107,6 +110,16 @@ describe("MainContent mailbox artifact View task routing", () => {
     await waitFor(() => expect(popOutTaskDetail).toHaveBeenCalledWith(fetchedTask));
     expect(fetchTaskDetailMock).toHaveBeenCalledWith("FN-7935", "project-1");
     expect(openDetailTask).not.toHaveBeenCalled();
+  });
+
+  it("opens the exact planning session and navigates to Planning", () => {
+    const openPlanningWithSession = vi.fn();
+    const handleChangeTaskView = vi.fn();
+    render(<MainContent {...mainContentProps({ modalManager: { openPlanningWithSession }, handleChangeTaskView })} />);
+
+    screen.getByText("Open mailbox planning session").click();
+    expect(openPlanningWithSession).toHaveBeenCalledWith("planning-8428");
+    expect(handleChangeTaskView).toHaveBeenCalledWith("planning");
   });
 
   it("supplies project-scoped native structure candidates to the mailbox picker", async () => {

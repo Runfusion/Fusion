@@ -229,6 +229,52 @@ describe("formatModelTag helper function", () => {
   });
 });
 
+describe("Chat pinned session sections", () => {
+  const pinnedAt = "2026-07-19T00:00:00.000Z";
+  const mixedSessions: ChatSessionInfo[] = [
+    { id: "session-pinned", agentId: "agent-001", status: "active", title: "Pinned", pinnedAt, createdAt: pinnedAt, updatedAt: pinnedAt },
+    { id: "session-recent", agentId: "agent-002", status: "active", title: "Recent", createdAt: pinnedAt, updatedAt: pinnedAt },
+  ];
+
+  it("separates pinned and recent direct sessions on desktop and omits empty shells", async () => {
+    setupMockChat({ activeSession: mixedSessions[0], sessions: mixedSessions, filteredSessions: mixedSessions });
+
+    const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const pinned = screen.getByTestId("chat-session-section-pinned");
+    const recent = screen.getByTestId("chat-session-section-recent");
+    expect(pinned).toHaveTextContent("Pinned");
+    expect(within(pinned).getByTestId("chat-session-session-pinned")).toBeInTheDocument();
+    expect(within(recent).getByTestId("chat-session-session-recent")).toBeInTheDocument();
+    expect(within(recent).getByTestId("chat-recent-divider")).toHaveTextContent("Recent");
+
+    setupMockChat({ activeSession: mixedSessions[1], sessions: [mixedSessions[1]], filteredSessions: [mixedSessions[1]] });
+    await act(async () => {
+      view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    });
+    expect(screen.queryByTestId("chat-session-section-pinned")).toBeNull();
+    expect(screen.getByTestId("chat-session-section-recent")).toBeInTheDocument();
+  });
+
+  it("separates pinned and recent direct sessions in the mobile switcher", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupMockChat({ activeSession: mixedSessions[0], sessions: mixedSessions, filteredSessions: mixedSessions });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await userEvent.click(screen.getByTestId("chat-session-session-pinned"));
+      await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
+
+      const pinned = screen.getByTestId("chat-mobile-session-section-pinned");
+      const recent = screen.getByTestId("chat-mobile-session-section-recent");
+      expect(within(pinned).getByTestId("chat-mobile-session-option-session-pinned")).toBeInTheDocument();
+      expect(within(recent).getByTestId("chat-mobile-session-option-session-recent")).toBeInTheDocument();
+      expect(within(recent).getByTestId("chat-mobile-recent-divider")).toHaveTextContent("Recent");
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+});
+
 describe("Chat Session Action Menu", () => {
   it("renders one overflow button on each session item without an inline action cluster", async () => {
     setupMockChat({

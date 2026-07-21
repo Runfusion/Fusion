@@ -9,6 +9,7 @@ import {
   FILE_SCOPE_FN_TOOLS,
   FILE_WRITE_BUILTIN_TOOLS,
   FILE_WRITE_DELETE_FN_TOOLS,
+  MISSION_LINEAGE_ADMISSION_TOOLS,
   NETWORK_API_TOOLS,
   PERMANENT_AGENT_TASK_MUTATION_TOOLS,
   READONLY_BUILTIN_TOOLS,
@@ -39,6 +40,17 @@ const COMMAND_EXECUTION_TOOLS = COMMAND_EXECUTION_FN_TOOLS;
 const REVIEW_GATE_BYPASS_TOOLS = REVIEW_GATE_BYPASS_FN_TOOLS;
 // FNXC:ToolGovernance 2026-07-09-08:30: FN-7737 — mirror agent-action-gate.ts's file_scope classification here so the permanent-agent gate resolves fn_task_file_scope_add identically (no two-path drift).
 const FILE_SCOPE_TOOLS = FILE_SCOPE_FN_TOOLS;
+const MISSION_ADMISSION_TOOLS = MISSION_LINEAGE_ADMISSION_TOOLS;
+
+function hasMissionLineageReference(args: unknown): boolean {
+  if (!args || typeof args !== "object") return false;
+  const lineage = (args as Record<string, unknown>).mission_lineage;
+  if (!lineage || typeof lineage !== "object") return false;
+  const reference = lineage as Record<string, unknown>;
+  return ["mission_id", "slice_id", "feature_id"].every((key) =>
+    typeof reference[key] === "string" && reference[key].trim().length > 0,
+  );
+}
 
 function normalizeArgs(args: unknown): Record<string, unknown> {
   return args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -162,6 +174,16 @@ export function resolvePermanentAgentToolDecision(input: {
   gating?: PermanentAgentGatingContext;
 }): PermanentAgentToolDecision {
   const classification = classifyPermanentAgentToolCall(input.toolName, input.args);
+
+  /*
+  FNXC:MissionAdmission 2026-07-30-00:00:
+  Keep the permanent-agent result in lockstep with evaluateAgentActionGate:
+  incomplete lineage is a hard off-mission block, not a policy-approvable task
+  mutation. The tool factory performs the full persistence-time validation.
+  */
+  if (MISSION_ADMISSION_TOOLS.has(input.toolName) && !hasMissionLineageReference(input.args)) {
+    return { ...classification, toolName: input.toolName, disposition: "block" };
+  }
 
   if (!input.gating?.permissionPolicy) {
     return {

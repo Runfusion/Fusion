@@ -506,6 +506,12 @@ function AppInner() {
         setGoalAnchorId(target.id);
         return;
       }
+      if (target.view === "roadmaps") {
+        // FNXC:NativeStructureEmbed 2026-07-19-12:45: Roadmap previews open the registered
+        // plugin destination through TaskView state, never a synthetic URL deep-link.
+        handleTaskViewChange("plugin:fusion-plugin-roadmap:roadmaps");
+        return;
+      }
       handleTaskViewChange(target.view);
     };
     window.addEventListener(NATIVE_STRUCTURE_OPEN_EVENT, openNativeStructure);
@@ -797,15 +803,15 @@ function AppInner() {
     [poppedOutTaskEntries, taskPopupsVisibleOnCurrentView],
   );
 
-  const pluginDashboardViews = useMemo<PluginDashboardViewEntry[]>(() => {
-    /*
-    FNXC:RoadmapsNavigation 2026-06-22-18:50:
-    The roadmap app view and experimental toggle were removed from the dashboard surface. Filter any plugin-provided Roadmaps dashboard view here so an installed/persisted plugin cannot reintroduce the sidebar destination.
-    */
-    return rawPluginDashboardViews.filter(
-      (entry) => !(entry.pluginId === "fusion-plugin-roadmap" && entry.view.viewId === "roadmaps"),
-    );
-  }, [rawPluginDashboardViews]);
+  /*
+  FNXC:RoadmapsNavigation 2026-07-19-12:00:
+  Preserve the plugin manifest's roadmaps entry now that the bundled host registers its view.
+  Native-structure roadmap-item previews use this as their callback-driven open destination.
+  */
+  const pluginDashboardViews = useMemo<PluginDashboardViewEntry[]>(
+    () => rawPluginDashboardViews,
+    [rawPluginDashboardViews],
+  );
 
   const { stats: agentStats } = useAgents(currentProject?.id);
 

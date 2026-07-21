@@ -2570,11 +2570,62 @@ describe("usage", () => {
       expect(codex.email).toBe("test@example.com");
       expect(codex.plan).toBe("Pro");
       expect(codex.windows).toHaveLength(2);
+      expect(codex.windows.map((window) => window.label)).toEqual(["Session (5h)", "Weekly"]);
 
       const sessionWindow = codex.windows.find((w) => w.label.includes("Session"));
       expect(sessionWindow).toBeDefined();
       expect(sessionWindow!.percentUsed).toBe(67.5);
       expect(sessionWindow!.percentLeft).toBe(32.5);
+    });
+
+    it("labels a seven-day primary window as Weekly when no secondary window is returned", async () => {
+      const mockResponse = {
+        rate_limit: {
+          primary_window: {
+            used_percent: 67,
+            limit_window_seconds: 7 * 24 * 60 * 60,
+            reset_after_seconds: 4 * 24 * 60 * 60,
+          },
+          secondary_window: null,
+        },
+      };
+
+      mockReadFile.mockImplementation((filePath: string) => {
+        if (filePath.includes("codex")) {
+          return JSON.stringify({
+            tokens: {
+              access_token: "test-token",
+            },
+          });
+        }
+        return Promise.reject(new Error("File not found"));
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const codex = providers.find((provider) => provider.name === "Codex")!;
+
+      expect(codex.status).toBe("ok");
+      expect(codex.windows).toHaveLength(1);
+      expect(codex.windows[0]).toMatchObject({
+        label: "Weekly",
+        percentUsed: 67,
+        windowDurationMs: 7 * 24 * 60 * 60 * 1000,
+      });
+      expect(codex.windows.some((window) => window.label === "Session (5h)")).toBe(false);
     });
 
     it("sets resetAt from reset_at timestamp", async () => {

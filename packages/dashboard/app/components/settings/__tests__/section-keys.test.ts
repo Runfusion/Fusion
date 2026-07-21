@@ -199,7 +199,7 @@ describe("settings section-keys registry", () => {
     }
   });
 
-  it("source-control-global owns the global GitLab fallbacks and the global tracking repo", () => {
+  it("source-control-global owns global source-control fallbacks", () => {
     const entry = getSectionKeyEntry("source-control-global")!;
     expect(entry.scope).toBe("global");
     expect(new Set(entry.keys)).toEqual(
@@ -210,6 +210,9 @@ describe("settings section-keys registry", () => {
         "gitlabApiBaseUrl",
         "gitlabAuthToken",
         "gitlabAuthTokenType",
+        "reportRoadmapDedupeEnabled",
+        "reportRoadmapLabel",
+        "reportRoadmapRepo",
       ]),
     );
 

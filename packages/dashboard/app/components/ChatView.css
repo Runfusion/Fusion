@@ -422,6 +422,16 @@ FN-8173 replaces the inline Pin/Rename/Delete cluster with one overflow trigger.
   color: var(--color-warning);
 }
 
+/*
+FNXC:ChatPinned 2026-07-19-00:00:
+Pinned and Recent conversation groups use the same divider treatment on desktop and mobile.
+A token-sized gap between populated groups makes their ownership visible without introducing a
+second sidebar-list component or leaving an empty section shell.
+*/
+.chat-session-section + .chat-session-section {
+  margin-top: var(--space-sm);
+}
+
 .chat-pinned-divider {
   display: flex;
   align-items: center;

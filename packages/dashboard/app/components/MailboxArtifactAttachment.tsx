@@ -10,6 +10,8 @@ export interface MailboxArtifactAttachmentProps {
   projectId?: string;
   taskId?: unknown;
   onOpenTask?: (taskId: string) => void;
+  /** The shared related-work control already renders this message's task link. */
+  hideTaskLink?: boolean;
 }
 
 function readString(value: unknown): string | undefined {
@@ -37,6 +39,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
   projectId,
   taskId,
   onOpenTask,
+  hideTaskLink = false,
 }: MailboxArtifactAttachmentProps) {
   const id = readString(artifactId);
   const type = readArtifactType(artifactType);
@@ -59,7 +62,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
       Open artifact
     </a>
   );
-  const taskLink = task && onOpenTask ? (
+  const taskLink = task && onOpenTask && !hideTaskLink ? (
     <button
       type="button"
       className="mailbox-artifact-attachment__link btn"

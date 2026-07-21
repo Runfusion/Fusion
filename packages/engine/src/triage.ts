@@ -6,8 +6,6 @@ import type {
   TaskDetail,
   TaskAttachment,
   Settings,
-  WorkflowStepResult,
-  WorkflowIr,
   Agent,
   AgentPermissionPolicy,
   PermanentAgentGatingContext,
@@ -15,14 +13,11 @@ import type {
 import {
   DUPLICATE_OF_METADATA_KEY,
   PLAN_REVIEW_GROUP_ID,
-  RetryStormError,
-  serializeRetryStormError,
   TaskDeletedError,
   buildTriageMemoryInstructions,
   isUnplannedSeedPrompt,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
-  flagTriageDuplicate,
   resolveAgentPrompt,
   builtinSeamPrompt,
   renderTriagePolicyPlaceholders,
@@ -36,6 +31,8 @@ import {
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
+  resolveWorkflowIrForTask,
+  getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
@@ -49,14 +46,13 @@ import {
   isEphemeralAgent,
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
-  upsertWorkflowStepResult,
   deriveFallbackTaskTitle,
   detectContentLanguage,
   localeDisplayName,
+  parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
-const PLAN_REVIEW_TEMPLATE_STEP_NODE_ID = "plan-review-step";
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
 type TaskListFormatter = (
@@ -85,7 +81,6 @@ approval reason explicit (awaitingApprovalReason `plan-review-replan-cap`) so op
 this is a non-converging Plan Review loop, not a routine require-all plan gate.
 */
 export const PLAN_REVIEW_GATE_REPLAN_CAP = 8;
-const PLAN_REVIEW_REPLAN_CAP_LOG_ACTION = "Plan Review replan cap reached — escalating to manual approval";
 
 export function inlineTaskListFallback(
   lines: string[],
@@ -130,10 +125,6 @@ import {
 } from "./agent-session-helpers.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
-import {
-  detectExternalIntegrationEvidenceGaps,
-  formatExternalIntegrationEvidenceDiagnostic,
-} from "./spec-validation/external-integration-evidence.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import {
   PRIORITY_SPECIFY,
@@ -189,8 +180,7 @@ import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
-import { ReviewerProviderError, reviewStep } from "./reviewer.js";
-import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
+import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 
@@ -198,7 +188,10 @@ import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 export interface TriageProcessorOptions {
   pollIntervalMs?: number;
   semaphore?: AgentSemaphore;
-  /** Usage limit pauser — parks only the affected provider-routed task. */
+  /**
+   * FNXC:ProviderRateLimitIsolation 2026-07-21-18:00:
+   * Parks only tasks routed through the provider whose API limit was detected.
+   */
   usageLimitPauser?: UsageLimitPauser;
   /** Stuck task detector — monitors triage sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
@@ -229,6 +222,8 @@ export class TriageProcessor {
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
   private processing = new Set<string>();
+  /** Synchronous ownership fence shared with advanced-triage self-healing. */
+  private advancedRecoveryReservations = new Set<string>();
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
   private processingSince = new Map<string, number>();
   private wasGlobalPaused = false;
@@ -661,6 +656,16 @@ export class TriageProcessor {
    * still completing Plan Review → todo after a stuck-kill of the main session.
    */
   getProcessingTaskIds(): Set<string> {
+    const ids = this.getPlanningTaskIds();
+    for (const taskId of this.advancedRecoveryReservations) ids.add(taskId);
+    return ids;
+  }
+
+  /**
+   * Return tasks owned by actual planner work, excluding recovery reservations.
+   * Recovery uses this narrower view when revalidating its own reserved task.
+   */
+  getPlanningTaskIds(): Set<string> {
     const ids = new Set(this.processing);
     for (const taskId of this.finalizing) ids.add(taskId);
     for (const taskId of this.activeSubagentSessions.keys()) {
@@ -668,6 +673,23 @@ export class TriageProcessor {
       if (sessions && sessions.size > 0) ids.add(taskId);
     }
     return ids;
+  }
+
+  /**
+   * Reserve a task for advanced-state recovery unless planning already owns it.
+   * The check-and-add is synchronous, as is specifyTask's reciprocal guard, so
+   * neither side can slip between ownership inspection and acquisition.
+   */
+  tryReserveAdvancedRecovery(taskId: string): (() => void) | undefined {
+    if (
+      this.advancedRecoveryReservations.has(taskId)
+      || this.processing.has(taskId)
+      || this.hasLivePlanningWork(taskId)
+    ) {
+      return undefined;
+    }
+    this.advancedRecoveryReservations.add(taskId);
+    return () => this.advancedRecoveryReservations.delete(taskId);
   }
 
   /** True when this processor still owns live work for `taskId` (main, subagent, or finalize). */
@@ -788,6 +810,31 @@ export class TriageProcessor {
     if (deterministicSpecFailure) {
       planLog.warn(`${task.id} planning recovery skipped — PROMPT.md failed deterministic validation (${deterministicSpecFailure})`);
       return false;
+    }
+
+    /*
+    FNXC:TriageStuckRecovery 2026-07-20:
+    A stuck planner may leave a partially edited seed that no longer matches the
+    byte-exact unplanned-seed detector. For step-heading workflows, non-empty prose
+    is not executable proof: require parsed steps unless the plan explicitly opts
+    into the legitimate zero-work contract. Otherwise recovery would release the
+    task to parse-steps, whose empty foreach could advance toward merge.
+    */
+    const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+    const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
+      node.kind === "parse-steps"
+      && (node.config?.artifact === undefined || node.config.artifact === "PROMPT.md")
+      && node.config?.parser === "step-headings"
+      && node.config?.requireStepsUnlessNoCommits === true
+    ) === true;
+    if (requiresPromptImplementationSteps && !promptDeclaresNoCommitsExpected(written)) {
+      const parsedSteps = getStepParser("step-headings")?.parse(written).steps ?? [];
+      if (parsedSteps.length === 0) {
+        const message = "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected";
+        planLog.warn(`${task.id} ${message}`);
+        await this.store.logEntry(task.id, message);
+        return false;
+      }
     }
 
     await this.finalizeApprovedTask(task, written, settings, {
@@ -1056,7 +1103,9 @@ export class TriageProcessor {
       }
 
       const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+        (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+          && !this.advancedRecoveryReservations.has(t.id)
+          && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
           // Skip failed specifications until the user explicitly retries them.
@@ -1211,7 +1260,11 @@ export class TriageProcessor {
     `processing` was cleared by a stuck-kill eviction race. Concurrent claim is
     what leaves `status:"planning"` on a todo card after Plan Review APPROVE.
     */
-    if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
+    if (
+      this.advancedRecoveryReservations.has(task.id)
+      || this.processing.has(task.id)
+      || this.hasLivePlanningWork(task.id)
+    ) return;
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 
@@ -1220,6 +1273,7 @@ export class TriageProcessor {
     );
     this.options.onSpecifyStart?.(task);
 
+    let activePlanningProvider: string | undefined;
     try {
       const detail = await this.store.getTask(task.id);
       const currentTask = detail ?? task;
@@ -1230,22 +1284,14 @@ export class TriageProcessor {
       const promptPath = `.fusion/tasks/${task.id}/PROMPT.md`;
 
       /*
-      FNXC:PlanReview 2026-06-29-12:58:
-      `plan-review-unavailable` is a reviewer-outage retry state, not a planning request. Dispatch it before any createFnAgent path so the existing PROMPT.md is reused and only Plan Review/finalization reruns.
-
-      FNXC:PlanReview 2026-06-29-23:02:
-      Retry still launches the Plan Review reviewer lane, so it must consume the same global AgentSemaphore slot as planning work while continuing to avoid the planner session and PROMPT.md rewrite path.
+      FNXC:PlanReview 2026-07-19-00:22 (U3):
+      The triage-owned `plan-review-unavailable` reviewer-outage retry lane
+      (retryUnavailablePlanReview) is deleted — the graph is the sole Plan Review
+      owner and its plan-review node holds in place on a provider outage without
+      rewriting PROMPT.md (PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE). A legacy row
+      still carrying this status (until U9 adoption) simply re-plans through the
+      normal path below; the graph re-runs Plan Review under a CAS lease.
       */
-      if (currentTask.status === "plan-review-unavailable") {
-        const retryWork = () => this.retryUnavailablePlanReview(currentTask, promptPath, settings);
-        if (this.options.semaphore) {
-          await this.options.semaphore.run(retryWork, PRIORITY_SPECIFY);
-        } else {
-          await retryWork();
-        }
-        return;
-      }
-
       const isFast = task.executionMode === "fast";
       // FN-6236: this is the only legacy executionMode="fast" bridge. Downstream
       // triage policy reads resolved workflow flags instead of the raw string.
@@ -1346,7 +1392,7 @@ export class TriageProcessor {
           // Agent delegation tools — discover and delegate work to other agents.
           ...(this.options.agentStore ? [
             createListAgentsTool(this.options.agentStore),
-            createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir }),
+            createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgent?.id }),
             createTaskAssignTool(this.options.agentStore, this.store),
           ] : []),
         ];
@@ -1476,6 +1522,7 @@ export class TriageProcessor {
           settings,
           assignedAgent?.runtimeConfig,
         );
+        activePlanningProvider = planningModel.provider;
 
         const planningSessionModelOptions = {
           defaultProvider: planningModel.provider,
@@ -1560,6 +1607,10 @@ export class TriageProcessor {
           "triage",
         );
 
+        // FNXC:TaskTiming 2026-08-01-10:00: triage owns the initial planning lane;
+        // first-start wins so a crash between ownership and persistence cannot open a second segment.
+        const planningStart = startPlanningSegment(task);
+        if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
         // Register session so the global pause listener can terminate it
         this.activeSessions.set(task.id, session);
 
@@ -1654,6 +1705,10 @@ export class TriageProcessor {
             );
           }
 
+          const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+          const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
+            ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
+            : [null, null];
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -1661,6 +1716,10 @@ export class TriageProcessor {
             attachmentContents,
             existingPrompt,
             feedback,
+            {
+              plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
+              originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+            },
           );
           await promptWithFallback(
             session,
@@ -1805,6 +1864,11 @@ export class TriageProcessor {
           Every triage planning exit path, including APPROVE, retry, pause/stuck abort, split/delete, and rate-limit wrapper attempts, records the active session's actual model before disposal so by-model analytics do not collapse triage usage to missing buckets.
           */
           await this.recordTriageSessionTokenUsage(task.id, session, { agentId: triageRunContext.agentId });
+          const livePlanningTask = await this.store.getTask(task.id);
+          if (livePlanningTask) {
+            const planningEnd = finalizePlanningSegment(livePlanningTask);
+            if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+          }
           session.dispose();
         }
       };
@@ -1850,12 +1914,14 @@ export class TriageProcessor {
         this.stuckAborted.delete(task.id);
         await this.handleStuckAbortRequeue(task, "catch");
       } else {
-        // Check if the error is a usage-limit error and park only this task.
+        // FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: preserve the resolved
+        // planning provider so health recovery can resume only its parked lane.
         if (this.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await this.options.usageLimitPauser.onUsageLimitHit(
             "triage",
             task.id,
             errorMessage,
+            activePlanningProvider,
           );
         } else if (err instanceof ModelFallbackExhaustedError) {
           /*
@@ -2293,7 +2359,7 @@ export class TriageProcessor {
    */
   private async updatePlanningStateIfStillCurrent(
     task: Task,
-    patch: Parameters<TaskStore["updateTask"]>[1],
+    patch: Parameters<TaskStore["updateTask"]>[1] | ((live: Task) => Parameters<TaskStore["updateTask"]>[1]),
   ): Promise<boolean> {
     if (typeof this.store.updateTaskAtomic !== "function") {
       // Compatibility adapters used by older embedded hosts do not expose the
@@ -2302,7 +2368,7 @@ export class TriageProcessor {
       if (!isTaskStillInPlanningStage(liveTask)) {
         return false;
       }
-      await this.store.updateTask(task.id, patch);
+      await this.store.updateTask(task.id, typeof patch === "function" ? patch(liveTask) : patch);
       return true;
     }
 
@@ -2322,9 +2388,24 @@ export class TriageProcessor {
         return null;
       }
       persisted = true;
-      return patch;
+      return typeof patch === "function" ? patch(liveTask) : patch;
     });
     return persisted;
+  }
+
+  /**
+   * FNXC:Triage 2026-07-30-15:00:
+   * FN-8361 requires filesystem recovery writes to keep the planning predicate and
+   * mutation in one task-lock acquisition; row-only atomic patches cannot protect PROMPT.md.
+   */
+  private async runIfStillPlanningUnderTaskLock(task: Task, operation: () => Promise<void>): Promise<boolean> {
+    const store = this.store as TaskStore;
+    if (typeof store.withTaskLock !== "function" || typeof store.readTaskForMove !== "function") return false;
+    return store.withTaskLock(task.id, async () => {
+      if (!isTaskStillInPlanningStage(await store.readTaskForMove(task.id))) return false;
+      await operation();
+      return true;
+    });
   }
 
   private restoreStatusAfterInterruptedTriageWork(task: Task): Task["status"] | null {
@@ -2336,66 +2417,6 @@ export class TriageProcessor {
       return task.status;
     }
     return null;
-  }
-
-  private async retryUnavailablePlanReview(task: Task, promptPath: string, settings: Settings): Promise<void> {
-    /*
-    FNXC:PlanReview 2026-06-29-12:35:
-    A reviewer outage parks tasks as plan-review-unavailable after PROMPT.md is already accepted. Backoff retry must reuse that exact PROMPT.md and rerun only the Plan Review gate; sending the task through the planner again would rewrite an approved draft without reviewer feedback.
-    */
-    const parkInvalidRetry = async (failure: string): Promise<void> => {
-      planLog.warn(`${task.id}: ${failure}`);
-      await this.store.logEntry(task.id, failure).catch((logError: unknown) => {
-        const logMessage = logError instanceof Error ? logError.message : String(logError);
-        planLog.warn(`${task.id}: failed to log invalid PROMPT.md during Plan Review retry: ${logMessage}`);
-      });
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error: failure,
-        nextRecoveryAt: null,
-      }).catch((updateError: unknown) => {
-        const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
-        planLog.warn(`${task.id}: failed to persist invalid PROMPT.md Plan Review retry failure: ${updateMessage}`);
-      });
-    };
-
-    const written = await readFile(join(this.rootDir, promptPath), "utf-8").catch(async (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      await parkInvalidRetry(`Plan Review retry could not read existing PROMPT.md (${promptPath}): ${message}`);
-      return null;
-    });
-
-    if (written === null) {
-      return;
-    }
-
-    if (!written.trim()) {
-      await parkInvalidRetry(`Plan Review retry found existing PROMPT.md (${promptPath}) but it is empty or whitespace-only.`);
-      return;
-    }
-
-    const deterministicSpecFailure = await this.validateGeneratedPrompt(task.id, written);
-    if (deterministicSpecFailure) {
-      await parkInvalidRetry(
-        `Plan Review retry PROMPT.md failed deterministic validation (${deterministicSpecFailure}). Fix the existing PROMPT.md or request a replan; reviewer-outage retry will not restart planning.`,
-      );
-      return;
-    }
-
-    await this.store.updateTask(task.id, { status: "planning", error: null }).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: failed to mark Plan Review retry as planning: ${message}`);
-    });
-
-    await this.finalizeApprovedTask(
-      { ...task, status: "planning" },
-      written,
-      settings,
-      {
-        recoveryLogAction: "Plan Review retry approved existing PROMPT.md — moved to execution",
-        preservePromptContent: true,
-      },
-    );
   }
 
   private async validateGeneratedPrompt(taskId: string, promptContent: string): Promise<string | null> {
@@ -2422,436 +2443,6 @@ export class TriageProcessor {
     }
 
     return null;
-  }
-
-  private isPlanReviewEnabled(task: Task): boolean {
-    /*
-    FNXC:PlanReview 2026-06-29-02:40:
-    Plan Review is a triage-owned pre-release gate. Task creation materializes default-on optional groups into `enabledWorkflowSteps`; an explicit empty array from Quick Add means the operator disabled every optional group. Use only that materialized list here so triage does not resurrect disabled Plan Review.
-    */
-    return Array.isArray(task.enabledWorkflowSteps) && task.enabledWorkflowSteps.includes(PLAN_REVIEW_GROUP_ID);
-  }
-
-  private async shouldRequireExternalIntegrationEvidenceForPlanReview(task: Task): Promise<boolean> {
-    /*
-     * FNXC:PlanValidation 2026-06-30-09:20:
-     * Triage may run Plan Review before the graph reaches `plan-review`; the graph later skips an already-passed Plan Review result. Read the selected workflow's Plan Review template flag here so Coding (per-step review) enforces external-integration evidence in the same Plan Review gate, while default Coding and other workflows stay unblocked.
-     */
-    const selection = typeof this.store.getTaskWorkflowSelectionAsync === "function"
-      ? await this.store.getTaskWorkflowSelectionAsync(task.id)
-      : typeof this.store.getTaskWorkflowSelection === "function"
-        ? this.store.getTaskWorkflowSelection(task.id)
-        : undefined;
-    const workflowId = selection?.workflowId;
-    if (!workflowId || typeof this.store.getWorkflowDefinition !== "function") return false;
-    const definition = await this.store.getWorkflowDefinition(workflowId).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: failed to resolve workflow '${workflowId}' for Plan Review evidence policy: ${message}`);
-      return undefined;
-    });
-    const ir = definition?.ir as WorkflowIr | undefined;
-    const planReview = ir?.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID);
-    const template = planReview?.config?.template as
-      | { nodes?: Array<{ id: string; config?: Record<string, unknown> }> }
-      | undefined;
-    const planReviewStep = template?.nodes?.find((node) => node.id === PLAN_REVIEW_TEMPLATE_STEP_NODE_ID);
-    return planReviewStep?.config?.requireExternalIntegrationEvidence === true;
-  }
-
-  private async recordPlanReviewWorkflowResult(task: Task, result: WorkflowStepResult): Promise<void> {
-    const live = await this.store.getTask(task.id).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: failed to load existing Plan Review workflow results; preserving in-memory result baseline: ${message}`);
-      return task;
-    });
-    /*
-    FNXC:WorkflowStepResults 2026-07-09-00:35:
-    FN-7727: route through the shared upsert helper (same as the executor
-    graph adapter) so a re-run of Plan Review after a failed attempt preserves
-    that prior attempt's history in `priorAttempts` instead of overwriting it.
-    */
-    const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
-    await this.store.updateTask(task.id, { workflowStepResults: existing });
-  }
-
-  /*
-  FNXC:PlanReviewReplan 2026-07-13-00:00:
-  Shared terminal step for a triage Plan Review gate REVISE. Increments the consecutive-replan
-  counter and routes the task back to `needs-replan` for another planning pass — until the count
-  reaches PLAN_REVIEW_GATE_REPLAN_CAP, after which it escalates to `awaiting-approval` (with a
-  clear log entry and a distinct awaitingApprovalReason) so a persistent planner/reviewer
-  disagreement surfaces to a human instead of looping forever. Callers still record the workflow
-  step result and the "AI spec revision requested" feedback log before invoking this.
-
-  FNXC:PlanReviewReplan 2026-07-15-11:09:
-  Cap is 8 automatic REVISE replans. Escalation still stamps awaitingApprovalReason
-  `plan-review-replan-cap` so TaskCard/TaskDetailModal/notifications can tell the operator
-  why approval is required (Plan Review did not converge) instead of looking like a generic
-  require-all plan gate.
-
-  FNXC:PlanReviewReplan 2026-07-15-12:00:
-  FN-7985 makes this triage-only ceiling a workflow setting. The source constant remains the
-  fallback when no valid non-negative finite integer is resolved, so an unset workflow follows
-  the coordinated built-in default instead of persisting a duplicate numeric default.
-  */
-  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string, settings: Settings): Promise<void> {
-    const configuredCap = settings.planReviewReplanCap;
-    const replanCap = typeof configuredCap === "number" && Number.isFinite(configuredCap) && Number.isInteger(configuredCap) && configuredCap >= 0
-      ? configuredCap
-      : PLAN_REVIEW_GATE_REPLAN_CAP;
-    const priorCount = task.planReviewReplanCount ?? 0;
-    if (priorCount >= replanCap) {
-      await this.store.logEntry(
-        task.id,
-        PLAN_REVIEW_REPLAN_CAP_LOG_ACTION,
-        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${replanCap}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
-      );
-      /*
-      FNXC:PlanReviewReplan 2026-07-13-00:00:
-      `awaitingApprovalReason` is written through a Record<string, unknown> the same way the
-      manual plan-approval hold clears it below so the distinct reason survives the update path.
-
-      FNXC:PlanReviewReplan 2026-07-15-11:09:
-      The dashboard special-cases `plan-review-replan-cap` (badge, detail banner, notifications)
-      so operators know approval is required because Plan Review exhausted its automatic replan
-      budget after non-convergence — Approve accepts the current PROMPT.md; Reject regenerates.
-      Legacy `release-authorization` rows still render as ordinary manual plan-approval holds.
-      */
-      const escalationUpdates: Record<string, unknown> = {
-        status: "awaiting-approval",
-        awaitingApprovalReason: "plan-review-replan-cap",
-        error: null,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-      };
-      await this.store.updateTask(task.id, escalationUpdates);
-      planLog.warn(
-        `${task.id} Plan Review replan cap (${replanCap}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
-      );
-      return;
-    }
-    await this.store.updateTask(task.id, {
-      status: "needs-replan",
-      planReviewReplanCount: priorCount + 1,
-      error: null,
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    });
-  }
-
-  private async runPlanReviewBeforeExecution(task: Task, promptContent: string, settings: Settings): Promise<"approved" | "blocked"> {
-    if (!this.isPlanReviewEnabled(task)) {
-      return "approved";
-    }
-
-    const alreadyPassed = task.workflowStepResults?.some(
-      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
-    );
-    if (alreadyPassed) {
-      return "approved";
-    }
-
-    const startedAt = new Date().toISOString();
-    await this.recordPlanReviewWorkflowResult(task, {
-      workflowStepId: PLAN_REVIEW_GROUP_ID,
-      workflowStepName: "Plan Review",
-      phase: "pre-merge",
-      status: "pending",
-      startedAt,
-    });
-    await this.store.logEntry(task.id, "[pre-merge] Starting workflow step: Plan Review");
-
-    if (await this.shouldRequireExternalIntegrationEvidenceForPlanReview(task)) {
-      const evidenceGaps = detectExternalIntegrationEvidenceGaps({ promptContent });
-      if (evidenceGaps.length > 0) {
-        const completedAt = new Date().toISOString();
-        const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
-        await this.recordPlanReviewWorkflowResult(task, {
-          workflowStepId: PLAN_REVIEW_GROUP_ID,
-          workflowStepName: "Plan Review",
-          phase: "pre-merge",
-          status: "failed",
-          verdict: "REVISE",
-          output: diagnostic,
-          notes: diagnostic,
-          startedAt,
-          completedAt,
-        });
-        /*
-        FNXC:TriagePlanReview 2026-07-17-14:04:
-        A requested Plan Review revision is normal replan flow, not a terminal workflow-step
-        failure. Log only the dedicated revision action here; the pre-merge failed action is
-        reserved for terminal failures such as RetryStormError.
-        */
-        await this.store.logEntry(
-          task.id,
-          "AI spec revision requested",
-          `Plan Review deterministic external-integration evidence check requested a planning revision before execution.\n\nFeedback:\n${diagnostic}`,
-        );
-        await this.blockAfterPlanReviewRevise(task, diagnostic, settings);
-        return "blocked";
-      }
-    }
-
-    const latestTaskForReview = await this.store.getTask(task.id).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: failed to load fresh task comments for Plan Review; using supplied task snapshot: ${message}`);
-      return task;
-    });
-    const userComments = selectUserCommentsForAgentContext(latestTaskForReview, { limit: null });
-
-    /*
-    FNXC:AgentSteering 2026-06-30-12:33:
-    Mandatory Plan Review must see user-authored unified comments and legacy steering from the latest task snapshot because it can block execution based on explicit operator requirements.
-
-    FNXC:AgentSteering 2026-06-30-13:19:
-    Plan Review receives the uncapped reviewer context so older task comments cannot be silently dropped before the mandatory execution gate evaluates operator requirements.
-    */
-    /*
-    FNXC:PlanReviewReplan 2026-07-15-11:15:
-    Triage Plan Review gates the full PROMPT.md before execution. Use reviewType "spec"
-    (not per-step "plan") so buildReviewRequest injects the full spec quality checklist
-    (mission, steps, surface enumeration, symptom verification, dangling task docs, …)
-    instead of step-checkbox language that does not match this gate. Inline PROMPT.md
-    repair remains allowed so the reviewer can fix-and-APPROVE instead of REVISE-looping.
-    */
-    /*
-    FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
-    Feed the spec reviewer its OWN latest Plan Review REVISE feedback plus the 1-based replan
-    attempt so a re-review verifies prior issues were addressed instead of surfacing a fresh,
-    deeper blocking issue each cycle. Prior feedback is the authoritative REVISE text stored in
-    workflowStepResults (same source blockAfterPlanReviewRevise / the replan seed use); attempt
-    is (planReviewReplanCount ?? 0) + 1. Both are spec-gate-only reviewer inputs — omitting them
-    on attempt 1 (or a fresh task) leaves the reviewer's cold-review behavior unchanged.
-    */
-    const priorPlanReviewRevise = [...(latestTaskForReview.workflowStepResults || [])]
-      .reverse()
-      .find(
-        (result) =>
-          result.workflowStepId === PLAN_REVIEW_GROUP_ID
-          && result.verdict === "REVISE"
-          && Boolean((result.output || result.notes)?.trim()),
-      );
-    const priorSpecReviewFeedback = (priorPlanReviewRevise?.output || priorPlanReviewRevise?.notes)?.trim() || undefined;
-    // FNXC:TriagePlanReviewConvergence 2026-07-16-21:30: derive the attempt from the MAX replan
-    // count across both the caller's `task` snapshot and the fresh `latestTaskForReview`. The
-    // refresh above falls back to the stale `task` when getTask() fails, so reading either one
-    // alone could under-count the attempt and skip the attempt-3 severity ratchet. Max is
-    // monotonic (fresh count >= stale), so it never sends a lower attempt than any snapshot
-    // knows about. This is best-effort convergence context, so a failed refresh must not defer
-    // or block the Plan Review gate — it just uses the best replan count available.
-    const specReviewAttempt =
-      Math.max(task.planReviewReplanCount ?? 0, latestTaskForReview.planReviewReplanCount ?? 0) + 1;
-
-    let reviewFailure: unknown;
-    const review = await reviewStep(
-      this.rootDir,
-      task.id,
-      0,
-      "PROMPT.md",
-      "spec",
-      promptContent,
-      undefined,
-      {
-        store: this.store,
-        taskId: task.id,
-        taskTitle: latestTaskForReview.title ?? task.title,
-        settings,
-        task: latestTaskForReview,
-        userComments: userComments.length > 0 ? userComments : undefined,
-        rootDir: this.rootDir,
-        agentStore: this.options.agentStore,
-        pluginRunner: this.options.pluginRunner,
-        allowInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false,
-        // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: spec-gate-only convergence inputs (see derivation above).
-        priorSpecReviewFeedback,
-        specReviewAttempt,
-        onSessionCreated: (session) => this.registerSubagentSession(task.id, session),
-        onSessionEnded: (session) => this.unregisterSubagentSession(task.id, session),
-      },
-    ).catch((error: unknown) => {
-      reviewFailure = error;
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: Plan Review unavailable before execution (${message})`);
-      return {
-        verdict: "UNAVAILABLE" as const,
-        review: `Plan Review session failed before producing a verdict: ${message}`,
-        summary: "Plan Review session unavailable.",
-      };
-    });
-
-    const completedAt = new Date().toISOString();
-    /*
-    FNXC:PlanReview 2026-07-15-18:00:
-    A reviewer-fallback RetryStormError is a terminal guard, not a transient reviewer
-    outage. Preserve its structured core serialization and stop here so Plan Review does
-    not re-enter `plan-review-unavailable`, where another poll would re-increment
-    reviewerFallbackRetryCount beyond the cap.
-    */
-    if (reviewFailure instanceof RetryStormError) {
-      const terminalError = JSON.stringify(serializeRetryStormError(reviewFailure));
-      const output = review.review || reviewFailure.message;
-      await this.recordPlanReviewWorkflowResult(task, {
-        workflowStepId: PLAN_REVIEW_GROUP_ID,
-        workflowStepName: "Plan Review",
-        phase: "pre-merge",
-        status: "failed",
-        output,
-        notes: review.summary,
-        startedAt,
-        completedAt,
-      });
-      await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", terminalError);
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error: terminalError,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-      });
-      return "blocked";
-    }
-
-    if (review.verdict === "APPROVE") {
-      await this.recordPlanReviewWorkflowResult(task, {
-        workflowStepId: PLAN_REVIEW_GROUP_ID,
-        workflowStepName: "Plan Review",
-        phase: "pre-merge",
-        status: "passed",
-        verdict: "APPROVE",
-        output: review.review,
-        notes: review.summary,
-        startedAt,
-        completedAt,
-      });
-      // FNXC:PlanReviewReplan 2026-07-13-00:00: a passing gate clears the consecutive-REVISE
-      // replan counter so a later, unrelated revision cycle starts from a fresh budget.
-      if ((task.planReviewReplanCount ?? 0) > 0) {
-        await this.store.updateTask(task.id, { planReviewReplanCount: null });
-      }
-      await this.clearPlanReviewRecoveryBudget(task);
-      await this.store.logEntry(task.id, "[pre-merge] Workflow step completed: Plan Review", review.summary);
-      return "approved";
-    }
-
-    if (review.verdict === "REVISE" || review.verdict === "RETHINK") {
-      await this.recordPlanReviewWorkflowResult(task, {
-        workflowStepId: PLAN_REVIEW_GROUP_ID,
-        workflowStepName: "Plan Review",
-        phase: "pre-merge",
-        status: "failed",
-        verdict: "REVISE",
-        output: review.review,
-        notes: review.summary,
-        startedAt,
-        completedAt,
-      });
-      /*
-      FNXC:TriagePlanReview 2026-07-17-14:04:
-      Reviewer REVISE and RETHINK outcomes re-enter planning through the same normal revision
-      flow as deterministic evidence gaps. Their single human-facing log is the revision action;
-      retain the failed workflow-result projection for replan/recovery without emitting a failed log.
-      */
-      await this.clearPlanReviewRecoveryBudget(task);
-      const reviseFeedback = review.review || review.summary || "(no feedback captured)";
-      await this.store.logEntry(
-        task.id,
-        "AI spec revision requested",
-        `Plan Review requested a planning revision before execution.\n\nStatus: ${review.verdict}\nFeedback:\n${reviseFeedback}`,
-      );
-      await this.blockAfterPlanReviewRevise(task, reviseFeedback, settings);
-      return "blocked";
-    }
-
-    /*
-    FNXC:PlanReview 2026-06-29-02:40:
-    UNAVAILABLE means the reviewer session did not produce a usable verdict. Keep the task in triage and retry with backoff; do not fabricate a REVISE or send the planner through another full rewrite loop when no reviewer actually rejected the plan.
-
-    FNXC:PlanReview 2026-07-15-21:30:
-    Reviewer PROVIDER failures (429/`overloaded_error`, dropped sockets) also land here, because the `reviewStep` catch above converts every throw — including `ReviewerProviderError` — into an UNAVAILABLE verdict. That laundering used to strand the task on a FIXED 30s re-park with no attempt counter, so a sustained provider outage re-ran Plan Review every 30s for hours (~1,900 requests/5h observed), which is the request volume that trips a provider's low-interactivity throttle and thereby prolongs the very outage being retried. Two rules prevent the storm:
-
-      1. A usage-limit failure must reach `UsageLimitPauser` so this provider-routed task parks without stopping healthy provider lanes. The inline catch swallows the throw before triage's own usage-limit handler in `specifyTask` can see it, so this path fires the pauser itself.
-      2. Every re-park goes through the bounded `computeRecoveryDecision` backoff (60s → 120s → 240s, ±10% jitter) and terminalizes when the budget is spent. A reviewer that never yields a verdict is a real failure and must surface, not spin — the old park had neither backoff nor cap.
-
-    `recoveryRetryCount` is the shared transient-triage budget this gate borrows; `clearPlanReviewRecoveryBudget` clears it on any real verdict so a task that survived a reviewer outage does not carry a spent budget into execution.
-    */
-    const unavailableOutput = review.review || review.summary || "Plan Review was unavailable before producing a verdict.";
-    const unavailableError = reviewFailure instanceof Error
-      ? reviewFailure.message
-      : (reviewFailure === undefined ? "" : String(reviewFailure));
-    await this.recordPlanReviewWorkflowResult(task, {
-      workflowStepId: PLAN_REVIEW_GROUP_ID,
-      workflowStepName: "Plan Review",
-      phase: "pre-merge",
-      status: "failed",
-      output: unavailableOutput,
-      notes: review.summary,
-      startedAt,
-      completedAt,
-    });
-    await this.store.logEntry(task.id, "[pre-merge] Workflow step unavailable: Plan Review", unavailableOutput);
-
-    if (this.options.usageLimitPauser && unavailableError && isUsageLimitError(unavailableError)) {
-      const unavailableProvider = reviewFailure instanceof ReviewerProviderError
-        ? reviewFailure.provider
-        : undefined;
-      planLog.warn(`${task.id}: Plan Review hit a provider usage limit — pausing only this provider-routed task: ${unavailableError}`);
-      await this.options.usageLimitPauser.onUsageLimitHit("triage", task.id, unavailableError, unavailableProvider).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        planLog.warn(`${task.id}: failed to signal Plan Review usage limit to the pauser: ${msg}`);
-      });
-    }
-
-    const decision = computeRecoveryDecision({
-      recoveryRetryCount: task.recoveryRetryCount,
-      nextRecoveryAt: task.nextRecoveryAt,
-    });
-    const errorSuffix = unavailableError ? `: ${unavailableError}` : "";
-
-    if (!decision.shouldRetry) {
-      const terminalError =
-        `Plan Review did not produce a verdict after ${MAX_RECOVERY_RETRIES} retries${errorSuffix}`;
-      planLog.error(`✗ ${task.id} Plan Review retry budget exhausted${errorSuffix}`);
-      await this.store.logEntry(task.id, terminalError).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        planLog.warn(`${task.id}: failed to log Plan Review retry exhaustion: ${msg}`);
-      });
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error: terminalError,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-      });
-      return "blocked";
-    }
-
-    const attempt = decision.nextState.recoveryRetryCount ?? 1;
-    const delay = formatDelay(decision.delayMs);
-    planLog.warn(`⚡ ${task.id} Plan Review unavailable — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}${errorSuffix}`);
-    await this.store.updateTask(task.id, {
-      status: "plan-review-unavailable",
-      error: `Plan Review did not produce a verdict; retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}${errorSuffix}`,
-      recoveryRetryCount: decision.nextState.recoveryRetryCount,
-      nextRecoveryAt: decision.nextState.nextRecoveryAt,
-    });
-    return "blocked";
-  }
-
-  /*
-  FNXC:PlanReview 2026-07-15-21:30:
-  A real Plan Review verdict proves the reviewer is reachable, so the borrowed transient-triage
-  recovery budget must go back to full. Leaving a spent `recoveryRetryCount` behind would shorten
-  — or immediately exhaust — the executor's own transient budget for a task whose only sin was
-  surviving a reviewer outage.
-  */
-  private async clearPlanReviewRecoveryBudget(task: Task): Promise<void> {
-    if ((task.recoveryRetryCount ?? 0) === 0 && !task.nextRecoveryAt) return;
-    await this.store.updateTask(task.id, {
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    }).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      planLog.warn(`${task.id}: failed to clear Plan Review recovery budget: ${msg}`);
-    });
   }
 
   private async tryFinalizeExplicitDuplicateMarker(
@@ -2955,42 +2546,79 @@ export class TriageProcessor {
       */
       if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
         if (canClearInactiveMarker) {
-          await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
-          await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          })) return;
+          await this.updatePlanningStateIfStillCurrent(task, { paused: false, pausedReason: null, status: null });
         }
         return;
       }
 
       const resolution = settings.triageDuplicateResolution ?? "prompt";
+      /*
+      FNXC:DuplicateIntake 2026-07-20-12:00:
+      FN-8440 requires a Keep decision to survive marker re-ingestion during replan. The
+      acknowledgement is scoped to this canonical id, so a marker targeting a different active
+      task still receives its own prompt; user and unrelated pauses remain untouched.
+      */
+      const keepAcknowledged = fusionCore.isTriageDuplicateKeepAcknowledged(task.sourceMetadata, canonicalId);
+      if (resolution === "prompt" && keepAcknowledged) {
+        if (canClearInactiveMarker) {
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          })) return;
+          await this.updatePlanningStateIfStillCurrent(task, {
+            paused: false,
+            pausedReason: null,
+            status: null,
+            sourceMetadataPatch: { nearDuplicateDismissed: true },
+          });
+        }
+        return;
+      }
       if (resolution === "delete") {
+        const deleteTaskIf = (this.store as unknown as { deleteTaskIf?: TaskStore["deleteTaskIf"] }).deleteTaskIf;
+        if (typeof deleteTaskIf !== "function") return;
+        const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
+          removeLineageReferences: true,
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
+        });
+        if (!result.deleted) return;
         await this.store.recordActivity({
           type: "task:auto-archived-duplicate", taskId: task.id, taskTitle: task.title ?? "",
           details: `Duplicate of ${canonicalId} — closed`, metadata: { canonicalTaskId: canonicalId, source: "explicit-marker" },
         });
-        await this.store.deleteTask(task.id, {
-          removeLineageReferences: true,
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
-        });
         return;
       }
       if (resolution === "prompt") {
-        await flagTriageDuplicate(this.store, task.id, canonicalId);
-        await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });
+        const applied = await this.updatePlanningStateIfStillCurrent(task, {
+          paused: true,
+          pausedReason: "duplicate-decision-required",
+          status: null,
+          sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false },
+        });
+        if (!applied) return;
+        await this.store.logEntry(task.id, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+        await this.store.recordActivity({ type: "task:auto-archived-duplicate", taskId: task.id, details: "Flagged (not deleted) as triage-marker duplicate", metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" } });
         return;
       }
-      await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
-      await this.store.updateTask(task.id, {
+      if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+        await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      })) return;
+      if (!await this.updatePlanningStateIfStillCurrent(task, {
         paused: false,
         pausedReason: null,
         status: null,
         sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: true },
-      });
+      })) return;
       return;
     }
 
     const parsedDeps = await this.store.parseDependenciesFromPrompt(task.id);
 
-    const taskUpdates: Record<string, any> = { status: null, error: null };
+    // Keep status in its planning state until the guarded release move; clearing it here
+    // would make the finalizer's own later writes fail the planning-stage predicate.
+    const taskUpdates: Record<string, any> = { error: null };
 
     if (parsedDeps.length > 0) {
       taskUpdates.dependencies = parsedDeps;
@@ -3036,13 +2664,15 @@ export class TriageProcessor {
       taskUpdates.size = sizeMatch[1] as "S" | "M" | "L";
     }
 
-    const reviewMatch = written.match(/^##\s+Review\s+Level:\s+(\d+)/m);
-    if (reviewMatch) {
-      taskUpdates.reviewLevel = parseInt(reviewMatch[1], 10);
-    }
+    /*
+    FNXC:ReviewLevelPreset 2026-07-19-10:40 (U8 / R6):
+    Removed the triage "## Review Level: N" parse-and-write. reviewLevel is now a
+    CREATION-TIME preset (it writes enabledWorkflowSteps at create time, applied in
+    task-creation.applyReviewLevelPreset); triage no longer re-derives or overrides
+    the row's reviewLevel from the specified prompt.
+    */
 
-    const noCommitsExpectedMatch = written.match(/^\*\*No commits expected:\*\*\s*(true|yes)\b/im);
-    if (noCommitsExpectedMatch) {
+    if (promptDeclaresNoCommitsExpected(written)) {
       taskUpdates.noCommitsExpected = true;
     }
 
@@ -3058,18 +2688,27 @@ export class TriageProcessor {
 
     if (!options.preservePromptContent) {
       /*
-      FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
-      After the planner writes PROMPT.md, inject the operator's original description near
-      the top (verbatim) so Mission/Steps rewrites never hide the source request. Runs
-      before Frontend UX injection. Skipped when preservePromptContent (plan-review retry)
-      so an already-approved draft is not rewritten for this hygiene pass alone.
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 keeps the operator request separate from plan.md. Finalization must inject
+      original-description when present; a plan-shaped description falls back to its body.
       */
-      let nextPrompt = applyOriginalDescription(written, task.description ?? "");
+      const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+      const originalDescriptionDocument = typeof getTaskDocument === "function"
+        ? await getTaskDocument.call(this.store, task.id, "original-description").catch(() => null)
+        : null;
+      const storedOriginalDescription = typeof originalDescriptionDocument?.content === "string"
+        ? originalDescriptionDocument.content.trim()
+        : "";
+      const parsedDescriptionPlan = parsePlanningPlanMd(task.description ?? "");
+      const originalDescription = storedOriginalDescription || parsedDescriptionPlan?.description || task.description || "";
+      let nextPrompt = applyOriginalDescription(written, originalDescription);
       nextPrompt = applyFrontendUxCriteria(nextPrompt, parsedFileScope);
       if (nextPrompt !== written) {
         const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
         try {
-          await writeFile(promptPath, nextPrompt, "utf-8");
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await writeFile(promptPath, nextPrompt, "utf-8");
+          })) return;
           written = nextPrompt;
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
@@ -3112,7 +2751,12 @@ export class TriageProcessor {
     const promptDeclaredTitle = extractPromptDeclaredTitle(written, task.id);
     const shouldApplyPromptDeclaredTitle = shouldReplaceTaskTitleFromPrompt(task, promptDeclaredTitle);
 
-    await this.store.updateTask(task.id, taskUpdates);
+    /*
+    FNXC:Triage 2026-07-30-15:00:
+    FN-8361 treats every delayed-finalization mutation as a live planning-stage
+    transition. A normal scheduler advance skips and terminates this recovery body.
+    */
+    if (!await this.updatePlanningStateIfStillCurrent(task, taskUpdates)) return;
 
     try {
       const preflightDecision = await Promise.race([
@@ -3219,7 +2863,7 @@ export class TriageProcessor {
 
           // FN-5152: when the candidate is older (or tie-canonical), flag for user confirmation.
           if (isStrictlyOlderOrTieCanonical(canonicalTask)) {
-            await this.store.updateTask(task.id, {
+            if (!await this.updatePlanningStateIfStillCurrent(task, {
               sourceMetadataPatch: {
                 nearDuplicateOf: canonical.id,
                 nearDuplicateScore: canonical.score,
@@ -3227,7 +2871,7 @@ export class TriageProcessor {
                 intentSignature: taskIntentSignature,
                 ...(parsedFileScope.length > 0 ? { fileScope: parsedFileScope } : {}),
               },
-            });
+            })) return;
             await this.store.logEntry(
               task.id,
               `Flagged as near-duplicate of ${canonical.id} (awaiting user decision)`,
@@ -3274,7 +2918,7 @@ export class TriageProcessor {
     */
     if (latestTransitionTask?.paused === true || latestTransitionTask?.userPaused === true) {
       const restoreStatus = options.isReplan ? "needs-replan" : null;
-      await this.store.updateTask(task.id, { status: restoreStatus });
+      if (!await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus })) return;
       await this.store.logEntry(
         task.id,
         "Specification approved but task is paused — leaving in triage, will resume on unpause",
@@ -3283,12 +2927,15 @@ export class TriageProcessor {
       return;
     }
 
-    const planReviewTask = latestTransitionTask ?? task;
-    const planReviewResult = await this.runPlanReviewBeforeExecution(planReviewTask, written, settings);
-    if (planReviewResult === "blocked") {
-      planLog.log(`${task.id} Plan Review blocked execution — staying in triage`);
-      return;
-    }
+    /*
+    FNXC:PlanReview 2026-07-19-00:20 (U3):
+    Triage no longer runs Plan Review out-of-graph. The graph is the SOLE Plan
+    Review owner (runPlanReviewBeforeExecution deleted); triage writes PROMPT.md and
+    proceeds straight to the ordinary plan-approval gate. The graph's plan-review
+    optional-group runs where the IR places it and owns REVISE→plan-replan, the
+    replan-cap awaiting-approval park (re-owned in executor.requestPreMergeOptionalStepFix),
+    and provider-outage holds — with a CAS lease making a duplicate reviewer impossible.
+    */
 
     /*
     FNXC:PlanApproval 2026-06-26-00:00:
@@ -3348,7 +2995,7 @@ export class TriageProcessor {
         if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
           approvalUpdates.title = promptDeclaredTitle;
         }
-        await this.store.updateTask(task.id, approvalUpdates);
+        if (!await this.updatePlanningStateIfStillCurrent(task, approvalUpdates)) return;
         await this.store.logEntry(
           task.id,
           options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
@@ -3382,8 +3029,16 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-10:35:
     A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
     */
+    // Apply title while the live row is still planning; a post-release patch can race execution.
+    if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
+      if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
+    }
+
     if (task.column !== "todo") {
-      await this.store.moveTask(task.id, "todo");
+      const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
+      if (typeof moveTaskIf !== "function") return;
+      const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
+      if (!release.moved) return;
     }
 
     /*
@@ -3425,10 +3080,6 @@ export class TriageProcessor {
       }
     }
 
-    if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-      await this.store.updateTask(task.id, { title: promptDeclaredTitle });
-    }
-
     if (options.recoveryLogAction) {
       await this.store.logEntry(task.id, options.recoveryLogAction);
       planLog.log(`✓ ${task.id} recovered and moved to todo`);
@@ -3446,6 +3097,10 @@ export class TriageProcessor {
 
 function parseFileScopeFromPrompt(text: string): string[] {
   return extractEffectiveWriteScopeFromPrompt(text);
+}
+
+function promptDeclaresNoCommitsExpected(text: string): boolean {
+  return /^\*\*No commits expected:\*\*\s*(true|yes)\b/im.test(text);
 }
 
 function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {
@@ -3596,8 +3251,14 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
+  planningContext?: { plan?: string; originalDescription?: string },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
+  const planDocument = planningContext?.plan?.trim();
+  const descriptionIsPlan = Boolean(parsePlanningPlanMd(task.description ?? ""));
+  const planInput = planDocument || (descriptionIsPlan ? task.description : undefined);
+  const originalDescription = planningContext?.originalDescription?.trim()
+    || (!descriptionIsPlan ? task.description : parsePlanningPlanMd(task.description ?? "")?.description || task.description);
   const isRevision = Boolean(existingPrompt && hasFeedback);
   const isFreshRespecification = Boolean(!existingPrompt && hasFeedback);
 
@@ -3809,12 +3470,17 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
 ## Task
 - **ID:** ${task.id}
 - **Title:** ${task.title || "(none)"}
-- **Description:** ${task.description}
+- **Description (current user context):** ${task.description}
+${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as the primary specification input. Expand it into the full executor-ready PROMPT.md; plan.md is not PROMPT.md.\n\n\`\`\`markdown\n${planInput}\n\`\`\`\n` : ""}
+## Original Request
+\`\`\`text
+${originalDescription}
+\`\`\`
 ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : ""}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

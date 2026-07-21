@@ -22,6 +22,7 @@ import { and, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { sanitizeTextValue, sanitizeJsonbValue } from "./postgres/nul-sanitize.js";
 import {
   DASHBOARD_USER_ID,
   type Message,
@@ -96,21 +97,32 @@ export async function sendMessage(
   handle: QueryHandle,
   message: PersistedMessage,
 ): Promise<Message> {
+  // FNXC:PostgresMigrationNulSanitize 2026-07-20: agent-to-agent/agent-to-user
+  // mailbox content can carry raw tool output (including a stray NUL byte
+  // from piped Windows CLI dumps), which Postgres text/jsonb columns reject
+  // outright. Sanitize before insert instead of letting the send throw, and
+  // return the sanitized value so the in-memory result matches what was
+  // persisted (the original unsanitized `message` object must not be handed
+  // back to the caller).
+  const sanitizedContent = sanitizeTextValue(message.content);
+  const sanitizedMetadata = sanitizeJsonbValue(message.metadata);
   await handle.insert(schema.project.messages).values({
     id: message.id,
     fromId: message.fromId,
     fromType: message.fromType,
     toId: message.toId,
     toType: message.toType,
-    content: message.content,
+    content: sanitizedContent,
     type: message.type,
     read: message.read ? 1 : 0,
-    metadata: message.metadata,
+    metadata: sanitizedMetadata,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   });
   return rowToMessage({
     ...message,
+    content: sanitizedContent,
+    metadata: sanitizedMetadata,
     read: message.read ? 1 : 0,
   });
 }

@@ -70,6 +70,8 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       columnMovedAt: task.columnMovedAt,
       firstExecutionAt: task.firstExecutionAt,
       cumulativeActiveMs: task.cumulativeActiveMs,
+      cumulativePlanningMs: task.cumulativePlanningMs,
+      planningStartedAt: task.planningStartedAt,
       executionStartedAt: task.executionStartedAt,
       executionCompletedAt: task.executionCompletedAt,
       archivedAt,
@@ -93,6 +95,7 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       mergeRetries: task.mergeRetries,
       error: task.error,
       modifiedFiles: task.modifiedFiles,
+      declaredSymbols: task.declaredSymbols,
       missionId: task.missionId,
       sliceId: task.sliceId,
       assigneeUserId: task.assigneeUserId,
@@ -176,6 +179,41 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
     store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
     return task;
   }
+
+/** PostgreSQL mirror of deleteTaskIfImpl: predicate and deletion share one task lock. */
+export async function deleteTaskIfBackendImpl(
+  store: TaskStore,
+  id: string,
+  predicate: (live: Task) => boolean | Promise<boolean>,
+  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: { agentId: string; runId: string; sessionId?: string; taskId?: string } },
+): Promise<{ task: Task; deleted: boolean }> {
+  if (options?.auditContext?.taskId === id) throw new TaskSelfDeleteError(id);
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const row = await readTaskRowAsync(layer, id, { includeDeleted: true });
+    if (!row) throw new Error(`Task ${id} not found`);
+    const live = store.rowToTask(store.pgRowToTaskRow(row));
+    if (live.deletedAt) return { task: live, deleted: false };
+    // FNXC:TaskDeletion 2026-07-29-19:15:
+    // FN-8361 conditional deletion preserves delete's lineage gate even when
+    // the caller predicate declines the mutation; guards precede the predicate.
+    const lineageChildIds = await findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
+    if (lineageChildIds.length > 0 && !options?.removeLineageReferences) {
+      throw new TaskHasLineageChildrenError(id, lineageChildIds);
+    }
+    if (!await predicate(live)) return { task: live, deleted: false };
+    await deleteTaskBackendImpl(store, id, options);
+    /*
+    FNXC:TaskDeletion 2026-07-29-18:45:
+    FN-8361 exposes `{ task, deleted }` as the authoritative conditional-delete
+    result. Return the persisted archived row, not deleteTaskBackendImpl's
+    pre-delete audit snapshot, so callers can safely inspect an applied result.
+    */
+    const deletedRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+    if (!deletedRow) throw new Error(`Task ${id} disappeared after soft-delete`);
+    return { task: store.rowToTask(store.pgRowToTaskRow(deletedRow)), deleted: true };
+  });
+}
 
 export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean },): Promise<Task> {
     const layer = store.asyncLayer!;
@@ -479,6 +517,7 @@ export async function restoreFromArchiveImpl(store: TaskStore, entry: import("..
       breakIntoSubtasks: entry.breakIntoSubtasks,
       noCommitsExpected: entry.noCommitsExpected,
       modifiedFiles: entry.modifiedFiles,
+      declaredSymbols: entry.declaredSymbols,
       // Intentionally NOT restoring: worktree, status, blockedBy, paused, executionStartBranch, baseCommitSha, error
     };
 

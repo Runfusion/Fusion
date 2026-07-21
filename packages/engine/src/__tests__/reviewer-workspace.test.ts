@@ -8,7 +8,9 @@ the cwd of each call. Coverage:
 - conjunction: two-repo task → two reviewer passes (one per repo cwd); review record reflects both; reviewed
   only when BOTH pass; one repo REVISE → aggregate REVISE tagged with that repo.
 - finding tag: a finding in repo B is repo-tagged in the aggregated review body.
-- in-session seam (createReviewStepTool / fn_review_step): a workspace task reviews each sub-repo cwd, not the root.
+- in-session seam (createReviewStepTool / fn_review_step): DELETED in U10 (R9) along with the tool.
+  The per-sub-repo loop and externalReviewCheckout resolution it covered are the SAME shared helpers the
+  surviving step-inversion seam exercises below, so the invariant keeps full coverage on the graph path.
 - step-inversion seam (createAuthoritativeWorkflowSeams().stepReview, executor.ts:5668): same — each sub-repo, not root.
 - regression: single-repo (non-workspace) task → exactly one reviewStep call at the singular worktree.
 */
@@ -184,73 +186,6 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
   });
 });
 
-describe("U2 KTD3 — in-session fn_review_step (createReviewStepTool) loops per sub-repo", () => {
-  it("workspace task: code review spawns one reviewer per sub-repo cwd, not the root", async () => {
-    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
-    const store = makeStore(task);
-    const executor = workspaceExecutor(store);
-    const seen = scriptReviewByCwd({
-      [WT_A]: { verdict: "APPROVE", review: "a ok", summary: "a" },
-      [WT_B]: { verdict: "APPROVE", review: "b ok", summary: "b" },
-    });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      ROOT, // singular worktreePath = the non-git root; workspace mode must NOT review it
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    const res = await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([WT_A, WT_B]);
-    expect(seen).not.toContain(ROOT);
-    // Aggregate APPROVE flows through the tool's verdict→text mapping unchanged.
-    expect(res.content[0].text).toBe("APPROVE");
-  });
-
-  it("regression: single-repo (non-workspace) task → exactly one reviewStep call at the singular worktree", async () => {
-    const task = makeTask();
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT); // no workspaceConfig → singular path
-    const seen = scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "ok", summary: "ok" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([WT_A]);
-  });
-
-  it("explicit external review checkout overrides the task worktree for fn_review_step", async () => {
-    const externalCheckout = makeGitCheckout();
-    const expectedCheckout = realpathSync(externalCheckout);
-    const task = makeTask({ customFields: { reviewCheckoutPath: externalCheckout } } as any);
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT);
-    const seen = scriptReviewByCwd({ [expectedCheckout]: { verdict: "APPROVE", review: "external ok", summary: "external" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([expectedCheckout]);
-  });
-});
-
 describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per sub-repo", () => {
   it("workspace task: stepReview spawns one reviewer per sub-repo cwd, not active.worktreePath/root", async () => {
     const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES, worktree: ROOT });
@@ -332,88 +267,6 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: WT_A, baselineSha: "base" } } as any;
     await seams.stepReview!(task as any, context, { type: "code", advisory: true } as any);
     expect(seen).toEqual([expectedCheckout]);
-  });
-});
-
-describe("sourceMetadata.externalReviewCheckout for fn_review_step", () => {
-  it("sourceMetadata.externalReviewCheckout overrides the task worktree for fn_review_step", async () => {
-    const externalCheckout = makeGitCheckout();
-    const expectedCheckout = realpathSync(externalCheckout);
-    const task = makeTask({ sourceMetadata: { externalReviewCheckout: externalCheckout } } as any);
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT);
-    const seen = scriptReviewByCwd({ [expectedCheckout]: { verdict: "APPROVE", review: "external ok", summary: "external" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([expectedCheckout]);
-  });
-
-  it("no metadata → fn_review_step reviews the task worktree (default fallback)", async () => {
-    const task = makeTask(); // no customFields, no sourceMetadata
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT);
-    const seen = scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "ok", summary: "ok" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([WT_A]);
-  });
-
-  it("invalid external metadata (non-existent path) → falls back to task worktree", async () => {
-    const task = makeTask({ sourceMetadata: { externalReviewCheckout: "/nonexistent/path/918" } } as any);
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT);
-    const seen = scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "ok", summary: "ok" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([WT_A]);
-  });
-
-  it("invalid external metadata (non-git directory) → falls back to task worktree", async () => {
-    const nonGitDir = mkdtempSync(join(tmpdir(), "review-nongit-integ-"));
-    cleanupDirs.push(nonGitDir);
-    const task = makeTask({ sourceMetadata: { externalReviewCheckout: nonGitDir } } as any);
-    const store = makeStore(task);
-    const executor = new TaskExecutor(store, ROOT);
-    const seen = scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "ok", summary: "ok" } });
-    const tool = (executor as any).createReviewStepTool(
-      task.id,
-      WT_A,
-      "PROMPT",
-      new Map(),
-      { current: null },
-      new Map(),
-      task,
-      undefined,
-    );
-    await tool.execute("call-1", { step: 1, type: "code", step_name: "Step 1", baseline: "base" });
-    expect(seen).toEqual([WT_A]);
   });
 });
 

@@ -33,6 +33,13 @@ import type {
 import type { ForeachEnvironment, WorkflowStepInstancePersistence } from "./workflow-graph-foreach.js";
 import type { PrNodeDeps } from "./pr-nodes.js";
 import type { WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "./runtime-primitives.js";
+import {
+  type WorkflowColumnBoundary,
+  type WorkflowColumnBoundaryAuditEvent,
+  type WorkflowColumnMove,
+  createWorkflowColumnBoundary,
+} from "./workflow-column-boundary.js";
+import type { WorkflowIrPin } from "@fusion/core";
 // (Both types are also used as values in the side-effect tracking wrappers below.)
 
 /**
@@ -135,6 +142,31 @@ export interface WorkflowGraphTaskRunnerDeps {
    * the same formula — so a caller that does not thread it keeps prior behavior.
    */
   runId?: string;
+  /*
+   * FNXC:WorkflowColumnBoundary 2026-07-18-20:55:
+   * U1 (KTD-1/2/3) — lifecycle column-boundary wiring. When present, the runner
+   * builds a WorkflowColumnBoundary from these hooks plus the run's task/workflow
+   * so graph traversal moves the card across column boundaries through the store's
+   * `moveTask` trait-hook path, pins the resolved IR per node-entry, and emits
+   * `task:column-transition` / `task:reconcile-workflow-drift`. Absent → the graph
+   * performs no lifecycle moves (byte-identical to the pre-cutover runner). The
+   * production wiring is buildColumnBoundaryHooks (executor.ts): store.moveTask +
+   * run-audit + the U9b task-row IR pin (createStoreIrPinPersistence).
+   */
+  columnBoundaryHooks?: WorkflowColumnBoundaryHooks;
+}
+
+/** Task/workflow-independent hooks the runner needs to build a column-boundary
+ *  controller. The runner supplies taskId/workflowId/ir/initialColumn per run. */
+export interface WorkflowColumnBoundaryHooks {
+  moveTask?: WorkflowColumnMove;
+  emitAudit?: (event: WorkflowColumnBoundaryAuditEvent) => void | Promise<void>;
+  pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;
+  loadPriorPin?: (taskId: string) => WorkflowIrPin | undefined | Promise<WorkflowIrPin | undefined>;
+  /** KTD-3 drift-park loop fix (PR #2342): null the stale `workflowIrPin*` row
+   *  fields when detectDrift fires so a requeue re-resolves the current IR. */
+  clearPin?: () => void | Promise<void>;
+  onWarn?: (message: string, detail: Record<string, unknown>) => void;
 }
 
 /**
@@ -219,6 +251,27 @@ export class WorkflowGraphTaskRunner {
 
     this.emit("start", task.id, definition.id);
     this.branchProgress.clear();
+
+    // U1 (KTD-1/2/3): build the lifecycle column-boundary controller for this run
+    // from the wired hooks + the run's task/workflow context. Absent hooks → no
+    // controller → the graph performs no lifecycle moves.
+    let columnBoundary: WorkflowColumnBoundary | undefined;
+    if (this.deps.columnBoundaryHooks) {
+      const hooks = this.deps.columnBoundaryHooks;
+      const priorPin = hooks.loadPriorPin ? await hooks.loadPriorPin(task.id) : undefined;
+      columnBoundary = createWorkflowColumnBoundary({
+        taskId: task.id,
+        workflowId: definition.id,
+        ir: validatedIr,
+        initialColumn: task.column,
+        moveTask: hooks.moveTask,
+        emitAudit: hooks.emitAudit,
+        pinNodeEntry: hooks.pinNodeEntry,
+        priorPin,
+        clearPin: hooks.clearPin,
+        onWarn: hooks.onWarn,
+      });
+    }
 
     // Track whether any node side effects ran. Invalid IR is rejected above as
     // failed/terminal before this point; once execution starts, no error can
@@ -335,6 +388,7 @@ export class WorkflowGraphTaskRunner {
         requestPreMergeOptionalStepFix: this.deps.requestPreMergeOptionalStepFix,
         publishTaskProjection: this.deps.publishTaskProjection,
         signal: this.deps.signal,
+        columnBoundary,
         publishTouchedFiles: this.deps.publishTouchedFiles,
         // Single source of truth (KTD-6): prefer the caller-threaded run id so the
         // executor's persistence deps probe/flip rows under the SAME id; fall back

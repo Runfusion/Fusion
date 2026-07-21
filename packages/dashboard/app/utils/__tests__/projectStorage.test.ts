@@ -93,6 +93,7 @@ describe("projectStorage", () => {
         "fn-agent-view",
         "kb-terminal-tabs",
         "kb-planning-last-description",
+        "kb-planning-active-session",
         "kb-subtask-last-description",
         "kb-mission-last-goal",
         "kb-usage-view-mode",
@@ -114,7 +115,7 @@ describe("projectStorage", () => {
     FNXC:ProjectStorage 2026-07-14-19:20:
     Keep PROJECT_STORAGE_KEYS length lockstep with the source array (todo hide-done, github import state, github setup warning dismissals).
     */
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(32);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(33);
   });
 
   it("stores branch filter values as scoped strings per project", () => {

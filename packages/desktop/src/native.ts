@@ -215,6 +215,8 @@ export function showDesktopNotification(
 type AutoUpdaterLike = {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
+  channel?: string | null;
+  allowPrerelease?: boolean;
   on: (event: string, handler: (...args: unknown[]) => void) => unknown;
   checkForUpdates: () => Promise<unknown>;
 };
@@ -307,6 +309,36 @@ function bindAutoUpdaterListeners(autoUpdater: AutoUpdaterLike): void {
   });
 }
 
+/*
+FNXC:UpdateChannels 2026-07-19-13:15:
+The desktop updater honors the shared `updateChannel` global setting. On the
+beta channel we set electron-updater's `channel` to "beta" (so it reads the
+`beta*.yml` manifests published by beta desktop builds) and `allowPrerelease`
+(so GitHub prereleases are considered). Stable leaves electron-updater at its
+defaults: the GitHub "latest" non-prerelease release only. Failures fall back
+to stable — the updater must never break because settings are unreadable.
+*/
+async function applyConfiguredUpdateChannel(autoUpdater: AutoUpdaterLike): Promise<void> {
+  let channel: "stable" | "beta" = "stable";
+  try {
+    const { GlobalSettingsStore } = await import("@fusion/core");
+    const store = new GlobalSettingsStore();
+    await store.init();
+    const settings = await store.getSettings();
+    channel = settings.updateChannel === "beta" ? "beta" : "stable";
+  } catch (error) {
+    console.warn("[desktop/native] Could not read update channel setting; defaulting to stable", error);
+  }
+
+  if (channel === "beta") {
+    autoUpdater.channel = "beta";
+    autoUpdater.allowPrerelease = true;
+  } else {
+    autoUpdater.channel = null;
+    autoUpdater.allowPrerelease = false;
+  }
+}
+
 export function setupAutoUpdater(mainWindow?: BrowserWindow): void {
   if (mainWindow) {
     autoUpdaterWindow = mainWindow;
@@ -320,6 +352,7 @@ export function setupAutoUpdater(mainWindow?: BrowserWindow): void {
       }
 
       bindAutoUpdaterListeners(autoUpdater);
+      await applyConfiguredUpdateChannel(autoUpdater);
 
       if (hasRunInitialUpdateCheck) {
         return;
@@ -346,6 +379,9 @@ export async function triggerUpdateCheck(
   }
 
   try {
+    // Re-read the channel on every manual check so a settings change takes
+    // effect without an app restart.
+    await applyConfiguredUpdateChannel(autoUpdater);
     await autoUpdater.checkForUpdates();
     return { status: "checking" };
   } catch (error) {

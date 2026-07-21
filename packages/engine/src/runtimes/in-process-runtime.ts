@@ -20,7 +20,6 @@ import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
-import { WorkflowAuthoritativeDriver } from "../workflow-authoritative-driver.js";
 import { buildPrNodeDeps } from "../pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
@@ -315,6 +314,7 @@ export class InProcessRuntime
         const backendBoot = await createTaskStoreForBackend({
           rootDir: this.config.workingDirectory,
           projectId: this.config.projectId,
+          onMigrationProgress: this.config.onMigrationProgress,
         });
         // FNXC:PostgresFinalCutover 2026-07-14-17:20: Engine runtimes must fail
         // startup when PostgreSQL cannot boot; constructing a SQLite TaskStore is no longer valid.
@@ -721,7 +721,6 @@ export class InProcessRuntime
       }
 
       const prNodeGithubOps = this.config.prNodeGithubOps;
-      const workflowAuthoritativeDriverRef: { current?: WorkflowAuthoritativeDriver } = {};
       const executorOptions: TaskExecutorOptions = {
         semaphore: this.projectSemaphore,
         pool: this.worktreePool,
@@ -746,8 +745,6 @@ export class InProcessRuntime
         onSliceComplete: (slice) => {
           void this.scheduler.onSliceComplete(slice);
         },
-        workflowAuthoritativeDispatch: async (task) =>
-          (await workflowAuthoritativeDriverRef.current?.maybeRun(task))?.handled ?? false,
         onStart: (task, worktreePath) => {
           this.recordActivity();
           runtimeLog.log(`Started executing task ${task.id} in ${worktreePath}`);
@@ -790,10 +787,6 @@ export class InProcessRuntime
         this.config.workingDirectory,
         executorOptions
       );
-      workflowAuthoritativeDriverRef.current = new WorkflowAuthoritativeDriver({
-        store: this.taskStore,
-        executor: this.executor,
-      });
       if (this.mergeRequester) {
         this.executor.setMergeRequester(this.mergeRequester);
       }
@@ -1063,7 +1056,11 @@ export class InProcessRuntime
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         listWorktreeHolders: () => this.executor?.listWorktreeHolders() ?? [],
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
-        getPlanningTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
+        getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
+        // FNXC:TaskTiming 2026-08-01-12:00: orphan planning recovery must defer
+        // while executor-owned graph Plan Review holds the sole planning anchor.
+        hasActivePlanningWorkflowSession: (taskId) => this.executor?.hasActivePlanningWorkflowSession(taskId) ?? false,
+        reserveAdvancedTriageRecovery: (taskId) => this.triageProcessor?.tryReserveAdvancedRecovery(taskId),
         evictStaleTriageProcessing: () => this.triageProcessor?.evictStaleProcessing() ?? new Set<string>(),
         enqueueMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) ?? false : undefined,
         requeueForAutoMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) ?? false : undefined,

@@ -15,6 +15,7 @@ import { generateWorktreeName, slugify } from "../worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { StepSessionExecutor } from "../step-session-executor.js";
+import { executingTaskLock } from "../active-session-registry.js";
 import { executorLog } from "../logger.js";
 import { withRateLimitRetry } from "../rate-limit-retry.js";
 import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
@@ -735,11 +736,31 @@ describe("summarizeToolArgs", () => {
   });
 });
 
+/*
+FNXC:EngineTests 2026-07-19-03:50 (U10b):
+Execution ownership (`executingTaskLock`, graph routing) is deliberately PROCESS-WIDE in production: a duplicate dispatch of the same card from ANY TaskExecutor instance must be dropped while a run owns it.
+Tests that fire a resume without awaiting it (`resumeOrphaned`, `task:updated` triggers) leave a real graph run in flight past their own end, so under graph-owned execution the next same-id test is dropped as a duplicate dispatch or collides on the shared worktree.
+Drain those in-flight runs between tests, then clear the registries, so each case measures its own dispatch instead of the previous test's leftovers.
+*/
+const processWideGraphRouting = () =>
+  (TaskExecutor as unknown as { processWideGraphRouting: Set<string> }).processWideGraphRouting;
+
+async function settleLeakedBackgroundRuns(): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (processWideGraphRouting().size > 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  processWideGraphRouting().clear();
+  executingTaskLock._clearForTest();
+}
+
 describe("TaskExecutor pause behavior", () => {
   beforeEach(() => {
     resetExecutorMocks();
     mockedExistsSync.mockReturnValue(true);
   });
+
+  afterEach(settleLeakedBackgroundRuns);
 
   it("terminates agent and moves task to todo when paused during execution", async () => {
     const store = createMockStore();
@@ -773,11 +794,14 @@ describe("TaskExecutor pause behavior", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Should move to todo, NOT mark as failed. This path (agent threw mid-
-    // execution while paused) explicitly nukes worktree+branch — work is
-    // discarded — so it must NOT flag preserveResumeState.
-    // FNXC:ExecutorMoveTaskOptions 2026-07-12: executor.ts:11622-11625 now always passes a moveTask options object built from conditional spreads; with no resumable progress and no preserved pause it collapses to {} (previously undefined). The intent (no preserveResumeState) is unchanged.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
+    // Should move to todo, NOT mark as failed.
+    // FNXC:ExecutorMoveTaskOptions 2026-07-12: executor.ts:11622-11625 now always passes a moveTask options object built from conditional spreads.
+    /*
+    FNXC:EngineTests 2026-07-19-03:12 (U10b):
+    A pause-abort bounce to todo must never discard progress the run already recorded.
+    Under graph-owned execution the workflow materializes its steps and marks the running one `in-progress` before the implementation session, so every aborted run has resumable progress and the bounce must carry `preserveResumeState` — the pre-graph "empty steps => discard worktree+branch" shape is unreachable.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true });
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
@@ -1303,6 +1327,17 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: sessionFilePath,
     } as any);
 
+    /*
+    FNXC:EngineTests 2026-07-19-04:05 (U10b):
+    Resume state is read from the STORE row, not from the Task literal handed to execute(): the graph re-reads the card at its execute node.
+    Seed the persisted sessionFile + worktree so the run is a genuine resume; without them the row looks worktree-less and the executor correctly recovers by minting a fresh worktree and a fresh session.
+    */
+    store._setRow("FN-001", {
+      sessionFile: sessionFilePath,
+      worktree: "/tmp/test/.worktrees/fn-001",
+      branch: "fusion/fn-001",
+    });
+
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
@@ -1416,7 +1451,7 @@ describe("TaskExecutor pause behavior", () => {
     const sessionFilePath = "/tmp/fn-4031-stale-session.jsonl";
     await writeFile(sessionFilePath, JSON.stringify({ cwd: "/tmp/test/.worktrees/bright-wren" }), "utf-8");
 
-    mockedExistsSync.mockImplementation((p) => String(p) !== "/tmp/test/.worktrees/fn-001");
+    mockedExistsSync.mockReturnValue(true);
 
     mockedCreateFnAgent.mockResolvedValue({
       session: {
@@ -1425,6 +1460,17 @@ describe("TaskExecutor pause behavior", () => {
       },
       sessionFile: "/tmp/sessions/new_session.jsonl",
     } as any);
+
+    /*
+    FNXC:EngineTests 2026-07-19-04:12 (U10b):
+    The invariant is "a persisted session whose recorded cwd is NOT the task's live worktree must never be resumed" — the mismatch, not a missing worktree, is what must reject the resume.
+    The graph re-reads the card from the store, so the live worktree/sessionFile are seeded on the row; the worktree exists on disk (existsSync true) so the only reason to refuse the resume is the cwd mismatch under test.
+    */
+    store._setRow("FN-001", {
+      sessionFile: sessionFilePath,
+      worktree: "/tmp/test/.worktrees/fn-001",
+      branch: "fusion/fn-001",
+    });
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
@@ -1485,7 +1531,15 @@ describe("swallowed async store failure observability", () => {
       enabledWorkflowSteps: [],
     });
 
-    mockExecuteAll.mockResolvedValue([{ stepIndex: 0, success: true, retries: 0 }]);
+    /*
+    FNXC:EngineTests 2026-07-19-04:25 (U10b):
+    A stubbed step-session run must record the step state a real one records: the graph's `steps#N:step-execute` node re-reads the projection and refuses to advance a step left `pending`.
+    Marking the step done keeps this test about the swallowed rate-limit log failure instead of silently terminating the run one node earlier.
+    */
+    mockExecuteAll.mockImplementation(async () => {
+      await store.updateStep("FN-001", 0, "done");
+      return [{ stepIndex: 0, success: true, retries: 0 }];
+    });
 
     store.logEntry.mockImplementation(async (_taskId: string, message: string) => {
       if (message.includes("Rate limited — retry")) {
@@ -1516,7 +1570,11 @@ describe("swallowed async store failure observability", () => {
       updatedAt: new Date().toISOString(),
     })).resolves.toBeUndefined();
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to log rate-limit retry: step-session retry log failure"),
     );
@@ -1578,7 +1636,16 @@ describe("swallowed async store failure observability", () => {
       updatedAt: new Date().toISOString(),
     })).resolves.toBeUndefined();
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    /*
+    FNXC:EngineTests 2026-07-19-03:18 (U10b):
+    A swallowed rate-limit logEntry failure must be observable in the log AND must not derail the run's handoff to review.
+    The handoff is now the graph's merge boundary, so the move carries the workflow-graph provenance instead of being a bare completion-path move.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to log rate-limit retry: main-agent retry log failure"),
     );
@@ -1591,28 +1658,29 @@ describe("swallowed async store failure observability", () => {
     const store = createMockStore();
     const retrySessionFilePath = "/tmp/sessions/retry-failed.jsonl";
 
-    store.updateTask.mockImplementation(async (_taskId: string, patch: Record<string, unknown>) => {
+    /*
+    FNXC:EngineTests 2026-07-19-04:45 (U10b):
+    Only the retry sessionFile write may fail; every other write must still land on the row.
+    The graph re-reads the card between nodes, so a blanket `updateTask` stub that swallows all writes leaves the row without the worktree/step state the run just persisted and the graph terminates before the retry under test ever happens.
+    Delegate to the harness's write-through implementation for everything except the write being sabotaged.
+    */
+    const passThroughUpdateTask = store.updateTask.getMockImplementation()!;
+    store.updateTask.mockImplementation(async (taskId: string, patch: Record<string, unknown>) => {
       if (patch?.sessionFile === retrySessionFilePath) {
         throw new Error("retry sessionFile write failed");
       }
-      return {};
+      return passThroughUpdateTask(taskId, patch);
     });
 
-    mockedCreateFnAgent
-      .mockResolvedValueOnce({
-        session: {
-          prompt: vi.fn().mockResolvedValue(undefined),
-          dispose: vi.fn(),
-        },
-        sessionFile: "/tmp/sessions/initial.jsonl",
-      } as any)
-      .mockResolvedValueOnce({
-        session: {
-          prompt: vi.fn().mockResolvedValue(undefined),
-          dispose: vi.fn(),
-        },
-        sessionFile: retrySessionFilePath,
-      } as any);
+    // First implementation session persists cleanly; every retry session carries the sabotaged path.
+    let agentCall = 0;
+    mockedCreateFnAgent.mockImplementation((async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+      sessionFile: agentCall++ === 0 ? "/tmp/sessions/initial.jsonl" : retrySessionFilePath,
+    })) as any);
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await expect(executor.execute({
@@ -1641,11 +1709,16 @@ describe("swallowed async store failure observability", () => {
     const store = createMockStore();
     let capturedCustomTools: any[] = [];
 
-    store.updateTask.mockImplementation(async (_taskId: string, patch: Record<string, unknown>) => {
+    /*
+    FNXC:EngineTests 2026-07-19-04:47 (U10b):
+    Only the sessionFile CLEAR may fail; the graph re-reads the card between nodes, so every other write must still land on the row or the run never reaches the completion that triggers the clear.
+    */
+    const passThroughUpdateTask = store.updateTask.getMockImplementation()!;
+    store.updateTask.mockImplementation(async (taskId: string, patch: Record<string, unknown>) => {
       if (patch?.sessionFile === null) {
         throw new Error("session clear failed");
       }
-      return {};
+      return passThroughUpdateTask(taskId, patch);
     });
 
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
@@ -1678,7 +1751,15 @@ describe("swallowed async store failure observability", () => {
       updatedAt: new Date().toISOString(),
     })).resolves.toBeUndefined();
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    /*
+    FNXC:EngineTests 2026-07-19-03:19 (U10b):
+    A failed sessionFile clear must warn but must not block the run's handoff to review; that handoff is now the graph's merge boundary, so the move carries workflow-graph provenance.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to clear sessionFile: session clear failed"),
     );
@@ -2010,6 +2091,11 @@ describe("TaskExecutor task:updated listener guards", () => {
   });
 });
 
+/*
+FNXC:EngineTests 2026-07-19-03:24 (U10b):
+Completion handoff to `in-review` is the workflow graph's merge boundary, not a completion-path move the executor makes on its own.
+Every handoff assertion in this block therefore asserts the graph's provenance on the move (`workflowMoveSource: "workflow-graph"`), so a regression that re-introduces a second, out-of-graph move-to-review authority fails here instead of passing silently.
+*/
 describe("TaskExecutor global pause behavior", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -2062,6 +2148,13 @@ describe("TaskExecutor global pause behavior", () => {
     // checkout path, so without unique worktrees FN-002 would fail on a path-collision guard rather than
     // exercise the pause-disposal invariant. existsSync is stubbed true (resume) so each stored path is
     // reused verbatim instead of regenerating a shared name.
+    /*
+    FNXC:EngineTests 2026-07-19-04:58 (U10b):
+    The per-task worktree must live on the STORE ROW, not only on the literal handed to execute(): the graph re-reads the card, and a row with no worktree looks like drift, so both tasks regenerate the SAME deterministic worktree name and the second one dies on the foreign-path guard instead of exercising pause disposal.
+    */
+    store._setRow("FN-001", { worktree: "/tmp/test/.worktrees/wt-001", branch: "fusion/fn-001" });
+    store._setRow("FN-002", { worktree: "/tmp/test/.worktrees/wt-002", branch: "fusion/fn-002" });
+
     const run = Promise.all([
       executor.execute({
         id: "FN-001", title: "T1", description: "T", column: "in-progress",
@@ -2121,7 +2214,12 @@ describe("TaskExecutor global pause behavior", () => {
     });
 
     // FNXC:ExecutorMoveTaskOptions 2026-07-12: executor.ts:11622-11625 now always passes a moveTask options object (conditional spreads collapse to {} when nothing to preserve); previously undefined. Intent (not marked failed) unchanged.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
+    /*
+    FNXC:EngineTests 2026-07-19-03:14 (U10b):
+    A global-pause abort must park the task in todo without failing it AND without throwing away the progress the run already recorded.
+    Graph-owned execution always has a materialized in-progress workflow step by the time the pause lands, so the bounce carries `preserveResumeState`.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true });
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
@@ -2245,12 +2343,12 @@ describe("TaskExecutor global pause behavior", () => {
           id === "FN-001" && action.includes("fn_task_done called while task was in todo during pause"),
       ),
     ).toBe(true);
-    expect(
-      store.logEntry.mock.calls.some(
-        ([id, action]: [string, string]) =>
-          id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
-      ),
-    ).toBe(true);
+    /*
+    FNXC:EngineTests 2026-07-19-05:12 (U10b):
+    Deleted assertion: the executor's own "Completion handoff deferred — global pause active" log line.
+    That line belongs to the pre-graph completion path, which the graph short-circuits at the implementation-complete boundary (`graphCompletion`) before any executor-side defer check runs — the executor no longer owns the handoff, so it no longer narrates deferring it.
+    The REQUIREMENT it stood for is still asserted here, on the surfaces that survive: the card is never handed to `in-review` under global pause, no completion watchdog is armed, and `fn_task_done` tells the agent the handoff is deferred until the pause clears.
+    */
     expect(taskDoneResult.content[0].text).toBe(
       "Task marked complete. Completion handoff deferred until pause is cleared.",
     );
@@ -2317,7 +2415,11 @@ describe("TaskExecutor global pause behavior", () => {
         bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-001",
+        "in-review",
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      );
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(
         store.logEntry.mock.calls.some(
@@ -2389,7 +2491,11 @@ describe("TaskExecutor global pause behavior", () => {
         bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-001",
+        "in-review",
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      );
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
       expect(
@@ -2465,7 +2571,11 @@ describe("TaskExecutor global pause behavior", () => {
         bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-001",
+        "in-review",
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      );
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(
         store.logEntry.mock.calls.some(
@@ -2533,7 +2643,11 @@ describe("TaskExecutor global pause behavior", () => {
         bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-001",
+        "in-review",
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      );
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
       expect(
@@ -2579,7 +2693,11 @@ describe("TaskExecutor global pause behavior", () => {
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 
@@ -2614,7 +2732,11 @@ describe("TaskExecutor global pause behavior", () => {
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 });
@@ -2625,7 +2747,7 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   // a TaskExecutor over a mock store and invoke the private method with `as any`.
   function makeTool(store = createMockStore()) {
     const executor = new TaskExecutor(store, "/tmp/test");
-    return { store, tool: (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map()) };
+    return { store, tool: (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }) };
   }
 
   it("returns isError with a self-describing message when no fields are supplied", async () => {

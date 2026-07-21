@@ -871,37 +871,47 @@ The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider d
 }
 
 /*
-FNXC:MailboxMobile 2026-07-17-13:43:
-FN-8238 keeps the full-page mobile title above one compact action row: unread badge,
-Compose, Mark all read, and Refresh remain visible together. This runtime-mode class
-mirrors isMobileViewport(); CSS media and pointer queries cannot observe its physical-screen
-or visualViewport classification, so desktop and tablet headers retain their shared chrome.
+FNXC:MailboxMobile 2026-07-19-17:00:
+FN-8407 supersedes FN-8238's title-then-actions mobile stack: Mailbox title and its
+unread badge, Compose, Mark all read, and Refresh share one right-aligned row at the
+320px boundary. Keep this override runtime-class-gated because CSS media and pointer
+queries cannot observe isMobileViewport()'s physical-screen or visualViewport classification;
+FN-8349 attempted this same change but finalized without landing it.
 */
 .mailbox-view--mobile .view-header {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: var(--space-sm);
 }
 
 .mailbox-view--mobile .view-header__title {
-  flex: 0 0 100%;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .mailbox-view--mobile .view-header__actions {
-  flex: 1 1 100%;
+  flex: 0 1 auto;
   min-width: 0;
   flex-wrap: nowrap;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: var(--space-xs);
-  margin-left: 0;
+  margin-left: auto;
 }
 
 .mailbox-view--mobile .view-header__actions .btn {
   min-width: 0;
   flex-shrink: 1;
   padding: var(--space-xs);
+}
+
+.mailbox-view--mobile .view-header__actions .btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.mailbox-view--mobile .view-header__actions .btn svg,
 .mailbox-view--mobile .view-header__actions .btn-icon,
 .mailbox-view--mobile .mailbox-unread-badge {
   flex-shrink: 0;

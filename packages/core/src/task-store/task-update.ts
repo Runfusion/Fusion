@@ -22,6 +22,7 @@ import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
 import {applyOriginalDescription} from "../original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
+import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
     {
@@ -36,6 +37,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
 
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
+      const wasFailed = task.status === "failed";
 
       // Capture title/description before mutation so the PROMPT.md stub
       // detector below can compare against the exact wrapper bytes that the
@@ -419,6 +421,34 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.bulkCompletionRefusalAt !== undefined) {
         task.bulkCompletionRefusalAt = updates.bulkCompletionRefusalAt;
       }
+      /*
+      FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3):
+      Node entry SETS the pin; node settle CLEARS it (null). Both directions must be writable
+      through updateTask or the pin either never lands or outlives its node and reports drift
+      against a node the task already left.
+      */
+      if (updates.workflowIrPin === null) {
+        task.workflowIrPin = undefined;
+      } else if (updates.workflowIrPin !== undefined) {
+        task.workflowIrPin = updates.workflowIrPin;
+      }
+      if (updates.workflowIrPinNodeId === null) {
+        task.workflowIrPinNodeId = undefined;
+      } else if (updates.workflowIrPinNodeId !== undefined) {
+        task.workflowIrPinNodeId = updates.workflowIrPinNodeId;
+      }
+      if (updates.workflowIrPinColumnId === null) {
+        task.workflowIrPinColumnId = undefined;
+      } else if (updates.workflowIrPinColumnId !== undefined) {
+        task.workflowIrPinColumnId = updates.workflowIrPinColumnId;
+      }
+      // FNXC:LegacyAdoption 2026-07-19-03:10 (U9b / KTD-8): stamped once by adoption; null is
+      // reserved for tests/operator repair that need to force re-adoption.
+      if (updates.legacyAdoptedAt === null) {
+        task.legacyAdoptedAt = undefined;
+      } else if (updates.legacyAdoptedAt !== undefined) {
+        task.legacyAdoptedAt = updates.legacyAdoptedAt;
+      }
       if (updates.worktreeSessionRetryCount === null) {
         task.worktreeSessionRetryCount = undefined;
       } else if (updates.worktreeSessionRetryCount !== undefined) {
@@ -574,6 +604,16 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.cumulativeActiveMs !== undefined) {
         task.cumulativeActiveMs = updates.cumulativeActiveMs;
       }
+      if (updates.cumulativePlanningMs === null) {
+        task.cumulativePlanningMs = undefined;
+      } else if (updates.cumulativePlanningMs !== undefined) {
+        task.cumulativePlanningMs = updates.cumulativePlanningMs;
+      }
+      if (updates.planningStartedAt === null) {
+        task.planningStartedAt = undefined;
+      } else if (updates.planningStartedAt !== undefined) {
+        task.planningStartedAt = updates.planningStartedAt;
+      }
       if (updates.executionStartedAt === null) {
         task.executionStartedAt = undefined;
       } else if (updates.executionStartedAt !== undefined) {
@@ -676,6 +716,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.modifiedFiles !== undefined) {
         task.modifiedFiles = updates.modifiedFiles;
       }
+      /* FNXC:SymbolLock 2026-07-31-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
+      if (hasOwnDeclaredSymbols(updates)) {
+        const normalized = normalizeDeclaredSymbols(Array.isArray(updates.declaredSymbols) ? updates.declaredSymbols : []);
+        task.declaredSymbols = normalized.length ? normalized : undefined;
+      } else if (updates.prompt !== undefined) {
+        const normalized = normalizeDeclaredSymbols(extractDeclaredSymbolsFromPrompt(updates.prompt));
+        task.declaredSymbols = normalized.length ? normalized : undefined;
+      }
       if (updates.missionId === null) {
         task.missionId = undefined;
       } else if (updates.missionId !== undefined) {
@@ -720,6 +768,20 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         });
       } else {
         await store.atomicWriteTaskJson(dir, task);
+      }
+
+      /*
+      FNXC:MissionSymbolAdmission 2026-08-01-00:00:
+      A workflow failure may park in the current in-progress column rather than
+      move out of it. Release that task's durable symbols on the status edge as
+      well as moveTask's column-exit path, allowing engine reconciliation to
+      record failure provenance without incorrectly completing the feature.
+      */
+      if (store.backendMode && !wasFailed && task.status === "failed") {
+        const symbols = resolveTaskSymbolsForTask(task);
+        if (symbols.resolvable) {
+          await store.releaseSymbolLocks(symbols.symbols, id);
+        }
       }
 
       // Update cache if watcher is active

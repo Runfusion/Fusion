@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
-import { BUG_URL_MAX_ENCODED } from "../areas/SystemControlsArea";
 
 const apiMock = vi.fn();
 const mockFetchSystemInfo = vi.fn();
@@ -272,101 +271,16 @@ describe("SystemControlsArea layout integration", () => {
     expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("writeText"), "error");
   });
 
-  it("embeds the full diagnostics bundle in the bug report body when the operator confirms", async () => {
-    mockFetchSystemLogs.mockResolvedValue({
-      entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "error", message: "boom" }],
-    });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("opens the guided report modal instead of a legacy GitHub window", async () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
     await renderSystemTab();
 
     const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
     fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Report bug" }));
 
-    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    const url = openSpy.mock.calls[0]?.[0] as string;
-    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
-    expect(url).toContain("github.com");
-    expect(url).toContain("/issues/new");
-    expect(body).toContain("### What happened");
-    expect(body).toContain("### Environment");
-    expect(body).toContain("### Diagnostics");
-    expect(body).toContain("<details><summary>Diagnostics</summary>");
-    expect(body).toContain('"recentLogs"');
-    expect(body).toContain("boom");
-    expect(body).not.toContain("\u2026(truncated)");
-    expect(url.length).toBeLessThanOrEqual(BUG_URL_MAX_ENCODED);
-
-    confirmSpy.mockRestore();
-    openSpy.mockRestore();
-  });
-
-  it("omits the diagnostics block from the bug report body when the operator declines", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
-    await renderSystemTab();
-
-    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
-    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
-
-    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
-    const url = openSpy.mock.calls[0]?.[0] as string;
-    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
-    expect(body).toContain("### What happened");
-    expect(body).toContain("### Environment");
-    expect(body).not.toContain("### Diagnostics");
-
-    confirmSpy.mockRestore();
-    openSpy.mockRestore();
-  });
-
-  it("neutralizes embedded code fences in log messages so they cannot break out of the diagnostics fence", async () => {
-    mockFetchSystemLogs.mockResolvedValue({
-      entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "error", message: "```oops``` breakout" }],
-    });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
-    await renderSystemTab();
-
-    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
-    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
-
-    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
-    const url = openSpy.mock.calls[0]?.[0] as string;
-    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
-    // The fenced JSON block should contain no raw ``` other than the fence delimiters themselves.
-    const jsonBlockMatch = body.match(/```json\n([\s\S]*?)\n```/);
-    expect(jsonBlockMatch).not.toBeNull();
-    expect(jsonBlockMatch?.[1]).not.toContain("```");
-    expect(jsonBlockMatch?.[1]).toContain("'''oops''' breakout");
-
-    confirmSpy.mockRestore();
-    openSpy.mockRestore();
-  });
-
-  it("truncates an oversized diagnostics bundle against the encoded GitHub URL ceiling", async () => {
-    mockFetchSystemLogs.mockResolvedValue({
-      entries: Array.from({ length: 100 }, (_, i) => ({
-        timestamp: "2026-07-12T00:00:00.000Z",
-        level: "error" as const,
-        message: `error-line-${i}-{\"quoted\":\"${"x".repeat(100)}\",\"nested\":{\"value\":\"${"y".repeat(100)}\"}}`,
-      })),
-    });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
-    await renderSystemTab();
-
-    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
-    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
-
-    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
-    const url = openSpy.mock.calls[0]?.[0] as string;
-    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
-    expect(url.length).toBeLessThanOrEqual(BUG_URL_MAX_ENCODED);
-    expect(body).toContain("\u2026(truncated)");
-
-    confirmSpy.mockRestore();
+    expect(await screen.findByRole("dialog", { name: "bug report" })).toBeTruthy();
+    expect(openSpy).not.toHaveBeenCalled();
     openSpy.mockRestore();
   });
 

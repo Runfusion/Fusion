@@ -2,6 +2,15 @@
 #
 # Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed.
 # Requires npm 11.5.1+ for OIDC support.
+#
+# FNXC:UpdateChannels 2026-07-19-13:30:
+# STABLE-CHANNEL ONLY. This workflow publishes with npm's implicit `latest`
+# dist-tag and must never run for a beta: betas are cut from `main` by
+# `pnpm release --channel beta`, which publishes with an explicit `--tag beta`
+# (see scripts/release.mjs and docs/plans/2026-07-19-001-beta-stable-release-tracks-plan.md).
+# If beta publishing ever moves to CI, this workflow needs a channel input that
+# threads `--tag beta` into the publish command — do not dispatch it as-is from
+# a pre-mode (.changeset/pre.json) checkout.
 
 name: Version & Release
 
@@ -42,7 +51,8 @@ jobs:
         uses: changesets/action@v1
         with:
           version: pnpm release:version
-          publish: pnpm -r publish --provenance --access public
+          # Explicit --tag latest: every publish path names its dist-tag (see channel note above).
+          publish: pnpm -r publish --provenance --access public --tag latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true

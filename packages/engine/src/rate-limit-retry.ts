@@ -2,6 +2,7 @@
  * Rate Limit Retry — wraps async agent work with exponential backoff
  * specifically for rate-limit / usage-limit errors.
  *
+ * FNXC:ProviderRateLimitIsolation 2026-07-21-18:00:
  * When an AI model returns a rate limit error (429, overloaded, quota, etc.),
  * this utility retries the operation with exponential backoff before letting
  * the error propagate to the caller's catch block, which triggers a global
@@ -75,6 +76,7 @@ export interface RateLimitRetryOptions {
  * a short flat delay — this budget is separate and does not consume rate-limit
  * attempts. All other errors are re-thrown immediately.
  *
+ * FNXC:ProviderRateLimitIsolation 2026-07-21-18:00:
  * After all retries are exhausted, the **original** error is thrown so the
  * caller's existing catch block can park the affected provider-routed task via
  * `UsageLimitPauser`.
@@ -138,7 +140,8 @@ export async function withRateLimitRetry<T>(
         continue;
       }
 
-      // All retries exhausted — throw so the caller can park this provider-routed task.
+      // FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: exhaustion parks only
+      // the affected provider-routed task instead of stopping the project.
       if (attempt >= maxRetries) {
         throw lastError;
       }

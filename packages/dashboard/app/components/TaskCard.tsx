@@ -39,10 +39,10 @@ import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
-import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
-import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
+import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
@@ -274,6 +274,35 @@ function isAgentCreatedTask(task: Task): boolean {
   return task.sourceType === "agent_heartbeat" || task.sourceType === "automation" || Boolean(getSourceAgentName(task));
 }
 
+function getNormalizedAgentIdentity(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * FNXC:TaskCardAgentBadges 2026-07-20-00:00:
+ * FN-8423 requires TaskCard to retain assigned ownership but suppress redundant
+ * created-by provenance only for the same agent identity. IDs are authoritative:
+ * distinct present IDs stay distinct even when their display names collide; names
+ * are a case-insensitive fallback only when either identity has no usable ID.
+ */
+function isSameAgentIdentity(
+  assignedAgentId: string | undefined,
+  sourceAgentId: string | undefined,
+  assignedAgentName: string | null | undefined,
+  sourceAgentName: string | undefined,
+): boolean {
+  const normalizedAssignedId = getNormalizedAgentIdentity(assignedAgentId);
+  const normalizedSourceId = getNormalizedAgentIdentity(sourceAgentId);
+
+  if (normalizedAssignedId && normalizedSourceId) {
+    return normalizedAssignedId === normalizedSourceId;
+  }
+
+  const normalizedAssignedName = getNormalizedAgentIdentity(assignedAgentName)?.toLocaleLowerCase();
+  const normalizedSourceName = getNormalizedAgentIdentity(sourceAgentName)?.toLocaleLowerCase();
+  return Boolean(normalizedAssignedName && normalizedSourceName && normalizedAssignedName === normalizedSourceName);
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Issue 1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
@@ -300,8 +329,8 @@ const TIME_INDICATOR_COLUMNS = new Set<ColumnId>([
 ]);
 const LIVE_TIME_INDICATOR_POLL_MS = 30_000;
 
-function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
-  return getTaskStatusBadgeLabel(status, t);
+function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string): string {
+  return getTaskStatusBadgeLabel(status, t, workflowStepLabel);
 }
 
 function getDoneCompletionMs(task: Task): number | null {
@@ -328,10 +357,11 @@ function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
 // inside instrumented code paths. Returns null on legacy tasks that completed
 // before `executionStartedAt` was tracked, so callers can fall back.
 function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
-  if (task.cumulativeActiveMs == null) {
-    return getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
-  }
-  return getActiveRuntimeMs(task, nowMs);
+  // FNXC:TaskTiming 2026-08-01-12:00: planning-only tasks have no execution
+  // accumulator, but their active AI duration still belongs on the card chip.
+  // Use the legacy execution window only when neither active-time source exists.
+  const totalActiveMs = getTotalAgentActiveMs(task, nowMs);
+  return totalActiveMs ?? getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
 }
 
 function getInReviewCompletionMs(task: Task): number | null {
@@ -1405,6 +1435,15 @@ function TaskCardComponent({
   const resolvedAssignedAgentName = assignedAgentNameFromMap ?? assignedAgentNameFromCache ?? agentName;
   const assignedAgentBadgeLabel = resolvedAssignedAgentName ?? task.assignedAgentId ?? "";
   const isAgentNameLoading = Boolean(task.assignedAgentId && !resolvedAssignedAgentName);
+  const shouldShowCreatedAgentBadge = isAgentCreated && !(
+    task.assignedAgentId
+    && isSameAgentIdentity(
+      task.assignedAgentId,
+      task.sourceAgentId,
+      resolvedAssignedAgentName,
+      sourceAgentName,
+    )
+  );
   const taskProviders = useMemo(() => {
     const providers: string[] = [];
     if (task.modelProvider) providers.push(task.modelProvider);
@@ -1547,7 +1586,7 @@ function TaskCardComponent({
       title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
       ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
     };
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
 
   const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 
@@ -3082,7 +3121,7 @@ function TaskCardComponent({
                       ? t("tasks.statusPlanning", "Planning")
                       : visualStatus === "merging-fix"
                         ? t("tasks.statusMergingFix", "Merging fixes…")
-                        : getTaskStatusLabel(visualStatus!, t)}
+                        : getTaskStatusLabel(visualStatus!, t, getRunningWorkflowStepLabel(task))}
           </span>
         )}
         {planReviewRunning && isAgentActive && (
@@ -3742,7 +3781,7 @@ function TaskCardComponent({
         )}
         </>
       )}
-      {isAgentCreated && (
+      {shouldShowCreatedAgentBadge && (
         <div className="card-agent-badge-row" data-testid="card-agent-badge-row">
           {/**
            * FNXC:TaskCardLayout 2026-07-10-00:00:

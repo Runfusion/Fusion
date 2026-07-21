@@ -190,6 +190,30 @@ describe("useAgents", () => {
     expect(console.error).toHaveBeenCalledWith("Failed to load agent stats:", expect.any(Error));
   });
 
+  it("hydrates and clears agent state per project on a project switch", async () => {
+    const agentsA = [createAgent({ id: "agent-a", state: "active" })];
+    const agentsB = [createAgent({ id: "agent-b", state: "active" })];
+    const statsB = { ...defaultStats, activeCount: 7 };
+    window.localStorage.setItem(`${SWR_CACHE_KEYS.AGENTS}:project-b`, JSON.stringify(agentsB));
+    window.localStorage.setItem(`${SWR_CACHE_KEYS.AGENT_STATS}:project-b`, JSON.stringify(statsB));
+    mockFetchAgents.mockImplementation((_filter, projectId) => Promise.resolve(projectId === "project-b" ? agentsB : agentsA));
+    mockFetchAgentStats.mockImplementation((projectId) => Promise.resolve(projectId === "project-b" ? statsB : defaultStats));
+
+    const { result, rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => useAgents(projectId),
+      { initialProps: { projectId: "project-a" } },
+    );
+    await waitFor(() => expect(result.current.agents).toEqual(agentsA));
+
+    rerender({ projectId: "project-b" });
+
+    await waitFor(() => {
+      expect(result.current.agents).toEqual(agentsB);
+      expect(result.current.stats).toEqual(statsB);
+    });
+    expect(result.current.agents).not.toContainEqual(expect.objectContaining({ id: "agent-a" }));
+  });
+
   it("creates SSE subscription with correct URL without projectId", async () => {
     renderHook(() => useAgents());
 

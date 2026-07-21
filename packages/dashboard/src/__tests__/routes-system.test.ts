@@ -819,6 +819,50 @@ describe("POST /api/kill-vitest", () => {
   });
 });
 
+describe("GET /api/plugins/dashboard-views", () => {
+  it("uses the request project's loaded plugin loader rather than leaking launch-project views", async () => {
+    const compoundEngineeringView = {
+      pluginId: "fusion-plugin-compound-engineering",
+      view: {
+        viewId: "compound-engineering",
+        label: "Compound Engineering",
+        componentPath: "./dashboard-view",
+        icon: "Boxes",
+        placement: "primary",
+        order: 36,
+      },
+    };
+    const projectLoaders = {
+      "project-a": { getPluginDashboardViews: vi.fn().mockResolvedValue([compoundEngineeringView]) },
+      "project-b": { getPluginDashboardViews: vi.fn().mockResolvedValue([]) },
+    };
+    const engines = Object.fromEntries(
+      Object.entries(projectLoaders).map(([projectId, loader]) => [projectId, {
+        getTaskStore: () => createMockStore(),
+        getPluginRunner: () => ({ getLoader: () => loader }),
+      }]),
+    );
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createMockStore(), {
+      // The launch loader intentionally has CE to reproduce the prior project-A leak.
+      pluginLoader: projectLoaders["project-a"],
+      engineManager: {
+        getEngine: (projectId: string) => engines[projectId as keyof typeof engines],
+        onProjectAccessed: vi.fn(),
+      } as any,
+    }));
+
+    const [projectA, projectB] = await Promise.all([
+      GET(app, "/api/plugins/dashboard-views?projectId=project-a"),
+      GET(app, "/api/plugins/dashboard-views?projectId=project-b"),
+    ]);
+
+    expect(projectA.body).toEqual([compoundEngineeringView]);
+    expect(projectB.body).toEqual([]);
+  });
+});
+
 describe("GET /api/plugins/runtimes", () => {
   function buildApp(pluginLoader?: { getPluginRuntimes?: () => Array<{ pluginId: string; runtime: { metadata: { runtimeId: string; name: string; description?: string; version?: string }; factory: () => unknown } }> }) {
     const app = express();

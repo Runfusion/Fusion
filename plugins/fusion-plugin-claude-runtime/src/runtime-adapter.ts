@@ -65,6 +65,8 @@ export interface ClaudeRuntimeAdapterOptions {
    * `AcpRuntimeAdapter` with Claude ACP settings.
    */
   createAcpAdapter?: AcpAdapterFactory;
+  /** Injectable only to assert bridge failure handling without binding a port. */
+  startToolBridge?: typeof startFusionToolBridge;
 }
 
 /** Turn-scoped stream accumulators stored on the session for prompt finalization. */
@@ -74,7 +76,14 @@ interface TurnAccum {
 
 interface SessionResources {
   toolBridge?: FusionToolBridge | null;
+  toolBridgeFailure?: "mcp-schema-server-missing" | "bridge-start-failed";
   skillStaging?: { dispose: () => void } | null;
+}
+
+function bridgeFailureReasonCode(error: unknown): "mcp-schema-server-missing" | "bridge-start-failed" {
+  return (error as { code?: unknown })?.code === "mcp-schema-server-missing"
+    ? "mcp-schema-server-missing"
+    : "bridge-start-failed";
 }
 
 function compactDiagnostic(value: string): string {
@@ -166,6 +175,9 @@ function ensureClaudeSessionShape(
   claude.messages = state.messages;
   claude.state = state;
   claude.lastModelDescription = `claude/${model}`;
+  if (resources.toolBridgeFailure) {
+    claude.fusionToolBridgeError = { reasonCode: resources.toolBridgeFailure };
+  }
   // Prefer callbacks already installed on the ACP session (wrapped at create
   // for turnAccum + engine fans-out). Only fall back to the raw engine options.
   claude.callbacks = {
@@ -220,6 +232,7 @@ export class ClaudeRuntimeAdapter implements AgentRuntime {
   readonly name = "Claude Runtime";
   private readonly binary?: string;
   private readonly createAcpAdapter: AcpAdapterFactory;
+  private readonly startToolBridge: typeof startFusionToolBridge;
   /** Per-session ACP adapter so model-specific spawn args stay consistent. */
   private readonly adapters = new WeakMap<object, ReturnType<AcpAdapterFactory>>();
 
@@ -236,6 +249,7 @@ export class ClaudeRuntimeAdapter implements AgentRuntime {
     this.createAcpAdapter =
       options?.createAcpAdapter ??
       ((settings) => new AcpRuntimeAdapter(settings) as unknown as ReturnType<AcpAdapterFactory>);
+    this.startToolBridge = options?.startToolBridge ?? startFusionToolBridge;
   }
 
   async createSession(
@@ -262,14 +276,26 @@ export class ClaudeRuntimeAdapter implements AgentRuntime {
 
     // ── Operator MCP + Fusion custom tools ────────────────────────────────
     const operatorMcp = toAcpMcpServers(options.mcpServers);
+    const customTools = collectCustomTools(options);
     let toolBridge: FusionToolBridge | null = null;
     try {
-      toolBridge = await startFusionToolBridge(collectCustomTools(options), {
+      toolBridge = await this.startToolBridge(customTools, {
         actionGateContext: options.actionGateContext,
       });
       resources.toolBridge = toolBridge;
-    } catch {
+    } catch (error) {
       toolBridge = null;
+      if (customTools.length > 0) {
+        const reasonCode = bridgeFailureReasonCode(error);
+        resources.toolBridgeFailure = reasonCode;
+        /*
+        FNXC:FusionToolBridgeDiagnostics 2026-07-20-08:00:
+        Requested fn_* tools must never silently degrade when their MCP bridge fails.
+        Emit a stable, schema-free diagnostic and preserve only its fixed reason code
+        on the session so engine audit metadata stays ids/counts/outcomes-only.
+        */
+        options.onText?.(`FUSION_TOOL_BRIDGE_FAILED: ${reasonCode}`);
+      }
     }
 
     const mcpServers: AcpMcpServer[] = [

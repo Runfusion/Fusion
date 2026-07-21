@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { Task, TaskTokenUsage, WorkflowStepResult } from "@fusion/core";
-import { extractTimingEvents, getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWallClockSinceFirstExecutionMs, getWorkflowRuntimeMs, type TimingEvent } from "../utils/taskTiming";
+import { extractTimingEvents, getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWallClockSinceFirstExecutionMs, getWorkflowRuntimeMs, type TimingEvent } from "../utils/taskTiming";
 import { getCanonicalStepNumber } from "../lib/step-display";
 import "./TaskTokenStatsPanel.css";
 
@@ -32,6 +32,8 @@ interface TaskTokenStatsPanelProps {
     | "executionCompletedAt"
     | "firstExecutionAt"
     | "cumulativeActiveMs"
+    | "cumulativePlanningMs"
+    | "planningStartedAt"
     | "column"
     | "columnMovedAt"
   >;
@@ -133,7 +135,7 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
   }, undefined);
 
   const workflowTiming = summarizeWorkflowTiming(task?.workflowStepResults ?? []);
-  const activeRuntimeMs = task ? getActiveRuntimeMs(task, nowMs) : null;
+  const activeRuntimeMs = task ? getTotalAgentActiveMs(task, nowMs) : null;
   const endToEndDurationMs = getEndToEndDurationMs(task?.executionStartedAt, task?.executionCompletedAt, nowMs);
   const wallClockSinceFirstExecutionMs = getWallClockSinceFirstExecutionMs(
     task?.firstExecutionAt,

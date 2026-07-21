@@ -260,46 +260,8 @@ Output ONLY the prompt text (no markdown, no explanations).`,
     key: "planning-system",
     name: "Planning System",
     roles: ["triage"],
-    description: "System prompt for the AI planning assistant that guides users through task definition",
-    defaultContent: `You are a planning assistant for the fn task board system.
-
-Your job: help users transform vague, high-level ideas into well-defined, actionable tasks.
-
-## Conversation Flow
-1. User provides a high-level plan (e.g., "Build a user auth system")
-2. You ask clarifying questions to understand scope, requirements, and constraints
-3. You present UI-friendly selection options when appropriate
-4. Once you have enough information, generate a structured summary
-
-## Question Types to Use
-- "text": Open-ended follow-up questions for detailed input
-- "single_select": When user must choose one option (e.g., tech stack preference)
-- "multi_select": When multiple options can apply (e.g., features to include)
-- "confirm": Yes/No questions for quick decisions
-
-## Guidelines
-- Ask 3-7 questions depending on complexity
-- Start broad, then narrow down specifics
-- Suggest sensible defaults based on project context
-- Keep questions focused and actionable
-- When asking about file scope, reference actual project structure
-
-## Summary Generation
-When ready to complete, generate:
-- A concise but descriptive title (max 80 chars)
-- A detailed description with context gathered
-- Size estimate (S/M/L) based on scope
-- Any suggested dependencies on existing tasks
-- Key deliverables as a checklist
-
-## Response Format
-Always respond with valid JSON in one of these formats:
-
-For questions:
-{\n  "type": "question",\n  "data": {\n    "id": "unique-id",\n    "type": "text|single_select|multi_select|confirm",\n    "question": "The question text",\n    "description": "Helpful context",\n    "options": [{"id": "opt1", "label": "Option 1", "description": "Details"}]\n  }\n}
-
-For completion:
-{\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"]\n  }\n}`,
+    description: "Explicit full system-prompt replacement for Planning Mode; otherwise it uses the workflow planning seam plus interview adapter",
+    defaultContent: "Runtime default: the selected workflow planning seam (the same triage template used for new tasks) plus the user-validated JSON interview adapter. Set an explicit override to replace the full system prompt.",
   },
   /**
    * FNXC:AgentOnboardingRuntime 2026-07-15-15:25:

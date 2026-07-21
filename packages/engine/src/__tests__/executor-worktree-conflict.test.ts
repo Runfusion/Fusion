@@ -4,6 +4,7 @@ import { TaskExecutor } from "../executor.js";
 import { activeSessionRegistry } from "../active-session-registry.js";
 import { ActiveSessionWorktreeRemovalError } from "../worktree-backend.js";
 import * as worktreePoolModule from "../worktree-pool.js";
+import * as branchConflictModule from "../branch-conflicts.js";
 import { createMockStore, mockedGenerateWorktreeName, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const CONFLICT_PATH = "/tmp/test/.worktrees/stale-self-owned";
@@ -55,6 +56,45 @@ describe("FN-4973: executor worktree conflict cleanup", () => {
     const result = await (executor as any).cleanupConflictingWorktree(CONFLICT_PATH, "fusion/fn-4973", "FN-4973");
     expect(result).toBe(false);
     expect(activeSessionRegistry.lookupByPath(CONFLICT_PATH)?.taskId).toBe("FN-4973");
+  });
+
+  it("defers out-of-root reclaim instead of moving a live same-task checkout", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const outsidePath = "/tmp/legacy-worktrees/recover-fn-8400";
+    const targetPath = "/tmp/test/.worktrees/recover-fn-8400";
+    (executor as any).addActiveWorktree("FN-8400", outsidePath);
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: outsidePath,
+      tipSha: "abc123",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "abc123", subject: "fix(FN-8400): preserve implementation" }],
+    } as any);
+    const relocate = vi.spyOn(worktreePoolModule, "relocateReclaimableWorktreeIntoRoot");
+
+    const result = await (executor as any).handleWorktreeConflict(
+      outsidePath,
+      "fusion/fn-8400",
+      targetPath,
+      "FN-8400",
+      "main",
+      0,
+      false,
+      {},
+    );
+
+    expect(result).toEqual({ path: outsidePath, branch: "fusion/fn-8400" });
+    expect(relocate).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePath: outsidePath,
+      targetPath,
+      taskId: "FN-8400",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8400",
+      expect.stringContaining("deferred relocation of active preserved worktree"),
+      outsidePath,
+    );
   });
 
   it("does not reconcile foreign-task registry entries and keeps refusal behavior", async () => {

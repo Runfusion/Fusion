@@ -23,6 +23,14 @@ describe("TaskExecutor model marker logging", () => {
       title: "Thinking marker",
       description: "Verify executor marker",
       column: "in-progress",
+      /*
+      FNXC:EngineTests 2026-07-19-16:10 (U10b):
+      The requirement under test is that the EXECUTOR's own session announces its resolved
+      model + thinking effort. Under graph ownership the optional pre-merge review nodes run
+      first and announce their own model, so this task declares no pre-merge gates — the
+      executor session is then the first session and the marker under test is the first row.
+      */
+      enabledWorkflowSteps: [],
       dependencies: [],
       steps: [],
       currentStep: 0,

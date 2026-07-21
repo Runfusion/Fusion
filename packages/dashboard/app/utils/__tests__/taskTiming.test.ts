@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getActiveRuntimeMs, getWallClockSinceFirstExecutionMs } from "../taskTiming";
+import { getActiveRuntimeMs, getTotalAgentActiveMs, getWallClockSinceFirstExecutionMs } from "../taskTiming";
 
 describe("taskTiming helpers", () => {
   it("returns persisted plus live segment for in-progress tasks", () => {
@@ -15,6 +15,13 @@ describe("taskTiming helpers", () => {
     );
 
     expect(runtime).toBe(300_000);
+  });
+
+  it("sums planning and execution segments without using idle dwell", () => {
+    expect(getTotalAgentActiveMs({
+      column: "done", cumulativeActiveMs: 120_000, executionStartedAt: undefined,
+      cumulativePlanningMs: 180_000, planningStartedAt: undefined,
+    }, Date.parse("2026-05-15T13:16:00.000Z"))).toBe(300_000);
   });
 
   it("returns null when there is no active-runtime signal", () => {

@@ -78,6 +78,11 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "showTaskChatsInCommonFeed",
     "taskPrefix",
     "workspaceMode",
+    "reportMode",
+    "reportModeByAction",
+    "reportRoadmapDedupeEnabled",
+    "reportRoadmapLabel",
+    "reportRoadmapRepo",
   ],
   /*
   FNXC:SourceControl 2026-07-15-20:30:

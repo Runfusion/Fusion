@@ -79,13 +79,17 @@ export function checkSessionError(session: { state: { errorMessage?: string; err
 export class UsageLimitPauser {
   constructor(private store: TaskStore) {}
 
+  private normalizeProviderId(provider: string): string {
+    return provider.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+
   /**
    * Clear only parks created for a provider whose independent health probe has
    * transitioned back to usable. Manual/user pauses and every other provider
    * reason remain untouched.
    */
   async onProviderAvailable(provider: string): Promise<number> {
-    const providerId = provider.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    const providerId = this.normalizeProviderId(provider);
     if (!providerId) return 0;
 
     const pausedReason = `provider-rate-limit:${providerId}`;
@@ -143,7 +147,7 @@ export class UsageLimitPauser {
    * @param provider - Best-effort provider identifier used in the pause reason
    */
   async onUsageLimitHit(agentType: string, taskId: string, errorMessage: string, provider?: string): Promise<void> {
-    const providerId = provider?.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    const providerId = provider ? this.normalizeProviderId(provider) : "";
     const pausedReason = providerId ? `provider-rate-limit:${providerId}` : "provider-rate-limit";
 
     /*

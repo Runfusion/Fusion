@@ -5,6 +5,7 @@ import {
   isTaskPinnedWorktreeNaming,
   pinnedWorktreeSlug,
   pinnedWorktreePathForTask,
+  preservedWorktreeTargetPathForTask,
 } from "../worktree-pinning.js";
 
 describe("worktree-pinning", () => {
@@ -48,6 +49,26 @@ describe("worktree-pinning", () => {
       const a = pinnedWorktreePathForTask("FN-9", {}, "/repo");
       const b = pinnedWorktreePathForTask("FN-9", {}, "/repo");
       expect(a).toBe(b);
+    });
+  });
+
+  describe("preservedWorktreeTargetPathForTask", () => {
+    it("uses the task id for task-pinned naming", () => {
+      expect(preservedWorktreeTargetPathForTask(
+        "FN-8400",
+        "/legacy/recover-fn-8400",
+        { worktreeNaming: "task-id" },
+        "/repo",
+      )).toBe("/repo/.worktrees/fn-8400");
+    });
+
+    it("preserves the legacy basename for non-pinned naming", () => {
+      expect(preservedWorktreeTargetPathForTask(
+        "FN-8400",
+        "/legacy/recover-fn-8400",
+        { worktreeNaming: "random" },
+        "/repo",
+      )).toBe("/repo/.worktrees/recover-fn-8400");
     });
   });
 });

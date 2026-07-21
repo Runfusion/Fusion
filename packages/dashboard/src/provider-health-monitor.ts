@@ -119,11 +119,17 @@ export class ProviderHealthMonitor {
     const providers = new Set<string>();
 
     await Promise.all(stores.map(async (store) => {
-      const tasks = await store.listTasks();
-      for (const task of tasks) {
-        if (task.paused !== true || task.userPaused === true) continue;
-        const providerId = providerIdFromRateLimitReason(task.pausedReason);
-        if (providerId) providers.add(providerId);
+      try {
+        const tasks = await store.listTasks();
+        for (const task of tasks) {
+          if (task.paused !== true || task.userPaused === true) continue;
+          const providerId = providerIdFromRateLimitReason(task.pausedReason);
+          if (providerId) providers.add(providerId);
+        }
+      } catch (error: unknown) {
+        this.options.logger.warn("Failed to list tasks for provider health scan", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }));
 
@@ -171,8 +177,17 @@ export class ProviderHealthMonitor {
       Recovery is driven by an authenticated daemon-side usage/capacity transition, not by waking a parked task and spending a model call as a probe. The persisted pause reason seeds this monitor after restart; one provider probe fans out only to exact matching parks across project engines.
       Provider probes start at a five-minute cadence; after five failed checks each provider backs off independently to 10/20/40/60 minutes. This bounds subscription API traffic without permanently stranding parks during a long outage.
       */
-      const recoveredCounts = await Promise.all(stores.map((store) =>
-        new UsageLimitPauser(store).onProviderAvailable(providerId)));
+      const recoveredCounts = await Promise.all(stores.map(async (store) => {
+        try {
+          return await new UsageLimitPauser(store).onProviderAvailable(providerId);
+        } catch (error: unknown) {
+          this.options.logger.warn("Failed to recover tasks for available provider", {
+            providerId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return 0;
+        }
+      }));
       const recoveredTasks = recoveredCounts.reduce((total, count) => total + count, 0);
       this.states.set(providerId, {
         status: "available",

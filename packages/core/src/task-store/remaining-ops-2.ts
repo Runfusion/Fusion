@@ -21,13 +21,13 @@ import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workf
 import "../builtin-traits.js";
 import {validateBranchGroupBranchName} from "../branch-assignment.js";
 import {toJson} from "../db.js";
-import {findSameAgentDuplicates} from "../duplicate-intake.js";
+import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
-import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./remaining-ops-8.js";
+import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
@@ -51,12 +51,17 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "validatorModelProvider", "validatorModelId",
       "planningModelProvider", "planningModelId", "mergerModelProvider", "mergerModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
+      // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8): this projection is a SECOND
+      // copy of the slim column list (see getTaskSelectClauseImpl2). The IR pin, its node entry,
+      // and the adoption stamp must appear in BOTH or a task read through this path reads as
+      // unpinned/never-adopted and gets re-adopted or traversed drift-blind.
+      "workflowIrPin", "workflowIrPinNodeId", "workflowIrPinColumnId", "legacyAdoptedAt",
       "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "mergerThinkingLevel", "executionMode",
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
-      "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
+      "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
-      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
@@ -203,51 +208,9 @@ export async function writeConfigImpl(store: TaskStore, config: BoardConfig, opt
   }
 
 export async function _maybeAutoArchiveSameAgentDuplicateBackendImpl(store: TaskStore, task: Task, input: TaskCreateInput,): Promise<void> {
-    const sourceAgentId = task.sourceAgentId ?? null;
-    const sourceParentTaskId = task.sourceParentTaskId ?? null;
-    if (!sourceAgentId && !sourceParentTaskId) return;
-
-    try {
-      const nowMs = Date.now();
-      const recent = (await store.listTasks({ slim: true, includeArchived: false })).filter((candidate) => {
-        if (candidate.id === task.id) return false;
-        const createdMs = Date.parse(candidate.createdAt);
-        if (Number.isNaN(createdMs)) return false;
-        if (createdMs < nowMs - 24 * 60 * 60 * 1000) return false;
-        const agentMatch = sourceAgentId != null && candidate.sourceAgentId === sourceAgentId;
-        const parentMatch = sourceParentTaskId != null && candidate.sourceParentTaskId === sourceParentTaskId;
-        return agentMatch || parentMatch;
-      });
-
-      const matches = findSameAgentDuplicates(
-        {
-          title: input.title ?? task.title,
-          description: input.description,
-          sourceParentTaskId,
-        },
-        recent.map((candidate) => ({
-          id: candidate.id,
-          title: candidate.title ?? "",
-          description: candidate.description,
-          column: candidate.column,
-          createdAt: Date.parse(candidate.createdAt),
-          sourceAgentId: candidate.sourceAgentId ?? null,
-          sourceParentTaskId: candidate.sourceParentTaskId ?? null,
-          tombstoned: false,
-        })),
-      );
-
-      for (const match of matches) {
-        try {
-          await store.deleteTask(match.id, { removeLineageReferences: true });
-        } catch {
-          // Best-effort dedup cleanup.
-        }
-      }
-    } catch {
-      // Best-effort; never fail task creation on dedup check.
-    }
-  }
+  // Keep the production backend as wiring only: policy lives in the shared resolver.
+  return resolveSameAgentDuplicateIntake(store, task, input);
+}
 
 export async function updateBranchGroupImpl(store: TaskStore, id: string, patch: BranchGroupUpdate): Promise<BranchGroup> {
     if (store.backendMode) {

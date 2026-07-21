@@ -129,6 +129,7 @@ describe("PlanningModeModal autosize", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockAddToast.mockReset();
     mockConfirm.mockResolvedValue(true);
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
@@ -153,6 +154,34 @@ describe("PlanningModeModal autosize", () => {
     mockUpdatePlanningSessionDraft.mockResolvedValue({ ok: true });
     mockStopPlanningGeneration.mockResolvedValue({ success: true });
     mockConnectPlanningStream.mockReturnValue({ close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) } as any);
+    mockUseViewportMode.mockReturnValue("desktop");
+    mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
+  });
+
+  it.each(["modal", "embedded"] as const)("starts planning on the first mobile touch without dismissing the %s surface", async (presentation) => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 320, viewportHeight: 480, viewportOffsetTop: 0, keyboardOpen: true });
+    const onClose = vi.fn();
+    render(<PlanningModeModal isOpen={true} onClose={onClose} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} presentation={presentation} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Build a user authentication/i), { target: { value: "Build a mobile-first dashboard" } });
+    const startButton = screen.getByRole("button", { name: "Start Planning" });
+    fireEvent.pointerDown(startButton, { pointerType: "touch" });
+
+    expect(startButton).toBeInTheDocument();
+    expect(mockStartPlanningStreaming).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(startButton);
+
+    await waitFor(() => expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
+      "Build a mobile-first dashboard",
+      undefined,
+      undefined,
+      { clarificationEnabled: true },
+      "draft-123",
+    ));
+    expect(screen.getByText("Generating initial plan…")).toBeInTheDocument();
   });
 
   it("grows initial planning textarea and caps at max", async () => {
@@ -187,14 +216,7 @@ describe("PlanningModeModal autosize", () => {
     });
   });
 
-  it("keeps SummaryView collapsed and expanded autosize caps distinct", async () => {
-    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
-      configurable: true,
-      get() {
-        return 900;
-      },
-    });
-
+  it("does not expose the removed final review for an unvalidated completed session", async () => {
     mockFetchAiSession.mockResolvedValueOnce({
       id: "session-complete-1",
       type: "planning",
@@ -228,20 +250,7 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
-    /*
-    FNXC:PlanningSummaryDescription 2026-07-15-23:15:
-    FN-8031 shows Markdown preview first, so autosize only applies after the Plain toggle reveals the textarea. Measure caps there rather than against a hidden textarea.
-    */
-    await screen.findByText("Recovered summary description from persisted session");
-    fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
-    const description = await screen.findByDisplayValue("Recovered summary description from persisted session") as HTMLTextAreaElement;
-    await waitFor(() => {
-      expect(description.style.height).toBe("640px");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
-    await waitFor(() => {
-      expect(description.style.height).toBe("800px");
-    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("This plan is still being prepared");
+    expect(screen.queryByTestId("planning-description-markdown-toggle")).toBeNull();
   });
 });

@@ -37,7 +37,7 @@ describe("MCP documentation contract", () => {
 
   it("keeps documented MCP implementation surfaces aligned with source", () => {
     const mcpGuide = readDoc("docs/mcp.md");
-    const routeSource = readDoc("packages/dashboard/src/routes.ts");
+    const routeSource = readDoc("packages/dashboard/src/routes/register-config-mcp-pi-settings-routes.ts");
     const cliSource = readDoc("packages/cli/src/commands/mcp.ts");
     const settingsModalSource = readDoc("packages/dashboard/app/components/SettingsModal.tsx");
 

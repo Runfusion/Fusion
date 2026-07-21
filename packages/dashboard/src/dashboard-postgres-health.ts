@@ -1,5 +1,7 @@
+import { resolve as resolvePath } from "node:path";
 import {
   checkPostgresHealth,
+  getSqliteMigrationState,
   detectTaskIdIntegrityAnomaliesAsync,
   type AsyncDataLayer,
   type TaskIdIntegrityReport,
@@ -15,9 +17,25 @@ export type DashboardTaskIdIntegrityHealth =
       error: string;
     };
 
+export interface DashboardMigrationHealth {
+  active: false;
+  durableStatus: "running" | "failed";
+  phase: "running" | "failed";
+  label: string;
+  lastError: string | null;
+  migrationKey: string;
+  updatedAt: string;
+}
+
 export interface DashboardPostgresHealthResult {
   database: ReturnType<TaskStore["getDatabaseHealth"]>;
   taskIdIntegrity: DashboardTaskIdIntegrityHealth;
+  migration?: DashboardMigrationHealth;
+}
+
+/** Typed server-owned context for health probes that need project partitioning. */
+export interface DashboardPostgresHealthContext {
+  projectId?: string;
 }
 
 /** Resolve the production TaskStore layer while retaining an explicit integration override. */
@@ -39,6 +57,7 @@ The dashboard health surface is a PostgreSQL readiness signal, not a legacy SQLi
 export async function evaluateDashboardPostgresHealth(
   store: TaskStore,
   overrideLayer?: AsyncDataLayer,
+  context?: DashboardPostgresHealthContext,
 ): Promise<DashboardPostgresHealthResult> {
   const checkedAt = new Date();
   let layer: AsyncDataLayer | null = null;
@@ -56,18 +75,64 @@ export async function evaluateDashboardPostgresHealth(
   ]);
   if (errors.length > 0) return failedHealth(checkedAt, ...errors);
 
+  let taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   try {
-    const taskIdIntegrity = await detectTaskIdIntegrityAnomaliesAsync(layer.db);
-    return {
-      database: healthyDatabase(checkedAt),
-      taskIdIntegrity,
-    };
+    taskIdIntegrity = await detectTaskIdIntegrityAnomaliesAsync(layer.db);
   } catch (error) {
     return failedHealth(
       checkedAt,
       `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
     );
   }
+
+  try {
+    const migration = await resolveDashboardMigrationHealth(store, layer, context);
+    return {
+      database: healthyDatabase(checkedAt),
+      taskIdIntegrity,
+      ...(migration ? { migration } : {}),
+    };
+  } catch {
+    // Migration status is advisory after connectivity and task-ID queries pass.
+    return { database: healthyDatabase(checkedAt), taskIdIntegrity };
+  }
+}
+
+/*
+FNXC:MigrationStatusDashboard 2026-07-19-14:30:
+After the real server is listening, durable running and failed markers are
+incomplete cutovers, not live progress. The typed server context carries the
+engine's bound project id, because TaskStore does not promise an ad-hoc getter;
+otherwise preserve startup-factory's absolute-root migration-key shape. No
+updated_at age threshold is valid because progress does not refresh it.
+*/
+async function resolveDashboardMigrationHealth(
+  store: TaskStore,
+  layer: AsyncDataLayer,
+  context?: DashboardPostgresHealthContext,
+): Promise<DashboardMigrationHealth | undefined> {
+  const boundProjectId = context?.projectId?.trim() || undefined;
+  const rootDir = typeof store.getRootDir === "function" ? store.getRootDir() : undefined;
+  // Compatibility-only test/integration stores without a root cannot identify a project marker.
+  if (!boundProjectId && !rootDir) return undefined;
+  const migrationKey = boundProjectId
+    ? `project:${boundProjectId}`
+    : `project:${resolvePath(rootDir!)}`;
+  const state = await getSqliteMigrationState(layer.db, migrationKey);
+  if (state?.status !== "running" && state?.status !== "failed") return undefined;
+  const status = state.status;
+  const lastError = state.lastError;
+  return {
+    active: false,
+    durableStatus: status,
+    phase: status,
+    label: status === "running"
+      ? "SQLite → PostgreSQL migration incomplete (status: running). Do not delete legacy .fusion/fusion.db backups. Re-run migration or check logs."
+      : `SQLite → PostgreSQL migration failed: ${lastError ?? "unknown error"}. Legacy SQLite files were retained as backups; see docs/storage.md and run 'fn db migrate' after fixing the error.`,
+    lastError,
+    migrationKey: state.migrationKey,
+    updatedAt: new Date(state.updatedAt).toISOString(),
+  };
 }
 
 function healthyDatabase(checkedAt: Date): DashboardPostgresHealthResult["database"] {
@@ -89,7 +154,7 @@ function failedHealth(
   return {
     database: {
       healthy: false,
-      corruptionDetected: true,
+      corruptionDetected: false,
       corruptionErrors: visibleErrors,
       lastCheckedAt: checkedAt,
       isRunning: false,
