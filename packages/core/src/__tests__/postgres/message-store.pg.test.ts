@@ -122,4 +122,41 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
       .filter((message) => message.metadata?.kind === "postgres-migration-complete");
     expect(completionMessages).toHaveLength(1);
   });
+
+  /*
+  FNXC:PostgresMigrationNulSanitize 2026-07-20:
+  Same NUL-byte hazard as the chat-store regression (chat-store-content-search-edit.pg.test.ts):
+  agent-to-agent/agent-to-user mailbox content can carry raw tool output
+  containing a literal U+0000 byte, which Postgres's text/jsonb columns
+  reject outright ("unsupported Unicode escape sequence" / "\u0000 cannot be
+  converted to text"). sendMessage now sanitizes content/metadata before
+  insert — verify a NUL-laden send round-trips instead of throwing.
+  */
+  it("sendMessage strips a raw U+0000 byte instead of throwing", async () => {
+    const { MessageStore } = await import("../../message-store.js");
+    const store = new MessageStore(null, { asyncLayer: h.layer() });
+
+    const diagnosticDump =
+      "===FUSION DB AGENTS===\n===NODES===\n\u0000===RUNNING PROCESSES===\n";
+    const sent = await store.sendMessage({
+      fromId: "agent-ceo",
+      fromType: "agent",
+      toId: "user-x",
+      toType: "user",
+      content: diagnosticDump,
+      type: "agent-to-user",
+      metadata: { toolOutput: "payload\u0000tail" },
+    });
+
+    expect(sent.content).toBe(
+      "===FUSION DB AGENTS===\n===NODES===\n===RUNNING PROCESSES===\n",
+    );
+    expect(sent.metadata?.toolOutput).toBe("payloadtail");
+
+    const fetched = await store.getMessage(sent.id);
+    expect(fetched?.content).toBe(
+      "===FUSION DB AGENTS===\n===NODES===\n===RUNNING PROCESSES===\n",
+    );
+    expect(fetched?.metadata?.toolOutput).toBe("payloadtail");
+  });
 });

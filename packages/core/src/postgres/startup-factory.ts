@@ -281,6 +281,35 @@ class NonUtf8EmbeddedClusterError extends Error {
   }
 }
 
+/*
+FNXC:PostgresStartupRace 2026-07-20-22:10:
+Companion to embedded-lifecycle.ts's FNXC:PostgresStartupRace 2026-07-15-20:45
+note: isAlreadyRunning() joins a data dir optimistically off postmaster.pid
+without probing liveness (a stale pid file from a crash must still resolve to
+a port, by design), and ensureJoinedDatabase() is explicitly best-effort —
+"never convert an optimistic join into a hard startup failure". But nothing
+downstream actually retried: a joiner that raced the true owner's TCP bind
+(process started, postmaster.pid written and "database system is ready"
+logged, but the listener not yet accepting) got exactly one shot at
+createConnectionSetFromUrl(), which throws ECONNREFUSED, which
+bootSchemaBackendOnce turns into a hard `startup-factory: failed to
+initialize PostgreSQL schema backend` error — observed reproducibly via
+`pnpm smoke:boot`'s isolated embedded-instance boot. This class marks that
+one specific case (joined instance, i.e. embeddedOwnsProcess === false,
+connection-refused) as retryable, mirroring the existing
+NonUtf8EmbeddedClusterError one-retry pattern below.
+*/
+class JoinedInstanceUnreachableError extends Error {
+  constructor(override readonly cause: unknown) {
+    super("embedded postgres: joined instance was not yet accepting connections");
+  }
+}
+
+/** Matches a TCP-level connection-refused failure (ECONNREFUSED / "connect ECONNREFUSED"). */
+function isConnectionRefusedError(chainText: string): boolean {
+  return /ECONNREFUSED/i.test(chainText);
+}
+
 /** Matches PostgreSQL's encoding-conversion failure raised by a non-UTF-8 cluster. */
 export function isEncodingConversionError(chainText: string): boolean {
   return /has no equivalent in encoding/i.test(chainText);
@@ -328,6 +357,15 @@ async function bootSchemaBackend(
   try {
     return await bootSchemaBackendOnce(options, bypassProjectIsolation);
   } catch (error) {
+    if (error instanceof JoinedInstanceUnreachableError) {
+      log.warn(
+        "startup-factory: joined embedded postgres instance was not yet accepting connections " +
+          "(startup race with the true owner's TCP bind — see FNXC:PostgresStartupRace 2026-07-20-22:10). " +
+          "Retrying once after a short delay.",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+    }
     if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
     log.warn(
       `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
@@ -443,6 +481,18 @@ async function bootSchemaBackendOnce(
     ) {
       recoverable = await isEmptyNonUtf8Cluster(connections.migration).catch(() => false);
     }
+    /*
+    FNXC:PostgresStartupRace 2026-07-20-22:10:
+    A joined (not owned) embedded instance that fails with a connection-refused
+    is the documented startup race (embedded-lifecycle.ts FNXC:PostgresStartupRace
+    2026-07-15-20:45): we joined off postmaster.pid before the true owner's
+    listener was accepting connections. This is retryable — see bootSchemaBackend's
+    JoinedInstanceUnreachableError handling — rather than a hard failure.
+    */
+    const joinedConnectionRefused =
+      embeddedLifecycle !== null &&
+      !embeddedOwnsProcess &&
+      isConnectionRefusedError(error instanceof Error ? `${error.message} ${String(error.cause ?? "")}` : String(error));
     await connections?.close().catch(() => undefined);
     await stopEmbeddedRuntime(
       embeddedLifecycle,
@@ -452,6 +502,9 @@ async function bootSchemaBackendOnce(
     ).catch(() => undefined);
     if (recoverable && embeddedDataDir !== null) {
       throw new NonUtf8EmbeddedClusterError(embeddedDataDir, error);
+    }
+    if (joinedConnectionRefused) {
+      throw new JoinedInstanceUnreachableError(error);
     }
     throw error;
   }
