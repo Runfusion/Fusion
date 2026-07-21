@@ -1698,69 +1698,21 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
 }
 
 .planning-refine-menu-header p,
-.planning-refine-menu-custom > span {
+.planning-refine-menu-input > span {
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   text-wrap: pretty;
 }
 
-.planning-refine-menu-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-sm);
-}
-
-.planning-refine-menu-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  min-height: calc(var(--space-2xl) + var(--space-md));
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  box-shadow: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--border) 80%, transparent);
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    box-shadow var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-.planning-refine-menu-option:hover {
-  background: var(--card-hover);
-  box-shadow: var(--focus-ring);
-}
-
-.planning-refine-menu-option:active {
-  transform: scale(0.96);
-}
-
-.planning-refine-menu-option:has(input:checked) {
-  background: color-mix(in srgb, var(--todo) 12%, var(--surface));
-  box-shadow: 0 0 0 var(--btn-border-width) var(--todo);
-}
-
-.planning-refine-menu-option input {
-  flex-shrink: 0;
-  accent-color: var(--todo);
-}
-
-.planning-refine-menu-option span {
-  min-width: 0;
-  color: var(--text);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-
-.planning-refine-menu-custom {
+.planning-refine-menu-input {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.planning-refine-menu-custom textarea {
-  min-height: calc(var(--space-2xl) * 2);
+.planning-refine-menu-input textarea {
+  min-height: calc(var(--space-2xl) * 3);
+  line-height: 1.5;
   resize: vertical;
 }
 
@@ -1808,14 +1760,13 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
     padding: var(--space-lg);
   }
 
-  .planning-refine-menu-options {
-    grid-template-columns: 1fr;
-  }
 }
 
 /*
-FNXC:PlanningMode 2026-06-25-09:20:
-Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer must absorb the narrower detail pane instead of relying on the mobile full-width stack. Allow the three labeled actions to wrap inside the pane while preserving the desktop left/right grouping when space is available.
+FNXC:PlanningModeTablet 2026-07-20-21:50:
+Tablet embedded Planning keeps the desktop two-pane shell. The question Next action and the plan
+Refine/Proceed actions share one compact bottom baseline; equal footer/button heights, non-wrapping
+plan actions, and a token-sized bottom inset keep all three controls inline without extra space.
 */
 @media (min-width: 769px) and (max-width: 1024px) {
   /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
@@ -1872,6 +1823,30 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
     flex-shrink: 1;
     max-width: 100%;
     white-space: normal;
+  }
+
+  .planning-question-pane .planning-actions,
+  .planning-plan-actions {
+    align-items: stretch;
+    min-height: calc(var(--space-2xl) + var(--space-xl));
+    padding: var(--space-sm) var(--space-lg) var(--space-xs);
+  }
+
+  .planning-question-pane .planning-actions {
+    justify-content: flex-end;
+  }
+
+  .planning-question-pane .planning-actions .btn,
+  .planning-plan-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  .planning-plan-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: var(--space-md);
   }
 }
 
@@ -2083,16 +2058,38 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
     padding: var(--space-md) var(--space-lg);
   }
 
+  /*
+  FNXC:PlanningModeMobile 2026-07-20-21:50:
+  The Planning detail header keeps Back, the lightbulb, a single-line truncated title, and Edit on
+  one row. Fixed icon controls may not shrink; only the title yields space before Sessions/History.
+  */
+
   .planning-modal--embedded .modal-header--embedded .detail-title-row {
     flex: 1 1 100%;
+    flex-wrap: nowrap;
+    width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .planning-modal--embedded .modal-header--embedded .detail-title-row h3 {
+    flex: 1 1 auto;
     min-width: 0;
+    margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .planning-modal--embedded .modal-header--embedded .detail-title-row > svg,
+  .planning-modal--embedded .modal-header--embedded .detail-title-row > .btn-icon,
+  .planning-modal--embedded .modal-header--embedded .planning-mobile-back {
+    flex: 0 0 auto;
+  }
+
+  .planning-modal--embedded .modal-header--embedded .planning-session-title-input {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .planning-header-controls {

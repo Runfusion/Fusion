@@ -586,8 +586,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const canReturnToSessionList = isCompactInterview && mobileShowDetail && planningSessions.length > 0;
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"question" | "plan">("question");
-  const [selectedRefineFocuses, setSelectedRefineFocuses] = useState<string[]>([]);
-  const [customRefineFocus, setCustomRefineFocus] = useState("");
+  /*
+  FNXC:PlanningMode 2026-07-20-21:50:
+  Refine accepts one freeform instruction instead of generated category choices. The instruction
+  guides both the regenerated plan and its next questions, resets when canceled, and must contain
+  non-whitespace text before submission.
+  */
+  const [refinementPrompt, setRefinementPrompt] = useState("");
 
   useEffect(() => {
     if (isMobile && workspaceQuestion) {
@@ -595,18 +600,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
   }, [isMobile, workspaceQuestion?.id]);
   const refineMenuRef = useRef<HTMLDivElement>(null);
+  const refinementInputRef = useRef<HTMLTextAreaElement>(null);
   const refineTriggerRef = useRef<HTMLButtonElement>(null);
   const { addToast } = useToast();
   const { pushNav } = useNavigationHistoryContext();
 
-  const combinedRefineFocus = useMemo(
-    () => [...selectedRefineFocuses, customRefineFocus.trim()].filter(Boolean).join(", "),
-    [customRefineFocus, selectedRefineFocuses],
-  );
+  const refinementInstructions = refinementPrompt.trim();
 
   useEffect(() => {
     if (!isRefineMenuOpen) return;
-    refineMenuRef.current?.focus();
+    refinementInputRef.current?.focus();
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
@@ -1596,7 +1599,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               });
             }
           }
-          connectToPlanningStream(sessionId);
         } else if (session.status === "complete" && session.result) {
           const summary = persistedRunningSummary ?? normalizePlanningSummary(JSON.parse(session.result));
           setRunningSummary(summary);
@@ -1737,6 +1739,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   // SSE subscription keeps the list live (mirrors useBackgroundSessions, but
   // unfiltered by status so completed/errored sessions stay visible).
+  /*
+  FNXC:PlanningMultiTab 2026-07-20-21:50:
+  Restored awaiting-input sessions intentionally have no idle per-session stream because a later
+  stream failure must not replace valid persisted plan/question state. Global session updates must
+  therefore rehydrate the selected idle view so another tab cannot leave it showing or submitting
+  a stale question. Locally streamed turns keep their existing connection and reconcile in place.
+  */
   useEffect(() => {
     if (!isOpen) return;
     const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
@@ -1746,6 +1755,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         const updated = JSON.parse(e.data) as AiSessionSummary;
         if (updated.type !== "planning") return;
         setPlanningSessions((prev) => dedupeSessionsById([updated, ...prev]));
+        const currentView = viewRef.current;
+        const isSelectedIdleSession = updated.id === currentSessionIdRef.current
+          && (currentView.type === "question" || currentView.type === "plan_review")
+          && streamConnectionRef.current === null;
+        if (isSelectedIdleSession) {
+          void loadSession(updated.id);
+        }
       } catch {
         // ignore malformed payload
       }
@@ -1771,7 +1787,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         void refreshSessionsList();
       },
     });
-  }, [isOpen, projectId, refreshSessionsList]);
+  }, [isOpen, loadSession, projectId, refreshSessionsList]);
 
   // Sidebar handlers
   const handleSelectSession = useCallback(
@@ -2321,13 +2337,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const handleRefineFromPlan = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
     const summary = runningSummaryRef.current;
-    if (!sessionId || !summary || !combinedRefineFocus) return;
+    if (!sessionId || !summary || !refinementInstructions) return;
     setError(null);
     setGenerationActivity("question");
     setIsRefineMenuOpen(false);
     setView({ type: "loading" });
     try {
-      const response = await respondToPlanning(sessionId, { refine: true, focus: combinedRefineFocus }, projectId);
+      const response = await respondToPlanning(sessionId, { refine: true, focus: refinementInstructions }, projectId);
       const responseQuestion = "type" in response ? response.data : response.currentQuestion;
       const responseSummary = "type" in response ? null : response.summary;
       const nextSummary = responseSummary ? normalizePlanningSummary(responseSummary) : summary;
@@ -2345,8 +2361,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           },
         });
       }
-      setSelectedRefineFocuses([]);
-      setCustomRefineFocus("");
+      setRefinementPrompt("");
     } catch (err) {
       setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to refine plan"));
       if (workspaceQuestion) {
@@ -2355,7 +2370,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
       }
     }
-  }, [combinedRefineFocus, projectId, t, workspaceQuestion]);
+  }, [projectId, refinementInstructions, t, workspaceQuestion]);
 
   const handleValidatePlan = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -2597,35 +2612,22 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             className="planning-refine-menu"
             data-testid="planning-refine-menu"
             role="dialog"
-            aria-label={t("planning.chooseRefinementAreas", "Choose areas to refine")}
+            aria-label={t("planning.refinePlanAndQuestions", "Refine plan and questions")}
             tabIndex={-1}
           >
             <div className="planning-refine-menu-header">
-              <h4>{t("planning.refineQuestion", "What should the next question focus on?")}</h4>
-              <p>{t("planning.refineQuestionHint", "Choose one or more areas, or describe your own.")}</p>
+              <h4>{t("planning.refinePlanAndNextQuestions", "Refine the plan and next questions")}</h4>
+              <p>{t("planning.refineInstructionsHint", "Describe what should change. The plan will update and the next questions will follow your direction.")}</p>
             </div>
-            <div className="planning-refine-menu-options">
-              {(summary.suggestedRefinements ?? []).map((focus) => (
-                <label key={focus} className="planning-refine-menu-option">
-                  <input
-                    type="checkbox"
-                    checked={selectedRefineFocuses.includes(focus)}
-                    onChange={() => setSelectedRefineFocuses((previous) => previous.includes(focus)
-                      ? previous.filter((item) => item !== focus)
-                      : [...previous, focus])}
-                  />
-                  <span>{focus}</span>
-                </label>
-              ))}
-            </div>
-            <label className="planning-refine-menu-custom">
-              <span>{t("planning.otherRefineFocus", "Or describe another focus")}</span>
+            <label className="planning-refine-menu-input">
+              <span>{t("planning.refinementInstructions", "Refinement instructions")}</span>
               <textarea
+                ref={refinementInputRef}
                 className="input"
-                value={customRefineFocus}
-                onChange={(event) => setCustomRefineFocus(event.target.value)}
-                placeholder={t("planning.refineFocusPlaceholder", "Describe what the next question should focus on")}
-                rows={2}
+                value={refinementPrompt}
+                onChange={(event) => setRefinementPrompt(event.target.value)}
+                placeholder={t("planning.refinePromptPlaceholder", "For example: add a staged rollout, cover failure recovery, and ask about migration risks.")}
+                rows={4}
               />
             </label>
             <div className="planning-refine-menu-actions">
@@ -2634,15 +2636,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 className="btn"
                 onClick={() => {
                   setIsRefineMenuOpen(false);
-                  setSelectedRefineFocuses([]);
-                  setCustomRefineFocus("");
+                  setRefinementPrompt("");
                   refineTriggerRef.current?.focus();
                 }}
               >
                 {t("common.cancel", "Cancel")}
               </button>
-              <button type="button" className="btn btn-primary" disabled={!combinedRefineFocus} onClick={() => void handleRefineFromPlan()}>
-                {t("planning.askNextQuestion", "Ask next question")}
+              <button type="button" className="btn btn-primary" disabled={!refinementInstructions} onClick={() => void handleRefineFromPlan()}>
+                {t("planning.applyRefinement", "Apply refinement")}
               </button>
             </div>
           </div>
@@ -2654,8 +2655,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           aria-expanded={isRefineMenuOpen}
           aria-controls={isRefineMenuOpen ? "planning-refine-menu" : undefined}
           onClick={() => {
-            setSelectedRefineFocuses([]);
-            setCustomRefineFocus("");
+            setRefinementPrompt("");
             setIsRefineMenuOpen((open) => !open);
           }}
         >
