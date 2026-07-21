@@ -37,9 +37,15 @@ describe("required workflow artifact contracts", () => {
 
   it("round-trips a deduplicated typed missing-artifact failure", () => {
     const value = requiredArtifactMissingValue([" PROMPT.md ", "PROMPT.md", "steps"]);
-    expect(value).toBe("required-artifact-missing:PROMPT.md,steps");
+    expect(value).toBe('required-artifact-missing:["PROMPT.md","steps"]');
     expect(parseRequiredArtifactMissingValue(value)).toEqual(["PROMPT.md", "steps"]);
+    expect(parseRequiredArtifactMissingValue("required-artifact-missing:PROMPT.md,steps")).toEqual(["PROMPT.md", "steps"]);
     expect(parseRequiredArtifactMissingValue("failed")).toBeNull();
+  });
+
+  it("round-trips artifact keys containing the legacy delimiter", () => {
+    const value = requiredArtifactMissingValue(["plans,primary.md", "steps"]);
+    expect(parseRequiredArtifactMissingValue(value)).toEqual(["plans,primary.md", "steps"]);
   });
 
   it("rejects an empty missing-artifact payload instead of emitting an unparsable value", () => {

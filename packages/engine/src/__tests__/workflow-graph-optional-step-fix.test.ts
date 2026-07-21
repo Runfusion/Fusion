@@ -80,6 +80,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     }));
   });
 
+  /*
+  FNXC:RequiredArtifactRecovery 2026-07-21-17:00:
+  Protected lifecycle states suppress missing-artifact replanning. Storage read
+  failures instead consume bounded graph-resume retries without being relabeled
+  as confirmed absence or terminal task failure.
+  */
   it.each([
     { label: "user-paused", patch: { paused: true, userPaused: true } },
     { label: "merged", patch: { column: "in-review", mergeDetails: { mergeConfirmed: true } } },

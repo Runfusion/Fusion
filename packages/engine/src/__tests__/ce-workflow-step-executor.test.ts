@@ -954,7 +954,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(result).toMatchObject({
         success: false,
         verdict: "REVISE",
-        failureValue: "required-artifact-missing:PROMPT.md",
+        failureValue: 'required-artifact-missing:["PROMPT.md"]',
       });
     });
 
@@ -980,7 +980,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
         success: false,
         revisionRequested: true,
         verdict: "REVISE",
-        failureValue: "required-artifact-missing:PROMPT.md",
+        failureValue: 'required-artifact-missing:["PROMPT.md"]',
         notes: expect.stringContaining("PROMPT.md could not be loaded"),
       });
       expect(store.logEntry).toHaveBeenCalledWith(
@@ -1032,7 +1032,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
         success: false,
         revisionRequested: true,
         verdict: "REVISE",
-        failureValue: "required-artifact-missing:PROMPT.md",
+        failureValue: 'required-artifact-missing:["PROMPT.md"]',
       });
     });
 

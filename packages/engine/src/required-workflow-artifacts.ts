@@ -22,12 +22,25 @@ export function requiredArtifactMissingValue(keys: readonly string[]): string {
   if (normalizedKeys.length === 0) {
     throw new Error("At least one required artifact key is needed");
   }
-  return `${REQUIRED_ARTIFACT_MISSING_PREFIX}${normalizedKeys.join(",")}`;
+  return `${REQUIRED_ARTIFACT_MISSING_PREFIX}${JSON.stringify(normalizedKeys)}`;
 }
 
 export function parseRequiredArtifactMissingValue(value: string | undefined): string[] | null {
   if (!value?.startsWith(REQUIRED_ARTIFACT_MISSING_PREFIX)) return null;
-  const keys = value.slice(REQUIRED_ARTIFACT_MISSING_PREFIX.length)
+  const payload = value.slice(REQUIRED_ARTIFACT_MISSING_PREFIX.length);
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (Array.isArray(parsed)) {
+      const keys = parsed
+        .filter((key): key is string => typeof key === "string")
+        .map((key) => key.trim())
+        .filter(Boolean);
+      return keys.length > 0 ? [...new Set(keys)] : null;
+    }
+  } catch {
+    // Pre-JSON signals used a comma-delimited payload; keep them recoverable.
+  }
+  const keys = payload
     .split(",")
     .map((key) => key.trim())
     .filter(Boolean);
