@@ -8,6 +8,8 @@ import {
   workflowEntryArtifacts,
 } from "../required-workflow-artifacts.js";
 
+// FNXC:WorkflowArtifacts 2026-07-21-17:00: This suite locks the typed missing/read
+// distinction and the non-empty planning/step-source contract used by every gate.
 describe("required workflow artifact contracts", () => {
   it("treats planning-owned and step-source declarations as workflow-entry inputs", () => {
     const ir = {

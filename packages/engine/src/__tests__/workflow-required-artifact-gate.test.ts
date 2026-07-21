@@ -5,7 +5,7 @@ import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
 import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
 
 /*
-FNXC:WorkflowGates 2026-06-17-18:24:
+FNXC:WorkflowArtifacts 2026-07-21-17:00:
 FN-6582 requires terminal workflow success to depend on declared task-document artifact key existence, not only graph node success. Planning-owned and step-source artifacts must also be non-empty because downstream execution cannot consume an empty contract.
 */
 

@@ -188,6 +188,7 @@ import {
 } from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import {
+  isRequiredArtifactReadFailedValue,
   parseRequiredArtifactMissingValue,
   requiredArtifactMissingValue,
   requiredArtifactReadFailedValue,
@@ -4903,6 +4904,9 @@ export class TaskExecutor {
     artifactKeys: string[],
     source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
   ): Promise<void> {
+    const currentTask = await this.store.getTask(task.id).catch(() => null);
+    if (!currentTask || this.isRequiredArtifactRecoveryProtected(currentTask)) return;
+    task = currentTask;
     const decision = computeRecoveryDecision({
       recoveryRetryCount: task.recoveryRetryCount,
       nextRecoveryAt: task.nextRecoveryAt,
@@ -4931,6 +4935,8 @@ export class TaskExecutor {
     });
 
     if (!decision.shouldRetry) {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
       const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
       await this.store.logEntry(task.id, error, undefined, context);
       await this.store.updateTask(task.id, {
@@ -4951,7 +4957,9 @@ export class TaskExecutor {
     );
     this.workflowLifecycleMovesInFlight.add(task.id);
     try {
-      await moveTaskToReplanColumn(this.store, { id: task.id, column: task.column }, replanColumn);
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      await moveTaskToReplanColumn(this.store, { id: task.id, column: liveTask.column }, replanColumn);
     } finally {
       this.workflowLifecycleMovesInFlight.delete(task.id);
     }
@@ -4962,6 +4970,18 @@ export class TaskExecutor {
       nextRecoveryAt: decision.nextState.nextRecoveryAt,
       graphResumeRetryCount: 0,
     }, context);
+  }
+
+  private isRequiredArtifactRecoveryProtected(task: Task): boolean {
+    return Boolean(
+      task.deletedAt
+      || task.paused
+      || task.userPaused === true
+      || task.column === "done"
+      || task.column === "archived"
+      || task.mergeDetails?.mergeConfirmed === true
+      || (task.column === "in-review" && task.autoMerge === false),
+    );
   }
 
   /**
@@ -5593,11 +5613,13 @@ export class TaskExecutor {
           try {
             content = await this.readTaskArtifact(task.id, artifact.key);
           } catch (error) {
+            const failureValue = requiredArtifactReadFailedValue(artifact.key);
             await this.handleGraphFailure(task, {
               disposition: "failed",
               outcome: "failure",
               reason: `workflow-required-artifact-read-failed:${artifact.key}:${error instanceof Error ? error.message : String(error)}`,
-              visitedNodeIds: [],
+              visitedNodeIds: ["workflow-entry-artifact"],
+              context: { "node:workflow-entry-artifact:value": failureValue },
             });
             return;
           }
@@ -9768,6 +9790,43 @@ export class TaskExecutor {
       the task failed with the signature erased (FN-7996 looped dispatch→park all day).
       */
       if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result)) {
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      if (isRequiredArtifactReadFailedValue(this.graphFailureValue(result))) {
+        /*
+        FNXC:WorkflowArtifacts 2026-07-21-17:00:
+        A TaskStore read outage is not proof that an artifact is absent. Keep the
+        task in place and use the bounded graph-resume budget instead of replanning
+        or terminalizing a possibly healthy workflow contract.
+        */
+        const priorRetries = live.graphResumeRetryCount ?? 0;
+        if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
+          const nextRetries = priorRetries + 1;
+          const message = `Required workflow artifact could not be read — retrying in place (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+          await this.store.updateTask(task.id, { graphResumeRetryCount: nextRetries }, this.getRunContextFor(task.id));
+          const scheduleRetry = () => {
+            void (async () => {
+              try {
+                const resumeTask = await this.store.getTask(task.id);
+                if (this.isRequiredArtifactRecoveryProtected(resumeTask) || resumeTask.status === "failed") return;
+                await this.execute(resumeTask);
+              } catch (err) {
+                executorLog.error(`Failed required-artifact read retry for ${task.id}:`, err);
+              }
+            })();
+          };
+          const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
+          handle.unref?.();
+        } else {
+          await this.store.logEntry(
+            task.id,
+            "Required workflow artifact read retry budget exhausted — task remains held in its current state",
+            undefined,
+            this.getRunContextFor(task.id),
+          );
+        }
         await this.persistTokenUsage(task.id);
         return;
       }

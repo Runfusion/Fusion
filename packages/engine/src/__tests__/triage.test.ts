@@ -1644,6 +1644,14 @@ Planner rewrote mission without the raw request.
       await (localProcessor as any).finalizeApprovedTask(task, written, { requirePlanApproval: false } as Settings);
 
       expect(localStore.moveTaskIf).not.toHaveBeenCalled();
+      for (const [, patch] of localStore.updateTask.mock.calls) {
+        expect(patch).not.toEqual(expect.objectContaining({
+          steps: expect.anything(),
+        }));
+        expect(patch).not.toEqual(expect.objectContaining({
+          sourceMetadataPatch: expect.anything(),
+        }));
+      }
       expect(localStore.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
         status: null,
         recoveryRetryCount: 1,

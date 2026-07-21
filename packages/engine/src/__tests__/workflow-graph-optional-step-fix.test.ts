@@ -71,11 +71,89 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       recoveryRetryCount: 1,
       nextRecoveryAt: expect.any(String),
     }), undefined);
-    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: 1 }), undefined);
+    for (const [, patch] of store.updateTask.mock.calls) {
+      expect((patch as Partial<Task>).postReviewFixCount ?? 0).toBe(0);
+    }
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:required-artifact-missing",
       metadata: expect.objectContaining({ artifactKeys: ["PROMPT.md"], action: "replan", attempt: 1 }),
     }));
+  });
+
+  it.each([
+    { label: "user-paused", patch: { paused: true, userPaused: true } },
+    { label: "merged", patch: { column: "in-review", mergeDetails: { mergeConfirmed: true } } },
+    { label: "manual-review", patch: { column: "in-review", autoMerge: false } },
+  ])("does not replan a $label task when lifecycle state changes before recovery", async ({ patch }) => {
+    const store = createMockStore();
+    const initial = task({ recoveryRetryCount: 0 });
+    const protectedTask = task({ ...patch } as Partial<Task>);
+    store.getTask.mockResolvedValueOnce(initial).mockResolvedValue(protectedTask);
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const scheduled = await (executor as any).requestPreMergeOptionalStepFix(initial.id, initial, {
+      stepName: "Plan Review",
+      feedback: "PROMPT.md could not be loaded",
+      phase: "pre-merge",
+      status: "failed",
+      failureValue: "required-artifact-missing:PROMPT.md",
+      nodeId: "plan-review",
+    });
+
+    expect(scheduled).toBe(true);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("honors a pause that races recovery immediately before the replan move", async () => {
+    const store = createMockStore();
+    const initial = task({ recoveryRetryCount: 0 });
+    const paused = task({ paused: true, userPaused: true });
+    store.getTask
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(paused);
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await (executor as any).requestPreMergeOptionalStepFix(initial.id, initial, {
+      stepName: "Plan Review",
+      feedback: "PROMPT.md could not be loaded",
+      phase: "pre-merge",
+      status: "failed",
+      failureValue: "required-artifact-missing:PROMPT.md",
+      nodeId: "plan-review",
+    });
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("holds and retries a graph-entry storage read failure without replanning or failing", async () => {
+    const store = createMockStore();
+    const liveTask = task({ graphResumeRetryCount: 0 });
+    store.getTask.mockResolvedValue(liveTask);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await (executor as any).handleGraphFailure(liveTask, {
+      disposition: "failed",
+      outcome: "failure",
+      reason: "workflow-required-artifact-read-failed:PROMPT.md:database unavailable",
+      visitedNodeIds: ["workflow-entry-artifact"],
+      context: { "node:workflow-entry-artifact:value": "required-artifact-read-failed:PROMPT.md" },
+    });
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, {
+      graphResumeRetryCount: 1,
+    }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      liveTask.id,
+      expect.objectContaining({ status: "failed" }),
+      undefined,
+    );
   });
 
   it("parks visibly when missing-artifact recovery is exhausted", async () => {

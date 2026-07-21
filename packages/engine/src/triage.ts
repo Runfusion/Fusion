@@ -2582,6 +2582,10 @@ export class TriageProcessor {
     } = {},
   ): Promise<void> {
     let written = writtenInput;
+    // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
+    // exists before persisting any dependencies, steps, metadata, or review state
+    // derived from it; a missing plan must leave no partially accepted projection.
+    if (await this.recoverMissingPromptBeforeRelease(task)) return;
     const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
 
     /*
@@ -3089,8 +3093,6 @@ export class TriageProcessor {
     A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
     */
     // Apply title while the live row is still planning; a post-release patch can race execution.
-    if (await this.recoverMissingPromptBeforeRelease(task)) return;
-
     if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }

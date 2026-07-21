@@ -3,6 +3,11 @@ import type { WorkflowIr, WorkflowIrArtifact } from "@fusion/core";
 export const REQUIRED_ARTIFACT_MISSING_PREFIX = "required-artifact-missing:";
 export const REQUIRED_ARTIFACT_READ_FAILED_PREFIX = "required-artifact-read-failed:";
 
+/*
+FNXC:WorkflowArtifacts 2026-07-21-17:00:
+Planning-owned and step-source artifacts are executable workflow contracts, so
+they must contain non-whitespace content before the graph can consume them.
+*/
 export function requiresNonEmptyWorkflowArtifact(artifact: WorkflowIrArtifact): boolean {
   return artifact.producedBy === "planning" || artifact.role === "step-source";
 }
