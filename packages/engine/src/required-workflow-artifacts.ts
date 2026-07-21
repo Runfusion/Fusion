@@ -18,7 +18,11 @@ export function workflowEntryArtifacts(ir: WorkflowIr): WorkflowIrArtifact[] {
 }
 
 export function requiredArtifactMissingValue(keys: readonly string[]): string {
-  return `${REQUIRED_ARTIFACT_MISSING_PREFIX}${[...new Set(keys)].join(",")}`;
+  const normalizedKeys = [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
+  if (normalizedKeys.length === 0) {
+    throw new Error("At least one required artifact key is needed");
+  }
+  return `${REQUIRED_ARTIFACT_MISSING_PREFIX}${normalizedKeys.join(",")}`;
 }
 
 export function parseRequiredArtifactMissingValue(value: string | undefined): string[] | null {

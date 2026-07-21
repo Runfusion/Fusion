@@ -2514,6 +2514,12 @@ export class TriageProcessor {
     }
   }
 
+  /*
+  FNXC:WorkflowArtifacts 2026-07-21-17:00:
+  Planning cannot release a task unless authoritative TaskStore read-back proves
+  PROMPT.md survived persistence. Confirmed absence retries the planning owner
+  within the shared recovery budget, then parks visibly when that budget expires.
+  */
   private async recoverMissingPromptBeforeRelease(task: Task): Promise<boolean> {
     const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
     // Legacy/minimal stores may not expose prompt enrichment. Production TaskStore
