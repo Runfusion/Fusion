@@ -43,6 +43,14 @@ export const WORKFLOW_WORK_ITEM_STATES = [
 
 export type WorkflowWorkItemState = (typeof WORKFLOW_WORK_ITEM_STATES)[number];
 
+/** States that keep a workflow work item eligible for continuation ownership. */
+export const ACTIVE_WORKFLOW_WORK_ITEM_STATES: readonly WorkflowWorkItemState[] = [
+  "runnable",
+  "running",
+  "held",
+  "retrying",
+];
+
 export interface WorkflowWorkItem {
   id: string;
   runId: string;

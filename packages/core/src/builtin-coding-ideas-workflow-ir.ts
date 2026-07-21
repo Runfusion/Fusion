@@ -94,9 +94,12 @@ const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {
     }
   }
 
+  // FNXC:CodingIdeasWorkflow 2026-07-21-12:20:
   // Keep this preset intentionally small: planning + plan review in Todo,
   // implementation in In progress, then code review and merge in In review.
-  // Browser and post-merge verification remain available in richer workflows.
+  // Browser and post-merge verification remain available in richer workflows;
+  // direct success edges replace the removed nodes so the reduced preset keeps
+  // one continuous executable path.
   const removedNodeIds = new Set([
     "browser-verification",
     "browser-verification-remediation",

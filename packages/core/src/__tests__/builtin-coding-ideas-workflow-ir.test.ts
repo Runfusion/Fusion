@@ -100,9 +100,13 @@ describe("builtin coding-ideas workflow ir", () => {
     expect(nodeColumn("parse")).toBe("in-progress");
     expect(nodeColumn("steps")).toBe("in-progress");
     expect(nodeColumn("code-review")).toBe("in-review");
+    expect(nodeColumn("code-review-remediation")).toBe("in-progress");
     expect(nodeColumn("completion-summary")).toBe("in-review");
-    expect(nodeColumn("merge-gate")).toBe("in-review");
+    for (const node of ir.nodes.filter((candidate) => candidate.id.startsWith("merge-"))) {
+      expect(node.column, `${node.id} should remain in review`).toBe("in-review");
+    }
     expect(ir.nodes.some((node) => node.id === "browser-verification")).toBe(false);
+    expect(ir.nodes.some((node) => node.id === "browser-verification-remediation")).toBe(false);
     expect(ir.nodes.some((node) => node.id === "post-merge-verification")).toBe(false);
   });
 

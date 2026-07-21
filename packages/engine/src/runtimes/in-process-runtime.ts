@@ -14,11 +14,13 @@ import type {
   GithubIssueAction,
   CliSession,
   NotificationPayload,
+  WorkflowWorkItem,
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
   ChatStore,
   computeWorkflowIrPin,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   isEphemeralAgent,
   resolveWorkflowIrForTask,
 } from "@fusion/core";
@@ -65,6 +67,25 @@ const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediat
 
 export const CLI_AGENT_AWAITING_INPUT_EVENT = "cli-agent-awaiting-input" as const;
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
+
+export interface PlanningContinuationCandidate {
+  item: WorkflowWorkItem;
+  task: Task | null | undefined;
+}
+
+/** Select due planning continuations whose task remains dispatchable. */
+export function selectActionablePlanningContinuations(
+  candidates: readonly PlanningContinuationCandidate[],
+): Array<{ item: WorkflowWorkItem; task: Task }> {
+  return candidates.filter(
+    (candidate): candidate is { item: WorkflowWorkItem; task: Task } =>
+      candidate.item.waitReason === "planning"
+      && candidate.task !== null
+      && candidate.task !== undefined
+      && candidate.task.paused !== true
+      && candidate.task.userPaused !== true,
+  );
+}
 
 export interface CliAgentAwaitingInputNotificationInfo {
   sessionId: string;
@@ -996,8 +1017,14 @@ export class InProcessRuntime
               const planReview = resolvePreReleasePlanReviewNode(ir);
               if (!planReview || planReview.column !== live.column) return;
 
+              /*
+              FNXC:PlanReview 2026-07-21-12:20:
+              Specification completion creates a planning continuation only
+              when the review node belongs to the card's current column and no
+              active continuation already owns the task.
+              */
               const active = await this.taskStore.listWorkflowWorkItemsForTask(live.id, { kinds: ["task"] });
-              if (!active.some((item) => ["held", "runnable", "running", "retrying"].includes(item.state))) {
+              if (!active.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) {
                 await this.taskStore.replaceActiveTaskWorkflowContinuation({
                   runId: `${live.id}:planning-continuation:${planReview.id}:${active.length}`,
                   taskId: live.id,
@@ -1840,7 +1867,11 @@ export class InProcessRuntime
     return this.missionExecutionLoop;
   }
 
-  /** Wake the durable task-continuation consumer without nesting execution in triage. */
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-12:20:
+   * Wake the durable task-continuation consumer in a microtask so triage can
+   * release its own execution slot before continuation dispatch begins.
+   */
   private kickWorkflowContinuationProcessor(): void {
     queueMicrotask(() => {
       void this.drainWorkflowContinuations().catch((error) => {
@@ -1850,6 +1881,11 @@ export class InProcessRuntime
   }
 
   private async drainWorkflowContinuations(): Promise<void> {
+    /*
+    FNXC:WorkflowScheduling 2026-07-21-12:20:
+    A single runtime drain owns selection at a time. Concurrent wakeups collapse
+    behind this guard and the recurring processor supplies the next bounded pass.
+    */
     if (this.workflowContinuationDrainActive || this.status !== "active") return;
     this.workflowContinuationDrainActive = true;
     try {
@@ -1858,10 +1894,12 @@ export class InProcessRuntime
         states: ["runnable", "retrying"],
         limit: 20,
       });
+      const candidates: PlanningContinuationCandidate[] = [];
       for (const item of items) {
-        if (item.waitReason !== "planning") continue;
         const task = await this.taskStore.getTask(item.taskId).catch(() => undefined);
-        if (!task || task.paused || task.userPaused) continue;
+        candidates.push({ item, task });
+      }
+      for (const { item, task } of selectActionablePlanningContinuations(candidates)) {
         void this.executor.execute(task).catch((error) => {
           runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
         });

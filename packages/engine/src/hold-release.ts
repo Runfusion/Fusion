@@ -42,6 +42,7 @@ import {
   resolveColumnFlags,
   resolveColumnAdjacency,
   PLAN_REVIEW_GROUP_ID,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   DEFAULT_WORKFLOW_POOL_ID,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
@@ -142,6 +143,7 @@ function isHeldTask(ir: WorkflowIr, task: Task): boolean {
  * `promoteHeldTask`, `releaseHeldTaskByEvent`) enforces the same invariant.
  */
 /**
+ * FNXC:PlanReview 2026-07-21-12:20:
  * Locate a Plan Review node placed before WIP. Disabled optional groups still
  * traverse this node, allowing the graph to persist the same generic capacity
  * continuation without invoking a reviewer.
@@ -176,9 +178,7 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
     if (!legacyPassed) {
       if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
       const continuations = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
-      const active = continuations.filter((item) =>
-        ["held", "runnable", "running", "retrying"].includes(item.state),
-      );
+      const active = continuations.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
       // Readiness is represented by the graph's durable boundary continuation,
       // not by a special-case review result. Optional groups that are disabled
       // are still traversed and therefore reach the same capacity boundary.

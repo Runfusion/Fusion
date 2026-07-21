@@ -14,7 +14,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -5659,7 +5659,7 @@ export class TaskExecutor {
         const workItems = await this.store.listWorkflowWorkItemsForTask?.(task.id, { kinds: ["task"] }) ?? [];
         for (let index = workItems.length - 1; index >= 0; index -= 1) {
           const candidate = workItems[index];
-          if (["held", "runnable", "running", "retrying"].includes(candidate.state)) {
+          if (ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(candidate.state)) {
             continuation = candidate;
             break;
           }
@@ -5956,7 +5956,7 @@ export class TaskExecutor {
       clearPin: pinPersistence.clearPin,
       onSuspend: async (suspension) => {
         const items = await this.store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
-        const live = items.filter((item) => ["held", "runnable", "running", "retrying"].includes(item.state));
+        const live = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
         if (live.some((item) => item.nodeId === suspension.nodeId)) return;
         await this.store.replaceActiveTaskWorkflowContinuation({
           runId: `${workflowRunId ?? `${task.id}:workflow`}:continuation:${suspension.nodeId}:${items.length}`,
@@ -5996,7 +5996,7 @@ export class TaskExecutor {
           target: event.taskId,
           metadata:
             event.type === "task:column-transition"
-              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId }
+              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId, irHash: event.irHash }
               : { taskId: event.taskId, workflowId: event.workflowId, pinnedNodeId: event.pinnedNodeId, reason: event.reason },
         });
       },

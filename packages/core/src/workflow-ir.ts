@@ -1553,6 +1553,7 @@ function validateColumnAgent(column: WorkflowIrColumn): void {
 function validateV2(ir: WorkflowIrV2): void {
   validateColumns(ir);
 
+  // FNXC:WorkflowValidation 2026-07-21-12:20:
   // Capacity holds must have somewhere the scheduler can actually release
   // them. Failing authoring here avoids durable continuations that can never
   // become runnable.

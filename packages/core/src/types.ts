@@ -78,6 +78,7 @@ export type { ThinkingLevel, Column, ColumnId, TaskPriority };
 
 import {
   MERGE_REQUEST_STATES,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   WORKFLOW_WORK_ITEM_KINDS,
   WORKFLOW_WORK_ITEM_STATES,
 } from "./types/merge-queue.js";
@@ -101,6 +102,7 @@ import type {
 } from "./types/merge-queue.js";
 export {
   MERGE_REQUEST_STATES,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   WORKFLOW_WORK_ITEM_KINDS,
   WORKFLOW_WORK_ITEM_STATES,
 };
