@@ -71,6 +71,14 @@ mcpServers through createResolvedAgentSession. Grok ACP must not drop them.
 2. **Fusion custom tools (`fn_*`)** — engine `customTools` are hosted by a loopback HTTP bridge + stdio MCP server (`mcp-schema-server.cjs`) named `fusion-custom-tools`. Grok invokes tools via real MCP `tools/call`; the bridge runs `ToolDefinition.execute` in-process. Dashboard chat and room responders include the same safe coordination/productivity tools as their pi-shaped sessions: board discovery, task creation and delegation, agent discovery/configuration, web fetch, and goal/memory/research retrieval; destructive agent-lifecycle tools remain excluded from chat.
 3. **Skills** — the bundled Fusion skill (`packages/cli/skill/fusion`) plus any `additionalSkillPaths` skill roots are staged into a temp plugin directory and loaded via `grok agent --plugin-dir` and `_meta.pluginDirs`. Requested skill names and tool counts are also written into `_meta.rules` / system prompt context.
 
+### Fusion tool bridge packaging and diagnostics
+
+`fusion-custom-tools` starts `mcp-schema-server.cjs` next to the loaded tool-bridge module. The asset is committed beside `src/tool-bridge.ts` for source-loaded plugins and the plugin `build` script copies it beside `dist/tool-bridge.js` for dist-loaded plugins. A missing co-located asset otherwise appears at the host as `handshake failed: connection closed: initialize response` during MCP initialize.
+
+When custom Fusion tools were requested but the bridge cannot start, the session emits `FUSION_TOOL_BRIDGE_FAILED: mcp-schema-server-missing` or `FUSION_TOOL_BRIDGE_FAILED: bridge-start-failed`. It deliberately omits the broken MCP server entry, and the engine records `fusionToolBridgeFailed`, its fixed reason code, and a requested-tool count on the ids-only `session:runtime-resolved` run-audit event. Paths, schemas, error prose, and credentials are not persisted there.
+
+Grok ACP sessions store a string model plus `lastModelDescription`; lane markers normalize this to `grok/<model>` (for example `grok/grok-4.5`) before appending thinking metadata, never `undefined/undefined`.
+
 ### Session lifecycle
 
 1. `createSession` — spawn `grok agent stdio`, ACP `initialize`, `session/new` over the task cwd.

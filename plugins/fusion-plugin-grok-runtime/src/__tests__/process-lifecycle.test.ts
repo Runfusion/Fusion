@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+/*
+FNXC:GrokRuntimeTests 2026-07-19-18:10:
+The lifecycle registry imports `redactSecrets` only for stderr-capture behavior,
+but this suite exercises listener ownership and child cleanup. Stub that unrelated
+core dependency so reset/import coverage cannot spend a shard's transform budget
+on the full @fusion/core graph.
+*/
+vi.mock("@fusion/core", () => ({
+  redactSecrets: (value: string) => value,
+}));
+
 const EVENTS = ["exit", "beforeExit", "SIGTERM", "SIGINT"] as const;
 
 function listenerCounts(): Record<(typeof EVENTS)[number], number> {
@@ -15,13 +26,13 @@ describe("Grok plugin process lifecycle", () => {
   });
 
   /*
-  FNXC:GrokRuntimeTests 2026-07-18-07:40:
+  FNXC:GrokRuntimeTests 2026-07-19-18:10:
   Prove the process-manager Symbol.for exit-hook guard by re-importing the
-  registry module (lifecycle owner), not the full plugin graph. Full-suite
-  shard transform of @fusion/core via process-manager can still exceed the
-  default 5s budget on cold workers — give the bound stress test 15s.
+  registry module (lifecycle owner), not the full plugin graph. The core
+  dependency is mocked above because stderr redaction is outside this seam;
+  this keeps repeated evaluation a bounded unit test under shard pressure.
   */
-  it("keeps its process cleanup owner bounded across repeated module evaluation", { timeout: 15_000 }, async () => {
+  it("keeps its process cleanup owner bounded across repeated module evaluation", async () => {
     const baseline = listenerCounts();
     const warnings: Error[] = [];
     const onWarning = (warning: Error) => warnings.push(warning);

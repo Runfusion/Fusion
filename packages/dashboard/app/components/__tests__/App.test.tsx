@@ -632,6 +632,7 @@ import { App, didEnterAwaitingApproval, didEnterDone } from "../../App";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth, fetchBoardWorkflows } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
+import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
 async function waitForAppShell(): Promise<void> {
@@ -643,6 +644,7 @@ async function waitForAppShell(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __test_clearDashboardViewsCache();
   /*
    * FNXC:DashboardTests 2026-06-22-03:47:
    * App.test.tsx runs beside other dashboard specs in the same Vitest process, so reset API mock implementations as well as call counts to prevent cross-file implementation leakage.
@@ -2568,17 +2570,18 @@ describe("App view switching", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
-  it("hides the removed Roadmaps destination even when settings and plugin API still mention it", async () => {
+  it("shows the hosted Roadmaps destination when the plugin API advertises it", async () => {
     /*
-    FNXC:RoadmapsNavigation 2026-06-22-18:50:
-    Roadmaps was removed as an app view and experiment. Stale persisted flags and plugin dashboard rows must not expose the old sidebar destination.
+    FNXC:RoadmapsNavigation 2026-07-19-12:00:
+    Roadmap-item previews open through the restored hosted roadmaps destination, so plugin
+    dashboard rows must remain visible rather than being filtered as legacy navigation.
     */
     mockUseViewportMode.mockReturnValue("desktop");
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, roadmap: true },
     });
-    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         pluginId: "fusion-plugin-roadmap",
         view: {
@@ -2595,7 +2598,7 @@ describe("App view switching", () => {
     render(<App />);
 
     expect(await screen.findByTestId("sidebar-nav-missions")).toBeInTheDocument();
-    expect(screen.queryByTestId("sidebar-nav-plugin-fusion-plugin-roadmap-roadmaps")).toBeNull();
+    expect(await screen.findByTestId("sidebar-nav-plugin-fusion-plugin-roadmap-roadmaps")).toBeInTheDocument();
   });
 
   it("restores board and plugin routes when persisted taskView changes across remounts", async () => {

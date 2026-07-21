@@ -1318,7 +1318,7 @@ export class StepSessionExecutor {
           const delegationTools = this.options.agentStore
             ? [
                 createListAgentsTool(this.options.agentStore),
-                createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir }),
+                createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId }),
                 createTaskAssignTool(this.options.agentStore, this.options.store!),
               ]
             : [];

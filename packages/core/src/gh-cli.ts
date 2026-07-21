@@ -33,6 +33,8 @@ export interface StructuredGhError {
   };
 }
 
+export const MAX_GH_STDIN_INPUT_BYTES = 8 * 1024 * 1024;
+
 export interface RunGhOptions {
   cwd?: string;
   /** External abort signal — propagated to the spawned `gh` process. */
@@ -47,6 +49,11 @@ export interface RunGhOptions {
    * pins any AI session's `prompt()` that triggered the tool call.
    */
   timeoutMs?: number;
+  /**
+   * Optional UTF-8 request body streamed to child stdin. Limited to 8 MiB so
+   * callers can send bounded Contents API payloads without argv overflow.
+   */
+  input?: string;
 }
 
 const DEFAULT_GH_TIMEOUT_MS = 30_000;
@@ -160,8 +167,11 @@ export function runGh(args: string[], cwd?: string): string {
  * hangs when `gh` stalls on the network or a credential helper.
  */
 export function runGhAsync(args: string[], cwdOrOptions?: string | RunGhOptions): Promise<string> {
-  const { cwd, signal: externalSignal, timeoutMs = DEFAULT_GH_TIMEOUT_MS } =
+  const { cwd, signal: externalSignal, timeoutMs = DEFAULT_GH_TIMEOUT_MS, input } =
     normalizeRunGhOptions(cwdOrOptions);
+  if (input !== undefined && Buffer.byteLength(input, "utf8") > MAX_GH_STDIN_INPUT_BYTES) {
+    return Promise.reject(makeGhError(`gh stdin input exceeds ${MAX_GH_STDIN_INPUT_BYTES} byte limit`, "INPUT_TOO_LARGE"));
+  }
 
   return new Promise((resolve, reject) => {
     if (externalSignal?.aborted) {
@@ -196,7 +206,7 @@ export function runGhAsync(args: string[], cwdOrOptions?: string | RunGhOptions)
       if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
     };
 
-    execFile(
+    const child = execFile(
       "gh",
       args,
       {
@@ -229,6 +239,13 @@ export function runGhAsync(args: string[], cwdOrOptions?: string | RunGhOptions)
         }
       }
     );
+    /*
+    FNXC:GhCliStdin 2026-07-19-12:00:
+    GitHub Contents API image bodies can contain several megabytes of base64.
+    Keep that payload on stdin because operating-system argv limits are much
+    smaller and can otherwise reject a valid bounded report screenshot.
+    */
+    if (input !== undefined) child.stdin?.end(input);
   });
 }
 

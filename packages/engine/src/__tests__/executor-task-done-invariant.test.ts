@@ -6,7 +6,7 @@ import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
 import { type TaskStore } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { createMockStore, mockedCreateFnAgent, mockedExec, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExec, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const fn416Prompt = `# Task: FN-416 - Assign ready implementation task to active owner
 
@@ -87,12 +87,41 @@ async function setup(overrides: Record<string, unknown> = {}) {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    tool = customTools.find((t: any) => t.name === "fn_task_done");
+    tool = captureNamedTool(customTools, "fn_task_done", tool);
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 
   const executor = new TaskExecutor(store as any, "/repo");
   await executor.execute(task as any);
+
+  /*
+  FNXC:EngineTests 2026-07-19-16:10 (U10b):
+  `execute()` here is only a VEHICLE for capturing the live `fn_task_done` tool; the requirement
+  under test in this file is what that tool does when the agent calls it against a given row state.
+  Under graph ownership the vehicle is no longer inert: the harness session never calls
+  fn_task_done, so the graph spends the task-done budget and rebounds the row (column -> todo,
+  steps reset to the prompt-derived pending shape, taskDoneRetryCount bumped) and records its own
+  moveTask/updateStep calls. That vehicle noise is not the contract — it silently rewrote the
+  PRECONDITION each test declares (all-steps-done source-free delivery, two-pending-step bulk
+  guard, ...) and polluted the spies the assertions read.
+  Restoring the declared row through `_setRow` (patches win over the per-file `getTask` override,
+  so this is the only ordering that beats the executor's own writes) and clearing call history
+  re-establishes the exact precondition each test always intended, without weakening any assertion.
+  */
+  const baseline = baseTask(overrides);
+  task = { ...baseline, column: "in-progress", paused: false, pausedByAgentId: null, status: null, error: null };
+  store._setRow(baseline.id as string, { ...task });
+  for (const spy of [
+    store.moveTask,
+    store.updateStep,
+    store.updateTask,
+    store.logEntry,
+    store.recordActivity,
+    store.handoffToReview,
+    mockedExecSync,
+  ]) {
+    spy.mockClear();
+  }
 
   return { store, tool, setTask: (next: any) => (task = { ...task, ...next }) };
 }
@@ -331,7 +360,15 @@ Atlas Notes task-board artifacts only:
 
     expect(result.content[0].text).toContain("Task marked complete");
     expect(result.content[0].text).not.toContain("fn_task_done refused: no_commits");
-    expect(store.moveTask.mock.calls).toEqual([["FN-350", "in-progress"]]);
+    /*
+    FNXC:EngineTests 2026-07-19-16:25 (U10b):
+    A clean completion performs NO column move of its own. The old expectation of a single
+    `moveTask(id,"in-progress")` was an artifact of the vehicle leaving the row parked in `todo`;
+    with the row restored to its declared `in-progress` state the requirement is exactly the
+    stricter one this test always meant — the completion neither rebounds to `todo` nor stages the
+    review handoff itself (the merge-node boundary owns the in-review move).
+    */
+    expect(store.moveTask.mock.calls).toEqual([]);
     expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 

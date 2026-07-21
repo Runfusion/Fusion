@@ -90,14 +90,16 @@ describe("FN-4811 follow-up (FN-4809): process-wide executingTaskLock", () => {
     // instance had its own `executing` Set, so both proceeded past the per-instance
     // guard and both created agent sessions.
     //
-    // The exact createFnAgent count depends on the retry loop (mocked prompt never
-    // calls fn_task_done, so the no-fn_task_done retry path may fire), so we don't
-    // assert exact-1. The invariant we DO assert is that exactly one of the two
-    // stores received work-related log entries — the other store stayed completely
-    // untouched because its execute() bailed at the lock claim.
-    const aLogCount = (storeA.logEntry as any).mock.calls.length;
-    const bLogCount = (storeB.logEntry as any).mock.calls.length;
-    expect((aLogCount > 0) !== (bLogCount > 0)).toBe(true);
+    /*
+    FNXC:EngineTests 2026-07-19-03:12 (U10b):
+    Requirement unchanged: a single task ID may only have ONE run doing real implementation work in a process, no matter how many TaskExecutor instances exist. The FN-4809 production symptom was literally a DUPLICATE "Worktree created at /..." log pair inside the same second, so that log line is the invariant's ground truth.
+    What changed: `execute()` now always enters the workflow graph, and the graph runs on BOTH executors. The loser still fails to claim `executingTaskLock` inside `runImplementation`, so it does no implementation work — but its graph wrapper does write step/status bookkeeping to its own store. "The losing store is completely untouched" is therefore no longer the contract; "the work happened exactly once" still is.
+    */
+    const worktreeCreatedLogs = [
+      ...(storeA.logEntry as any).mock.calls,
+      ...(storeB.logEntry as any).mock.calls,
+    ].filter((call: any[]) => typeof call[1] === "string" && call[1].startsWith("Worktree created at "));
+    expect(worktreeCreatedLogs).toHaveLength(1);
   });
 
   it("releases the lock after execute() finishes so subsequent calls proceed", async () => {

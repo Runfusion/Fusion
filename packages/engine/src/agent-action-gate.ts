@@ -10,6 +10,7 @@ import {
   COMMAND_EXECUTION_FN_TOOLS,
   COORDINATION_EXEMPT_TOOLS,
   FILE_SCOPE_FN_TOOLS,
+  MISSION_LINEAGE_ADMISSION_TOOLS,
   READONLY_BUILTIN_TOOLS,
   REVIEW_GATE_BYPASS_FN_TOOLS,
   classifyGitCommand,
@@ -96,6 +97,16 @@ const COMMAND_EXECUTION_TOOLS = COMMAND_EXECUTION_FN_TOOLS;
 const READONLY_DISCOVERY_TOOLS = READONLY_BUILTIN_TOOLS;
 const REVIEW_GATE_BYPASS_TOOLS = REVIEW_GATE_BYPASS_FN_TOOLS;
 const FILE_SCOPE_TOOLS = FILE_SCOPE_FN_TOOLS;
+const MISSION_ADMISSION_TOOLS = MISSION_LINEAGE_ADMISSION_TOOLS;
+
+function hasMissionLineageReference(args: Record<string, unknown>): boolean {
+  const lineage = args.mission_lineage;
+  if (!lineage || typeof lineage !== "object") return false;
+  const reference = lineage as Record<string, unknown>;
+  return ["mission_id", "slice_id", "feature_id"].every((key) =>
+    typeof reference[key] === "string" && reference[key].trim().length > 0,
+  );
+}
 
 function normalizeArgs(args: unknown): Record<string, unknown> {
   return args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -202,11 +213,26 @@ export function evaluateAgentActionGate(params: {
   }
 
   /*
+  FNXC:MissionAdmission 2026-07-30-00:00:
+  FN-8307 blocks incomplete lineage before policy disposition. Approval cannot
+  authorize off-mission implementation work; agent-tools.ts is the authoritative
+  full-chain validator before any task row is written.
+  */
+  const missionAdmissionBlocked = MISSION_ADMISSION_TOOLS.has(params.toolName) && !hasMissionLineageReference(args);
+  if (missionAdmissionBlocked) {
+    category = "task_agent_mutation";
+    resourceType = "task";
+    operation = "mission-lineage-required";
+  }
+
+  /*
   FNXC:ToolPermissions 2026-07-01-00:00:
   Exact tool-name overrides must be resolved before category policy so operators can block a single governed tool such as `fn_task_create` without blocking every `task_agent_mutation` tool. Exempt coordination tools remain hard-bypassed to avoid heartbeat deadlocks.
   */
   const exactDisposition = category === "exempt" ? undefined : params.permissionPolicy.toolRules?.[params.toolName];
-  const disposition: AgentPermissionPolicyDisposition | "allow" = category === "exempt"
+  const disposition: AgentPermissionPolicyDisposition | "allow" = missionAdmissionBlocked
+    ? "block"
+    : category === "exempt"
     ? "allow"
     : exactDisposition ?? params.permissionPolicy.rules[category];
 

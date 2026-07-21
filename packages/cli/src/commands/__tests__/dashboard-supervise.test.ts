@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
+import { classifyDashboardFatalExit, resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
+import { FUSION_NON_RETRYABLE_EXIT_CODE } from "@fusion/core";
 
 /*
 FNXC:SystemPanel 2026-07-12-14:25:
@@ -29,6 +30,19 @@ describe("shouldSuperviseDashboard", () => {
   it("is disabled when an inspector is attached (child would fight over the port)", () => {
     expect(shouldSuperviseDashboard(["dashboard"], {}, ["--inspect=9230"])).toBe(false);
     expect(shouldSuperviseDashboard(["dashboard"], {}, ["--inspect-brk"])).toBe(false);
+  });
+});
+
+describe("classifyDashboardFatalExit", () => {
+  it("stops unique-constraint failures without consuming restart attempts", () => {
+    expect(classifyDashboardFatalExit({ cause: { code: "23505" } })).toEqual({
+      exitCode: FUSION_NON_RETRYABLE_EXIT_CODE,
+      nonRetryable: true,
+    });
+  });
+
+  it("leaves ordinary startup failures retryable", () => {
+    expect(classifyDashboardFatalExit(new Error("port unavailable"))).toEqual({ exitCode: 1, nonRetryable: false });
   });
 });
 

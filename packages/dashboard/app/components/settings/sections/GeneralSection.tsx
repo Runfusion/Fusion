@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type ReportActionType, type WorkflowDefinition } from "@fusion/core";
+import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type ReportActionType, type ReportTarget, type WorkflowDefinition } from "@fusion/core";
 import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsToggleRow } from "../SettingsToggleRow";
@@ -7,6 +7,9 @@ import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
+import { ReportActionMenu } from "../../ReportActionMenu";
+import { ReportModal } from "../../ReportModal";
+import { resolveReportContextRefs } from "../../../utils/reportContextRefs";
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Locale labels come from core's shared `localeDisplayName` (endonyms), NOT from the LanguageSelector component: importing a component module for a constant drags its i18n/react-i18next initialization into every consumer of this section, which breaks tests that mock react-i18next narrowly.
@@ -15,7 +18,7 @@ The core helper is the same list the translate banner labels source languages wi
 import { localeDisplayName } from "@fusion/core/detect-content-language";
 import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
 import { WorkflowIcon } from "../../WorkflowIcon";
-import { fetchWorkflows } from "../../../api";
+import { fetchWorkflows, listDiscussionCategories, type DiscussionCategoryOption } from "../../../api";
 import { clearAllLocalCache } from "../../../utils/swrCache";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SectionBaseProps } from "./context";
@@ -44,6 +47,15 @@ GitHub/GitLab settings are NOT in this section. The tracking block, the tracking
 export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
+    const [reportAction, setReportAction] = useState<ReportActionType | null>(null);
+    const [discussionCategories, setDiscussionCategories] = useState<DiscussionCategoryOption[]>([]);
+    const reportContextRefs = typeof window === "undefined" ? undefined : resolveReportContextRefs(window.location);
+    useEffect(() => {
+        let cancelled = false;
+        // FNXC:GithubDiscussions 2026-07-16-21:15: Category IDs are repository-owned, so settings loads safe server-provided choices.
+        void listDiscussionCategories().then((result) => { if (!cancelled) setDiscussionCategories(Array.isArray(result.categories) ? result.categories : []); }).catch(() => { if (!cancelled) setDiscussionCategories([]); });
+        return () => { cancelled = true; };
+    }, []);
     useEffect(() => {
         let cancelled = false;
         fetchWorkflows(projectId, { includeDisabledBuiltins: true })
@@ -135,6 +147,21 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
     };
     return (<>
       <h4 className="settings-section-heading">{t("settings.general.general", "General")}</h4>
+      {/*
+        FNXC:ReportPipeline 2026-07-18-19:30:
+        FN-8348 makes Settings General a canonical report entry point so Bug,
+        Feedback, Idea, and Help stay available when compact Header navigation
+        hides actions. Reuse the shared menu and modal to preserve guided-report
+        capture and deep-link task/agent context.
+      */}
+      <SettingsFieldRow
+        htmlFor="report-action-menu"
+        label={t("settings.general.report", "Report")}
+        help={t("settings.general.reportHelp", "Report a bug, send feedback, share an idea, or get help from Fusion.")}
+        scope="project"
+      >
+        <ReportActionMenu onSelect={setReportAction} />
+      </SettingsFieldRow>
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:
         A blank prefix stores `undefined`, not "": empty means "no prefix configured" and must delete the
@@ -334,15 +361,39 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
             </select>
           </div>
         ))}
+        <div className="settings-field-label-row"><label htmlFor="reportTarget">{t("settings.general.reportTarget", "Default report target")}</label><SettingsHelpTip settingKey="reportTarget">{t("settings.general.reportTargetHelp", "Optional Issue or Discussion target. When unset, action defaults are preserved.")}</SettingsHelpTip></div>
+        <select id="reportTarget" value={form.reportTarget ?? ""} onChange={(event) => setForm((current) => ({ ...current, reportTarget: (event.target.value || undefined) as ReportTarget | undefined }))}><option value="">{t("settings.general.reportTargetInherit", "Preserve action default")}</option><option value="issue">{t("settings.general.reportTargetIssue", "GitHub Issue")}</option><option value="discussion">{t("settings.general.reportTargetDiscussion", "GitHub Discussion")}</option></select>
+        {(["bug", "feedback", "idea", "help"] as const).map((action) => <div key={`report-target-${action}`}><label htmlFor={`reportTarget-${action}`}>{t(`settings.general.reportTargetOverride.${action}`, `${action[0].toUpperCase()}${action.slice(1)} target override`)}</label><select id={`reportTarget-${action}`} value={form.reportTargetByAction?.[action] ?? ""} onChange={(event) => setForm((current) => { const reportTargetByAction = { ...current.reportTargetByAction }; const selected = event.target.value as "" | ReportTarget; if (selected) reportTargetByAction[action] = selected; else delete reportTargetByAction[action]; return { ...current, reportTargetByAction: Object.keys(reportTargetByAction).length ? reportTargetByAction : undefined }; })}><option value="">{t("settings.general.reportTargetInherit", "Preserve action default")}</option><option value="issue">{t("settings.general.reportTargetIssue", "GitHub Issue")}</option><option value="discussion">{t("settings.general.reportTargetDiscussion", "GitHub Discussion")}</option></select></div>)}
+        <div className="settings-field-label-row"><label htmlFor="reportDiscussionCategory">{t("settings.general.reportDiscussionCategory", "Discussion category")}</label><SettingsHelpTip settingKey="reportDiscussionCategory">{t("settings.general.reportDiscussionCategoryHelp", "Required when filing to GitHub Discussions.")}</SettingsHelpTip></div>
+        <select id="reportDiscussionCategory" value={form.reportDiscussionCategory ?? ""} onChange={(event) => setForm((current) => ({ ...current, reportDiscussionCategory: event.target.value || undefined }))} disabled={!discussionCategories.length}><option value="">{t("settings.general.reportDiscussionCategorySelect", "Select a Discussion category")}</option>{discussionCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
         <SettingsToggleRow
           descriptor={{
-            key: "reportRoadmapDedup",
-            label: t("settings.general.reportRoadmapDedup", "Check roadmap before filing reports"),
-            help: t("settings.general.reportRoadmapDedupHelp", "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off."),
+            key: "reportRoadmapDedupeEnabled",
+            label: t("settings.general.reportRoadmapDedupeEnabled", "Deduplicate reports against public roadmap"),
+            help: t("settings.general.reportRoadmapDedupeEnabledHelp", "Match open, labeled roadmap issues before filing. Default: on."),
             scope: "project",
           }}
-          value={form.reportRoadmapDedup === true}
-          onChange={(value) => setForm((current) => ({ ...current, reportRoadmapDedup: value ?? false }))}
+          value={form.reportRoadmapDedupeEnabled ?? true}
+          onChange={(value) => setForm((current) => ({ ...current, reportRoadmapDedupeEnabled: value ?? true }))}
+        />
+        <SettingsTextRow
+          descriptor={{
+            key: "reportRoadmapLabel",
+            label: t("settings.general.reportRoadmapLabel", "Public roadmap label"),
+            help: t("settings.general.reportRoadmapLabelHelp", "Open GitHub Issues with this label are considered roadmap items. Default: roadmap."),
+          }}
+          value={form.reportRoadmapLabel ?? "roadmap"}
+          onChange={(value) => setForm((current) => ({ ...current, reportRoadmapLabel: value || undefined }))}
+        />
+        <SettingsTextRow
+          descriptor={{
+            key: "reportRoadmapRepo",
+            label: t("settings.general.reportRoadmapRepo", "Public roadmap repository (optional)"),
+            help: t("settings.general.reportRoadmapRepoHelp", "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset."),
+            placeholder: "owner/repository",
+          }}
+          value={form.reportRoadmapRepo ?? ""}
+          onChange={(value) => setForm((current) => ({ ...current, reportRoadmapRepo: value || undefined }))}
         />
       </div>
       {/*
@@ -684,6 +735,7 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           <button type="button" className="btn btn-sm" onClick={handleClearLocalData}>{t("settings.general.clearLocalDataButton", "Clear local data")}</button>
         </div>
       </div>
+      {reportAction && <ReportModal actionType={reportAction} contextRefs={reportContextRefs} onClose={() => setReportAction(null)} />}
     </>);
 }
 export default GeneralSection;

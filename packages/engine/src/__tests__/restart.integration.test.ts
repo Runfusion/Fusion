@@ -288,7 +288,7 @@ import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "../wo
 import { createFnAgent } from "../pi.js";
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import type { Task, TaskDetail, TaskStep, Column, ColumnId, Settings, StepStatus } from "@fusion/core";
+import type { Task, TaskDetail, TaskStep, ColumnId, Settings, StepStatus } from "@fusion/core";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedExecSync = vi.mocked(execSync);
@@ -306,9 +306,69 @@ const DEFAULT_SETTINGS: Settings = {
   worktreeInitCommand: undefined,
 };
 
+/*
+FNXC:EngineTests 2026-07-19-18:20 (U10b):
+This file defines its OWN `createMockStore`, which SHADOWS the shared harness one — so none of
+the shared U5g/U10b seams reached it. Under graph ownership that is no longer a cosmetic
+difference: a store exposing neither `getTaskWorkflowSelection` nor `getTaskWorkflowSelectionAsync`
+now ALWAYS fails closed (`workflow-selection-api-unavailable`) because the legacy fallback
+executor was deleted, so every `execute()`/`resumeOrphaned()` on this surface terminated the graph
+before reaching any behavior under test.
+
+The requirement this fake must model is "a real TaskStore": it can name the workflow a task runs
+under, it serves PROMPT.md as an artifact (the graph's `parse` node reads step sources from
+`getTaskDocument` before any agent session exists), it answers the verification-request reader the
+completion path calls unconditionally, and — critically — its writes are READABLE BACK. The graph
+deliberately re-reads the row instead of trusting the in-memory task it was handed (the
+write-capable-node isolation guard and the merge implementation-proof gate both do this), so a
+write-only `updateTask`/`updateStep`/`moveTask` reported a task with no worktree and no completed
+steps no matter what the executor had just persisted.
+
+Fixed once here rather than per test. Per-test `getTask`/`moveTask` overrides still choose the
+row's SHAPE; the executor's own writes layer on top, because they are the later writes. A test that
+must simulate an EXTERNAL mutation beating the executor's writes uses `store._setRow(id, patch)`.
+*/
 function createMockStore(overrides: Record<string, any> = {}) {
   const listeners = new Map<string, Function[]>();
+  const patches = new Map<string, Record<string, any>>();
+  const applyPatch = (id: string, patch: Record<string, any> | undefined) => {
+    if (!patch || typeof patch !== "object") return;
+    patches.set(id, { ...(patches.get(id) ?? {}), ...patch });
+  };
+  const makeWriteThroughGetTask = (defaultImpl: (id?: string) => Promise<any>) => {
+    const mock = vi.fn(defaultImpl);
+    const merge = (id: string | undefined, result: unknown) =>
+      result && typeof result === "object"
+        ? { ...(result as Record<string, any>), ...(patches.get(id ?? "FN-001") ?? {}) }
+        : result;
+    const rawImpl = mock.mockImplementation.bind(mock);
+    mock.mockImplementation = ((fn: (id?: string) => unknown) =>
+      rawImpl(async (id?: string) => merge(id, await fn(id)))) as typeof mock.mockImplementation;
+    mock.mockResolvedValue = ((value: unknown) =>
+      rawImpl(async (id?: string) => merge(id, value))) as typeof mock.mockResolvedValue;
+    return mock;
+  };
+  const makeWriteThroughMoveTask = () => {
+    const finish = async (id: string, column: string, result?: unknown) => {
+      applyPatch(id, { column });
+      const live = await store.getTask(id);
+      return result && typeof result === "object"
+        ? { ...(result as Record<string, any>), ...(patches.get(id) ?? {}), ...(live ?? {}) }
+        : live;
+    };
+    const mock = vi.fn(async (id: string, column: string) => finish(id, column));
+    const rawImpl = mock.mockImplementation.bind(mock);
+    mock.mockImplementation = ((fn: (...a: any[]) => unknown) =>
+      rawImpl(async (id: string, column: string, ...rest: unknown[]) =>
+        finish(id, column, await (fn as any)(id, column, ...rest)))) as typeof mock.mockImplementation;
+    mock.mockResolvedValue = ((value: unknown) =>
+      rawImpl(async (id: string, column: string) => finish(id, column, value))) as typeof mock.mockResolvedValue;
+    return mock;
+  };
   const store = {
+    _setRow(id: string, patch: Record<string, any>) {
+      applyPatch(id, patch);
+    },
     on: vi.fn((event: string, fn: Function) => {
       const existing = listeners.get(event) || [];
       existing.push(fn);
@@ -316,11 +376,33 @@ function createMockStore(overrides: Record<string, any> = {}) {
     }),
     emit: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue(makeTaskDetail("FN-001", "in-progress")),
-    updateTask: vi.fn().mockResolvedValue({}),
-    moveTask: vi.fn().mockImplementation(async (id: string, col: Column) => {
-      return makeTask(id, col);
+    getTask: makeWriteThroughGetTask(async (id?: string) =>
+      makeTaskDetail(id ?? "FN-001", "in-progress"),
+    ),
+    updateTask: vi.fn(async (id: string, patch: Record<string, any>) => {
+      applyPatch(id, patch);
+      return { ...(patches.get(id) ?? {}), id };
     }),
+    moveTask: makeWriteThroughMoveTask(),
+    recordActivity: vi.fn().mockResolvedValue({}),
+    mergeTask: vi.fn().mockResolvedValue({}),
+    getWorkflowStep: vi.fn().mockResolvedValue(undefined),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    getGoalStore: vi.fn().mockReturnValue({ listGoals: vi.fn().mockReturnValue([]) }),
+    clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
+    getBranchGroup: vi.fn().mockReturnValue({ id: "BG-test", status: "open", branchName: "fusion/bg-test" }),
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
+    getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    getTaskVerificationRequest: vi.fn().mockReturnValue(null),
+    getTaskDocument: vi.fn(async (_taskId: string, key: string) =>
+      key === "PROMPT.md"
+        ? { content: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check" }
+        : undefined,
+    ),
+    getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "builtin:coding", stepIds: [] }),
+    getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     addTaskComment: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
@@ -342,8 +424,13 @@ function createMockStore(overrides: Record<string, any> = {}) {
     getRootDir: vi.fn().mockReturnValue("/tmp/root"),
     getFusionDir: vi.fn().mockReturnValue("/tmp/root/.fusion"),
     getTasksDir: vi.fn().mockReturnValue("/tmp/root/.fusion/tasks"),
-    updateStep: vi.fn().mockImplementation(async (id: string, step: number, status: StepStatus) => {
-      return makeTaskDetail(id, "in-progress");
+    updateStep: vi.fn(async (id: string, stepIndex: number, status: StepStatus) => {
+      const current = await store.getTask(id);
+      const steps = ((current?.steps as TaskStep[] | undefined) ?? []).map(
+        (s, i) => (i === stepIndex ? { ...s, status } : s),
+      );
+      applyPatch(id, { steps });
+      return { ...current, steps };
     }),
     createTask: vi.fn().mockImplementation(async (input: any) => {
       return makeTask("FN-NEW", "triage");
@@ -376,6 +463,18 @@ function makeTask(id: string, column: ColumnId, overrides: Partial<Task> = {}): 
     title: `Task ${id}`,
     description: `Description for ${id}`,
     column,
+    /*
+    FNXC:EngineTests 2026-07-19-18:40 (U10b):
+    No optional pre-merge gates by default. These restart tests hand-roll a session stub that
+    assumes it IS the implementation session; under graph ownership the FIRST session is Plan
+    Review, whose verdict is read off the session's stream. A stub with no `subscribe` reads as a
+    provider failure, so the graph retried Plan Review in place and re-dispatched forever — a
+    runaway that outlived the test and inflated unrelated agent-count assertions later in the
+    file. Declaring the gates OFF restores the premise these tests were written against; a test
+    that wants a gate enables it explicitly. This must live on the row the STORE serves, because
+    the graph re-reads the row rather than trusting the task literal handed to `execute()`.
+    */
+    enabledWorkflowSteps: [],
     dependencies: [],
     steps: [],
     currentStep: 0,
@@ -755,18 +854,35 @@ describe("In-progress task resume after restart", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-041", "Resumed after engine restart");
   });
 
+  /*
+  FNXC:EngineTests 2026-07-19-19:10 (U10b):
+  "Already complete" now has to mean complete INCLUDING its pre-merge gates. The graph is the
+  sole owner of gate execution, so recovery only transitions straight to in-review when the
+  gates are provably satisfied; a task whose gates have not run is re-dispatched through the
+  graph instead (that is the FN-7039 fail-open this cutover closed). Recording the passed
+  default review rows states the premise this test always assumed — that nothing is left to run
+  and only the stranded COLUMN needs fixing — so every assertion below is unchanged.
+  */
   it("resumeOrphaned() fast-paths already-complete tasks to in-review", async () => {
     const store = createMockStore();
+    const passedDefaultReviews = [
+      { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge" as const, status: "passed" as const },
+      { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge" as const, status: "passed" as const },
+    ];
     const completedTask = makeTask("FN-963", "in-progress", {
       worktree: "/tmp/wt/FN-963",
       baseCommitSha: "base123",
       steps: makeSteps("done", "done", "skipped"),
+      enabledWorkflowSteps: undefined,
+      workflowStepResults: passedDefaultReviews,
     });
     store.listTasks.mockResolvedValue([completedTask]);
     store.getTask.mockResolvedValue(makeTaskDetail("FN-963", "in-progress", {
       worktree: "/tmp/wt/FN-963",
       baseCommitSha: "base123",
       steps: makeSteps("done", "done", "skipped"),
+      enabledWorkflowSteps: undefined,
+      workflowStepResults: passedDefaultReviews,
     }));
 
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -836,10 +952,17 @@ describe("In-progress task resume after restart", () => {
   });
 
   // U4 (KTD-2/KTD-5): the legacy `runWorkflowSteps` recovery path was deleted.
-  // recoverCompletedTask now RE-ENTERS the workflow graph (maybeExecuteWorkflowGraph),
-  // which records workflowStepResults and OWNS the in-review / back-for-fix
-  // transition. These two tests replace the old "runWorkflowSteps fails → bounce"
-  // test: one proves the graph re-entry seam, one proves the fail-closed guard.
+  // recoverCompletedTask now RE-ENTERS the workflow graph, which records
+  // workflowStepResults and OWNS the in-review / back-for-fix transition.
+  // These two tests replace the old "runWorkflowSteps fails → bounce" test:
+  // one proves the graph re-entry seam, one proves the fail-closed guard.
+  /*
+  FNXC:EngineTests 2026-07-19-18:25 (U10b):
+  The graph entry seam is `executeWorkflowGraph`, not `maybeExecuteWorkflowGraph`. The rename
+  encodes a contract change, not a cosmetic one: the graph can no longer DECLINE a task (it
+  returns void and fails closed instead of falling through to a second, legacy executor), so
+  there is nothing left for a "maybe" to mean. Recovery therefore delegates unconditionally.
+  */
   it("recoverCompletedTask() re-enters the workflow graph (records results + owns the transition)", async () => {
     const store = createMockStore();
     const task = makeTask("FN-963", "in-progress", {
@@ -854,7 +977,7 @@ describe("In-progress task resume after restart", () => {
     // (the graph's own recording/transition behavior is covered by
     // builtin-coding-workflow-step-results.test.ts and the cutover backstop).
     const graphEntry = vi
-      .spyOn(executor as any, "maybeExecuteWorkflowGraph")
+      .spyOn(executor as any, "executeWorkflowGraph")
       .mockResolvedValue(true);
 
     const recovered = await executor.recoverCompletedTask(task);
@@ -897,7 +1020,7 @@ describe("In-progress task resume after restart", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
     const graphEntry = vi
-      .spyOn(executor as any, "maybeExecuteWorkflowGraph")
+      .spyOn(executor as any, "executeWorkflowGraph")
       .mockResolvedValue(true);
 
     const recovered = await executor.recoverCompletedTask(task);
@@ -909,11 +1032,57 @@ describe("In-progress task resume after restart", () => {
     }));
   });
 
+  it("recoverCompletedTask() legally re-homes a completed triage zombie before review handoff", async () => {
+    const store = createMockStore();
+    const task = makeTask("FN-TRIAGE-ZOMBIE", "triage", {
+      worktree: "/tmp/wt/FN-TRIAGE-ZOMBIE",
+      steps: makeSteps("done"),
+      enabledWorkflowSteps: ["plan-review", "code-review"],
+      workflowIrPinNodeId: "merge",
+      workflowStepResults: [
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "passed" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "passed" },
+      ],
+    });
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-TRIAGE-ZOMBIE", "triage", {
+      worktree: task.worktree,
+      steps: makeSteps("done"),
+      enabledWorkflowSteps: task.enabledWorkflowSteps,
+      workflowIrPinNodeId: "merge",
+      workflowStepResults: task.workflowStepResults,
+    }));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
+
+    const recovered = await executor.recoverCompletedTask(task);
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenNthCalledWith(
+      1,
+      task.id,
+      "todo",
+      expect.objectContaining({ recoveryRehome: true, preserveProgress: true, preserveWorktree: true }),
+    );
+    expect(store.moveTask).toHaveBeenNthCalledWith(2, task.id, "in-progress");
+    expect(store.handoffToReview).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      evidence: expect.objectContaining({ reason: "completed-task-recovered" }),
+    }));
+  });
+
+  /*
+  FNXC:EngineTests 2026-07-19-18:55 (U10b):
+  "Enabled steps are ABSENT" is the condition under test, so it must be stated rather than
+  inherited: the fixture builders now default `enabledWorkflowSteps` to `[]` (gates off) for the
+  graph, and `[]` is a present-but-empty selection, not an absent one. Setting it back to
+  `undefined` keeps this test asserting the default-review-row path it was written for.
+  */
   it("recoverCompletedTask() treats passed default review rows as satisfied when enabled steps are absent", async () => {
     const store = createMockStore();
     const task = makeTask("FN-7228-DEFAULT", "in-progress", {
       worktree: "/tmp/wt/FN-7228-DEFAULT",
       steps: makeSteps("done"),
+      enabledWorkflowSteps: undefined,
       workflowStepResults: [
         { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "passed" },
         { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "passed" },
@@ -922,13 +1091,14 @@ describe("In-progress task resume after restart", () => {
     store.getTask.mockResolvedValue(makeTaskDetail("FN-7228-DEFAULT", "in-progress", {
       worktree: "/tmp/wt/FN-7228-DEFAULT",
       steps: makeSteps("done"),
+      enabledWorkflowSteps: undefined,
       workflowStepResults: task.workflowStepResults,
     }));
 
     const executor = new TaskExecutor(store, "/tmp/test");
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
     const graphEntry = vi
-      .spyOn(executor as any, "maybeExecuteWorkflowGraph")
+      .spyOn(executor as any, "executeWorkflowGraph")
       .mockResolvedValue(true);
 
     const recovered = await executor.recoverCompletedTask(task);
@@ -941,11 +1111,18 @@ describe("In-progress task resume after restart", () => {
   });
 
   it("recoverCompletedTask() fails closed (KTD-5) when the store lacks getTaskWorkflowSelection and the task has enabled workflow steps", async () => {
-    // createMockStore does NOT expose getTaskWorkflowSelection, so the workflow
-    // graph cannot resolve a selection — and the legacy runWorkflowSteps path was
-    // removed (U4). A task with an enabled pre-merge step MUST fail closed rather
-    // than silently hand off to review with no gate execution (the FN-7039 class).
+    /*
+    FNXC:EngineTests 2026-07-19-18:45 (U10b):
+    The fail-closed requirement is unchanged, but the premise now has to be STATED. The default
+    fake is workflow-aware (as a real TaskStore is), so this test deliberately strips the
+    workflow-selection readers to model the only remaining store that cannot name a workflow.
+    Such a store no longer has a legacy executor to fall through to: it parks the task instead of
+    reaching review with its gates unrun (the FN-7039 class). The reason string is now
+    unconditional and no longer mentions enabled step counts.
+    */
     const store = createMockStore({
+      getTaskWorkflowSelection: undefined,
+      getTaskWorkflowSelectionAsync: undefined,
       getTask: vi.fn().mockResolvedValue(makeTaskDetail("FN-963", "in-progress", {
         worktree: "/tmp/wt/FN-963",
         steps: makeSteps("done"),
@@ -1002,7 +1179,7 @@ describe("In-progress task resume after restart", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
     const graphEntry = vi
-      .spyOn(executor as any, "maybeExecuteWorkflowGraph")
+      .spyOn(executor as any, "executeWorkflowGraph")
       .mockResolvedValue(true);
 
     const recovered = await executor.recoverCompletedTask(task);
@@ -1030,7 +1207,7 @@ describe("In-progress task resume after restart", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
     const graphEntry = vi
-      .spyOn(executor as any, "maybeExecuteWorkflowGraph")
+      .spyOn(executor as any, "executeWorkflowGraph")
       .mockResolvedValue(true);
     // Simulate a bounce already scheduled for this task.
     (executor as any).workflowRerunWatchdogs.set("FN-7211", setTimeout(() => {}, 0));

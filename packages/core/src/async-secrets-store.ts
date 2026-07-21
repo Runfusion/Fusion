@@ -41,6 +41,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { asc, eq, sql } from "drizzle-orm";
+import { isPostgresUniqueError } from "./postgres-errors.js";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import {
@@ -137,14 +138,6 @@ function tableForScope(scope: SecretScope): ProjectSecretsTable {
   return scope === "project"
     ? schema.project.secrets
     : (schema.central.secretsGlobal as unknown as ProjectSecretsTable);
-}
-
-function isPostgresUniqueError(error: unknown): boolean {
-  // PostgreSQL unique_violation (23505). The code may be on the error directly
-  // (raw postgres.js) or on the `cause` (Drizzle wraps postgres errors).
-  const directCode = (error as { code?: string } | null)?.code;
-  const causeCode = (error as { cause?: { code?: string } } | null)?.cause?.code;
-  return directCode === "23505" || causeCode === "23505";
 }
 
 function isAccessPolicy(value: string): value is SecretAccessPolicy {

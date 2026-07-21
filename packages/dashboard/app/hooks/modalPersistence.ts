@@ -2,6 +2,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 
 // Storage keys — each modal type has independent storage
 export const STORED_PLANNING_KEY = "kb-planning-last-description";
+export const STORED_PLANNING_ACTIVE_SESSION_KEY = "kb-planning-active-session";
 export const STORED_SUBTASK_KEY = "kb-subtask-last-description";
 export const STORED_MISSION_KEY = "kb-mission-last-goal";
 export const STORED_GITHUB_IMPORT_KEY = "kb-dashboard-github-import-state";
@@ -18,6 +19,22 @@ export function getPlanningDescription(projectId?: string): string {
 
 export function clearPlanningDescription(projectId?: string): void {
   removeScopedItem(STORED_PLANNING_KEY, projectId);
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-12:00:
+Embedded Planning unmounts whenever main-content navigation leaves its view. FN-8437 keeps the last active interview id project-scoped, matching Chat's active-session persistence, so a return during generation can rehydrate through the modal's single loadSession path.
+*/
+export function savePlanningActiveSession(sessionId: string, projectId?: string): void {
+  setScopedItem(STORED_PLANNING_ACTIVE_SESSION_KEY, sessionId, projectId);
+}
+
+export function getPlanningActiveSession(projectId?: string): string {
+  return getScopedItem(STORED_PLANNING_ACTIVE_SESSION_KEY, projectId) || "";
+}
+
+export function clearPlanningActiveSession(projectId?: string): void {
+  removeScopedItem(STORED_PLANNING_ACTIVE_SESSION_KEY, projectId);
 }
 
 // Subtask persistence

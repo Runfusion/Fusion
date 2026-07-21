@@ -326,6 +326,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
   };
 
+  /*
+  FNXC:Worktrees 2026-07-19-15:47:
+  Acquisition delegates branch creation to the isolated-worktree primitive. The project root remains
+  on its current branch; task branch selection must never use a root-checkout `git checkout` or `git switch`.
+  */
   const createWorktreeImpl = createWorktree
     ? createWorktree
     : async (createBranch: string, createPath: string, createTaskId: string, startPoint?: string, allowRename?: boolean) => {
@@ -731,6 +736,22 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
           worktreePath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName);
           branch = branchName;
         } else {
+          /*
+          FNXC:WorktreeIdentity 2026-07-19-16:05:
+          Pool preparation changes the checked-out branch but linked-worktree
+          identity metadata survives the prior occupant. Refresh the marker and
+          shared hooks before exposing the checkout to the new task.
+          */
+          await installTaskWorktreeIdentityGuard({
+            worktreePath,
+            taskId: task.id,
+            commitMsgHookEnabled: settings.commitMsgHookEnabled,
+            taskPrefix: settings.taskPrefix,
+            taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
+            commitAuthorEnabled: settings.commitAuthorEnabled,
+            commitAuthorName: settings.commitAuthorName,
+            commitAuthorEmail: settings.commitAuthorEmail,
+          });
           acquiredFromPool = true;
           logger?.log(`Acquired worktree from pool: ${worktreePath}`);
           await store.updateTask(task.id, { worktree: worktreePath, branch });

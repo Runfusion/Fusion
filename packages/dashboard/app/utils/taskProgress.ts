@@ -141,6 +141,27 @@ export function getUnifiedTaskProgress(
 }
 
 /*
+FNXC:TaskStatusBadge 2026-07-19-2b:55 (U12 / R2 / R11):
+The workflow-step-derived badge label. Operator surfaces used to render raw engine status tokens
+("planning", "needs-replan"), which name ENGINE bookkeeping rather than the stage the card is
+actually in — and which no user-authored workflow has any reason to recognize. When a workflow step
+is running, its own IR-declared name ("Plan Review", "Code Review") is both truer and workflow-owned,
+so it takes precedence over the status vocabulary.
+
+Returns undefined when nothing is running, leaving the status mapping as the fallback. The engine
+statuses themselves are unchanged — `needs-replan` remains the graph's durable replan signal; this
+only decides what the operator READS.
+*/
+export function getRunningWorkflowStepLabel(
+  task: Pick<Task, "steps" | "enabledWorkflowSteps" | "workflowStepResults">,
+): string | undefined {
+  const running = getUnifiedTaskProgress(task).items.find(
+    (item) => item.source === "workflow" && item.status === "running",
+  );
+  return running?.name;
+}
+
+/*
 FNXC:TaskCardPlanReviewBadge 2026-07-11-12:00:
 FN-7831 requires task cards and list rows to show a distinct "Reviewing" badge only while the optional `plan-review` workflow step is actively running. Reuse the unified progress item status so every board surface follows the same startedAt-without-completedAt semantics as the progress list.
 */

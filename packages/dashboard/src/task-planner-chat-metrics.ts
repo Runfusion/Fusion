@@ -15,6 +15,8 @@ type MetricsTask = Pick<
   | "executionCompletedAt"
   | "firstExecutionAt"
   | "cumulativeActiveMs"
+  | "cumulativePlanningMs"
+  | "planningStartedAt"
 >;
 
 type TokenBucketInput = Pick<
@@ -75,6 +77,7 @@ export interface TaskPlannerChatMetricsPayload {
     wallClockSinceFirstExecutionMs: number | null;
     activeRuntimeMs: number | null;
     cumulativeActiveMs: number | null;
+    cumulativePlanningMs: number | null;
     timedExecutionMs: number | null;
     logTimingDurationMs: number | null;
     timingEventCount: number;
@@ -361,6 +364,12 @@ function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMe
     ? (cumulativeActiveMs ?? 0) + Math.max(0, nowMs - executionStartedMs)
     : cumulativeActiveMs;
 
+  const cumulativePlanningMs = optionalFiniteNumber(task.cumulativePlanningMs);
+  const planningStartedMs = parseTimestampToMs(task.planningStartedAt, malformedTimestamps);
+  const totalActiveMs = (activeRuntimeMs != null || cumulativePlanningMs != null || planningStartedMs != null)
+    ? (activeRuntimeMs ?? 0) + (cumulativePlanningMs ?? 0) + (planningStartedMs != null ? Math.max(0, nowMs - planningStartedMs) : 0)
+    : null;
+
   const timingEvents = extractTimingEvents(task.log);
   const timedEvents = timingEvents.filter((event) => event.durationMs != null);
   const logTimingDurationMs = timedEvents.length > 0
@@ -380,7 +389,7 @@ function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMe
     if (!longest || (step.durationMs ?? 0) > (longest.durationMs ?? 0)) return step;
     return longest;
   }, null);
-  const totalExecutionMs = activeRuntimeMs
+  const totalExecutionMs = totalActiveMs
     ?? endToEndExecutionMs
     ?? timedExecutionMs
     ?? (logTimingDurationMs != null || workflowRuntimeMs != null ? (logTimingDurationMs ?? 0) + (workflowRuntimeMs ?? 0) : null);
@@ -393,6 +402,7 @@ function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMe
     wallClockSinceFirstExecutionMs,
     activeRuntimeMs,
     cumulativeActiveMs,
+    cumulativePlanningMs,
     timedExecutionMs,
     logTimingDurationMs,
     timingEventCount: timingEvents.length,
@@ -436,7 +446,7 @@ export function formatTaskPlannerChatMetrics(
     ? "cost unavailable because at least one model has no pricing"
     : `estimated cost ${formatUsd(metrics.tokens.cost.usd)}`;
   const staleSuffix = metrics.tokens.cost.pricingStale ? "; pricing is stale" : "";
-  const timingSummary = `total execution ${formatDuration(metrics.timing.totalExecutionMs)}, active runtime ${formatDuration(metrics.timing.activeRuntimeMs)}, ${metrics.timing.timingEventCount.toLocaleString()} timing events, ${metrics.timing.timedWorkflowStepCount.toLocaleString()} workflow steps with timing`;
+  const timingSummary = `total active ${formatDuration(metrics.timing.totalExecutionMs)}, execution runtime ${formatDuration(metrics.timing.activeRuntimeMs)}, ${metrics.timing.timingEventCount.toLocaleString()} timing events, ${metrics.timing.timedWorkflowStepCount.toLocaleString()} workflow steps with timing`;
 
   return {
     metrics,

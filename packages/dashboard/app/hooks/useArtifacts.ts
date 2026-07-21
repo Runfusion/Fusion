@@ -3,6 +3,7 @@ import type { ArtifactType, ArtifactWithTask } from "@fusion/core";
 import { fetchArtifacts } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useProjectContextGuard } from "./useProjectContextGuard";
 
 export interface UseArtifactsResult {
   /** List of artifacts across agents and tasks */
@@ -46,8 +47,15 @@ export function useArtifacts(options?: {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
   const sseRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+  FNXC:ProjectScoping 2026-07-15-20:10:
+  Artifact fetches and SSE callbacks capture their project before work begins;
+  the shared guard drops delayed project-A results after the view switches to B.
+  */
+  const { capture } = useProjectContextGuard(projectId, "useArtifacts");
 
   const refresh = useCallback(async () => {
+    const context = capture();
     if (abortRef.current) {
       abortRef.current.abort();
     }
@@ -69,7 +77,7 @@ export function useArtifacts(options?: {
         q: searchQuery,
       }, projectId);
 
-      if (requestController.signal.aborted) {
+      if (requestController.signal.aborted || context.isStale()) {
         return;
       }
 
@@ -80,16 +88,21 @@ export function useArtifacts(options?: {
       }
       initialLoadCompleteRef.current = true;
     } catch (err) {
-      if (requestController.signal.aborted) {
+      if (requestController.signal.aborted || context.isStale()) {
         return;
       }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (!requestController.signal.aborted && isInitial) {
+      /*
+      FNXC:ProjectScoping 2026-07-16-00:00:
+      A stale request must not clear the new project's loading indicator after
+      a project switch, including when the old request rejects.
+      */
+      if (!requestController.signal.aborted && !context.isStale() && isInitial) {
         setLoading(false);
       }
     }
-  }, [authorId, cacheKey, projectId, searchQuery, taskId, type]);
+  }, [authorId, cacheKey, capture, projectId, searchQuery, taskId, type]);
 
   useEffect(() => {
     refreshRef.current = refresh;
@@ -125,6 +138,7 @@ export function useArtifacts(options?: {
   }, [refresh]);
 
   useEffect(() => {
+    const context = capture();
     /*
      * FNXC:ArtifactRegistry 2026-06-27-00:00:
      * Already-open task and project artifact lists must live-refresh from TaskStore's authoritative artifact:registered SSE event and also accept the best-effort agent/chat message notifications as an additional signal. Task-scoped hooks filter by artifact/task metadata while project-scoped hooks rely on the projectId refetch and optional payload projectId guard, preserving SWR cached rendering, search filters, and scoped fetch behavior without showing a loading flash.
@@ -145,7 +159,7 @@ export function useArtifacts(options?: {
         };
         const artifactId = source === "artifact" ? payload.id : payload.metadata?.artifactId;
         const artifactTaskId = source === "artifact" ? payload.taskId : payload.metadata?.taskId;
-        if (!artifactId) return;
+        if (!artifactId || context.isStale()) return;
         if (projectId && payload.projectId && payload.projectId !== projectId) return;
         if (taskId && artifactTaskId !== taskId) return;
 
@@ -186,7 +200,7 @@ export function useArtifacts(options?: {
         sseRefreshDebounceRef.current = null;
       }
     };
-  }, [projectId, taskId]);
+  }, [capture, projectId, taskId]);
 
   useEffect(() => {
     void refresh();

@@ -8,15 +8,16 @@ function firstText(result: { content: Array<{ type: string; text?: string }> }):
   return first?.type === "text" ? (first.text ?? "") : "";
 }
 
-function createMessageStoreHarness() {
+function createMessageStoreHarness(parent?: Record<string, unknown> | null) {
   const wakeSpy = vi.fn();
+  const getMessage = vi.fn(async () => parent ?? null);
   const sendMessage = vi.fn(async (input: Record<string, unknown>) => {
     if (input.toType === "agent") {
       await wakeSpy(input);
     }
     return { id: "msg-1" };
   });
-  return { messageStore: { sendMessage }, sendMessage, wakeSpy };
+  return { messageStore: { getMessage, sendMessage }, getMessage, sendMessage, wakeSpy };
 }
 
 async function executeSend(
@@ -73,6 +74,87 @@ describe("createSendMessageTool recipient validation", () => {
 
     expect(firstText(await executeSend(legacyTool, { to_id: "agent-b", content: " " }) as never)).toBe("ERROR: Message content cannot be empty");
     expect(firstText(await executeSend(legacyTool, { to_id: "agent-b", content: "hello", reply_to_message_id: " " }) as never)).toBe("ERROR: reply_to_message_id must be a non-empty string");
+  });
+
+  it("routes an owned CLI parent reply to the CLI user mailbox", async () => {
+    const parent = {
+      id: "parent-cli",
+      fromId: "cli",
+      fromType: "user",
+      toId: "agent-a",
+      toType: "agent",
+    };
+    const { messageStore, sendMessage } = createMessageStoreHarness(parent);
+    const tool = createSendMessageTool(messageStore as never, "agent-a");
+
+    // Heartbeat guidance intentionally names the sender explicitly; it must still
+    // preserve the parent user's type rather than treating `cli` as an agent.
+    const result = await executeSend(tool, { content: "received", reply_to_message_id: "parent-cli", to_id: "cli" });
+
+    expect(firstText(result as never)).toContain("Message sent to cli");
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      toId: "cli",
+      toType: "user",
+      type: "agent-to-user",
+      metadata: { replyTo: { messageId: "parent-cli" } },
+    }));
+  });
+
+  it("routes an owned dashboard parent reply to the dashboard mailbox", async () => {
+    const parent = {
+      id: "parent-dashboard",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-a",
+      toType: "agent",
+    };
+    const { messageStore, sendMessage } = createMessageStoreHarness(parent);
+    const tool = createSendMessageTool(messageStore as never, "agent-a");
+
+    await executeSend(tool, { content: "received", reply_to_message_id: "parent-dashboard" });
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      toId: "dashboard",
+      toType: "user",
+      type: "agent-to-user",
+    }));
+  });
+
+  it("allows an explicit alternate recipient without inheriting a foreign parent", async () => {
+    const foreignParent = {
+      id: "parent-foreign",
+      fromId: "cli",
+      fromType: "user",
+      toId: "agent-b",
+      toType: "agent",
+    };
+    const { messageStore, sendMessage } = createMessageStoreHarness(foreignParent);
+    const tool = createSendMessageTool(messageStore as never, "agent-a");
+
+    await executeSend(tool, { content: "forward", reply_to_message_id: "parent-foreign", to_id: "agent-c" });
+
+    // A different explicit ID is a forward: without type it keeps the legacy
+    // agent-to-agent default instead of inheriting the foreign parent's user type.
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ toId: "agent-c", toType: "agent", type: "agent-to-agent" }));
+  });
+
+  it("rejects foreign or missing parents when no explicit recipient is supplied", async () => {
+    const foreignParent = {
+      id: "parent-foreign",
+      fromId: "cli",
+      fromType: "user",
+      toId: "agent-b",
+      toType: "agent",
+    };
+    const foreignHarness = createMessageStoreHarness(foreignParent);
+    const foreignTool = createSendMessageTool(foreignHarness.messageStore as never, "agent-a");
+    const missingHarness = createMessageStoreHarness();
+    const missingTool = createSendMessageTool(missingHarness.messageStore as never, "agent-a");
+
+    expect(firstText(await executeSend(foreignTool, { content: "nope", reply_to_message_id: "parent-foreign" }) as never)).toMatch(/^ERROR: reply_to_message_id/);
+    expect(foreignHarness.sendMessage).not.toHaveBeenCalled();
+    expect(firstText(await executeSend(missingTool, { content: "nope", reply_to_message_id: "missing" }) as never)).toMatch(/^ERROR: reply_to_message_id/);
+    expect(missingHarness.sendMessage).not.toHaveBeenCalled();
   });
 
   it("does not report delivery when recipient validation is unavailable", async () => {

@@ -129,6 +129,11 @@ export default defineConfig({
       Language detection is pure string logic shared with the server; alias its subpath explicitly rather than widening the `@fusion/core` alias, which would drag the full index (and its Node deps) into the bundle.
       This alias MUST precede the `@fusion/core` entry — Vite matches aliases in order, so the broader key would otherwise swallow the subpath.
       */
+      /*
+      FNXC:DashboardBrowserSafeCore 2026-07-16-12:00:
+      The dashboard core-import scanner enforces this alias boundary for both relative core/src and package-subpath value imports.
+      Add a new browser leaf only after its full dependency graph is reviewed and it has a dated entry in scripts/lib/dashboard-browser-safe-core-modules.json.
+      */
       "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
@@ -166,6 +171,10 @@ export default defineConfig({
       "@fusion-plugin-examples/quality/dashboard-view": resolve(
         __dirname,
         "../../plugins/fusion-plugin-quality/src/dashboard-view.tsx",
+      ),
+      "@fusion-plugin-examples/roadmap/dashboard-view": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-roadmap/src/dashboard-view.tsx",
       ),
       "@fusion-plugin-examples/quality/qa-tab": resolve(
         __dirname,

@@ -11,6 +11,50 @@ function git(dir: string, cmd: string): string {
 }
 
 describe("pre-commit identity guard (real git)", () => {
+  it("refreshes a recycled worktree owner so the reassigned task can commit", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-8400-precommit-"));
+    const worktreeDir = join(rootDir, "wt-pooled");
+
+    try {
+      git(rootDir, "git init -b main");
+      git(rootDir, 'git config user.email "test@example.com"');
+      git(rootDir, 'git config user.name "Test"');
+      writeFileSync(join(rootDir, "README.md"), "init\n");
+      git(rootDir, "git add README.md && git commit -m 'init'");
+
+      git(rootDir, "git worktree add -b fusion/fn-old wt-pooled HEAD");
+      await installTaskWorktreeIdentityGuard({ worktreePath: worktreeDir, taskId: "FN-OLD" });
+
+      // Pool preparation reuses the same linked worktree for a new task branch.
+      git(worktreeDir, "git checkout -B fusion/fn-new main");
+      writeFileSync(join(worktreeDir, "new-owner.txt"), "new owner\n");
+      git(worktreeDir, "git add new-owner.txt");
+
+      const staleOwnerCommit = spawnSync("git", ["commit", "-m", "fix(FN-NEW): blocked by stale owner"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+      });
+      expect(staleOwnerCommit.status).toBe(1);
+      expect(`${staleOwnerCommit.stderr}${staleOwnerCommit.stdout}`).toContain(
+        "fusion: refusing commit — worktree owns FN-OLD but HEAD is fusion/fn-new",
+      );
+
+      await installTaskWorktreeIdentityGuard({ worktreePath: worktreeDir, taskId: "FN-NEW" });
+
+      const refreshedOwnerCommit = spawnSync("git", ["commit", "-m", "fix(FN-NEW): accepted after owner refresh"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+      });
+      expect(refreshedOwnerCommit.status).toBe(0);
+
+      const taskIdPathRaw = git(worktreeDir, "git rev-parse --git-path fusion-task-id");
+      const taskIdPath = resolve(worktreeDir, taskIdPathRaw);
+      expect(readFileSync(taskIdPath, "utf-8").trim()).toBe("FN-NEW");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("uses per-worktree metadata so a shared stale hook still allows sibling owner commits", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "fn-5266-precommit-"));
     const staleDir = join(rootDir, "wt-stale");

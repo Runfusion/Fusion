@@ -47,6 +47,9 @@ jobs:
       - name: Changeset format
         run: pnpm check:changesets
 
+      - name: Dashboard route modularity
+        run: pnpm check:routes-modular
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

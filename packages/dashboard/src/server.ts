@@ -25,7 +25,6 @@ import { ApiError, sendErrorResponse } from "./api-error.js";
 import {
   countRunningAgentsInRegisteredProjectStores,
   countRunningAgentsInStore,
-  getOrCreateProjectStore,
   evictAllProjectStores,
   setOnProjectFirstCreated,
 } from "./project-store-resolver.js";
@@ -128,13 +127,15 @@ function buildTaskIdIntegrityHealth(report: DashboardTaskIdIntegrityHealth) {
 function buildHealthPayload(args: {
   database: ReturnType<TaskStore["getDatabaseHealth"]>;
   taskIdIntegrityReport: DashboardTaskIdIntegrityHealth;
+  migration?: import("./dashboard-postgres-health.js").DashboardMigrationHealth;
   cliPackageVersion: string;
   engineAvailable: boolean;
 }) {
-  const { database, cliPackageVersion, engineAvailable } = args;
+  const { database, cliPackageVersion, engineAvailable, migration } = args;
   const taskIdIntegrity = buildTaskIdIntegrityHealth(args.taskIdIntegrityReport);
   return {
-    status: !database.healthy || database.corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
+    // Durable running/failed migration markers must never be hidden behind ok health.
+    status: migration || !database.healthy || database.corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
     /*
@@ -146,6 +147,7 @@ function buildHealthPayload(args: {
     },
     database,
     taskIdIntegrity,
+    ...(migration ? { migration } : {}),
   };
 }
 
@@ -1188,21 +1190,26 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       // Prefer the engine's store when available — this ensures SSE listeners
       // attach to the same EventEmitter instance that the engine writes to,
       // rather than a separate store created by getOrCreateProjectStore.
-      let scopedStore: TaskStore;
+      const scopedStore: TaskStore = await resolveProjectScopedStore(projectId);
       let agentStore: AgentStore | undefined;
       let messageStore: MessageStore | undefined;
       let automationStore: AutomationStore | undefined;
       let scopedChatStore = chatStore;
+      /*
+      FNXC:ProjectScoping 2026-07-15-20:10:
+      A project-scoped SSE stream must attach to the same canonical TaskStore as
+      request handlers and the launch engine. Reimplementing the resolver here
+      created a second store for the launch project when its engine was not
+      immediately available, which separated its EventEmitter from mutations.
+      */
       if (engineManager) {
         const engine = engineManager.getEngine(projectId);
-        scopedStore = engine?.getTaskStore() ?? await getOrCreateProjectStore(projectId);
         scopedChatStore = getOrCreateScopedChatStore(scopedStore, engine?.getChatStore?.());
-        // Use the engine's stores if available
+        // Use the engine's auxiliary stores when available.
         agentStore = engine?.getAgentStore();
         messageStore = engine?.getMessageStore();
         automationStore = engine?.getAutomationStore();
       } else {
-        scopedStore = await getOrCreateProjectStore(projectId);
         scopedChatStore = getOrCreateScopedChatStore(scopedStore);
       }
       // Fallback: create AgentStore if engine doesn't have one
@@ -1723,10 +1730,19 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
    * unreachable backend surfaces degraded status + errors.
    */
   app.get("/api/health", async (_req, res) => {
-    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer);
+    /*
+    FNXC:MigrationStatusDashboard 2026-07-19-14:30:
+    The daemon's TaskStore is bound to the engine project id, but TaskStore has
+    no project-id accessor. Pass that typed server identity to health so durable
+    migration markers use project:<projectId> instead of a root-path fallback.
+    */
+    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer, {
+      projectId: options?.engine?.getProjectId?.(),
+    });
     res.json(buildHealthPayload({
       database: health.database,
       taskIdIntegrityReport: health.taskIdIntegrity,
+      migration: health.migration,
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
     }));
@@ -1927,11 +1943,18 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
      * Force-recompute PostgreSQL connectivity and task-ID integrity through
      * the live TaskStore layer (or an explicit integration override). Query
      * failures remain visible as degraded health instead of healthy fallback.
+     *
+     * FNXC:MigrationStatusDashboard 2026-07-19-14:30:
+     * Preserve the engine's typed bound project identity on refresh so this
+     * endpoint queries the same durable project migration marker as GET health.
      */
-    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer);
+    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer, {
+      projectId: options?.engine?.getProjectId?.(),
+    });
     res.json(buildHealthPayload({
       database: health.database,
       taskIdIntegrityReport: health.taskIdIntegrity,
+      migration: health.migration,
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
     }));
@@ -2553,7 +2576,12 @@ export function setupBadgeWebSocket(
       return scopedStore;
     }
     
-    // Create scoped store
+    /*
+    FNXC:ProjectScoping 2026-07-15-20:10:
+    Badge WebSocket listeners use the canonical scoped resolver, including for
+    the launch project, so an explicit `projectId` cannot bind a duplicate
+    TaskStore/EventEmitter and leak or miss cross-project badge updates.
+    */
     scopedStore = await resolveScopedStore(projectId, store, options?.engineManager, options?.engine?.getProjectId?.(), options);
     scopedStores.set(projectId, scopedStore);
     return scopedStore;

@@ -315,6 +315,12 @@ FN-6722 workspace verification observed dev-server-process time out only in the 
 FNXC:DashboardTestQuarantine 2026-06-21-12:42:
 FN-6860 rescued dev-server-process by settling stdout detection and fallback-probe lifecycle work before stop/close/failure teardown, then removed its ledger/config quarantine entry. The same loaded API shard also confirmed FN-6742's session-cross-tab rescue still holds, so its stale ledger-only entry was removed to restore lockstep.
 
+FNXC:DashboardTestQuarantine 2026-07-19-18:45:
+FN-8394 rescues dev-server-process after its second load-sensitive quarantine.
+Its injected child-process and process-tree-signal seams preserve lifecycle,
+stdout/URL, fallback-timer, failure, and restart assertions without a real shell
+child or filesystem store; keep it out of this exclude list and ledger.
+
 FNXC:DashboardTestQuarantine 2026-06-22-18:05:
 FN-6937 verified that FN-6860's claimed session-cross-tab ledger removal had not landed: the file was active because this exclude list was empty, but `test-quarantine.json` still carried the stale 2026-06-19 row. The repeated loaded `dashboard-api-quality-backfill` runs and lock-holder mutation proof confirmed FN-6742's rescue still holds, so remove the orphaned ledger row and keep this list empty to restore ledger↔config lockstep.
 
@@ -346,21 +352,6 @@ const quarantinedDashboardTests: string[] = [
   async-store or applicable mock/non-store contracts. Remove their ledger/exclude
   pairs so dashboard-api-quality-backfill collects the restored coverage.
   */
-  /*
-  FNXC:DashboardTestQuarantine 2026-07-18-14:05:
-  Full-suite shard 2 (run 29660321240): Terminal-guard tab settle race under
-  dashboard-app-quality-backfill load; passes focused thrice with no product bug.
-  Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
-  */
-  "app/components/__tests__/TaskDetailModal.tab-persistence.test.tsx",
-  /*
-  FNXC:DashboardTestQuarantine 2026-07-18-14:40:
-  Full-suite shard 4 (run 29661202279): re-flaked stdout/fallback-probe race in
-  clears fallback probe timer when URL is detected from logs under the loaded
-  API backfill lane (prior FN-6722 quarantine / FN-6860 rescue). Quarantine on
-  sight — mirrored in scripts/lib/test-quarantine.json.
-  */
-  "src/__tests__/dev-server-process.test.ts",
 ];
 
 const qualityApiTests = [
@@ -559,6 +550,10 @@ export default defineConfig({
       "@fusion-plugin-examples/quality/dashboard-view": resolve(
         __dirname,
         "../../plugins/fusion-plugin-quality/src/dashboard-view.tsx",
+      ),
+      "@fusion-plugin-examples/roadmap/dashboard-view": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-roadmap/src/dashboard-view.tsx",
       ),
       "@fusion-plugin-examples/quality/qa-tab": resolve(
         __dirname,

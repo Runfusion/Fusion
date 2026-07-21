@@ -4280,7 +4280,6 @@ export function TaskDetailContent({
                   </p>
                 </div>
               )}
-              <TaskVerificationStatus request={verificationRequest} />
               <div className="detail-meta">
                 {/*
                 FNXC:QuickAddActionRow 2026-07-16-16:00:
@@ -4288,11 +4287,16 @@ export function TaskDetailContent({
                 attach, GitHub tracking, Oversight, Priority, then Fast. The compact
                 controls delegate to the existing single file-input upload and
                 GitHub-tracking handlers so this row never forks persistence paths.
+
+                FNXC:QuickAddActionRow 2026-07-20-12:00:
+                FN-8421 completes FN-8287 sizing-class wiring: every mounted inline
+                action carries its shared-square class, preventing Oversight/Fast
+                from using a different tablet-height contract than its siblings.
                 */}
                 <div className="detail-meta-inline-controls" data-testid="detail-meta-inline-controls">
                   <button
                     type="button"
-                    className="btn btn-icon btn-sm"
+                    className="btn btn-icon btn-sm detail-inline-attach"
                     data-testid="detail-inline-attach"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
@@ -4304,7 +4308,7 @@ export function TaskDetailContent({
                   {canEditGithubTracking && !gitlabTrackedItem && (
                     <button
                       type="button"
-                      className={`btn btn-icon btn-sm ${githubTrackingEnabled ? "btn-primary" : ""}`}
+                      className={`btn btn-icon btn-sm detail-inline-github-toggle ${githubTrackingEnabled ? "btn-primary" : ""}`}
                       data-testid="detail-inline-github-toggle"
                       onClick={() => void handleToggleGithubTracking()}
                       disabled={isSavingGithubTracking}
@@ -4531,7 +4535,7 @@ export function TaskDetailContent({
                         */}
                         <button
                           type="button"
-                          className="btn btn-icon btn-sm"
+                          className="btn btn-icon btn-sm detail-priority-trigger"
                           data-testid="detail-priority-trigger"
                           onClick={() => setShowInlinePriorityPicker((isOpen) => !isOpen)}
                           disabled={isSavingInlinePriority}
@@ -4760,6 +4764,8 @@ export function TaskDetailContent({
                   )}
                 </div>
               </div>
+              {/* FNXC:TaskVerificationStatus 2026-07-19-12:00: Verification status moved below metadata controls per UX feedback — empty state "No chat verification requested" was appearing too prominently near the top of the card. */}
+              <TaskVerificationStatus request={verificationRequest} />
               {shouldShowBranchGroupCard && task.branchContext?.groupId && (
                 /* FNXC:BranchGroupDetails 2026-06-30-00:00: Task-detail branch groups must return to their compact collapsed default when users switch tasks, including between members of the same shared branch group. Key by task and group so a manual expansion never leaks into the next task detail view. */
                 <BranchGroupCard

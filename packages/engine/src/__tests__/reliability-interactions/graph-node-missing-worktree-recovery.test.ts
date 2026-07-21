@@ -3,7 +3,14 @@ import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
 import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflow-graph-executor.js";
 import { TaskExecutor } from "../../executor.js";
-import { createMockStore, mockedExecSync, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
+import { activeSessionRegistry } from "../../active-session-registry.js";
+import {
+  createMockStore,
+  mockedCreateFnAgent,
+  mockedExecSync,
+  mockedExistsSync,
+  resetExecutorMocks,
+} from "../executor-test-helpers.js";
 import { MAX_WORKTREE_SESSION_RETRIES } from "../../self-healing.js";
 
 /*
@@ -317,6 +324,59 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("releases the repo-root session lease after the fallback reviewer completes", async () => {
+    const store = createMockStore();
+    const agentStore = { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() };
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const output = '{"verdict":"APPROVE","notes":""}';
+    mockedCreateFnAgent.mockImplementation(async () => {
+      const listeners: Array<(event: any) => void> = [];
+      return {
+        session: {
+          state: {},
+          subscribe: (listener: (event: any) => void) => {
+            listeners.push(listener);
+            return vi.fn();
+          },
+          prompt: vi.fn(async () => {
+            for (const listener of listeners) {
+              listener({
+                type: "message_update",
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: output,
+                  partial: output,
+                },
+              });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const live = makeTask();
+    const step = {
+      id: "graph:plan-review-step",
+      name: "Plan Review",
+      description: "",
+      mode: "prompt",
+      phase: "pre-merge",
+      gateMode: "gate",
+      prompt: "Review the plan.",
+      toolMode: "readonly",
+      enabled: true,
+      createdAt: live.createdAt,
+      updatedAt: live.updatedAt,
+    };
+
+    const result = await (executor as any).executeWorkflowStep(live, step, "/tmp/test", {});
+
+    expect(result.success).toBe(true);
+    expect(activeSessionRegistry.lookupByPath("/tmp/test")).toBeNull();
   });
 
   it("keeps other read-only nodes on the recorded path so they fail fast into recovery", async () => {

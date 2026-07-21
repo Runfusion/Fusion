@@ -34,10 +34,13 @@ vi.mock("../reviewer.js", async (importOriginal) => {
   return { ...actual, reviewStep: vi.fn() };
 });
 vi.mock("../logger.js", () => {
+  const probe = process.env.FUSION_TEST_LOG_PROBE === "1"
+    ? (...a: unknown[]) => console.error("[probe]", ...a)
+    : undefined;
   const createMockLogger = () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+    log: vi.fn(probe),
+    warn: vi.fn(probe),
+    error: vi.fn(probe),
   });
   return {
     createLogger: vi.fn(() => createMockLogger()),
@@ -67,14 +70,59 @@ vi.mock("../merger.js", () => ({
   aiMergeTask: vi.fn(),
   findWorktreeUser: vi.fn().mockResolvedValue(null),
 }));
+/*
+FNXC:EngineTests 2026-07-19-06:00 (U5f / R9):
+Session-shape defaults. ~419 per-file `mockedCreateFnAgent.mockResolvedValue({session:{...}})`
+sites each hand-roll a session stub, and almost all of them define only `prompt`/`dispose` —
+the surface the LEGACY execute path touched. Once every run is graph-owned, those same tests
+also reach the workflow-STEP session, which subscribes to the stream (`session.subscribe(...)`
+in executor.ts), so each of those stubs would throw "subscribe is not a function". That was
+the single largest failure class when the store was made workflow-aware (38 of 59 in the
+measured sample).
+
+Rather than edit 419 literals, fill the gaps at the ONE seam every executor session is built
+through. A stub's own methods always win — this only supplies what a stub omitted, so no test
+loses control of behavior it actually asserts.
+*/
+/*
+FNXC:EngineTests 2026-07-19-12:10 (U5g pt2):
+Verdict-shaped default stream for REVIEW sessions. A workflow review step reads its verdict
+from the session's streamed text (`session.subscribe` -> `output` -> `parseWorkflowStepVerdict`
+in executor.ts). A stub that streams nothing therefore always produces "malformed output (no
+parseable verdict)", which under graph ownership routes the run into `plan-replan` -> triage
+instead of the behavior under test. Emitting APPROVE is the neutral default: it makes a review
+step inert, matching what these tests assumed back when reviewers were not in their loop.
+Keyed on the "## Feedback Format" block that `verdictBlock` puts in a review step's system
+prompt, so implementation sessions keep a silent stream, and any stub that defines its own
+`subscribe` (including tests deliberately asserting malformed or REVISE output) still wins.
+*/
+const REVIEW_MARKER = "## Feedback Format";
+const APPROVE_OUTPUT = "{\"verdict\":\"APPROVE\",\"notes\":\"\"}";
+
+function withSessionDefaults(session: any, options?: { systemPrompt?: unknown }): any {
+  if (!session || typeof session !== "object") return session;
+  if (typeof session.subscribe !== "function") {
+    const isReview = typeof options?.systemPrompt === "string" && options.systemPrompt.includes(REVIEW_MARKER);
+    session.subscribe = isReview
+      ? vi.fn((listener: (e: unknown) => void) => {
+        listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: APPROVE_OUTPUT, partial: APPROVE_OUTPUT } });
+        return vi.fn();
+      })
+      : vi.fn(() => vi.fn());
+  }
+  if (typeof session.prompt !== "function") session.prompt = vi.fn().mockResolvedValue(undefined);
+  if (typeof session.dispose !== "function") session.dispose = vi.fn();
+  return session;
+}
+
 vi.mock("../agent-session-helpers.js", async () => {
   const { createFnAgent } = await import("../pi.js");
   return {
     createResolvedAgentSession: async (options: any) => {
       const result = await createFnAgent(options);
       return {
-        session: result.session,
-        sessionFile: result.sessionFile,
+        session: withSessionDefaults(result?.session, options),
+        sessionFile: result?.sessionFile,
         runtimeId: "pi",
         wasConfigured: false,
       };
@@ -349,6 +397,7 @@ import { classifyTaskWorktree, describeRegisteredWorktrees, isUsableTaskWorktree
 import { classifyStaleLock, tryRemoveStaleLock } from "../worktree-stale-lock.js";
 import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree-stale-registration.js";
 import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
+import { TaskExecutor } from "../executor.js";
 
 export const mockedCreateFnAgent = vi.mocked(createFnAgent);
 export const mockedSessionManager = vi.mocked(SessionManager);
@@ -369,6 +418,37 @@ export const mockedTryRemoveStaleLock = vi.mocked(tryRemoveStaleLock);
 export const mockedParseStaleRegistrationPath = vi.mocked(parseStaleRegistrationPath);
 export const mockedRecoverStaleRegistration = vi.mocked(recoverStaleRegistration);
 export const mockedInstallTaskWorktreeIdentityGuard = vi.mocked(installTaskWorktreeIdentityGuard);
+
+/*
+FNXC:EngineTests 2026-07-19-14:20 (U10b — the merge-requester harness seam):
+Under graph ownership the in-review handoff IS the merge boundary: the `requestMerge` seam calls
+`ensureWorkflowMergeBoundaryTask` and then moves the task to the merge node's column. There is no
+completion-path `moveTask(id, "in-review")` any more. But `requestMerge` short-circuits to
+`merge-unavailable` BEFORE any row mutation when `mergeRequester` is unset, so a bare
+`new TaskExecutor(store, root)` — which is how ~40 legacy-shaped test files build one — terminated
+the graph with ZERO moveTask calls. Production always injects a requester (the work engine wires
+it), so this is harness absence, not the contract under test.
+
+Injected by patching the two entry points rather than by a prototype accessor: TS class fields
+define an own `mergeRequester` (undefined) per instance, which SHADOWS any prototype accessor. A
+test that calls `setMergeRequester` itself still wins — this only fills the hole when nothing set
+one. The default is deliberately a no-op queue result, not a success: it proves the boundary was
+reached without asserting a merge landed.
+*/
+const DEFAULT_TEST_MERGE_RESULT = { merged: false, noOp: false, reason: "queued" };
+const executorProto = TaskExecutor.prototype as unknown as Record<string, any>;
+for (const method of ["execute", "resumeTaskForAgent"] as const) {
+  const original = executorProto[method];
+  if (typeof original !== "function" || original.__fusionDefaultMergeRequester) continue;
+  const patched = function (this: any, ...args: unknown[]) {
+    if (!this.mergeRequester) {
+      this.setMergeRequester(async () => DEFAULT_TEST_MERGE_RESULT as any);
+    }
+    return original.apply(this, args);
+  };
+  (patched as any).__fusionDefaultMergeRequester = true;
+  executorProto[method] = patched;
+}
 
 export type EventListener = (...args: unknown[]) => void;
 
@@ -391,7 +471,91 @@ const createLegacySettingsMock = (initialSettings: Record<string, unknown>) => {
 
 export function createMockStore() {
   const listeners = new Map<string, EventListener[]>();
+  /*
+  FNXC:EngineTests 2026-07-19-09:10 (U5g):
+  Write-through task state. `updateTask` used to be a black hole (`mockResolvedValue({})`) while
+  `getTask` returned a frozen literal, so nothing the executor persisted was ever readable back.
+  The legacy execute path tolerated that because it carried the in-memory `task` object forward.
+  The graph does not: the write-capable-node isolation guard re-reads the row
+  (`executionTarget = await this.store.getTask(live.id)`, executor.ts) precisely so it cannot
+  trust a stale in-memory copy, and then rejects with `no-worktree-for-write-node` because the
+  frozen literal has no worktree — 41 failures across 4 files, all of them worktree-mechanics
+  tests that never reached the assertion under test.
+  Recording `updateTask` patches and replaying them from `getTask` is what a real store does, so
+  this closes the gap at the shared seam rather than per file. Files that install their own
+  `getTask`/`updateTask` implementations replace these outright and are unaffected.
+  */
+  const patches = new Map<string, Record<string, unknown>>();
+  const applyPatch = (id: string, patch: Record<string, unknown> | undefined) => {
+    if (!patch || typeof patch !== "object") return;
+    patches.set(id, { ...(patches.get(id) ?? {}), ...patch });
+  };
+  /*
+  FNXC:EngineTests 2026-07-19-14:45 (U10b):
+  Write-through survives a per-file `getTask` override. U5g made the DEFAULT `getTask` replay
+  `updateTask` patches, but ~10 files on this surface install their own `getTask` returning a
+  frozen literal — so for them the row never reflected anything the executor persisted (no
+  worktree, steps never terminal), and the graph rejected at the write-capable-node guard or the
+  merge implementation-proof gate before the assertion under test ran.
+  Wrapping `mockImplementation`/`mockResolvedValue` (rather than editing each file) keeps the
+  override's INTENT — it still decides the row's shape — while the executor's own writes are
+  layered on top, which is what a real store does. Patches win: they are the later writes.
+  */
+  const makeWriteThroughGetTask = (defaultImpl: (id?: string) => Promise<any>) => {
+    const mock = vi.fn(defaultImpl);
+    const merge = (id: string | undefined, result: unknown) =>
+      result && typeof result === "object"
+        ? { ...(result as Record<string, unknown>), ...(patches.get(id ?? "FN-001") ?? {}) }
+        : result;
+    const rawImpl = mock.mockImplementation.bind(mock);
+    const rawResolved = mock.mockResolvedValue.bind(mock);
+    mock.mockImplementation = ((fn: (id?: string) => unknown) =>
+      rawImpl(async (id?: string) => merge(id, await fn(id)))) as typeof mock.mockImplementation;
+    mock.mockResolvedValue = ((value: unknown) =>
+      rawImpl(async (id?: string) => merge(id, value))) as typeof mock.mockResolvedValue;
+    void rawResolved;
+    return mock;
+  };
+  /*
+  FNXC:EngineTests 2026-07-19-15:05 (U10b):
+  `moveTask` must return the LIVE row, not a literal. The graph's merge boundary
+  (`ensureWorkflowMergeBoundaryTask`) returns `store.moveTask(...)`'s result and feeds it
+  straight into the implementation-proof gate, so a mock returning `{}` (or a captured
+  pre-execution task literal) reported zero/pending steps and the merge failed
+  `implementation-incomplete` — after the implementation had provably completed and
+  `updateStep` had written every step `done`. Same wrapper treatment as `getTask` so per-file
+  overrides keep choosing the row's shape while the executor's own writes layer on top.
+  */
+  const makeWriteThroughMoveTask = () => {
+    const finish = async (id: string, column: string, result?: unknown) => {
+      applyPatch(id, { column });
+      const live = await store.getTask(id);
+      return result && typeof result === "object"
+        ? { ...(result as Record<string, unknown>), ...(patches.get(id) ?? {}), ...(live ?? {}) }
+        : live;
+    };
+    const mock = vi.fn(async (id: string, column: string) => finish(id, column));
+    const rawImpl = mock.mockImplementation.bind(mock);
+    mock.mockImplementation = ((fn: (...a: any[]) => unknown) =>
+      rawImpl(async (id: string, column: string, ...rest: unknown[]) =>
+        finish(id, column, await (fn as any)(id, column, ...rest)))) as typeof mock.mockImplementation;
+    mock.mockResolvedValue = ((value: unknown) =>
+      rawImpl(async (id: string, column: string) => finish(id, column, value))) as typeof mock.mockResolvedValue;
+    return mock;
+  };
   const store = {
+    /*
+    FNXC:EngineTests 2026-07-19-15:30 (U10b):
+    Test-side write into the same patch log the executor writes to. Needed because patches WIN
+    over a per-file `getTask` override (the executor's writes are the later ones), so a test that
+    simulates an EXTERNAL mutation by mutating its own captured literal — "the worktree vanished
+    under us" — would be silently overwritten by the executor's earlier `updateTask`. Routing
+    that simulated mutation through `_setRow` restores correct ordering without polluting the
+    `updateTask` spy, which several of these tests assert negatively on.
+    */
+    _setRow(id: string, patch: Record<string, unknown>) {
+      applyPatch(id, patch);
+    },
     on: vi.fn((event: string, fn: EventListener) => {
       const existing = listeners.get(event) || [];
       existing.push(fn);
@@ -411,11 +575,23 @@ export function createMockStore() {
     },
     emit: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue({
-      id: "FN-001",
+    getTask: makeWriteThroughGetTask(async (id?: string) => ({
+      id: id ?? "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
+      /*
+      FNXC:EngineTests 2026-07-19-12:10 (U5g pt2):
+      No optional pre-merge gates on the minimal fake's default task. These legacy-shaped tests
+      hand-roll a session stub assuming the FIRST session is the IMPLEMENTATION session; under
+      graph ownership the first session is Plan Review, so a stub's side effects (pausing,
+      disposing, triggering store events) fired against the wrong session. Declaring the gates
+      off restores that premise without weakening any assertion — a test that wants a gate sets
+      one explicitly. This MUST live on the store's task, not on the literals passed to
+      `execute()`: the graph re-reads the row rather than trusting the passed object, which is
+      why the same value on an inline literal provably does nothing.
+      */
+      enabledWorkflowSteps: [],
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -423,10 +599,14 @@ export function createMockStore() {
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(patches.get(id ?? "FN-001") ?? {}),
+    })),
+    updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
+      applyPatch(id, patch);
+      return { ...(patches.get(id) ?? {}), id };
     }),
-    updateTask: vi.fn().mockResolvedValue({}),
     recordActivity: vi.fn().mockResolvedValue({}),
-    moveTask: vi.fn().mockResolvedValue({}),
+    moveTask: makeWriteThroughMoveTask(),
     handoffToReview: vi.fn().mockImplementation(async (id: string) => store.moveTask(id, "in-review")),
     mergeTask: vi.fn().mockResolvedValue({}),
     createTask: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
@@ -454,7 +634,23 @@ export function createMockStore() {
       autoMerge: false,
       worktreeInitCommand: undefined,
     }),
-    updateStep: vi.fn().mockResolvedValue({}),
+    /*
+    FNXC:EngineTests 2026-07-19-14:20 (U10b):
+    Write-through step state, for the same reason `updateTask` became write-through (U5g).
+    `updateStep` was a black hole while `getTask` replayed only `updateTask` patches, so the
+    graph's `steps#N:step-execute` node re-read the projection, saw the step still `pending`,
+    and terminated with `step N not completed by implementation pass` — before the assertion
+    under test. Land this WITH the workflow-selection flip: on its own (no flip) it costs a red
+    in `executor-task-done-invariant`, because without the flip nothing reads the projection back.
+    */
+    updateStep: vi.fn(async (id: string, stepIndex: number, status: string) => {
+      const current = await store.getTask(id);
+      const steps = ((current?.steps as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (s, i) => (i === stepIndex ? { ...s, status } : s),
+      );
+      applyPatch(id, { steps });
+      return { ...current, steps };
+    }),
     getWorkflowStep: vi.fn().mockResolvedValue(undefined),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     setPluginWorkflowStepTemplates: vi.fn(),
@@ -484,17 +680,69 @@ export function createMockStore() {
     getAgentLogs: vi.fn().mockResolvedValue([]),
     getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
     /*
-    FNXC:EngineTests 2026-07-19-01:10:
-    FN-8296 runs pending chat-requested verification before createFnAgent. Minimal
-    executor mocks must stub the verification request readers so default execute()
-    paths do not throw "getTaskVerificationRequestAsync is not a function" and
-    fail before session creation (236 engine-default/reliability failures).
+FNXC:TaskVerificationRequest 2026-07-19-04:30 (merged with U5f 2026-07-19-06:00):
+    Executor execute() claims pending chat-enqueued verification requests via
+    getTaskVerificationRequestAsync / claim / finish, and the completion path also
+    reads the sync getTaskVerificationRequest on stores that expose it. Default all
+    of them to "no pending request" so execute-path tests keep no-verification
+    behavior (28 failures at HEAD without these stubs; same fix landed on main in
+    #2332 and in the cutover's U5f — this block is the union).
     */
     getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    getTaskVerificationRequest: vi.fn().mockReturnValue(null),
     claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
+    createTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:EngineTests 2026-07-19-09:40 (U5g):
+    Step-source artifact for the graph's `parse` node. The builtin coding graph parses PROMPT.md
+    into the task step list before it ever reaches the implementation node, and
+    `readTaskArtifact` resolves that artifact as `getTaskDocument(id,"PROMPT.md")` first, falling
+    back to `getTask().prompt`. The fallback is not reachable for most of this surface: ~10 files
+    install their own `store.getTask` implementation returning a task literal with no `prompt`, so
+    the artifact read returns undefined, `parse` fails `parse-error`, and the graph terminates
+    BEFORE any agent session exists — which is why the captured `fn_task_done` tool was null in 59
+    tests. `getTaskDocument` is not overridden anywhere on this surface, so supplying it here fixes
+    every one of those files at the shared seam instead of per file.
+    */
+    getTaskDocument: vi.fn(async (_taskId: string, key: string) =>
+      key === "PROMPT.md"
+        ? { content: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check" }
+        : undefined,
+    ),
+    /*
+    FNXC:EngineTests 2026-07-19-14:20 (U10b — THE FLIP):
+    The workflow-selection readers. Their ABSENCE is what routed this whole surface down
+    `maybeExecuteWorkflowGraph`'s legacy fallback (executor.ts, the
+    `typeof getTaskWorkflowSelection* !== "function"` block). Production TaskStores always
+    expose them, so the fallback existed only for minimal/older adapters — and this harness
+    was its largest consumer. Supplying them here is the cutover's flip: the surface now runs
+    the graph, which is the precondition for deleting that fallback (U10 step 4) and making
+    `graphCompletion` mandatory. A test that wants the pre-flip shape must delete these
+    explicitly, and after the fallback's deletion no such shape exists.
+    */
+    getTaskWorkflowSelectionAsync: vi
+      .fn()
+      .mockResolvedValue({ workflowId: "builtin:coding", stepIds: [] }),
+    getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
   };
   return store as any;
+}
+
+/*
+FNXC:ExecutorTests 2026-07-19-09:40:
+Under graph ownership mockedCreateFnAgent fires once per graph session (e.g. Plan
+Review, then implementation), so a bare `customTools.find(...)` assignment on a
+session WITHOUT the tool would clobber an already-captured reference with
+undefined. Shared capture guard: keep the previous capture when the current
+session's customTools lacks the named tool.
+*/
+export function captureNamedTool<T extends { name: string }>(
+  customTools: T[] | undefined,
+  name: string,
+  previous: T | undefined,
+): T | undefined {
+  return customTools?.find((tool) => tool.name === name) ?? previous;
 }
 
 export function resetExecutorMocks() {

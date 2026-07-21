@@ -19,10 +19,16 @@ export async function reconcileMissionFeatureState(
   feature: Pick<MissionFeature, "id" | "status" | "lastValidatorStatus">,
   context: MissionFeatureSyncContext = {},
 ): Promise<MissionFeatureSyncDecision> {
-  if (task.status === "failed" && feature.status === "in-progress") {
+  /*
+  FNXC:MissionReconciliation 2026-07-30-00:00:
+  FN-8307 makes failure a provenance-preserving withheld outcome regardless of
+  the feature's current state. A released scheduler symbol lock permits this
+  reconciliation but never proves implementation completion.
+  */
+  if (task.status === "failed" || task.error) {
     return {
       kind: "failure",
-      reason: `task ${task.id} failed while feature ${feature.id} is in-progress`,
+      reason: `task ${task.id} failed; feature ${feature.id} remains ${feature.status}`,
     };
   }
 
@@ -58,28 +64,13 @@ export async function reconcileMissionFeatureState(
     return { kind: "noop" };
   }
 
-  if (task.column === "archived") {
-    if (hasUnvalidatedAssertions) {
-      if (feature.status !== "in-progress") {
-        return {
-          kind: "update",
-          status: "in-progress",
-          reason: `task ${task.id} archived; awaiting assertion validation`,
-        };
-      }
-      return { kind: "noop" };
-    }
-
-    if (feature.status !== "done") {
-      return {
-        kind: "update",
-        status: "done",
-        reason: `task ${task.id} was archived after completion`,
-      };
-    }
-
-    return { kind: "noop" };
-  }
+  /*
+  FNXC:MissionReconciliation 2026-07-30-00:00:
+  Archiving is retention, not a completion signal. Leave canonical feature
+  status untouched so a terminal/duplicate archive cannot fabricate roadmap
+  progress; callers may still recompute hierarchy idempotently.
+  */
+  if (task.column === "archived") return { kind: "noop" };
 
   if (
     (task.column === "in-progress" || task.column === "in-review")

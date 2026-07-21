@@ -49,12 +49,63 @@ export interface StampMigratedProjectRowsResult {
   readonly stamped: boolean;
 }
 
+export interface ProjectPartitionOwnership {
+  readonly fallbackProjectId: string;
+  readonly registeredProjectId: string;
+  readonly fallbackOwnedRows: boolean;
+  readonly registeredOwnedRows: boolean;
+  readonly ownershipByRelation: Record<string, { fallback: boolean; registered: boolean }>;
+}
+
+export type ProjectPartitionRekeyReason =
+  | "unreplaced-fk-dependent"
+  | "unsupported-unique-metadata"
+  | "unsafe-fk-update-graph"
+  | "unique-violation"
+  | "unknown";
+
+/** A fail-closed promotion result that also preserves the pre-write bind decision. */
+export class ProjectPartitionRekeyError extends Error {
+  constructor(
+    readonly reason: ProjectPartitionRekeyReason,
+    readonly ownership: ProjectPartitionOwnership,
+    readonly details: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Project partition reconciliation refused (${reason}): ${details}`, options);
+    this.name = "ProjectPartitionRekeyError";
+  }
+}
+
+export function selectDegradedBindTarget(
+  ownership: ProjectPartitionOwnership | undefined,
+): "fallback" | "registered" | "refuse" {
+  if (!ownership) return "refuse";
+  if (ownership.fallbackOwnedRows) return "fallback";
+  return ownership.registeredOwnedRows ? "registered" : "refuse";
+}
+
+type RekeyTarget = { schema: string; table: string };
+type UniqueRule = { schema: string; table: string; name: string; columns: string[]; nullsNotDistinct: boolean; partial: boolean; expression: boolean };
+type ForeignKey = { constraintId: string; constraintName: string; childSchema: string; childTable: string; parentSchema: string; parentTable: string; childColumns: string[]; parentColumns: string[]; deferrable: boolean; updateAction: string; deleteAction: string };
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+function relationName(target: RekeyTarget): string { return `${quoteIdentifier(target.schema)}.${quoteIdentifier(target.table)}`; }
+function relationKey(target: RekeyTarget): string { return `${target.schema}.${target.table}`; }
+// Project identifiers originate from central storage, but quote them here because catalog-driven SQL cannot bind identifiers and must remain injection-safe.
+function quoteLiteral(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
+
 /**
- * FNXC:ProjectIdentityPromotion 2026-07-14-14:08:
- * An unregistered project first runs under a stable path-derived partition. If
- * central registration later assigns its canonical ID, atomically promote all
- * project and archive rows plus migration bookkeeping so the next boot cannot
- * strand the project in the fallback partition or repeat its SQLite cutover.
+ * FNXC:ProjectPartitionMerge 2026-07-20-12:00:
+ * A registered project can legitimately have older path-fallback rows. Promotion is a single catalog-driven merge, not a NOT EXISTS skip: fallback rows win conflicts so registration scaffolding cannot discard operator settings. Normal UNIQUE keys require non-NULL equality while NULLS NOT DISTINCT keys use IS NOT DISTINCT FROM.
+ *
+ * FNXC:ProjectPartitionMerge 2026-07-20-12:00:
+ * Before writes, reject metadata we cannot model and unsafe update FK edges. Registered rows are deleted only for a proven unique conflict; any inbound registered dependent makes that delete fail closed regardless of CASCADE/SET NULL/SET DEFAULT, rather than using an FK action as data cleanup. The typed error retains pre-transaction ownership so startup can safely bind fallback after rollback.
+ *
+ * FNXC:ProjectPartitionMerge 2026-07-20-12:30:
+ * Evaluate each catalog FK constraint independently: aggregating separate edges can miss a dependent and permit a collateral cascade. DEFERRABLE only permits deferred checks; ON UPDATE SET NULL/SET DEFAULT remain unsafe because they can mutate retained children during promotion.
  */
 export async function rekeyFallbackProjectPartition(
   db: MigrationDb,
@@ -64,83 +115,204 @@ export async function rekeyFallbackProjectPartition(
   if (!fallbackProjectId || fallbackProjectId === registeredProjectId) return false;
 
   return db.transaction(async (tx) => {
+    // This remains the first statement: migration-stamping-lock-order.test.ts enforces it.
     await acquireSqliteMigrationStateLock(tx);
-    const tables = (await tx.execute(sql`
-      SELECT table_name
+    const targets = (await tx.execute(sql`
+      SELECT table_schema AS schema, table_name AS table
       FROM information_schema.columns
       WHERE table_schema = 'project' AND column_name = 'project_id'
-      ORDER BY table_name
-    `)) as unknown as Array<{ table_name: string }>;
-    /*
-    FNXC:ProjectIdentityPromotion 2026-07-14-18:58:
-    Fallback ownership can exist only in satellite tables such as agents, reports, or mission state. Inspect every project-owned table before deciding promotion is a no-op; task/archive-only detection stranded those partitions after central registration.
-    */
-    let ownsProjectRows = false;
-    for (const { table_name: tableName } of tables) {
-      const rows = (await tx.execute(sql`
-        SELECT EXISTS (
-          SELECT 1 FROM ${sql.identifier("project")}.${sql.identifier(tableName)}
-          WHERE project_id = ${fallbackProjectId}
-        ) AS found
-      `)) as unknown as Array<{ found: boolean }>;
-      if (rows[0]?.found) {
-        ownsProjectRows = true;
-        break;
+      UNION ALL SELECT 'archive', 'archived_tasks'
+      WHERE to_regclass('archive.archived_tasks') IS NOT NULL
+      ORDER BY 1, 2
+    `)) as unknown as RekeyTarget[];
+    const ownershipByRelation: Record<string, { fallback: boolean; registered: boolean }> = {};
+    for (const target of targets) {
+      const rows = (await tx.execute(sql.raw(`SELECT EXISTS (SELECT 1 FROM ${relationName(target)} WHERE project_id = ${quoteLiteral(fallbackProjectId)}) AS fallback, EXISTS (SELECT 1 FROM ${relationName(target)} WHERE project_id = ${quoteLiteral(registeredProjectId)}) AS registered`))) as unknown as Array<{ fallback: boolean; registered: boolean }>;
+      ownershipByRelation[relationKey(target)] = rows[0] ?? { fallback: false, registered: false };
+    }
+    const stateExists = (await tx.execute(sql`SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists`)) as unknown as Array<{ exists: boolean }>;
+    let fallbackMigration = false;
+    let registeredMigration = false;
+    if (stateExists[0]?.exists) {
+      const rows = (await tx.execute(sql`SELECT EXISTS (SELECT 1 FROM public.fusion_sqlite_migrations WHERE project_id = ${fallbackProjectId}) AS fallback, EXISTS (SELECT 1 FROM public.fusion_sqlite_migrations WHERE project_id = ${registeredProjectId}) AS registered`)) as unknown as Array<{ fallback: boolean; registered: boolean }>;
+      fallbackMigration = rows[0]?.fallback === true;
+      registeredMigration = rows[0]?.registered === true;
+      ownershipByRelation["public.fusion_sqlite_migrations"] = { fallback: fallbackMigration, registered: registeredMigration };
+    }
+    const ownership: ProjectPartitionOwnership = {
+      fallbackProjectId, registeredProjectId,
+      fallbackOwnedRows: fallbackMigration || Object.values(ownershipByRelation).some((row) => row.fallback),
+      registeredOwnedRows: registeredMigration || Object.values(ownershipByRelation).some((row) => row.registered),
+      ownershipByRelation,
+    };
+    if (!ownership.fallbackOwnedRows) return false;
+
+    const uniqueRules = (await tx.execute(sql`
+      SELECT ns.nspname AS schema, cls.relname AS table, idx.relname AS name,
+             array_agg(att.attname ORDER BY ord.n) AS columns,
+             COALESCE(ind.indnullsnotdistinct, false) AS "nullsNotDistinct",
+             ind.indpred IS NOT NULL AS partial, ind.indexprs IS NOT NULL AS expression
+      FROM pg_index ind
+      JOIN pg_class cls ON cls.oid = ind.indrelid
+      JOIN pg_namespace ns ON ns.oid = cls.relnamespace
+      JOIN pg_class idx ON idx.oid = ind.indexrelid
+      -- FNXC:ProjectPartitionMerge 2026-07-20-12:45: indkey also contains non-key INCLUDE attributes; only indnkeyatts participate in a unique conflict after project_id is rewritten.
+      JOIN LATERAL unnest(ind.indkey::smallint[]) WITH ORDINALITY ord(attnum, n)
+        ON ord.n <= ind.indnkeyatts
+      LEFT JOIN pg_attribute att ON att.attrelid = cls.oid AND att.attnum = ord.attnum
+      WHERE ind.indisunique
+        AND (ns.nspname = 'project' OR (ns.nspname = 'archive' AND cls.relname = 'archived_tasks'))
+      GROUP BY ns.nspname, cls.relname, idx.relname, ind.indnullsnotdistinct, ind.indpred, ind.indexprs
+    `)) as unknown as UniqueRule[];
+    const targetKeys = new Set(targets.map(relationKey));
+    const relevantRules = uniqueRules.filter((rule) => {
+      const rows = ownershipByRelation[`${rule.schema}.${rule.table}`];
+      /* FNXC:ProjectPartitionMerge 2026-07-20-12:45: A partial/expression rule can depend on project_id even when its key attrs do not. We cannot evaluate that predicate safely, so include it in the fail-closed metadata pass whenever fallback rows will be moved. */
+      return targetKeys.has(`${rule.schema}.${rule.table}`) && rows?.fallback
+        && (rule.columns.includes("project_id") || rule.expression || rule.partial)
+        // Without a registered row this rewrite cannot introduce a second
+        // member of the index, so opaque predicates have no conflict to model.
+        && rows.registered;
+    });
+    for (const rule of relevantRules) {
+      if (rule.expression || rule.partial || rule.columns.some((column) => !column)) {
+        throw new ProjectPartitionRekeyError("unsupported-unique-metadata", ownership, `${rule.schema}.${rule.table}.${rule.name}`);
       }
     }
-    if (!ownsProjectRows) {
-      const rows = (await tx.execute(sql`
-        SELECT EXISTS (
-          SELECT 1 FROM archive.archived_tasks WHERE project_id = ${fallbackProjectId}
-        ) AS found
-      `)) as unknown as Array<{ found: boolean }>;
-      ownsProjectRows = rows[0]?.found === true;
+
+    const fks = (await tx.execute(sql`
+      SELECT con.oid::text AS "constraintId", con.conname AS "constraintName",
+             cns.nspname AS "childSchema", child.relname AS "childTable",
+             pns.nspname AS "parentSchema", parent.relname AS "parentTable",
+             array_agg(ca.attname ORDER BY keys.n) FILTER (WHERE ca.attname IS NOT NULL) AS "childColumns",
+             array_agg(pa.attname ORDER BY keys.n) FILTER (WHERE pa.attname IS NOT NULL) AS "parentColumns",
+             con.condeferrable AS deferrable, con.confupdtype AS "updateAction", con.confdeltype AS "deleteAction"
+      FROM pg_constraint con
+      JOIN pg_class child ON child.oid = con.conrelid JOIN pg_namespace cns ON cns.oid = child.relnamespace
+      JOIN pg_class parent ON parent.oid = con.confrelid JOIN pg_namespace pns ON pns.oid = parent.relnamespace
+      JOIN LATERAL unnest(con.conkey) WITH ORDINALITY keys(attnum, n) ON true
+      LEFT JOIN pg_attribute ca ON ca.attrelid = con.conrelid AND ca.attnum = keys.attnum
+      LEFT JOIN pg_attribute pa ON pa.attrelid = con.confrelid AND pa.attnum = con.confkey[keys.n]
+      WHERE con.contype = 'f'
+      GROUP BY con.oid, con.conname, cns.nspname, child.relname, pns.nspname, parent.relname, con.condeferrable, con.confupdtype, con.confdeltype
+    `)) as unknown as ForeignKey[];
+    const updateUnsafe = fks.find((fk) => {
+      const parentRows = ownershipByRelation[`${fk.parentSchema}.${fk.parentTable}`];
+      const childRows = ownershipByRelation[`${fk.childSchema}.${fk.childTable}`];
+      const rewritesFkIdentity = fk.parentColumns.includes("project_id")
+        || (targetKeys.has(`${fk.childSchema}.${fk.childTable}`) && fk.childColumns.includes("project_id"));
+      // SET NULL/DEFAULT mutates retained children even when the check is deferred.
+      const mutatesChild = fk.updateAction === "n" || fk.updateAction === "d";
+      const childIsRekeyed = targetKeys.has(`${fk.childSchema}.${fk.childTable}`);
+      /* FNXC:ProjectPartitionMerge 2026-07-20-12:45: A deferred check only makes a two-sided rekey safe: an external child is never rewritten by this loop and would still reference the fallback key at commit. CASCADE is the only catalog action that can safely update it. */
+      const deferredExternalChild = fk.deferrable && !childIsRekeyed;
+      return targetKeys.has(`${fk.parentSchema}.${fk.parentTable}`)
+        && (parentRows?.fallback || childRows?.fallback)
+        && rewritesFkIdentity
+        && (mutatesChild || deferredExternalChild || (!fk.deferrable && fk.updateAction !== "c"));
+    });
+    if (updateUnsafe) {
+      throw new ProjectPartitionRekeyError("unsafe-fk-update-graph", ownership, `${updateUnsafe.childSchema}.${updateUnsafe.childTable} -> ${updateUnsafe.parentSchema}.${updateUnsafe.parentTable}`);
     }
-    const migrationState = (await tx.execute(sql`
-      SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists
-    `)) as unknown as Array<{ exists: boolean }>;
-    let ownsMigrationState = false;
-    if (migrationState[0]?.exists) {
-      const markerRows = (await tx.execute(sql`
-        SELECT EXISTS (
-          SELECT 1 FROM public.fusion_sqlite_migrations
-          WHERE project_id = ${fallbackProjectId}
-        ) AS found
-      `)) as unknown as Array<{ found: boolean }>;
-      ownsMigrationState = markerRows[0]?.found === true;
-    }
-    if (!ownsProjectRows && !ownsMigrationState) return false;
 
     await tx.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
-    for (const { table_name: tableName } of tables) {
-      await tx.execute(sql`
-        UPDATE ${sql.identifier("project")}.${sql.identifier(tableName)}
-        SET project_id = ${registeredProjectId}
-        WHERE project_id = ${fallbackProjectId}
-      `);
+    await tx.execute(sql.raw(`CREATE TEMP TABLE fusion_rekey_conflict_candidates (
+      schema_name text NOT NULL, table_name text NOT NULL, row_id tid NOT NULL,
+      PRIMARY KEY (schema_name, table_name, row_id)
+    ) ON COMMIT DROP`));
+
+    // Compute the complete delete plan before deleting a parent. A dependent is
+    // safe only when it is itself a registered conflict candidate; this is the
+    // proof that its fallback counterpart replaces it after promotion.
+    for (const rule of relevantRules) {
+      const target: RekeyTarget = { schema: rule.schema, table: rule.table };
+      const nonProjectColumns = rule.columns.filter((column) => column !== "project_id");
+      const predicate = nonProjectColumns.length === 0
+        ? "TRUE"
+        : rule.nullsNotDistinct
+          ? nonProjectColumns.map((column) => `reg.${quoteIdentifier(column)} IS NOT DISTINCT FROM fb.${quoteIdentifier(column)}`).join(" AND ")
+          : nonProjectColumns.map((column) => `reg.${quoteIdentifier(column)} IS NOT NULL AND fb.${quoteIdentifier(column)} IS NOT NULL AND reg.${quoteIdentifier(column)} = fb.${quoteIdentifier(column)}`).join(" AND ");
+      await tx.execute(sql.raw(`INSERT INTO fusion_rekey_conflict_candidates(schema_name, table_name, row_id)
+        SELECT ${quoteLiteral(rule.schema)}, ${quoteLiteral(rule.table)}, reg.ctid
+        FROM ${relationName(target)} reg
+        WHERE reg.project_id = ${quoteLiteral(registeredProjectId)}
+          AND EXISTS (SELECT 1 FROM ${relationName(target)} fb
+            WHERE fb.project_id = ${quoteLiteral(fallbackProjectId)} AND ${predicate})
+        ON CONFLICT DO NOTHING`));
     }
-    await tx.execute(sql`
-      UPDATE archive.archived_tasks
-      SET project_id = ${registeredProjectId}
-      WHERE project_id = ${fallbackProjectId}
-    `);
-    if (migrationState[0]?.exists) {
-      await tx.execute(sql`
-        UPDATE public.fusion_sqlite_migrations
-        SET project_id = ${registeredProjectId}, updated_at = now()
-        WHERE project_id = ${fallbackProjectId}
-      `);
-      await tx.execute(sql`
-        INSERT INTO public.fusion_sqlite_migrations(migration_key, project_id, status, last_error, updated_at)
-        SELECT ${`project:${registeredProjectId}`}, ${registeredProjectId}, status, last_error, now()
-        FROM public.fusion_sqlite_migrations
-        WHERE migration_key = ${`project:${fallbackProjectId}`}
-        ON CONFLICT (migration_key) DO UPDATE
-        SET project_id = EXCLUDED.project_id,
-            status = EXCLUDED.status,
-            last_error = EXCLUDED.last_error,
-            updated_at = now()
-      `);
+
+    for (const fk of fks) {
+      const parentKey = `${fk.parentSchema}.${fk.parentTable}`;
+      if (!targetKeys.has(parentKey)) continue;
+      const childTarget = targetKeys.has(`${fk.childSchema}.${fk.childTable}`);
+      const join = fk.childColumns.map((column, index) => `child.${quoteIdentifier(column)} IS NOT DISTINCT FROM parent.${quoteIdentifier(fk.parentColumns[index]!)}`).join(" AND ");
+      const registeredChildScope = childTarget
+        ? ` AND child.${quoteIdentifier("project_id")} = ${quoteLiteral(registeredProjectId)}`
+        : "";
+      const unreplaced = (await tx.execute(sql.raw(`SELECT EXISTS (
+        SELECT 1 FROM ${relationName({ schema: fk.childSchema, table: fk.childTable })} child
+        JOIN ${relationName({ schema: fk.parentSchema, table: fk.parentTable })} parent ON ${join}
+        JOIN fusion_rekey_conflict_candidates parent_candidate
+          ON parent_candidate.schema_name = ${quoteLiteral(fk.parentSchema)}
+         AND parent_candidate.table_name = ${quoteLiteral(fk.parentTable)}
+         AND parent_candidate.row_id = parent.ctid
+        WHERE 1 = 1${registeredChildScope}
+          AND NOT EXISTS (SELECT 1 FROM fusion_rekey_conflict_candidates child_candidate
+            WHERE child_candidate.schema_name = ${quoteLiteral(fk.childSchema)}
+              AND child_candidate.table_name = ${quoteLiteral(fk.childTable)}
+              AND child_candidate.row_id = child.ctid)
+      ) AS found`))) as unknown as Array<{ found: boolean }>;
+      if (unreplaced[0]?.found) {
+        throw new ProjectPartitionRekeyError("unreplaced-fk-dependent", ownership, `${fk.constraintName || fk.constraintId}: ${fk.childSchema}.${fk.childTable} (${fk.deleteAction}) depends on ${fk.parentSchema}.${fk.parentTable}`);
+      }
+    }
+
+    /*
+    FNXC:ProjectPartitionMerge 2026-07-20-13:15:
+    Delete only the precomputed registered conflict set, children before parents.
+    This permits a fallback-wins parent/child merge when every removed child has
+    its own fallback replacement, while an unreplaced child aborts before any
+    ON DELETE CASCADE, SET NULL, or SET DEFAULT side effect can run.
+    */
+    const pending = new Set(targets.map(relationKey));
+    while (pending.size > 0) {
+      const next = [...pending].find((key) => !fks.some((fk) =>
+        `${fk.parentSchema}.${fk.parentTable}` === key
+        && pending.has(`${fk.childSchema}.${fk.childTable}`)
+        && `${fk.childSchema}.${fk.childTable}` !== key,
+      ));
+      // A non-deferrable delete cycle has no statement-safe child-first order.
+      const deferredCycle = !next && [...pending].every((key) => fks
+        .filter((fk) => `${fk.parentSchema}.${fk.parentTable}` === key && pending.has(`${fk.childSchema}.${fk.childTable}`))
+        .every((fk) => fk.deferrable));
+      if (!next && !deferredCycle) {
+        throw new ProjectPartitionRekeyError("unknown", ownership, "non-deferrable conflict-delete FK cycle");
+      }
+      const deleteKey = next ?? [...pending][0]!;
+      const [schema, table] = deleteKey.split(".");
+      await tx.execute(sql.raw(`DELETE FROM ${relationName({ schema: schema!, table: table! })} reg
+        USING fusion_rekey_conflict_candidates candidate
+        WHERE candidate.schema_name = ${quoteLiteral(schema!)}
+          AND candidate.table_name = ${quoteLiteral(table!)}
+          AND candidate.row_id = reg.ctid`));
+      pending.delete(deleteKey);
+    }
+    // ON UPDATE CASCADE changes child keys with its parent statement, so its
+    // parent must run first; deferred edges have no statement-order constraint.
+    const updatePending = new Map(targets.map((target) => [relationKey(target), target]));
+    while (updatePending.size > 0) {
+      const target = [...updatePending.values()].find((candidate) => !fks.some((fk) =>
+        `${fk.childSchema}.${fk.childTable}` === relationKey(candidate)
+        && updatePending.has(`${fk.parentSchema}.${fk.parentTable}`)
+        && fk.updateAction === "c",
+      ));
+      const next = target ?? updatePending.values().next().value as RekeyTarget;
+      await tx.execute(sql.raw(`UPDATE ${relationName(next)} SET project_id = ${quoteLiteral(registeredProjectId)} WHERE project_id = ${quoteLiteral(fallbackProjectId)}`));
+      updatePending.delete(relationKey(next));
+    }
+    if (stateExists[0]?.exists) {
+      await tx.execute(sql`UPDATE public.fusion_sqlite_migrations SET project_id = ${registeredProjectId}, updated_at = now() WHERE project_id = ${fallbackProjectId}`);
+      await tx.execute(sql`INSERT INTO public.fusion_sqlite_migrations(migration_key, project_id, status, last_error, updated_at) SELECT ${`project:${registeredProjectId}`}, ${registeredProjectId}, status, last_error, now() FROM public.fusion_sqlite_migrations WHERE migration_key = ${`project:${fallbackProjectId}`} ON CONFLICT (migration_key) DO UPDATE SET project_id = EXCLUDED.project_id, status = EXCLUDED.status, last_error = EXCLUDED.last_error, updated_at = now()`);
     }
     return true;
   });

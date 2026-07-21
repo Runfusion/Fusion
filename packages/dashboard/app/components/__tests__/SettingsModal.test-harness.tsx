@@ -203,19 +203,20 @@ export async function expectSettingPersists({ section, label, kind, value, scope
     fireEvent.change(control, { target: { value: String(value) } });
   }
 
-  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
 
   if (scope === "global") {
     await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
-    expect(mockUpdateGlobalSettings.mock.calls[0]?.[0]).toEqual(
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
       expect.objectContaining({ [expectedKey]: value }),
     );
     return;
   }
 
   await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
-  expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(
+  expect(mockUpdateSettings).toHaveBeenCalledWith(
     expect.objectContaining({ [expectedKey]: value }),
+    undefined,
   );
 }
 
@@ -225,7 +226,7 @@ export async function assertProjectModelSavePayload(provider: string, modelId: s
 
   fireEvent.change(screen.getByLabelText("Default Provider"), { target: { value: provider } });
   fireEvent.change(screen.getByLabelText("Default Model"), { target: { value: modelId } });
-  fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
 
   await waitFor(() => {
     expect(mockUpdateSettings).toHaveBeenCalledWith(

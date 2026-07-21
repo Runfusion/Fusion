@@ -34,7 +34,7 @@ async function setup() {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    tool = customTools.find((t: any) => t.name === "fn_task_done");
+    tool = customTools.find((t: any) => t.name === "fn_task_done") ?? tool;
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 

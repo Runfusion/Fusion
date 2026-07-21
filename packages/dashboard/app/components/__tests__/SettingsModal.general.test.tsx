@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
+import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import {
   mockFetchSettings,
   mockFetchSettingsByScope,
@@ -77,10 +78,13 @@ import {
   installSettingsModalEnv,
 } from "./SettingsModal.test-harness";
 
+const mockListDiscussionCategories = vi.fn(async () => ({ categories: [] }));
+
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
     fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
+    listDiscussionCategories: (...args: unknown[]) => mockListDiscussionCategories(...args),
     fetchSettingsByScope: (...args: unknown[]) => mockFetchSettingsByScope(...args),
     updateSettings: (...args: unknown[]) => mockUpdateSettings(...args),
     updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
@@ -209,6 +213,8 @@ describe("SettingsModal", () => {
 
   afterEach(() => {
     viewportMode = "mobile";
+    mockListDiscussionCategories.mockReset();
+    mockListDiscussionCategories.mockResolvedValue({ categories: [] });
   });
 
   const availableUpdate = {
@@ -388,7 +394,6 @@ describe("SettingsModal", () => {
 
     await settingsModalUser.click(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i }));
     await settingsModalUser.click(screen.getByRole("button", { name: /^General · Global$/ }));
-    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mockUpdateSettings).toHaveBeenCalledWith(
@@ -704,7 +709,6 @@ describe("SettingsModal", () => {
 
     await settingsModalUser.selectOptions(screen.getByLabelText("AI merge"), "deterministic");
     await settingsModalUser.selectOptions(screen.getByLabelText("Integration worktree"), "cwd-main");
-    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
@@ -781,7 +785,6 @@ describe("SettingsModal", () => {
     expect(checkbox).not.toBeChecked();
 
     await settingsModalUser.click(checkbox);
-    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mockUpdateSettings).toHaveBeenCalledWith(
@@ -969,7 +972,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -988,7 +990,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Skip confirmation dialogs for critical actions" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1007,7 +1008,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save tool output in agent logs" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1026,7 +1026,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1046,7 +1045,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" }));
       await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1076,7 +1074,6 @@ describe("SettingsModal", () => {
       });
 
       await settingsModalUser.selectOptions(screen.getByRole("combobox", { name: "Global default tracking repo" }), "octo/global-default");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1100,7 +1097,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.type(screen.getByLabelText("Global GitLab instance URL"), " https://gitlab.company.test/ ");
       await settingsModalUser.type(screen.getByLabelText("Global GitLab API base URL (optional / advanced)"), " https://gitlab.company.test/api/v4/ ");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1130,8 +1126,6 @@ describe("SettingsModal", () => {
       expect(enableToggle).not.toBeChecked();
       expect(screen.getByLabelText("Global GitLab instance URL")).toBeDisabled();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
-
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
     });
 
@@ -1146,7 +1140,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
@@ -1185,7 +1178,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(enableToggle);
       expect(enableToggle).not.toBeChecked();
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: false }));
@@ -1214,7 +1206,6 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("heading", { name: "Agent Provisioning Approvals" })).toBeInTheDocument();
 
     await settingsModalUser.selectOptions(screen.getByLabelText("Approval mode"), "always");
-    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1227,6 +1218,18 @@ describe("SettingsModal", () => {
   });
 
   describe("General · Project", () => {
+    it("populates the Discussion category selector from the report category route", async () => {
+      mockListDiscussionCategories.mockResolvedValue({ categories: [{ id: "DC_ideas", name: "Ideas", slug: "ideas" }] });
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const category = await screen.findByLabelText("Discussion category");
+      expect(category).toBeEnabled();
+      expect(screen.getByRole("option", { name: "Ideas" })).toHaveValue("DC_ideas");
+      await settingsModalUser.selectOptions(category, "DC_ideas");
+      await waitFor(() => expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({ reportDiscussionCategory: "DC_ideas" }));
+    });
+
     it("renders completion documentation automation control", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -1336,14 +1339,15 @@ describe("SettingsModal", () => {
 
       fireEvent.change(screen.getByLabelText("In-app report mode"), { target: { value: "auto-file" } });
       fireEvent.change(screen.getByLabelText("Bug report override"), { target: { value: "draft-review" } });
-      fireEvent.click(screen.getByLabelText("Check roadmap before filing reports"));
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getByLabelText("Deduplicate reports against public roadmap"));
+      fireEvent.change(screen.getByLabelText("Public roadmap label"), { target: { value: "planned" } });
 
       await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
       expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
         reportMode: "auto-file",
         reportModeByAction: { bug: "draft-review" },
-        reportRoadmapDedup: true,
+        reportRoadmapDedupeEnabled: false,
+        reportRoadmapLabel: "planned",
       }));
     });
 
@@ -1392,7 +1396,6 @@ describe("SettingsModal", () => {
       expect(ephemeralToggle.checked).toBe(true);
 
       await settingsModalUser.click(ephemeralToggle);
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1487,7 +1490,6 @@ describe("SettingsModal", () => {
       expect(mailCleanupSelect.value).toBe("0");
 
       await settingsModalUser.selectOptions(mailCleanupSelect, "7");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1499,7 +1501,6 @@ describe("SettingsModal", () => {
       mockUpdateSettings.mockClear();
 
       await settingsModalUser.selectOptions(mailCleanupSelect, "0");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1526,7 +1527,6 @@ describe("SettingsModal", () => {
       await settingsModalUser.type(recentInput, "7");
       await settingsModalUser.type(fetchLimitInput, "60");
       await settingsModalUser.type(summaryMaxInput, "900");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1551,7 +1551,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.selectOptions(modeSelect, "new-tasks");
       await settingsModalUser.type(screen.getByPlaceholderText("owner/repo"), "octo/repo");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1584,7 +1583,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.type(screen.getByLabelText("GitLab instance URL"), " https://gitlab.example.com/gitlab/ ");
       await settingsModalUser.type(screen.getByLabelText("GitLab API base URL (optional / advanced)"), " https://api.example.com/v4/ ");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1620,7 +1618,6 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1650,7 +1647,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab instance URL"));
       await settingsModalUser.clear(screen.getByLabelText("GitLab API base URL (optional / advanced)"));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1674,7 +1670,6 @@ describe("SettingsModal", () => {
       expect(screen.getByText(/does not turn GitHub tracking on for ordinary new tasks/i)).toBeInTheDocument();
 
       await settingsModalUser.click(importLinkToggle);
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1707,7 +1702,6 @@ describe("SettingsModal", () => {
       expect(importLinkToggle.checked).toBe(true);
 
       await settingsModalUser.click(importLinkToggle);
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1739,7 +1733,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.selectOptions(modeSelect, "off");
       await settingsModalUser.clear(screen.getByPlaceholderText("owner/repo"));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1784,7 +1777,6 @@ describe("SettingsModal", () => {
       ) as HTMLInputElement;
 
       await settingsModalUser.click(dedupToggle);
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1796,7 +1788,6 @@ describe("SettingsModal", () => {
       mockUpdateSettings.mockClear();
 
       await settingsModalUser.click(dedupToggle);
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1842,7 +1833,6 @@ describe("SettingsModal", () => {
       expect(await within(repoSelect).findByRole("option", { name: "octo/repo" })).toBeInTheDocument();
 
       await settingsModalUser.selectOptions(repoSelect, "octo/repo");
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateSettings).toHaveBeenCalled();
@@ -1895,7 +1885,6 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByRole("button", { name: /Appearance/ }));
       await settingsModalUser.click(screen.getByRole("button", { name: "Largest" }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalled();
@@ -1903,6 +1892,125 @@ describe("SettingsModal", () => {
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({ dashboardFontScalePct: 120 }));
+    });
+  });
+
+  describe("auto-save", () => {
+    const changeProjectToggle = () => fireEvent.click(screen.getByLabelText("Show capacity risk banner"));
+
+    it("removes the Save button in both modal and embedded presentations", async () => {
+      const { unmount } = renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+      expect(screen.queryByRole("button", { name: /^Save$/i })).not.toBeInTheDocument();
+      unmount();
+
+      renderModal({ initialSection: "general", presentation: "embedded" });
+      await waitForSettingsModalReady();
+      expect(screen.queryByRole("button", { name: /^Save$/i })).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["footer Close", async (container: HTMLElement) => settingsModalUser.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!)],
+      ["header close", async (container: HTMLElement) => settingsModalUser.click(container.querySelector(".modal-close") as HTMLButtonElement)],
+      ["Escape", async () => { fireEvent.keyDown(document, { key: "Escape" }); }],
+      ["backdrop", async (container: HTMLElement) => {
+        const overlay = container.querySelector(".settings-modal-overlay") as HTMLElement;
+        fireEvent.mouseDown(overlay);
+        fireEvent.mouseUp(overlay);
+      }],
+    ])("flushes the latest edit through %s without a leave warning", async (path, dismiss) => {
+      const onClose = vi.fn();
+      const result = path === "backdrop"
+        ? render(<ModalDismissPreferenceProvider enabled><SettingsModal initialSection="general" onClose={onClose} addToast={noop} /></ModalDismissPreferenceProvider>)
+        : renderModal({ initialSection: "general", onClose });
+      await waitForSettingsModalReady();
+      changeProjectToggle();
+      await dismiss(result.container);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ capacityRiskBannerEnabled: true }),
+        undefined,
+      ));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog", { name: /unsaved/i })).not.toBeInTheDocument();
+    });
+
+    it("flushes the latest edit through the embedded mobile close affordance", async () => {
+      const onClose = vi.fn();
+      renderModal({ initialSection: "general", presentation: "embedded", onClose });
+      await waitForSettingsModalReady();
+      changeProjectToggle();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Close" }));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ capacityRiskBannerEnabled: true }),
+        undefined,
+      ));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("coalesces rapid edits into one debounced write", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+      vi.useFakeTimers();
+
+      const toggle = screen.getByLabelText("Show capacity risk banner");
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSettings).toHaveBeenLastCalledWith(expect.objectContaining({ capacityRiskBannerEnabled: true }), undefined);
+      vi.useRealTimers();
+    });
+
+    it("persists global concurrency and scoped MCP edits without Save", async () => {
+      renderModal({ initialSection: "scheduling-global" });
+      await waitForSettingsModalReady();
+      fireEvent.change(await screen.findByLabelText("Global Max Concurrent"), { target: { value: "7" } });
+      await waitFor(() => expect(mockUpdateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 7 }));
+
+      cleanup();
+      renderModal({ initialSection: "mcp" });
+      await waitForSettingsModalReady();
+      fireEvent.click(await screen.findByLabelText("Enable MCP servers for this scope"));
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mcpServers: expect.objectContaining({ enabled: true }) }),
+        undefined,
+      ));
+    });
+
+    it("keeps Settings open after a persist failure and retries on the next edit", async () => {
+      const addToast = vi.fn();
+      mockUpdateSettings.mockRejectedValueOnce(new Error("offline"));
+      renderModal({ initialSection: "general", addToast });
+      await waitForSettingsModalReady();
+
+      changeProjectToggle();
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledTimes(1));
+      expect(addToast).toHaveBeenCalledWith("offline", "error");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+      changeProjectToggle();
+      changeProjectToggle();
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("button", { name: /^Save$/i })).not.toBeInTheDocument();
+    });
+
+    it("trails an in-flight snapshot so an older response cannot overwrite the final edit", async () => {
+      let finishFirstSave: (() => void) | undefined;
+      mockUpdateSettings.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSave = resolve; }));
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      changeProjectToggle();
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledTimes(1));
+      changeProjectToggle();
+      await act(async () => { finishFirstSave?.(); });
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledTimes(2));
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ capacityRiskBannerEnabled: true }));
+      expect(mockUpdateSettings.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ capacityRiskBannerEnabled: false }));
     });
   });
 

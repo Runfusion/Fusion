@@ -145,7 +145,7 @@ async function loadCommandHandlers() {
   const { runOrgExport } = await import("./commands/org-export.js");
   const { runOrgImport } = await import("./commands/org-import.js");
   const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
-  const { runChatInteractive } = await import("./commands/chat.js");
+  const { runChatInteractive, parseChatCliArgs } = await import("./commands/chat.js");
   const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup, runPluginAvailable, runPluginSettings, runPluginRescan } = await import("./commands/plugin.js");
   const { runPluginCreate, runPluginNew } = await import("./commands/plugin-scaffold.js");
   const { runPluginDev } = await import("./commands/plugin-dev.js");
@@ -291,6 +291,7 @@ async function loadCommandHandlers() {
     runExperimentFinalize,
     runUpdate,
     runChatInteractive,
+    parseChatCliArgs,
   };
 }
 
@@ -317,7 +318,8 @@ Usage:
   fn desktop --dev                    Launch source-checkout desktop with hot-reload (connects to Vite dev server)
   fn desktop --paused                 Launch with automation paused
   fn desktop --no-auth                Disable bearer-token auth for the embedded local dashboard
-  fn update [--check] [--global] [--json]   Update Fusion to the latest version
+  fn update [--check] [--global] [--json] [--channel <stable|beta>] [--force]
+                                       Update Fusion on the selected release channel
   fn upgrade                           Alias for fn update
   fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>, --no-dedup)
   fn task plan [description] [opts]    Create task via AI-guided planning
@@ -446,13 +448,14 @@ PR:
                                       Export Fusion agents to an Agent Companies package directory
                                       (agent skills assigned via metadata.skills affect execution-time tools)
   fn agent mailbox <id>             View an agent's mailbox
-  fn message inbox                  List inbox messages
+  fn message inbox [--user <cli|dashboard>]
+                                    List CLI or dashboard operator inbox messages
   fn message outbox                 List sent messages
   fn message send <agent-id> <msg>  Send a message to an agent
   fn message read <id>              Read a specific message
   fn message delete <id>            Delete a message
-  fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
-                                    Interactive or one-shot chat with an agent
+  fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--reply-timeout-ms <n>] [--conversation-id <id>]
+                                    Named mailbox conversation with deadline-bounded inbox replies
   fn backup --create         Create a database backup immediately
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
@@ -815,6 +818,7 @@ async function main() {
     runExperimentFinalize,
     runUpdate,
     runChatInteractive,
+    parseChatCliArgs,
   } = await loadCommandHandlers();
 
   try {
@@ -934,10 +938,23 @@ async function main() {
 
       case "update":
       case "upgrade": {
+        // FNXC:UpdateChannels 2026-07-19-13:05: --channel <stable|beta> selects
+        // and persists the release track; --force installs the channel target
+        // even when not newer (the explicit beta → stable downgrade path).
+        // A bare trailing --channel (or one followed by another flag) errors
+        // instead of being silently ignored (PR #2345 review).
+        const channelFlagIndex = args.indexOf("--channel");
+        const channelValue = channelFlagIndex !== -1 ? args[channelFlagIndex + 1] : undefined;
+        if (channelFlagIndex !== -1 && (channelValue === undefined || channelValue.startsWith("--"))) {
+          console.error("Error: --channel requires a value: stable or beta.");
+          process.exit(1);
+        }
         await runUpdate({
           check: args.includes("--check"),
           global: args.includes("--global") ? true : undefined,
           json: args.includes("--json"),
+          channel: channelValue,
+          force: args.includes("--force"),
         });
         break;
       }
@@ -2053,7 +2070,12 @@ async function main() {
         const subcommand = args[1];
         switch (subcommand) {
           case "inbox": {
-            await runMessageInbox(projectName);
+            const inboxUser = getFlagValue(args.slice(2), "--user");
+            if (inboxUser !== undefined && inboxUser !== "cli" && inboxUser !== "dashboard") {
+              console.error("Usage: fn message inbox [--user <cli|dashboard>]");
+              process.exit(1);
+            }
+            await runMessageInbox(projectName, inboxUser);
             break;
           }
           case "outbox": {
@@ -2091,38 +2113,20 @@ async function main() {
       }
 
       case "chat": {
-        const usage = "Usage: fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]";
-        const agentId = args[1];
-        if (!agentId) {
-          console.error(usage);
+        const parsed = parseChatCliArgs(args.slice(1));
+        if ("error" in parsed) {
+          console.error(parsed.error);
           process.exit(1);
         }
 
-        const pollIdx = args.indexOf("--poll-ms");
-        const pollMs = pollIdx !== -1 && pollIdx + 1 < args.length
-          ? Number.parseInt(args[pollIdx + 1] ?? "", 10)
-          : undefined;
-
-        if (pollIdx !== -1 && (!Number.isFinite(pollMs) || (pollMs ?? 0) <= 0)) {
-          console.error(usage);
-          process.exit(1);
-        }
-
-        const filteredArgs = args.slice(2).filter((arg, idx, arr) => {
-          if (arg === "--once" || arg === "--non-interactive" || arg === "--poll-ms") return false;
-          if (idx > 0 && arr[idx - 1] === "--poll-ms") return false;
-          return true;
-        });
-        const contentArg = filteredArgs.join(" ").trim();
-        const once = args.includes("--once") || contentArg.length > 0;
-        const nonInteractive = args.includes("--non-interactive") || contentArg.length > 0;
-        const input = contentArg ? Readable.from(contentArg) : process.stdin;
-
-        const code = await runChatInteractive(agentId, {
+        const input = parsed.contentArg ? Readable.from(parsed.contentArg) : process.stdin;
+        const code = await runChatInteractive(parsed.agentId, {
           project: projectName,
-          once,
-          nonInteractive,
-          pollIntervalMs: pollMs,
+          once: parsed.once,
+          nonInteractive: parsed.nonInteractive,
+          pollIntervalMs: parsed.pollIntervalMs,
+          replyTimeoutMs: parsed.replyTimeoutMs,
+          conversationId: parsed.conversationId,
           input,
         });
         process.exit(code);
@@ -2322,7 +2326,10 @@ async function main() {
     }
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    const { isPostgresUniqueError, ProjectPartitionRekeyError, FUSION_NON_RETRYABLE_EXIT_CODE } = await import("@fusion/core");
+    process.exit(isPostgresUniqueError(err) || err instanceof ProjectPartitionRekeyError
+      ? FUSION_NON_RETRYABLE_EXIT_CODE
+      : 1);
   }
 }
 

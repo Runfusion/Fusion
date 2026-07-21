@@ -175,12 +175,51 @@ interface BuiltinSpec {
   };
 }
 
-function defaultColumnForLinearNode(node: WorkflowIrNode): string {
+/*
+FNXC:WorkflowBuiltins 2026-07-19-11:05:
+Column defaulting for a linear built-in's nodes. Post-cutover a node's column IS
+the card's lifecycle position, so an unseamed node (a custom `gate`/`prompt` an
+author drops between the seams) can no longer default to a fixed column: the old
+blanket `todo` default sent the card BACKWARD into the capacity-hold column
+mid-run. Observed on `builtin:review-heavy` (in-review -> todo -> in-review at
+the `security` gate), `builtin:design` (in-progress -> todo at `design-review`),
+and `builtin:compound-engineering` (`review-handoff`/`document`). Re-entering the
+hold column mid-flight also re-arms its `reset-on-entry` trait and re-subjects a
+live card to the release sweep.
+
+Rule: seams keep their fixed lifecycle homes; an unseamed node INHERITS the
+column of the node before it, so it stays wherever the pipeline already is. The
+one exception is a node that follows intake — planning happens in the hold column
+(plan-in-place), which is what `builtin:compound-engineering`'s `plan` node needs.
+*/
+function columnForLinearNode(node: WorkflowIrNode, previousColumn: string): string {
+  // `start`/`end` are graph terminals, not column destinations (the boundary
+  // never enters them), but they must still name a sane column: intake for the
+  // creation column and the complete column for the terminal.
+  if (node.kind === "start") return "triage";
+  if (node.kind === "end") return "done";
   const seam = node.config?.seam;
   if (seam === "execute") return "in-progress";
   if (seam === "review") return "in-review";
   if (seam === "merge") return "in-review";
-  return "todo";
+  return previousColumn === "triage" ? "todo" : previousColumn;
+}
+
+/** Resolve every linear-spec node's column in graph order, threading the
+ *  previously-resolved column so unseamed nodes inherit it. */
+function assignLinearNodeColumns(nodes: WorkflowIrNode[]): WorkflowIrNode[] {
+  let previousColumn = "triage";
+  return nodes.map((node) => {
+    if (node.column) {
+      previousColumn = node.column;
+      return node;
+    }
+    const column = columnForLinearNode(node, previousColumn);
+    // `end` names the complete column but must not drag the inheritance chain
+    // there — nothing follows it, so this is only defensive.
+    if (node.kind !== "end") previousColumn = column;
+    return { ...node, column };
+  });
 }
 
 function canonicalBuiltinWorkflowColumns(): WorkflowIrColumn[] {
@@ -267,7 +306,7 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     version: "v2",
     name: spec.name,
     columns: canonicalBuiltinWorkflowColumns(),
-    nodes: nodes.map((node) => (node.column ? node : { ...node, column: defaultColumnForLinearNode(node) })),
+    nodes: assignLinearNodeColumns(nodes),
     edges,
   });
   if (ir.version !== "v2" || !ir.columns.find((column) => column.id === "todo")?.traits.some((trait) => trait.trait === "hold")) {
@@ -776,4 +815,25 @@ const BUILTIN_BY_ID = new Map(BUILTIN_WORKFLOWS.map((wf) => [wf.id, wf]));
 
 export function getBuiltinWorkflow(id: string): WorkflowDefinition | undefined {
   return BUILTIN_BY_ID.get(id);
+}
+
+/** The operator-facing default workflow id used when a task has no
+ *  `task_workflow_selection` row. */
+export const DEFAULT_WORKFLOW_ID = "builtin:coding";
+
+/*
+FNXC:WorkflowBuiltins 2026-07-19-10:20:
+Single authority for the no-selection default IR. `builtin:coding` is an id
+that the catalog maps to BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR — it
+is NOT the legacy `BUILTIN_CODING_WORKFLOW_IR` constant (that constant is now
+`builtin:legacy-coding`). Two move-path resolvers had drifted apart on exactly
+this point: prepareWorkflowMovePolicyPreflightImpl resolved the default through
+the catalog while resolveTaskWorkflowIrForMove used the raw constant, so a task
+with NO selection row produced two different workflow signatures and every
+flag-ON move threw "workflow move policy preflight is stale". Both sides (and
+the sync resolver) now call this helper so the default cannot drift again.
+*/
+export function resolveDefaultWorkflowIr(): WorkflowIr {
+  const ir = getBuiltinWorkflow(DEFAULT_WORKFLOW_ID)?.ir ?? BUILTIN_CODING_WORKFLOW_IR;
+  return typeof ir === "string" ? parseWorkflowIr(ir) : ir;
 }

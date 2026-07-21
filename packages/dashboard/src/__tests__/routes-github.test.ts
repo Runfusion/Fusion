@@ -51,6 +51,8 @@ const {
   mockExecFile,
   mockGetCachedImportTranslation,
   mockResolveTargetLocale,
+  mockTranslateText,
+  mockCheckTranslateRateLimit,
 } = vi.hoisted(() => ({
   mockPerformUpdateCheck: vi.fn(),
   mockClearUpdateCheckCache: vi.fn(),
@@ -58,7 +60,18 @@ const {
   mockExecFile: vi.fn(),
   mockGetCachedImportTranslation: vi.fn(),
   mockResolveTargetLocale: vi.fn(),
+  mockTranslateText: vi.fn(),
+  mockCheckTranslateRateLimit: vi.fn(),
 }));
+
+vi.mock("../ai-translate.js", async () => {
+  const actual = await vi.importActual<typeof import("../ai-translate.js")>("../ai-translate.js");
+  return {
+    ...actual,
+    translateText: mockTranslateText,
+    checkTranslateRateLimit: mockCheckTranslateRateLimit,
+  };
+});
 
 vi.mock("../update-check.js", async () => {
   const actual = await vi.importActual<typeof import("../update-check.js")>("../update-check.js");
@@ -584,6 +597,73 @@ describe("POST /github/issues/fetch", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(10);
+  });
+});
+
+/*
+FNXC:GitHubImportTranslate 2026-07-20-00:00:
+FN-8417 requires the HTTP reopen boundary, not just the translation service, to
+prove that a second identical auto-translate request uses the durable cache.
+The route must reserve rate-limit budget only for uncached model work.
+*/
+describe("POST /github/issues/auto-translate", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    const translations = new Map<string, {
+      translatedTitle: string;
+      translatedBody: string;
+      detectedLocale: string | null;
+      recordedAt: string;
+    }>();
+    store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        githubImportAutoTranslate: true,
+        importTranslateTargetLocale: "en",
+      }),
+      getImportTranslation: vi.fn(async (key) => translations.get(JSON.stringify(key)) ?? null),
+      recordImportTranslation: vi.fn(async (key, value) => {
+        translations.set(JSON.stringify(key), {
+          ...value,
+          detectedLocale: value.detectedLocale ?? null,
+          recordedAt: "2026-07-20T00:00:00.000Z",
+        });
+      }),
+    });
+    mockTranslateText.mockResolvedValue({ title: "Translated title", body: "Translated body" });
+    mockCheckTranslateRateLimit.mockReturnValue(true);
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("auto-translate serves a second identical POST from cache without model or rate-limit cost", async () => {
+    const body = JSON.stringify({
+      owner: "owner",
+      repo: "repo",
+      targetLocale: "en",
+      items: [{ number: 17, title: "Error del servidor", body: "El servidor devuelve un error cuando el usuario intenta guardar los cambios en la configuracion. No se puede completar la operacion porque el sistema no responde. Por favor revise los registros del servidor para mas informacion sobre este problema.", state: "open" }],
+    });
+
+    const first = await REQUEST(buildApp(), "POST", "/api/github/issues/auto-translate", body, {
+      "Content-Type": "application/json",
+    });
+    const second = await REQUEST(buildApp(), "POST", "/api/github/issues/auto-translate", body, {
+      "Content-Type": "application/json",
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(mockTranslateText).toHaveBeenCalledTimes(1);
+    expect(first.body.translations[17]).toEqual({ title: "Translated title", body: "Translated body" });
+    expect(second.body.translations[17]).toEqual({ title: "Translated title", body: "Translated body" });
+    expect(mockCheckTranslateRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckTranslateRateLimit).toHaveBeenCalledWith(expect.any(String), 1);
+    expect(store.recordImportTranslation).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1416,6 +1496,28 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       sourceIssue: expect.objectContaining({ issueNumber: 2 }),
     }));
+    expect(throttledSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates repeated issue numbers using tasks accumulated within the batch", async () => {
+    const throttledSpy = vi.spyOn(GitHubClient.prototype, "fetchThrottled")
+      .mockResolvedValueOnce({ success: true, data: mockGitHubIssue(1, "Duplicate issue") } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>)
+      .mockResolvedValueOnce({ success: true, data: mockGitHubIssue(1, "Duplicate issue") } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, 1], delayMs: 1 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([
+      { issueNumber: 1, success: true, taskId: expect.any(String) },
+      { issueNumber: 1, success: true, skipped: true, taskId: expect.any(String) },
+    ]);
+    expect(store.createTask).toHaveBeenCalledTimes(1);
     expect(throttledSpy).toHaveBeenCalledTimes(2);
   });
 

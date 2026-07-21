@@ -147,8 +147,9 @@ export interface ProjectModelsSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     onOpenWorkflowSettings?: () => void;
     registerWorkflowLaneSaver?: (saver: SectionSaveHandler | null) => void;
+    onWorkflowLanesChange?: () => void;
 }
-export function ProjectModelsSection({ form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
+export function ProjectModelsSection({ form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, onWorkflowLanesChange, }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
     const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
     const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
@@ -212,6 +213,13 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         ...Object.fromEntries(Object.entries(workflowPending).filter(([, value]) => value !== null)),
     }), [workflowPayload, workflowPending]);
     const setWorkflowPairValue = useCallback((pair: WorkflowModelPair, value: string) => {
+        /*
+        FNXC:SettingsAutoSave 2026-08-03-01:00:
+        FN-8395 removes the primary Save button. Notify the Settings shell for
+        every workflow-lane mutation because these pending overrides are local
+        section state rather than keys in its shared form.
+        */
+        onWorkflowLanesChange?.();
         setWorkflowRejections((current) => {
             const next = { ...current };
             delete next[pair.providerId];
@@ -231,10 +239,11 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 [pair.modelId]: value.slice(slashIdx + 1),
             };
         });
-    }, []);
+    }, [onWorkflowLanesChange]);
     const setWorkflowThinkingValue = useCallback((pair: WorkflowModelPair, value: string) => {
         if (!pair.thinkingId)
             return;
+        onWorkflowLanesChange?.();
         setWorkflowRejections((current) => {
             if (!pair.thinkingId || !current[pair.thinkingId])
                 return current;
@@ -243,7 +252,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             return next;
         });
         setWorkflowPending((current) => ({ ...current, [pair.thinkingId as string]: value || null }));
-    }, []);
+    }, [onWorkflowLanesChange]);
     const resetWorkflowPairValue = useCallback((pair: WorkflowModelPair) => {
         setWorkflowPairValue(pair, "");
         setWorkflowThinkingValue(pair, "");

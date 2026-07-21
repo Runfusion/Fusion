@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
-import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +43,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
   });
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    tool = customTools.find((t: any) => t.name === "fn_task_done");
+    tool = captureNamedTool(customTools, "fn_task_done", tool);
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 
@@ -51,6 +51,21 @@ async function setup(overrides: Record<string, unknown> = {}) {
   await executor.execute(makeTask(overrides) as any);
 
   return { store, tool, getTask: () => task };
+}
+
+/*
+FNXC:EngineTests 2026-07-19-15:05 (U10b):
+Review gates are workflow-graph nodes now, so an `execute()` on this surface always opens at least one
+review session (Plan Review) BEFORE the implementation session exists. The FN-4115 pre-session-liveness
+requirement was never "no agent may be created" — it is "the IMPLEMENTATION session must not start on an
+untrusted checkout". The implementation session is the only one that carries the completion tool
+`fn_task_done` (review nodes run readonly with prompt-write only), so identify it by that tool rather than
+by a raw createFnAgent call count, which now measures graph review nodes too.
+*/
+function implementationSessionCalls() {
+  return mockedCreateFnAgent.mock.calls.filter(([opts]: any[]) =>
+    ((opts?.customTools ?? []) as any[]).some((t) => t?.name === "fn_task_done"),
+  );
 }
 
 describe("FN-4115 wrong-checkout completion rejection", () => {
@@ -77,7 +92,15 @@ describe("FN-4115 wrong-checkout completion rejection", () => {
     });
     const result = await tool.execute("id", {});
     expect(result.content[0].text).toContain("fn_task_done refused: wrong_toplevel");
-    expect(store.updateStep).not.toHaveBeenCalled();
+    /*
+    FNXC:EngineTests 2026-07-19-15:05 (U10b):
+    The graph's step-execute node legitimately marks step 0 `in-progress` (`{ source: "graph" }`) during
+    setup, so "updateStep was never called" no longer isolates the refusal. The requirement it stood for is
+    that a REFUSED fn_task_done must never advance a step to `done`; assert that directly.
+    */
+    expect(
+      store.updateStep.mock.calls.some(([id, , status]) => id === "FN-4115" && status === "done"),
+    ).toBe(false);
     expect(store.moveTask).toHaveBeenCalledWith("FN-4115", "todo", { preserveProgress: true });
     expect(store.logEntry).not.toHaveBeenCalledWith("FN-4115", expect.stringContaining("Task marked done by agent"));
   });
@@ -134,7 +157,7 @@ describe("FN-4115 wrong-checkout completion rejection", () => {
     store.getTask.mockResolvedValue(makeTask());
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(makeTask() as any);
-    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(implementationSessionCalls()).toHaveLength(0);
     expect(store.moveTask).toHaveBeenCalledWith("FN-4115", "todo", { preserveProgress: true });
   });
 
@@ -145,7 +168,7 @@ describe("FN-4115 wrong-checkout completion rejection", () => {
     store.getTask.mockResolvedValue(escaped);
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(escaped as any);
-    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(implementationSessionCalls()).toHaveLength(0);
     expect(store.moveTask).toHaveBeenCalledWith("FN-4115", "todo", { preserveProgress: true });
   });
 });

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { TaskStore, TaskDetail, Settings } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
-import { reviewStep } from "../reviewer.js";
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");
@@ -120,60 +119,13 @@ describe("triage deterministic plan validation for external integration evidence
     }
   });
 
-  it("blocks the per-step review workflow during Plan Review when external evidence is missing", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-ext-evidence-plan-review-"));
-    try {
-      const taskId = "FN-5321";
-      const prompt = "## Mission\nAdd an external CLI.\n\n## Steps\n- Download and run `wt` from https://github.com/worktrunk/worktrunk/releases/latest/download/wt-linux-x64.tar.gz\n";
-      const task = {
-        ...mockTaskDetail,
-        id: taskId,
-        enabledWorkflowSteps: ["plan-review"],
-        workflowStepResults: [],
-      };
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(task),
-        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:stepwise-coding", stepIds: ["plan-review"] }),
-        getWorkflowDefinition: vi.fn().mockResolvedValue({
-          id: "builtin:stepwise-coding",
-          ir: {
-            nodes: [
-              {
-                id: "plan-review",
-                kind: "optional-group",
-                config: {
-                  template: {
-                    nodes: [
-                      {
-                        id: "plan-review-step",
-                        kind: "prompt",
-                        config: { requireExternalIntegrationEvidence: true },
-                      },
-                    ],
-                  },
-                },
-              },
-            ],
-          },
-        }),
-      } as Partial<TaskStore>);
-      const processor = new TriageProcessor(store, rootDir);
-
-      const result = await (processor as any).runPlanReviewBeforeExecution(task, prompt, {} as Settings);
-
-      expect(result).toBe("blocked");
-      expect(reviewStep).not.toHaveBeenCalled();
-      expect(store.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "needs-replan" }));
-      expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([id, action]) => id === taskId && action === "[pre-merge] Workflow step failed: Plan Review",
-      )).toBe(false);
-      expect(store.logEntry).toHaveBeenCalledWith(
-        taskId,
-        "AI spec revision requested",
-        expect.stringContaining("External-integration evidence gaps"),
-      );
-    } finally {
-      await rm(rootDir, { recursive: true, force: true });
-    }
-  });
+  /*
+   * FNXC:PlanReview 2026-07-19-00:55 (U3):
+   * Removed the "blocks during Plan Review when external evidence is missing" case:
+   * it exercised the deleted triage-owned Plan Review gate
+   * (runPlanReviewBeforeExecution + shouldRequireExternalIntegrationEvidenceForPlanReview).
+   * External-integration evidence enforcement is now graph-owned (the plan-review
+   * node reads `requireExternalIntegrationEvidence`); the deterministic-triage
+   * validation cases above (validateGeneratedPrompt) are unaffected and retained.
+   */
 });

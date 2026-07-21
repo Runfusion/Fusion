@@ -81,6 +81,13 @@ describe("task pipeline smoke", () => {
       audit: () => undefined,
     };
 
+    // R5 lock (U3/KTD-4): capture recorded WorkflowStepResults so we can assert the
+    // graph is the SOLE Plan Review author — exactly one plan-review gate, its lease
+    // owned by this run (leaseOwner === runId), settling to `passed`. A regression that
+    // re-breaks the gate-barrel classifyReviewLease export (see index.gate.ts) would
+    // fail to produce a passed plan-review result here in addition to the loud guard.
+    const recordedStepResults: Array<{ workflowStepId: string; status: string; leaseOwner?: string | null }> = [];
+
     const runtime = new WorkflowTaskRuntime({
       store: {
         getTaskWorkflowSelection: () => {
@@ -89,6 +96,9 @@ describe("task pipeline smoke", () => {
         },
         getWorkflowDefinition: async () => undefined,
         getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
+      },
+      recordWorkflowStepResult: (_taskId: string, r: { workflowStepId: string; status: string; leaseOwner?: string | null }) => {
+        recordedStepResults.push({ workflowStepId: r.workflowStepId, status: r.status, leaseOwner: r.leaseOwner });
       },
       primitives,
       runCustomNode: async (node) => {
@@ -143,5 +153,18 @@ describe("task pipeline smoke", () => {
     expect(mergeContexts).toEqual([
       { workflowId: "builtin-stepwise-final-review-coding", runId: "FN-7228-SMOKE:builtin:coding" },
     ]);
+
+    // R5: the graph is the sole Plan Review author — exactly one plan-review gate,
+    // leased by THIS run (leaseOwner === runId), settling to `passed`. The lease is
+    // stamped `pending` on start then upserted terminal, so we assert on the trail.
+    const planReviewRecords = recordedStepResults.filter((r) => r.workflowStepId === "plan-review");
+    expect(planReviewRecords.length).toBeGreaterThan(0);
+    // Graph-authored lease: the pending record carries this run's id as leaseOwner.
+    expect(planReviewRecords.some((r) => r.leaseOwner === "FN-7228-SMOKE:builtin:coding")).toBe(true);
+    // Exactly one terminal plan-review outcome, and it PASSED (no duplicate reviewer,
+    // no triage-authored result — the FN-1315 single-owner contract).
+    const terminalPlanReview = planReviewRecords.filter((r) => r.status !== "pending");
+    expect(terminalPlanReview).toHaveLength(1);
+    expect(terminalPlanReview[0].status).toBe("passed");
   });
 });

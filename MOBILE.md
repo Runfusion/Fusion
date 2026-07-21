@@ -101,7 +101,7 @@ gesture delivery enabled across `cap sync` regenerations.
 
 ### Planning Mode
 
-Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. On desktop/tablet the split view is unaffected. Once sessions are saved, mobile shows the session list as usual and the user can navigate between list and detail panes.
+Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. Every viewport uses the same sequential surface: idea, generated initial plan, then optional refinement questions. Plan review offers model-suggested focus choices plus **Write your own focus**, followed by **Refine** and **Validate**; refine asks one question and validate creates the task. Generation remains resumable across refreshes, and answer turns visibly report **Updating plan…** before returning to review. There is no three-pane interview or Question/Running plan/Answered questions tab switcher. On mobile, opening Planning with saved sessions lands on the full-pane, scrollable saved-session list with **New session** as its footer. **Sessions** and the mobile back control always return to that list, including from plan review and create retry.
 
 ### Chat and Quick Chat mobile scroll/readability behavior
 

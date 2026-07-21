@@ -104,7 +104,7 @@ function getUserMcpServers(options: unknown): UserMcpServerSpec[] {
  * 1. `context.tools` — the per-session tool list pi-ai actually hands to
  *    `streamSimple`. This is what the session is asking the model to see, so
  *    it includes session-scoped registrations (e.g. `fn_review_spec` and
- *    `fn_review_step` injected by the engine's triage/executor sessions).
+ *    `fn_spawn_agent` injected by the engine's triage/executor sessions).
  * 2. `pi.getAllTools()` — fallback for older callers that don't supply
  *    `context.tools`.
  *

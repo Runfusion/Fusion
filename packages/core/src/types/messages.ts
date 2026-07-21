@@ -83,6 +83,18 @@ export interface MessageMetadata extends Record<string, unknown> {
   wakeRecipient?: boolean;
   /** Structured operator-approved follow-up task proposal. */
   kind?: string;
+  /** Related task for mailbox messages that require an operator response. */
+  taskId?: string;
+  /** Persisted Planning Mode session for a planning-clarification message. */
+  sessionId?: string;
+  /** Planning question that produced a planning-clarification message. */
+  questionId?: string;
+  /**
+   * FNXC:CliChatConversation 2026-07-20-12:00:
+   * CLI-to-agent mailbox chat needs a durable thread identity because MessageStore
+   * inbox delivery is not a dashboard ChatView session or a multi-agent room.
+   */
+  conversationId?: string;
   proposedTask?: ProposedTaskMetadata;
   proposalStatus?: "pending" | "creating" | "created" | "dismissed";
   createdTaskId?: string;

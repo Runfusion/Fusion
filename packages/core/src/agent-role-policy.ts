@@ -67,6 +67,13 @@ export interface BacklogPickupRoleOptions {
   allowEngineer?: boolean;
 }
 
+/*
+FNXC:AutoClaim 2026-07-19-00:00:
+FN-8362: This is the shared automatic-backlog boundary. Executors always pass;
+engineers require the resolved opt-in, while reviewer/custom never do. This
+must remain separate from explicit routing, where eligible engineers can be
+assigned or delegated work regardless of backlog-auto-claim settings.
+*/
 export function canAgentTakeImplementationTaskForBacklogPickup(
   agent: AgentAssignmentPolicyInput,
   task: Pick<Task, "column">,

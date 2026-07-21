@@ -937,6 +937,33 @@ describe("TaskPlannerChatTab", () => {
     expect(mobileTextHideRule).toMatch(/span:not\(\.chat-input-stop-icon\)/);
   });
 
+  it("keeps Planner Chat input and send/stop height-parity across desktop, tablet, and mobile (FN-8421)", () => {
+    const mobileQueryStart = taskPlannerChatCss.indexOf("@media (max-width: 768px)");
+    const desktopAndTabletCss = mobileQueryStart >= 0 ? taskPlannerChatCss.slice(0, mobileQueryStart) : taskPlannerChatCss;
+    const desktopInputRule = desktopAndTabletCss.match(/\.task-planner-chat-input\s*\{[^}]*\}/)?.[0] ?? "";
+    const desktopSendRule = desktopAndTabletCss.match(/\.task-planner-chat-send\s*\{[^}]*\}/)?.[0] ?? "";
+    const mobileInputRule = taskPlannerChatCss.slice(mobileQueryStart).match(/\.task-planner-chat-input\s*\{[^}]*\}/)?.[0] ?? "";
+    const mobileSendRule = taskPlannerChatCss.slice(mobileQueryStart).match(/\.task-planner-chat-send\s*\{[^}]*\}/)?.[0] ?? "";
+
+    // FNXC:TaskDetailPlannerChat 2026-07-20-12:00: The base contract serves
+    // desktop and the 769–1024 tablet band; explicit border-box sizing and
+    // zero button padding prevent inherited `.btn` padding from re-inflating
+    // the Send or Stop variant above the textarea.
+    const desktopTabletHeight = "calc(var(--space-2xl) + var(--space-sm))";
+    const mobileHeight = "calc(var(--space-2xl) + var(--space-lg))";
+    expect(desktopInputRule).toContain(`height: ${desktopTabletHeight};`);
+    expect(desktopInputRule).toContain(`min-height: ${desktopTabletHeight};`);
+    expect(desktopSendRule).toContain(`block-size: ${desktopTabletHeight};`);
+    expect(desktopSendRule).toContain(`min-block-size: ${desktopTabletHeight};`);
+    expect(desktopSendRule).toContain("box-sizing: border-box;");
+    expect(desktopSendRule).toContain("padding: 0;");
+    expect(mobileInputRule).toContain(`height: ${mobileHeight};`);
+    expect(mobileInputRule).toContain(`min-height: ${mobileHeight};`);
+    expect(mobileSendRule).toContain(`block-size: ${mobileHeight};`);
+    expect(mobileSendRule).toContain(`min-block-size: ${mobileHeight};`);
+    expect(mobileSendRule).toContain("padding: 0;");
+  });
+
   it("renders live and stored thinking output through the standard chat surface", async () => {
     const user = userEvent.setup();
     mockFetchChatMessages.mockResolvedValueOnce({
@@ -1644,9 +1671,9 @@ describe("TaskPlannerChatTab", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => expect(mockEditChatMessage).toHaveBeenCalledWith("chat-planner", "m1", "Hello, edited", undefined));
-      // Optimistic truncation happens before the PATCH resolves: the edited row and its tail drop immediately.
-      await waitFor(() => expect(screen.queryByText("Hello")).not.toBeInTheDocument());
-      expect(screen.queryByText("Hi there")).not.toBeInTheDocument();
+      // The edited row stays mounted until PATCH success so a rejected save can retain its correction.
+      expect(screen.getByTestId("chat-message-edit-editor-m1")).toBeInTheDocument();
+      expect(screen.getByText("Hi there")).toBeInTheDocument();
       expect(mockStreamChatResponse).not.toHaveBeenCalled();
 
       deferredEdit.resolve({ retained: [] });
@@ -1689,7 +1716,9 @@ describe("TaskPlannerChatTab", () => {
       await waitFor(() => expect(addToast).toHaveBeenCalledWith("edit failed", "error"));
       await waitFor(() => expect(mockFetchChatMessages).toHaveBeenCalledTimes(2));
       expect(mockStreamChatResponse).not.toHaveBeenCalled();
-      expect(await screen.findByText("Hello")).toBeInTheDocument();
+      // A rejected PATCH must leave the inline correction available for retry instead of closing it.
+      expect(screen.getByTestId("chat-message-edit-editor-m1")).toBeInTheDocument();
+      expect(textarea).toHaveValue("Hello, edited");
     });
 
     it("hides the edit affordance on an already-persisted message while a new generation is streaming", async () => {

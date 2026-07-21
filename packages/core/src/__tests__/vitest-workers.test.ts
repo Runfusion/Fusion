@@ -54,6 +54,44 @@ describe("computeMaxWorkers", () => {
     expect(process.env.VITEST_MAX_WORKERS).toBe("2");
   });
 
+  // FNXC:PgTestWorkerCap 2026-07-18-18:00: maxCap must clamp the FINAL count for
+  // DB-bound suites (pg-gate) so fork fan-out never oversubscribes one Postgres,
+  // and it must win even over an explicit VITEST_MAX_WORKERS above the cap.
+  it("clamps the final worker count to maxCap for DB-bound suites", () => {
+    delete process.env.VITEST_MAX_WORKERS;
+    delete process.env.FUSION_TEST_TOTAL_WORKERS;
+    delete process.env.FUSION_TEST_CONCURRENCY;
+
+    const cpuCap = Math.max(1, cpus().length - 1);
+    const workers = computeMaxWorkers({ defaultCap: 6, maxCap: 4 });
+
+    expect(workers).toBe(Math.min(4, cpuCap));
+    expect(process.env.VITEST_MAX_WORKERS).toBe(String(workers));
+  });
+
+  it("applies maxCap even when explicit VITEST_MAX_WORKERS exceeds it", () => {
+    process.env.VITEST_MAX_WORKERS = "12";
+    delete process.env.FUSION_TEST_TOTAL_WORKERS;
+    delete process.env.FUSION_TEST_CONCURRENCY;
+
+    const cpuCap = Math.max(1, cpus().length - 1);
+    const workers = computeMaxWorkers({ maxCap: 4 });
+
+    expect(workers).toBe(Math.min(4, cpuCap));
+  });
+
+  it("does not raise workers below maxCap on low-core machines", () => {
+    delete process.env.VITEST_MAX_WORKERS;
+    delete process.env.FUSION_TEST_TOTAL_WORKERS;
+    delete process.env.FUSION_TEST_CONCURRENCY;
+
+    // A defaultCap under the maxCap must be preserved (min semantics, not a floor).
+    const cpuCap = Math.max(1, cpus().length - 1);
+    const workers = computeMaxWorkers({ defaultCap: 2, maxCap: 4 });
+
+    expect(workers).toBe(Math.min(2, cpuCap));
+  });
+
   it("uses a CPU-aware default cap when no overrides are provided", () => {
     delete process.env.VITEST_MAX_WORKERS;
     delete process.env.FUSION_TEST_TOTAL_WORKERS;

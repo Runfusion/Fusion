@@ -62,6 +62,24 @@ export function normalizeColumn(value: unknown, fallback: Column = DEFAULT_COLUM
   return isColumn(value) ? value : fallback;
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-19-2b:00 (U12 / R2 / R11):
+The workflow-aware counterpart to `normalizeColumn`, and the one client code should use when
+sanitizing a column id off the wire.
+
+`normalizeColumn` answers "is this one of the SIX legacy ids", so it silently rewrites every
+workflow-defined id to `triage`. That is correct only for the closed default-workflow set; applied
+to a real board it teleports cards. A custom `merging` column's cards rendered in Triage because
+the dashboard ran every task through the legacy coercion on ingest.
+
+The right invariant at a deserialization boundary is narrower: reject only what is structurally
+unusable (non-string / empty), and pass every real id through untouched. Membership is not this
+function's business — the task's resolved workflow decides that, via `workflowHasColumn`.
+*/
+export function normalizeColumnId(value: unknown, fallback: ColumnId = DEFAULT_COLUMN): ColumnId {
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
 /** Ordered task-priority levels for the core task domain contract. */
 export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];

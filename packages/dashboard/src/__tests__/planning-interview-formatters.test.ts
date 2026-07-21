@@ -85,4 +85,12 @@ describe("planning interview formatter Other answers", () => {
     expect(agent).toContain("Ask a different scoping question");
     expect(qa).toContain("Ask a different scoping question");
   });
+
+  it("reasserts the infinite, high-impact next-question contract with every answer", () => {
+    const prompt = formatResponseForAgent(singleSelectQuestion, { strategy: "discovery" });
+
+    expect(prompt).toContain("exactly one new, high-impact question");
+    expect(prompt).toContain("does not repeat a prior question");
+    expect(prompt).toContain("only the user can validate it");
+  });
 });

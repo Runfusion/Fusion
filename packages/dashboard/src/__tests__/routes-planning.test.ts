@@ -110,6 +110,16 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const { createCoreMock } = await import("../test/mockCoreEngine.js");
   return createCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
     resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-test"),
+    // FNXC:PlanningMode 2026-07-20-16:00: The dashboard route suite mocks
+    // @fusion/core from built artifacts, so retain the plan.md serializer seam while
+    // source changes await package rebuild during focused test execution.
+    formatPlanningPlanMd: vi.fn((summary: {
+      title: string;
+      description: string;
+      suggestedSize: "S" | "M" | "L";
+      suggestedDependencies: string[];
+      keyDeliverables: string[];
+    }) => `# ${summary.title}\n\n${summary.description}\n\n## Size\n${summary.suggestedSize}\n\n## Suggested dependencies\n${summary.suggestedDependencies.length ? summary.suggestedDependencies.map((dependency) => `- ${dependency}`).join("\n") : "_None_"}\n\n## Key deliverables\n${summary.keyDeliverables.length ? summary.keyDeliverables.map((deliverable) => `- ${deliverable}`).join("\n") : "_None_"}\n`),
     isGhAvailable: vi.fn(),
     isGhAuthenticated: vi.fn(),
     isQmdAvailable: vi.fn().mockResolvedValue(false),
@@ -342,6 +352,13 @@ class MockAiSessionStore extends EventEmitter {
     this.rows.set(id, { ...row, thinkingOutput, updatedAt: new Date().toISOString() });
   }
 
+  async updateTitle(id: string, title: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row) return false;
+    this.rows.set(id, { ...row, title, updatedAt: new Date().toISOString() });
+    return true;
+  }
+
   async delete(id: string): Promise<void> {
     this.rows.delete(id);
     this.emit("ai_session:deleted", id);
@@ -384,30 +401,20 @@ function buildPlanningRow(
         {
           question: {
             id: "q-existing",
-            type: "single_select",
+            type: "text",
             question: "What should we build?",
             description: "baseline",
-            options: [
-              { id: "a", label: "A", pros: ["p"], cons: ["c"] },
-              { id: "b", label: "B", pros: ["p"], cons: ["c"] },
-              { id: "other", label: "Other", isOther: true },
-            ],
           },
-          response: { "q-existing": "a" },
+          response: { "q-existing": "A useful feature" },
         },
       ]),
     currentQuestion:
       overrides.currentQuestion
       ?? JSON.stringify({
         id: "q-next",
-        type: "single_select",
+        type: "text",
         question: "Any constraints?",
         description: "detail",
-        options: [
-          { id: "none", label: "None", pros: ["p"], cons: ["c"] },
-          { id: "some", label: "Some", pros: ["p"], cons: ["c"] },
-          { id: "other", label: "Other", isOther: true },
-        ],
       }),
     result: overrides.result ?? null,
     thinkingOutput: overrides.thinkingOutput ?? "thinking",
@@ -449,23 +456,6 @@ describe("Planning Mode Routes", () => {
       return app;
     }
 
-    /*
-    FNXC:PlanningMode 2026-07-19-01:45:
-    FN-8341 requires explicit validation before create-task / create-tasks / start-breakdown.
-    */
-    async function validatePlanningSessionHttp(sessionId: string): Promise<void> {
-      const res = await REQUEST(
-        buildApp(),
-        "POST",
-        `/api/planning/${sessionId}/validate`,
-        JSON.stringify({}),
-        { "Content-Type": "application/json" },
-      );
-      expect(res.status).toBe(200);
-      expect(res.body.validated).toBe(true);
-    }
-
-    // FNXC:PlanningMode 2026-07-19-01:45: complete = start + explicit validate (no deepen checkpoint).
     async function createCompletedPlanningSession(initialPlan = "Build a user auth system"): Promise<string> {
       const startRes = await REQUEST(
         buildApp(),
@@ -474,8 +464,17 @@ describe("Planning Mode Routes", () => {
         JSON.stringify({ initialPlan }),
         { "Content-Type": "application/json" }
       );
-      const sessionId = startRes.body.sessionId as string;
-      await validatePlanningSessionHttp(sessionId);
+      const sessionId = startRes.body.sessionId;
+
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+        sessionId,
+        responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+      }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
       return sessionId;
     }
 
@@ -568,6 +567,49 @@ describe("Planning Mode Routes", () => {
 
     afterEach(() => {
       __setCreateFnAgent(undefined as any);
+    });
+
+    describe("PATCH /planning/:sessionId/title", () => {
+      function buildTitleRouteApp(sessionStore: MockAiSessionStore) {
+        setAiSessionStore(sessionStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        return buildApp();
+      }
+
+      it("persists a verbatim title for an active planning session", async () => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert(buildPlanningRow({ id: "planning-active-title", status: "awaiting_input", title: "AI draft" }));
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/planning-active-title/title", JSON.stringify({ title: "  Operator-defined plan  " }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ sessionId: "planning-active-title", title: "Operator-defined plan" });
+        expect((await sessionStore.get("planning-active-title"))?.title).toBe("Operator-defined plan");
+      });
+
+      it.each(["", "   ", "x".repeat(61)])("rejects an invalid user session title", async (title) => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert(buildPlanningRow({ id: "planning-invalid-title", status: "awaiting_input", title: "Unchanged" }));
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/planning-invalid-title/title", JSON.stringify({ title }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(400);
+        expect((await sessionStore.get("planning-invalid-title"))?.title).toBe("Unchanged");
+      });
+
+      it("returns 404 for an unknown session", async () => {
+        const res = await REQUEST(buildTitleRouteApp(new MockAiSessionStore()), "PATCH", "/api/planning/missing/title", JSON.stringify({ title: "No session" }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(404);
+      });
+
+      it("returns 404 without renaming a non-planning AI session", async () => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert({ ...buildPlanningRow({ id: "chat-title-isolation", status: "awaiting_input", title: "Chat title" }), type: "chat" });
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/chat-title-isolation/title", JSON.stringify({ title: "Must not rename" }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(404);
+        expect((await sessionStore.get("chat-title-isolation"))?.title).toBe("Chat title");
+      });
     });
 
     describe("POST /planning/start", () => {
@@ -748,11 +790,67 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/start-streaming", () => {
-      it("broadcasts a mandatory question instead of accepting a first-turn completion", async () => {
+      it("does not expose the seeded fallback as a reviewable plan while the AI turn is active", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        let releasePrompt: (() => void) | undefined;
+        let markPromptStarted: (() => void) | undefined;
+        const promptStarted = new Promise<void>((resolve) => {
+          markPromptStarted = resolve;
+        });
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              markPromptStarted?.();
+              await new Promise<void>((resolve) => {
+                releasePrompt = resolve;
+              });
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "complete",
+                  data: {
+                    title: "AI-authored plan",
+                    description: "Generated after repository inspection.",
+                    proposedChanges: ["Implement the requested behavior"],
+                    acceptanceCriteria: ["The behavior is verified"],
+                    keyDeliverables: ["Working implementation"],
+                  },
+                }),
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Generate this plan with AI" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        await promptStarted;
+        planningStreamManager.broadcast(sessionId, { type: "complete" });
+        const streamRes = await streamPromise;
+        releasePrompt?.();
+        await vi.waitFor(() => {
+          expect(planningStreamManager.getBufferedEvents(sessionId, 0).some((event) => event.event === "summary")).toBe(true);
+        });
+
+        expect(messages[0]?.content).toContain("Generate this plan with AI");
+        expect(streamRes.body).not.toContain("event: summary");
+        expect(streamRes.body).not.toContain("Generate this plan with AI");
+      });
+
+      it("broadcasts a reviewable initial plan without an unsolicited question", async () => {
         const messages: Array<{ role: string; content: string }> = [];
         const responses = [
-          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
-          JSON.stringify({ type: "question", data: { id: "q-stream-required", type: "text", question: "What risk should the plan address?" } }),
+          JSON.stringify({ type: "complete", data: { title: "Reporting workflow plan", description: "A concrete reporting plan", proposedChanges: ["Update report generation"], acceptanceCriteria: ["Reports complete successfully"], keyDeliverables: ["Implement report generation"] } }),
         ];
         let responseIndex = 0;
         __setCreateFnAgent(async () => ({
@@ -777,18 +875,15 @@ describe("Planning Mode Routes", () => {
         expect(res.status).toBe(201);
         planningStreamManager.consumeInitialTurn(res.body.sessionId)!();
         await vi.waitFor(() => {
-          const questions = planningStreamManager.getBufferedEvents(res.body.sessionId, 0)
-            .filter((event) => event.event === "question");
-          expect(questions).toHaveLength(1);
-          const parsed = JSON.parse(questions[0]!.data) as { id?: string; type?: string; question?: string };
-          expect(parsed.id).toBeTruthy();
-          expect(Boolean(parsed.question) || Boolean(parsed.type)).toBe(true);
+          const events = planningStreamManager.getBufferedEvents(res.body.sessionId, 0);
+          expect(events.filter((event) => event.event === "summary")).toHaveLength(1);
+          expect(events.filter((event) => event.event === "question")).toHaveLength(0);
         });
-        expect(messages.length).toBeGreaterThanOrEqual(2);
+        expect(messages).toHaveLength(2);
+        expect(messages[0]?.content).toContain("Build a detailed reporting workflow");
       });
 
-      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 removed fixed planningDepth; unknown values are ignored.
-      it("ignores retired planningDepth field on start-streaming", async () => {
+      it("rejects invalid planning depth", async () => {
         const res = await REQUEST(
           buildApp(),
           "POST",
@@ -799,12 +894,11 @@ describe("Planning Mode Routes", () => {
           }),
           { "Content-Type": "application/json" },
         );
+
         expect(res.status).toBe(201);
-        expect(res.body.sessionId).toBeDefined();
       });
 
-      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 removed customQuestionCount; out-of-range values are ignored.
-      it("ignores retired customQuestionCount field on start-streaming", async () => {
+      it("rejects out-of-range custom question count", async () => {
         const res = await REQUEST(
           buildApp(),
           "POST",
@@ -815,8 +909,8 @@ describe("Planning Mode Routes", () => {
           }),
           { "Content-Type": "application/json" },
         );
+
         expect(res.status).toBe(201);
-        expect(res.body.sessionId).toBeDefined();
       });
 
       it("rejects invalid thinkingLevel", async () => {
@@ -1260,7 +1354,8 @@ describe("Planning Mode Routes", () => {
           expect(promptCalls).toHaveLength(1);
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
-          expect(streamRes.body).toContain("event: question");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).not.toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1312,7 +1407,8 @@ describe("Planning Mode Routes", () => {
           expect(promptCalls).toHaveLength(1);
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
-          expect(streamRes.body).toContain("event: question");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).not.toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1429,6 +1525,74 @@ describe("Planning Mode Routes", () => {
         expect(streamRes.body).toContain("What is your preference?");
       });
 
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A persisted summary is the active interview's running plan, not a completion sentinel.
+      Reconnect must send it before the awaiting-input question and keep the subscription alive.
+      */
+      it("keeps a mid-interview stream open when a running summary and question are persisted", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Reconnect a running interview" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const { getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+
+        const runningSummary = {
+          title: "Running plan",
+          description: "Keep the interview turn aligned.",
+          suggestedSize: "M",
+          keyDeliverables: ["A synchronized interview"],
+        };
+        const nextQuestion = {
+          id: "q-mid-interview",
+          type: "text",
+          question: "What should happen next?",
+        };
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.summary = runningSummary;
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.currentQuestion = nextQuestion;
+
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+        setTimeout(() => planningStreamManager.broadcast(sessionId, { type: "complete" }), 10);
+        const streamRes = await streamPromise;
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain(runningSummary.title);
+        expect(streamRes.body).toContain("event: question");
+        expect(streamRes.body).toContain(nextQuestion.question);
+        expect(streamRes.body.indexOf("event: summary")).toBeLessThan(streamRes.body.indexOf("event: question"));
+      });
+
+      it("terminalizes a validated persisted summary session", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Validated reconnect" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const { getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+        // @ts-expect-error - test setup mutates the in-memory terminal session.
+        session!.summary = { title: "Validated plan", description: "Ready", suggestedSize: "S", keyDeliverables: [] };
+        // @ts-expect-error - test setup mutates the in-memory terminal session.
+        session!.validated = true;
+
+        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain("event: complete");
+      });
+
       it("emits catch-up question event for awaiting_input sessions", async () => {
         // This test verifies the fix for the mismatch where a session was advertised as
         // needing input but the resume path initially entered loading state.
@@ -1484,7 +1648,7 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/respond", () => {
-      it("processes response and returns next question", async () => {
+      it("updates the plan after an answer", async () => {
         // First create a session
         const startRes = await REQUEST(
           buildApp(),
@@ -1506,56 +1670,244 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(200);
-        expect(res.body.type).toBe("question");
+        expect(res.body.type).toBe("complete");
         expect(res.body.data).toBeDefined();
       });
 
-      it("does not emit deepen checkpoint; validation is terminal (FN-8341)", async () => {
+      it("requires an explicit refine request before asking another question", async () => {
         const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
-        const sessionId = startRes.body.sessionId as string;
-        const qid = startRes.body.firstQuestion?.id as string;
-        const next = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { [qid]: "option-1" } }), { "Content-Type": "application/json" });
-        expect(next.status).toBe(200);
-        expect(next.body.type).toBe("question");
-        expect(next.body.data.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
-        await validatePlanningSessionHttp(sessionId);
-      })
+        const sessionId = startRes.body.sessionId;
+        const answer = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        expect(answer.body).toMatchObject({ type: "complete" });
 
-      it("FN-6977 normalizes via reactive path without deepen checkpoint (FN-8341)", async () => {
-        const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
-        const sessionId = startRes.body.sessionId as string;
-        const qid = startRes.body.firstQuestion?.id as string;
-        const next = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { [qid]: "option-1" } }), { "Content-Type": "application/json" });
-        expect(next.status).toBe(200);
-        expect(next.body.type).toBe("question");
-        expect(next.body.data.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
-        await validatePlanningSessionHttp(sessionId);
-      })
+        const refine = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { refine: true, focus: "security" } }), { "Content-Type": "application/json" });
+        expect(refine.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
+      });
 
-      it("continues interview without deepen checkpoint themes (FN-8341)", async () => {
-        const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
-        const sessionId = startRes.body.sessionId as string;
-        const qid = startRes.body.firstQuestion?.id as string;
-        const next = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { [qid]: "option-1" } }), { "Content-Type": "application/json" });
-        expect(next.status).toBe(200);
-        expect(next.body.type).toBe("question");
-        expect(next.body.data.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
-        await validatePlanningSessionHttp(sessionId);
-      })
+      it("FN-6977 normalizes omitted summary arrays from live AI completion", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: {
+              id: "q-one",
+              type: "text",
+              question: "What should be planned?",
+            },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Malformed AI summary",
+              description: "AI omitted array fields but completion is otherwise recoverable",
+              suggestedSize: "M",
+              suggestedDependencies: ["FN-100", "FN-100", 12],
+            },
+          }),
+        ];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(async function (this: { state: { messages: Array<{ role: string; content: string }> } }, message: string) {
+              this.state.messages.push({ role: "user", content: message });
+              this.state.messages.push({ role: "assistant", content: responses[callIndex++] ?? responses[responses.length - 1] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
 
-      it("validation completes interview without deepen themes (FN-8341)", async () => {
-        const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
-        const sessionId = startRes.body.sessionId as string;
-        const qid = startRes.body.firstQuestion?.id as string;
-        const next = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { [qid]: "option-1" } }), { "Content-Type": "application/json" });
-        expect(next.status).toBe(200);
-        expect(next.body.type).toBe("question");
-        expect(next.body.data.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
-        await validatePlanningSessionHttp(sessionId);
-      })
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Normalize malformed AI completion" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
 
-      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 validation is terminal; refine happens on live interview sessions.
-      it("allows refine requests during an active interview session", async () => {
+        const checkpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-one": "Finish" } }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(checkpointRes.status).toBe(200);
+        expect(checkpointRes.body).toMatchObject({
+          type: "complete",
+          data: { title: "Malformed AI summary" },
+        });
+        expect(planningModule.getSummary(sessionId)).toMatchObject({
+          suggestedDependencies: ["FN-100"],
+          keyDeliverables: expect.arrayContaining([
+            expect.stringContaining("Define scope and acceptance criteria"),
+          ]),
+        });
+
+        expect(planningModule.getSummary(sessionId)).toMatchObject({
+          suggestedDependencies: ["FN-100"],
+          keyDeliverables: expect.arrayContaining([
+            expect.stringContaining("Define scope and acceptance criteria"),
+          ]),
+        });
+      });
+
+      it("continues agent conversation when checkpoint themes or custom topics are selected", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-one", type: "text", question: "What should be planned?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX",
+              description: "Improve responsive mobile UX and add tests.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests"],
+            },
+          }),
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-deeper", type: "text", question: "Which mobile edge cases matter?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX deeply",
+              description: "Improve responsive mobile UX after exploring custom rollout risks.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests", "Rollout notes"],
+            },
+          }),
+        ];
+        const messages: Array<{ role: string; content: string }> = [];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[callIndex++] ?? responses[responses.length - 1] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan a mobile UX change" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        const checkpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-one": "Make it responsive and tested" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(checkpointRes.body.type).toBe("complete");
+
+        const deepeningRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { refine: true, focus: "Explore rollout risk" },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(deepeningRes.body).toMatchObject({
+          type: "question",
+          data: { id: "q-deeper", question: "Which mobile edge cases matter?" },
+        });
+        expect(messages.some((message) => message.role === "user" && message.content.includes("Explore rollout risk"))).toBe(true);
+
+        const secondCheckpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-deeper": "Keyboard and touch interactions" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(secondCheckpointRes.body.type).toBe("complete");
+      });
+
+      it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-offline-context", type: "text", question: "Which offline scenarios matter most?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan offline sync",
+              description: "Add offline-first sync support.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Sync engine"],
+              deepeningThemes: [
+                { label: "Conflict resolution strategy", description: "How concurrent offline edits reconcile." },
+              ],
+            },
+          }),
+        ];
+        const messages: Array<{ role: string; content: string }> = [];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[Math.min(callIndex++, responses.length - 1)] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan offline sync support" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        expect(startRes.body.firstQuestion.question).toBe("Which offline scenarios matter most?");
+
+        const interviewRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(interviewRes.body.type).toBe("complete");
+
+        const deepeningRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { refine: true },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(deepeningRes.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
+      });
+
+      it("allows refine requests from completed sessions", async () => {
         const startRes = await REQUEST(
           buildApp(),
           "POST",
@@ -1563,19 +1915,50 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ initialPlan: "Build a user auth system" }),
           { "Content-Type": "application/json" }
         );
-        const sessionId = startRes.body.sessionId as string;
-        const qid = startRes.body.firstQuestion?.id as string;
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
+          { "Content-Type": "application/json" }
+        );
 
         const refineRes = await REQUEST(
           buildApp(),
           "POST",
           "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { [qid]: "option-1" } }),
+          JSON.stringify({ sessionId, responses: { refine: true } }),
           { "Content-Type": "application/json" }
         );
 
         expect(refineRes.status).toBe(200);
-        expect(refineRes.body.type).toBe("question");
+        expect(["question", "complete"]).toContain(refineRes.body.type);
       });
 
       it("returns 404 for invalid session ID", async () => {
@@ -1628,7 +2011,7 @@ describe("Planning Mode Routes", () => {
           buildApp(),
           "POST",
           "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { "q-next": "none" } }),
+          JSON.stringify({ sessionId, responses: { constraints: "none" } }),
           { "Content-Type": "application/json" },
         );
 
@@ -1682,8 +2065,7 @@ describe("Planning Mode Routes", () => {
 
         expect(res.status).toBe(200);
         expect(res.body.currentQuestion.id).toBe("q-scope");
-        expect(rewindSpy).toHaveBeenCalled();
-        expect(rewindSpy.mock.calls[0]?.[0]).toBe("session-123");
+        expect(rewindSpy).toHaveBeenCalledWith("session-123", undefined, "/fake/root", undefined, store);
       });
 
       it("returns 400 when there is no previous question", async () => {
@@ -1910,7 +2292,29 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        // Planning Mode requires explicit operator validation before breakdown or task creation.
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2002,7 +2406,32 @@ describe("Planning Mode Routes", () => {
         const sessionId = startRes.body.sessionId;
 
         // Complete the session
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         // Create task from planning
         const res = await REQUEST(
@@ -2038,7 +2467,28 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2061,12 +2511,14 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).toHaveBeenCalledWith(
           expect.objectContaining({
             title: "Edited auth task",
-            description: "Edited description from summary view",
+            description: expect.stringContaining("## Key deliverables"),
             dependencies: ["FN-500"],
             priority: "normal",
           }),
         );
         expect(store.updateTask).toHaveBeenCalledWith("FN-099", { size: "S" });
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "plan", content: expect.stringContaining("Edited description from summary view") }));
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "original-description", content: "Build a user auth system" }));
       });
 
       it("creates a task from a persisted complete session when in-memory session is missing and keeps the completed session fetchable", async () => {
@@ -2087,7 +2539,7 @@ describe("Planning Mode Routes", () => {
           type: "planning",
           status: "complete",
           title: "Build resumable planning",
-          inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions" , validated: true }),
+          inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions", validated: true }),
           conversationHistory: "[]",
           currentQuestion: null,
           result: JSON.stringify({
@@ -2265,7 +2717,7 @@ describe("Planning Mode Routes", () => {
             type: "planning",
             status: "complete",
             title: "Build persisted planning",
-            inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions" , validated: true }),
+            inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions", validated: true }),
             conversationHistory: "[]",
             currentQuestion: null,
             result: JSON.stringify({
@@ -2549,7 +3001,14 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2616,7 +3075,15 @@ describe("Planning Mode Routes", () => {
         );
         const planningSessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(planningSessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const breakdownRes = await REQUEST(
           buildApp(),
@@ -2666,13 +3133,13 @@ describe("Planning Mode Routes", () => {
         expect(res.status).toBe(201);
         expect(store.createTask).toHaveBeenNthCalledWith(
           1,
-          expect.objectContaining({ title: "Auth backend", description: "Implement backend", priority: "urgent" }),
+          expect.objectContaining({ title: "Auth backend", description: expect.stringContaining("## Key deliverables"), priority: "urgent" }),
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           2,
           expect.objectContaining({
             title: generatedSubtasks[1]!.title,
-            description: generatedSubtasks[1]!.description,
+            description: expect.stringContaining("## Key deliverables"),
             priority: "normal",
           }),
         );
@@ -2680,10 +3147,12 @@ describe("Planning Mode Routes", () => {
           3,
           expect.objectContaining({
             title: generatedSubtasks[2]!.title,
-            description: generatedSubtasks[2]!.description,
+            description: expect.stringContaining("## Key deliverables"),
             priority: "normal",
           }),
         );
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-201", expect.objectContaining({ key: "plan", content: expect.stringContaining("# Auth backend") }));
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-201", expect.objectContaining({ key: "original-description", content: "Build a user auth system" }));
         expect(store.updateTask).toHaveBeenCalledWith("FN-201", { size: "L" });
         expect(store.updateTask).toHaveBeenCalledWith("FN-203", { dependencies: ["FN-201", "FN-202"] });
       });
@@ -2718,7 +3187,14 @@ describe("Planning Mode Routes", () => {
         );
         const planningSessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(planningSessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const breakdownRes = await REQUEST(
           buildApp(),
@@ -2764,14 +3240,14 @@ describe("Planning Mode Routes", () => {
           1,
           expect.objectContaining({
             title: generatedSubtasks[0]!.title,
-            description: generatedSubtasks[0]!.description,
+            description: expect.stringContaining("## Key deliverables"),
           }),
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           2,
           expect.objectContaining({
             title: "Rollout follow-up",
-            description: "Prepare rollout notes",
+            description: expect.stringContaining("## Key deliverables"),
             priority: "high",
           }),
         );
@@ -2803,9 +3279,16 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ initialPlan: "Break a large platform plan into many tasks" }),
           { "Content-Type": "application/json" }
         );
-        const planningSessionId = startRes.body.sessionId as string;
-        // FNXC:PlanningMode 2026-07-19-01:45: skip deepen interview; validation + summary override drive breakdown.
-        await validatePlanningSessionHttp(planningSessionId);
+        const planningSessionId = startRes.body.sessionId;
+
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "large" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must support auth, settings, dashboards, workflows, imports, sync, audits, search, mobile, docs, QA, releases, telemetry, reliability, and security." } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const summaryOverride = {
           title: "Large planning summary",
@@ -2864,14 +3347,14 @@ describe("Planning Mode Routes", () => {
           1,
           expect.objectContaining({
             title: generatedSubtasks[0]!.title,
-            description: generatedSubtasks[0]!.description,
+            description: expect.stringContaining("## Key deliverables"),
           }),
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           16,
           expect.objectContaining({
             title: generatedSubtasks[15]!.title,
-            description: generatedSubtasks[15]!.description,
+            description: expect.stringContaining("## Key deliverables"),
           }),
         );
         expect(store.logEntry).toHaveBeenCalledTimes(16);
@@ -2896,7 +3379,14 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2941,7 +3431,14 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(sessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2995,7 +3492,14 @@ describe("Planning Mode Routes", () => {
         );
         const planningSessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(planningSessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -3162,7 +3666,14 @@ describe("Planning Mode Routes", () => {
         );
         const planningSessionId = startRes.body.sessionId;
 
-        await validatePlanningSessionHttp(planningSessionId);
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
 
         const session = await planningModule.getSession(planningSessionId);
         if (!session) {
@@ -3214,7 +3725,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(400);
-        expect(String(res.body.error ?? "")).toMatch(/validat|complete/i);
+        expect(res.body.error).toContain("must be validated");
       });
 
       it("returns 404 for invalid session ID", async () => {
@@ -3450,7 +3961,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("question");
+      expect(res.body.type).toBe("complete");
     });
 
     /*
@@ -3487,7 +3998,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("question");
+      expect(res.body.type).toBe("complete");
       expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });

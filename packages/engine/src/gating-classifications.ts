@@ -47,7 +47,15 @@ export const COMMAND_EXECUTION_FN_TOOLS: ReadonlySet<string> = new Set([
  * FNXC:ToolGovernance 2026-06-27-16:51:
  * Identity reflection stays out of this action-gate mutation-only list because it is heartbeat-critical coordination, not a task-board mutation. Keep it in COORDINATION_EXEMPT_TOOLS and READONLY_FN_TOOLS so exported mutation sets do not contradict action-gate exemption semantics.
  */
-const PERMANENT_AND_ACTION_TASK_AGENT_TOOLS = ["fn_task_create"] as const;
+/*
+FNXC:MissionAdmission 2026-07-30-00:00:
+FN-8307 treats autonomous implementation creation and delegation as one admission
+class in both gate paths. They must never fall through as permanent-agent
+coordination, because agent-tools.ts validates the referenced active lineage
+before it can persist the task.
+*/
+export const MISSION_LINEAGE_ADMISSION_TOOLS: ReadonlySet<string> = new Set(["fn_task_create", "fn_delegate_task"]);
+const PERMANENT_AND_ACTION_TASK_AGENT_TOOLS = ["fn_task_create", "fn_delegate_task"] as const;
 const ACTION_GATE_TASK_AGENT_ONLY_TOOLS = [
   ...PERMANENT_AND_ACTION_TASK_AGENT_TOOLS,
   "fn_delegate_task",
@@ -161,7 +169,6 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_task_get",
   "fn_task_document_write",
   "fn_task_document_read",
-  "fn_delegate_task",
   "fn_task_import_github",
   "fn_task_import_github_issue",
   "fn_task_import_gitlab_project_issues",

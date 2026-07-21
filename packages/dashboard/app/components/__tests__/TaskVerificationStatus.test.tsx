@@ -15,9 +15,9 @@ const base: TaskVerificationRequest = {
 };
 
 describe("TaskVerificationStatus", () => {
-  it("renders an empty state without a request", () => {
-    render(<TaskVerificationStatus request={null} />);
-    expect(screen.getByText("No chat verification requested.")).toBeInTheDocument();
+  it("renders nothing without a request", () => {
+    const { container } = render(<TaskVerificationStatus request={null} />);
+    expect(container.firstChild).toBeNull();
   });
 
   it.each(["requested", "running", "passed", "failed", "rejected"] as const)("renders the %s lifecycle state", (status) => {

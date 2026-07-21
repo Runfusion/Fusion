@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAppVersion, parseSemver } from "../app-version.js";
+import { getAppVersion, parseSemver, compareVersions, isVersionNewer, resolveUpdateTargetVersion } from "../app-version.js";
 
 describe("getAppVersion", () => {
   it("should return a non-empty string", () => {
@@ -122,5 +122,72 @@ describe("parseSemver", () => {
       expect(parseSemver("1.2.3 ")).toBeNull();
       expect(parseSemver("1.2.3\n")).toBeNull();
     });
+  });
+});
+
+/*
+FNXC:UpdateChannels 2026-07-19-13:40:
+Shared version ordering + channel resolution for every update surface.
+Full SemVer 2.0.0 precedence, including prerelease identifiers — the class of
+bug being prevented: comparators that ignore prerelease suffixes treat
+0.73.0-beta.2, -beta.3, and 0.73.0 as equal.
+*/
+describe("compareVersions / isVersionNewer", () => {
+  it("orders plain releases", () => {
+    expect(compareVersions("1.2.3", "1.2.4")).toBeLessThan(0);
+    expect(compareVersions("1.3.0", "1.2.9")).toBeGreaterThan(0);
+    expect(compareVersions("1.2.3", "1.2.3")).toBe(0);
+  });
+
+  it("ranks a prerelease below its release", () => {
+    expect(compareVersions("0.73.0-beta.1", "0.73.0")).toBeLessThan(0);
+    expect(isVersionNewer("0.73.0", "0.73.0-beta.9")).toBe(true);
+  });
+
+  it("ranks a prerelease above lower releases", () => {
+    expect(isVersionNewer("0.73.0-beta.0", "0.72.5")).toBe(true);
+  });
+
+  it("orders prerelease iterations numerically", () => {
+    expect(isVersionNewer("0.73.0-beta.3", "0.73.0-beta.2")).toBe(true);
+    expect(isVersionNewer("0.73.0-beta.10", "0.73.0-beta.2")).toBe(true);
+    expect(compareVersions("0.73.0-beta.2", "0.73.0-beta.2")).toBe(0);
+  });
+
+  it("orders numeric prerelease identifiers below alphanumeric ones", () => {
+    // SemVer spec: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta
+    expect(compareVersions("1.0.0-alpha", "1.0.0-alpha.1")).toBeLessThan(0);
+    expect(compareVersions("1.0.0-alpha.1", "1.0.0-alpha.beta")).toBeLessThan(0);
+    expect(compareVersions("1.0.0-alpha.beta", "1.0.0-beta")).toBeLessThan(0);
+  });
+
+  it("ignores build metadata", () => {
+    expect(compareVersions("1.2.3+build.1", "1.2.3+build.2")).toBe(0);
+  });
+
+  it("sorts unparseable versions below parseable ones", () => {
+    expect(isVersionNewer("not-a-version", "0.0.1")).toBe(false);
+    expect(isVersionNewer("0.0.1", "not-a-version")).toBe(true);
+  });
+});
+
+describe("resolveUpdateTargetVersion", () => {
+  it("stable follows latest only and never sees beta", () => {
+    expect(resolveUpdateTargetVersion("stable", { latest: "0.72.0", beta: "0.73.0-beta.5" })).toBe("0.72.0");
+    expect(resolveUpdateTargetVersion(undefined, { latest: "0.72.0", beta: "0.73.0-beta.5" })).toBe("0.72.0");
+  });
+
+  it("beta resolves the semver-max of latest and beta", () => {
+    expect(resolveUpdateTargetVersion("beta", { latest: "0.72.0", beta: "0.73.0-beta.1" })).toBe("0.73.0-beta.1");
+    // A promoted stable overtakes its own betas.
+    expect(resolveUpdateTargetVersion("beta", { latest: "0.73.0", beta: "0.73.0-beta.4" })).toBe("0.73.0");
+  });
+
+  it("handles missing dist-tags", () => {
+    expect(resolveUpdateTargetVersion("beta", { latest: "0.72.0" })).toBe("0.72.0");
+    expect(resolveUpdateTargetVersion("beta", { beta: "0.73.0-beta.1" })).toBe("0.73.0-beta.1");
+    expect(resolveUpdateTargetVersion("stable", { beta: "0.73.0-beta.1" })).toBeNull();
+    expect(resolveUpdateTargetVersion("beta", {})).toBeNull();
+    expect(resolveUpdateTargetVersion("stable", { latest: "" })).toBeNull();
   });
 });

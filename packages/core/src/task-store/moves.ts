@@ -14,13 +14,17 @@ import type {Task, Column, ColumnId, HandoffToReviewOptions} from "../types.js";
 import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflow-ir.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflow-transitions.js";
-import {isBuiltinWorkflowId, getBuiltinWorkflow} from "../builtin-workflows.js";
-import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
+import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../builtin-workflows.js";
 import {parseWorkflowIr} from "../workflow-ir.js";
 import {findWorkflowColumn, resolveColumnPluginGates} from "../plugin-gate-verdict.js";
-import {getTraitRegistry} from "../trait-registry.js";
-import {resolveColumnCapacity} from "../workflow-capacity.js";
-import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, evaluateMergeBlockerGuard} from "../default-workflow-hooks.js";
+import {getTraitRegistry, resolveColumnFlags} from "../trait-registry.js";
+import {resolveColumnCapacity, resolveWipBudgetColumns} from "../workflow-capacity.js";
+import {
+  type TransitionColumnFacts,
+  evaluateCapacityRejection,
+  evaluateTransitionInvariants,
+} from "../workflow-transition-policy.js";
+import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../default-workflow-hooks.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPending, clearTransitionPending} from "../transition-pending.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
@@ -31,6 +35,7 @@ import {getTaskMergeBlocker} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {disposeTaskBeforeMove} from "../task-move-disposer.js";
+import {resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
 
 /*
 FNXC:PostgresCutover 2026-07-05-19:50:
@@ -47,19 +52,83 @@ async function resolveTaskWorkflowIrForMove(store: TaskStore, id: string): Promi
   }
   const selection = await store.getTaskWorkflowSelectionAsync(id);
   const workflowId = selection?.workflowId;
-  if (!workflowId) return store.applyBuiltInPromptOverridesSync("builtin:coding", BUILTIN_CODING_WORKFLOW_IR);
+  /* FNXC:WorkflowBuiltins 2026-07-19-10:24: every no-selection/unresolvable fallback goes through resolveDefaultWorkflowIr() so this resolver and prepareWorkflowMovePolicyPreflightImpl agree on the default IR (see the helper's note on the "preflight is stale" drift). */
+  if (!workflowId) return store.applyBuiltInPromptOverridesSync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
   if (isBuiltinWorkflowId(workflowId)) {
     const builtin = getBuiltinWorkflow(workflowId);
-    return store.applyBuiltInPromptOverridesSync(workflowId, builtin?.ir ?? BUILTIN_CODING_WORKFLOW_IR);
+    const ir = builtin?.ir;
+    return store.applyBuiltInPromptOverridesSync(workflowId, ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir);
   }
   try {
     const def = await store.getWorkflowDefinition(workflowId);
-    return def ? parseWorkflowIr(def.ir) : BUILTIN_CODING_WORKFLOW_IR;
+    return def ? parseWorkflowIr(def.ir) : resolveDefaultWorkflowIr();
   } catch {
-    return BUILTIN_CODING_WORKFLOW_IR;
+    return resolveDefaultWorkflowIr();
   }
 }
 import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async-merge-coordination.js";
+
+/*
+FNXC:WorkflowTransitionPolicy 2026-07-18-19:52:
+Resolve a column's trait-derived facts (id + OR-merged flags) for the shared
+transition validator (KTD-5). An unknown/legacy column absent from the workflow
+IR resolves to empty flags — the legacy VALID_TRANSITIONS adjacency already
+gates those moves, so the invariant policy simply does not fire on them.
+*/
+function resolveTransitionColumnFacts(ir: WorkflowIr, columnId: string): TransitionColumnFacts {
+  const column = findWorkflowColumn(ir, columnId);
+  return {
+    columnId,
+    flags: column ? resolveColumnFlags(column) : {},
+  };
+}
+
+/*
+FNXC:WorkflowCapacity 2026-07-19-10:35:
+Shared pooled-capacity enforcement (U4/KTD-9/KTD-10), extracted from the async
+(backend transaction) and sync (SQLite transaction) move paths, which had the
+identical resolve-budget → count-occupants → verdict → throw sequence inline.
+Parameterized by a count callback so each path supplies its own in-transaction
+counter. The occupant fold is maybe-async on purpose: the sync SQLite path runs
+inside a synchronous `db.transactionImmediate` callback and MUST count, judge,
+and throw synchronously (a returned promise there would escape the
+transaction), while the backend path awaits the returned promise. Counting
+stays sequential in the async case, matching the original per-column awaits
+against the same transaction handle. A shared `limitSetting` pools multiple
+wip columns, so occupants are summed across every column sharing the target's
+budget — a task occupies exactly one column, so the sum never double-counts.
+KTD-5: the ONE capacity counter feeds the ONE capacity-verdict authority
+(`evaluateCapacityRejection`).
+*/
+function enforcePooledColumnCapacity(args: {
+  workflowIr: WorkflowIr;
+  toColumn: string;
+  taskId: string;
+  capacity: { limit: number; countPending: boolean };
+  countOccupants: (budgetColumn: string, countPending: boolean) => number | Promise<number>;
+}): void | Promise<void> {
+  const { workflowIr, toColumn, taskId, capacity, countOccupants } = args;
+  const budgetColumns = resolveWipBudgetColumns(workflowIr, toColumn);
+  const judge = (occupants: number): void => {
+    const capacityRejection = evaluateCapacityRejection(toColumn, {
+      limit: capacity.limit,
+      occupants,
+    });
+    if (capacityRejection) {
+      throw new TransitionRejectionError(
+        capacityRejection,
+        `Cannot move ${taskId} to '${toColumn}': column at capacity (${occupants}/${capacity.limit})`,
+      );
+    }
+  };
+  const step = (index: number, occupants: number): void | Promise<void> => {
+    if (index >= budgetColumns.length) return judge(occupants);
+    const count = countOccupants(budgetColumns[index], capacity.countPending);
+    if (typeof count === "number") return step(index + 1, occupants + count);
+    return count.then((resolved) => step(index + 1, occupants + resolved));
+  };
+  return step(0, 0);
+}
 
 export async function moveTaskImpl(store: TaskStore, id: string, toColumn: ColumnId, options?: MoveTaskOptions,): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:15:
@@ -75,6 +144,38 @@ export async function moveTaskImpl(store: TaskStore, id: string, toColumn: Colum
     const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
     return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }));
   }
+
+export interface MoveTaskIfResult {
+  task: Task;
+  moved: boolean;
+}
+
+/**
+ * FNXC:RuntimeTaskOrchestrationAsync 2026-07-29-12:00:
+ * FN-8361 recovery releases must read, predicate, and transition under one task
+ * lock because updateTaskAtomic cannot express a column move. `{ task, moved }`
+ * is the authoritative applied/skip signal; never nest public moveTask here.
+ */
+export async function moveTaskIfImpl(
+  store: TaskStore,
+  id: string,
+  toColumn: ColumnId,
+  predicate: (live: Task) => boolean | Promise<boolean>,
+  options?: MoveTaskOptions,
+): Promise<MoveTaskIfResult> {
+  const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
+  return store.withTaskLock(id, async () => {
+    const live = await store.readTaskForMove(id);
+    if (!await predicate(live) || live.column === toColumn) {
+      return { task: live, moved: false };
+    }
+    const task = await store.moveTaskInternal(id, toColumn, options, {
+      fromHandoff: false,
+      movePolicyPreflight,
+    }, live);
+    return { task, moved: true };
+  });
+}
 
 export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:20:
@@ -390,22 +491,59 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           );
         }
       }
-      // 3. Sync trait guards (in-lock). Skipped entirely when bypassGuards
-      //    (engine/recovery moves, KTD-9). The default workflow's merge-blocker
-      //    trait reads the same getTaskMergeBlocker.
-      if (!bypassGuards) {
-        const guardReason = evaluateMergeBlockerGuard(task, fromColumn, toColumn);
-        if (guardReason) {
+      // ── KTD-5: shared transition-policy invariants (single validator) ───────
+      // FNXC:WorkflowTransitionPolicy 2026-07-18-19:55:
+      // Every mover funnels through here. The structural invariants (merge-blocker
+      // on complete-bound entry; terminal→wip re-entry) live in the pure
+      // workflow-transition-policy module so graph, scheduler, self-healing,
+      // operator, and dashboard moves all reject identically. Merge-blocker
+      // enforcement preserves the legacy bypass contract (engine/recovery moves
+      // that set bypassGuards/skipMergeBlocker are trusted to have proven the
+      // blocker clear — the finalizer's proven-merge path), so the blocker fact is
+      // only resolved when NOT bypassed. Terminal→wip re-entry is a new capability
+      // invariant that holds for all movers (builtin:coding never crosses it, so
+      // the characterization oracle stays byte-identical).
+      //
+      // FNXC:WorkflowTransitionPolicy 2026-07-19-10:20:
+      // The blocker fact is resolved only when the SOURCE column carries the
+      // `merge-blocker` trait flag — the trait-level generalization of the legacy
+      // `fromColumn === "in-review"` gate. Resolving it for every complete-bound
+      // move re-hardcoded the review lane: `getTaskMergeBlocker` rejects any
+      // source column that is not literally "in-review", which broke the
+      // six-column benchmark's merging → done edge and the builtin
+      // in-progress → done mission-validation edge that legacy allowed unchecked.
+      // The column-identity precondition inside `getTaskMergeBlocker` is
+      // skipped via the explicit `skipColumnIdentityCheck` option (PR #2341
+      // review — previously this spoofed `column: "in-review"`, which would
+      // silently misapply any future column-dependent logic there): the
+      // fromFacts `mergeBlocker` flag IS the workflow's review-lane identity,
+      // so only the content checks (paused / blocking status / incomplete
+      // steps / pre-merge step results) decide. For builtin:coding this is
+      // byte-identical — its only merge-blocker column is literally
+      // "in-review".
+      {
+        const fromFacts = resolveTransitionColumnFacts(workflowIr, fromColumn);
+        const toFacts = resolveTransitionColumnFacts(workflowIr, toColumn);
+        const mergeBlockerReason =
+          !bypassGuards && toFacts.flags.complete && fromFacts.flags.mergeBlocker === true
+            ? (getTaskMergeBlocker(task, { skipColumnIdentityCheck: true }) ?? null)
+            : null;
+        const decision = evaluateTransitionInvariants({
+          taskId: id,
+          from: fromFacts,
+          to: toFacts,
+          mergeBlockerReason,
+        });
+        if (!decision.allow) {
           throw new TransitionRejectionError(
-            makeTransitionRejection(
-              "merge-blocked",
-              "transition.rejected.mergeBlocked",
-              true,
-              guardReason,
-            ),
-            `Cannot move ${id} to done: ${guardReason}`,
+            decision.rejection,
+            `Cannot move ${id} to '${toColumn}': ${decision.rejection.detail ?? decision.rejection.code}`,
           );
         }
+      }
+      // 4. Sync trait guards (in-lock) — plugin gate re-check. Skipped entirely
+      //    when bypassGuards (engine/recovery moves, KTD-9).
+      if (!bypassGuards) {
         // 4. Plugin gate verdict re-check (U8, KTD-2). For each PLUGIN gate trait
         //    on the target column, consume the pre-evaluated verdict (recorded by
         //    the engine's trait adapter outside the lock). A blocking gate with
@@ -553,6 +691,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     });
 
     const movedAt = internal.now ?? new Date().toISOString();
+    // FNXC:TaskTiming 2026-08-01-10:00: column dwell is wall-clock stage data,
+    // accumulated before replacing the prior column anchor and never used as AI active time.
+    const priorColumnMovedAt = Date.parse(task.columnMovedAt ?? "");
+    const moveMs = Date.parse(movedAt);
+    if (fromColumn !== toColumn && Number.isFinite(priorColumnMovedAt) && Number.isFinite(moveMs)) {
+      task.columnDwellMs = { ...(task.columnDwellMs ?? {}), [fromColumn]: Math.max(0, task.columnDwellMs?.[fromColumn] ?? 0) + Math.max(0, moveMs - priorColumnMovedAt) };
+    }
     task.column = toColumn;
     task.columnMovedAt = movedAt;
     task.updatedAt = movedAt;
@@ -749,24 +894,22 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         if (useWorkflow && workflowIr && fromColumn !== toColumn) {
           const capacity = resolveColumnCapacity(workflowIr, toColumn, mergedSettingsForMove);
           if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-            const occupants = await store.countActiveInCapacitySlotAsync({
-              tx,
-              targetColumn: toColumn,
-              workflowId: effectiveWorkflowIdForMove,
-              countPending: capacity.countPending,
-              excludeTaskId: id,
+            // Shared pooled-budget enforcement (see enforcePooledColumnCapacity);
+            // this path supplies the async in-transaction counter.
+            await enforcePooledColumnCapacity({
+              workflowIr,
+              toColumn,
+              taskId: id,
+              capacity,
+              countOccupants: (budgetColumn, countPending) =>
+                store.countActiveInCapacitySlotAsync({
+                  tx,
+                  targetColumn: budgetColumn,
+                  workflowId: effectiveWorkflowIdForMove,
+                  countPending,
+                  excludeTaskId: id,
+                }),
             });
-            if (occupants >= capacity.limit) {
-              throw new TransitionRejectionError(
-                makeTransitionRejection(
-                  "capacity-exhausted",
-                  "transition.rejected.capacityExhausted",
-                  true,
-                  `Column '${toColumn}' is at capacity (${occupants}/${capacity.limit})`,
-                ),
-                `Cannot move ${id} to '${toColumn}': column at capacity (${occupants}/${capacity.limit})`,
-              );
-            }
           }
         }
 
@@ -888,23 +1031,22 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       if (useWorkflow && workflowIr && fromColumn !== toColumn) {
         const capacity = resolveColumnCapacity(workflowIr, toColumn, mergedSettingsForMove);
         if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-          const occupants = store.countActiveInCapacitySlotSync({
-            targetColumn: toColumn,
-            workflowId: effectiveWorkflowIdForMove,
-            countPending: capacity.countPending,
-            excludeTaskId: id,
+          // Shared pooled-budget enforcement (see enforcePooledColumnCapacity);
+          // the sync counter keeps count → verdict → throw fully synchronous
+          // inside this sync transaction callback.
+          enforcePooledColumnCapacity({
+            workflowIr,
+            toColumn,
+            taskId: id,
+            capacity,
+            countOccupants: (budgetColumn, countPending) =>
+              store.countActiveInCapacitySlotSync({
+                targetColumn: budgetColumn,
+                workflowId: effectiveWorkflowIdForMove,
+                countPending,
+                excludeTaskId: id,
+              }),
           });
-          if (occupants >= capacity.limit) {
-            throw new TransitionRejectionError(
-              makeTransitionRejection(
-                "capacity-exhausted",
-                "transition.rejected.capacityExhausted",
-                true,
-                `Column '${toColumn}' is at capacity (${occupants}/${capacity.limit})`,
-              ),
-              `Cannot move ${id} to '${toColumn}': column at capacity (${occupants}/${capacity.limit})`,
-            );
-          }
         }
       }
 
@@ -1001,6 +1143,28 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
 
     await store.writeTaskJsonFile(dir, task);
+
+    /*
+    FNXC:MissionSymbolAdmission 2026-07-19-22:04:
+    FN-8306 makes the central lifecycle transition the primary symbol-lock
+    release authority. A durable lock belongs only to active implementation;
+    handoff to review, cancellation/requeue, and terminal moves therefore release
+    the task's declared symbols here. Active implementation is the workflow's
+    countsTowardWip trait, not the legacy `in-progress` id: custom WIP columns
+    must retain and renew locks between internal WIP transitions, then release
+    them only when leaving WIP. PostgreSQL owns durable locks; SQLite has no
+    symbol-lock table and remains on coarse scheduling behavior.
+    */
+    const lifecycleWorkflowIr = workflowIr ?? await resolveTaskWorkflowIrForMove(store, id);
+    const fromIsImplementation = resolveTransitionColumnFacts(lifecycleWorkflowIr, fromColumn).flags.countsTowardWip === true;
+    const toIsImplementation = resolveTransitionColumnFacts(lifecycleWorkflowIr, toColumn).flags.countsTowardWip === true;
+    if (store.backendMode && fromIsImplementation && !toIsImplementation) {
+      const symbols = resolveTaskSymbolsForTask(task);
+      if (symbols.resolvable) {
+        await store.releaseSymbolLocks(symbols.symbols, id);
+      }
+    }
+
     if (fromColumn === "in-review" && toColumn === "todo" && moveSource === "user") {
       const handoffAccepted = await store.getCompletionHandoffAcceptedMarker(id);
       const mergeRequest = await store.getMergeRequestRecordAsync(id);

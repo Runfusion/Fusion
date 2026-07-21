@@ -64,7 +64,7 @@ export interface HoursSavedSummary {
 
 /**
  * FNXC:CommandCenterProductivity 2026-06-19-12:00:
- * Task-duration productivity stats are derived from `tasks.cumulativeActiveMs` for done tasks completed in the selected range. Missing qualifying durations are unavailable, not zero, so old or untracked tasks do not read as instant work.
+ * Task-duration productivity stats are derived from combined planning (`cumulativePlanningMs`) and execution (`cumulativeActiveMs`) activity for done tasks completed in the selected range. Missing qualifying combined durations are unavailable, not zero, so old or untracked tasks do not read as instant work.
  */
 export interface TaskDurationSummary {
   completedTasks: number;
@@ -77,7 +77,7 @@ export interface TaskDurationSummary {
 
 /**
  * FNXC:CommandCenterProductivity 2026-06-30-10:17:
- * Operators need average and median task active duration over time from real completed-task `cumulativeActiveMs` history. Trend buckets are emitted only for days with qualifying completed tasks; missing history must stay absent/unavailable, never fabricated as zero-duration chart points.
+ * Operators need average and median task active duration over time from real completed-task planning plus execution history. Trend buckets are emitted only for days with qualifying completed tasks; missing history must stay absent/unavailable, never fabricated as zero-duration chart points.
  */
 export interface TaskDurationTrendBucket {
   bucket: string;
@@ -124,7 +124,8 @@ interface ModifiedFilesRow {
 }
 
 interface TaskDurationRow {
-  cumulativeActiveMs: number;
+  cumulativeActiveMs: number | null;
+  cumulativePlanningMs: number | null;
   executionCompletedAt: string;
 }
 
@@ -250,8 +251,7 @@ export async function aggregateProductivityAnalytics(
   const durationClauses: string[] = [
     `"column" = 'done'`,
     "executionCompletedAt IS NOT NULL",
-    "cumulativeActiveMs IS NOT NULL",
-    "cumulativeActiveMs > 0",
+    "(COALESCE(cumulativeActiveMs, 0) + COALESCE(cumulativePlanningMs, 0)) > 0",
   ];
   const durationParams: string[] = [];
   if (query.from !== undefined) {
@@ -264,10 +264,10 @@ export async function aggregateProductivityAnalytics(
   }
   const durationRows = db
     .prepare(
-      `SELECT cumulativeActiveMs, executionCompletedAt FROM tasks WHERE ${durationClauses.join(" AND ")} ORDER BY executionCompletedAt ASC`,
+      `SELECT cumulativeActiveMs, cumulativePlanningMs, executionCompletedAt FROM tasks WHERE ${durationClauses.join(" AND ")} ORDER BY executionCompletedAt ASC`,
     )
     .all(...durationParams) as TaskDurationRow[];
-  const durations = durationRows.map((row) => row.cumulativeActiveMs).sort((a, b) => a - b);
+  const durations = durationRows.map((row) => (row.cumulativeActiveMs ?? 0) + (row.cumulativePlanningMs ?? 0)).sort((a, b) => a - b);
   const totalDurationMs = durations.reduce((sum, durationMs) => sum + durationMs, 0);
   const taskDuration: TaskDurationSummary = durations.length > 0
     ? {
@@ -291,7 +291,7 @@ export async function aggregateProductivityAnalytics(
   for (const row of durationRows) {
     const bucket = row.executionCompletedAt.slice(0, 10);
     const bucketDurations = durationBuckets.get(bucket) ?? [];
-    bucketDurations.push(row.cumulativeActiveMs);
+    bucketDurations.push((row.cumulativeActiveMs ?? 0) + (row.cumulativePlanningMs ?? 0));
     durationBuckets.set(bucket, bucketDurations);
   }
   const taskDurationTrend: TaskDurationTrendBucket[] = [...durationBuckets.entries()].map(([bucket, bucketDurations]) => {
@@ -401,16 +401,15 @@ async function aggregateProductivityAnalyticsAsync(
   const dFrom = query.from !== undefined ? sql`AND execution_completed_at >= ${query.from}` : sql``;
   const dTo = query.to !== undefined ? sql`AND execution_completed_at <= ${query.to}` : sql``;
   const durationRows = (await layer.db.execute(
-    sql`SELECT cumulative_active_ms AS "cumulativeActiveMs", execution_completed_at AS "executionCompletedAt"
+    sql`SELECT cumulative_active_ms AS "cumulativeActiveMs", cumulative_planning_ms AS "cumulativePlanningMs", execution_completed_at AS "executionCompletedAt"
         FROM project.tasks
         WHERE "column" = 'done'
           AND execution_completed_at IS NOT NULL
-          AND cumulative_active_ms IS NOT NULL
-          AND cumulative_active_ms > 0
+          AND (COALESCE(cumulative_active_ms, 0) + COALESCE(cumulative_planning_ms, 0)) > 0
           ${dFrom} ${dTo}
-        ORDER BY cumulative_active_ms ASC`,
-  )) as Array<{ cumulativeActiveMs: number; executionCompletedAt: string }>;
-  const durations = durationRows.map((row) => Number(row.cumulativeActiveMs));
+        ORDER BY (COALESCE(cumulative_active_ms, 0) + COALESCE(cumulative_planning_ms, 0)) ASC`,
+  )) as Array<{ cumulativeActiveMs: number | null; cumulativePlanningMs: number | null; executionCompletedAt: string }>;
+  const durations = durationRows.map((row) => Number(row.cumulativeActiveMs ?? 0) + Number(row.cumulativePlanningMs ?? 0));
   const totalDurationMs = durations.reduce((sum, durationMs) => sum + durationMs, 0);
   const taskDuration: TaskDurationSummary = durations.length > 0
     ? {
@@ -434,7 +433,7 @@ async function aggregateProductivityAnalyticsAsync(
   for (const row of durationRows) {
     const bucket = row.executionCompletedAt.slice(0, 10);
     const bucketDurations = durationBuckets.get(bucket) ?? [];
-    bucketDurations.push(Number(row.cumulativeActiveMs));
+    bucketDurations.push(Number(row.cumulativeActiveMs ?? 0) + Number(row.cumulativePlanningMs ?? 0));
     durationBuckets.set(bucket, bucketDurations);
   }
   const taskDurationTrend: TaskDurationTrendBucket[] = [...durationBuckets.entries()].map(([bucket, bucketDurations]) => {

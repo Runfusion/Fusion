@@ -78,6 +78,7 @@ import { resolveSelfExtension } from "./self-extension.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
+import { startMigrationHoldingServer } from "./migration-holding-server.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
@@ -262,6 +263,21 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const selectedHost = opts.host ?? "127.0.0.1";
   const cwd = await resolveRuntimeProjectPath();
 
+  /*
+  FNXC:MigrationHoldingPage 2026-07-19-12:10:
+  A daemon with an explicit port has an operator-reachable HTTP address while
+  engine startup may run the SQLite→PostgreSQL cutover, so bind the holding
+  server before starting engines and forward runtime progress. Port 0 is
+  deliberately excluded: no browser can know the ephemeral URL before listen.
+  */
+  const migrationHoldingServer = selectedPort > 0
+    ? await startMigrationHoldingServer({
+        port: selectedPort,
+        host: selectedHost,
+        log: (message) => console.log(`[daemon] ${message}`),
+      })
+    : null;
+
   // ── CentralCore: global coordination + ntfy project ID lookup ─────────
   let ntfyProjectId: string | undefined;
   let sharedCentralCore: CentralCore | null = null;
@@ -345,6 +361,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
 
   const engineManager = new ProjectEngineManager(sharedCentralCore, {
+    onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
     cliPackageVersion,
     getMergeStrategy,
     processPullRequestMerge: (s, wd, taskId, pool) =>
@@ -910,6 +927,8 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     https: loadTlsCredentialsFromEnv(),
   });
 
+  // The holding server owns a fixed daemon port only through engine/store boot.
+  await migrationHoldingServer?.close();
   const server = app.listen(selectedPort, selectedHost);
 
   await new Promise<void>((resolve, reject) => {

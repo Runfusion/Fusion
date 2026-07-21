@@ -13,6 +13,17 @@ describe("chat system prompt guidance", () => {
     expect(CHAT_SYSTEM_PROMPT).toContain('to_id: "dashboard"');
   });
 
+  it("authorizes the full coding workspace toolset for user-directed changes", () => {
+    const lower = CHAT_SYSTEM_PROMPT.toLowerCase();
+
+    for (const tool of ["read", "write", "edit", "bash", "grep", "find", "ls"]) {
+      expect(lower).toContain(`\`${tool}\``);
+    }
+    expect(lower).toContain("user-requested code changes");
+    expect(lower).toContain("do not claim that you only have read access");
+    expect(lower).toContain("pending-approval");
+  });
+
   it("keeps the checked-out branch sticky unless explicitly requested", () => {
     const lower = CHAT_SYSTEM_PROMPT.toLowerCase();
 

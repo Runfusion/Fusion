@@ -67,6 +67,8 @@ export function toTokenCostRow(
  * Task cost is a read-time derivation shared by the done Summary tab, always-available Cost tab, and optional card badge. Keep the costFor/pricing-overrides path centralized here so unpriced or zero-usage states keep the guess-free “—” sentinel everywhere and derived USD is never persisted.
  *
  * FNXC:TaskDetailSummaryTokenCost 2026-06-27-00:00:
+ * FNXC:TaskCost 2026-08-01-10:00: tokenUsage is a full-task additive ledger;
+ * triage and graph Plan Review buckets intentionally have no role filter here.
  * Done-task Summary shows durable token usage broken down by model with derived USD cost. Use already-loaded task.tokenUsage.perModel buckets plus costFor and global pricing overrides threaded from TaskDetailModal; do not fetch or persist cost here. Unpriced models render “—” instead of $0 and make the task total unavailable so estimates are never understated.
  */
 export function buildTokenCostRows(task: TaskDetail, unknownLabel: string, pricingOverrides?: ModelPricingOverrides): TokenCostRow[] {

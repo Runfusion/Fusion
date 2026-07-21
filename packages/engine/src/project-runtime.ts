@@ -1,5 +1,5 @@
 import type { EventEmitter } from "node:events";
-import type { TaskStore, Task, IsolationMode, ProjectSettings, GithubIssueAction } from "@fusion/core";
+import type { TaskStore, Task, IsolationMode, ProjectSettings, GithubIssueAction, MigrationProgressEvent } from "@fusion/core";
 import type { Scheduler } from "./scheduler.js";
 
 /**
@@ -55,6 +55,13 @@ export interface ProjectRuntimeConfig {
    * Useful when the caller (e.g. dashboard.ts) owns and watches the store.
    */
   externalTaskStore?: TaskStore;
+  /**
+   * FNXC:MigrationHoldingPage 2026-07-19-12:00:
+   * A fixed-port daemon binds a temporary holding server before engine startup.
+   * Forward factory migration progress through the runtime so that server can
+   * report live cutover status until the real dashboard listener takes over.
+   */
+  onMigrationProgress?: (event: MigrationProgressEvent) => void;
   /**
    * PR-entity node GitHub ops (U3): the injected `createPr`/`mergePr`/`respond`
    * callbacks (+ source resolver + audit) for the `pr-create`/`pr-respond`/

@@ -1293,17 +1293,16 @@ export async function createMissionInterviewSession(
   promptOverrides?: PromptOverrideMap,
   modelProvider?: string,
   modelId?: string,
-  thinkingLevelOrProjectId?: ThinkingLevel | string | null,
-  projectIdOrPluginRunner?: string | null | SkillPluginRunner,
-  pluginRunnerMaybe?: SkillPluginRunner,
+  thinkingLevel?: ThinkingLevel,
+  projectId?: string | null,
+  pluginRunner?: SkillPluginRunner,
 ): Promise<string> {
-  const thinkingLevel = THINKING_LEVELS.includes(thinkingLevelOrProjectId as ThinkingLevel)
-    ? (thinkingLevelOrProjectId as ThinkingLevel)
-    : undefined;
-  const projectId = thinkingLevel
-    ? (projectIdOrPluginRunner as string | null | undefined)
-    : (thinkingLevelOrProjectId as string | null | undefined);
-  const pluginRunner = (thinkingLevel ? pluginRunnerMaybe : projectIdOrPluginRunner) as SkillPluginRunner | undefined;
+  /*
+  FNXC:MissionInterview 2026-07-19-20:46:
+  FN-8414 / GitHub #2356 removed the legacy positional overload because an omitted
+  thinkingLevel shifted projectId into pluginRunner. Keep this fixed tail so TypeScript
+  rejects a project-id string where a SkillPluginRunner is required.
+  */
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
     throw new RateLimitError(

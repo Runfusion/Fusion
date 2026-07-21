@@ -253,6 +253,17 @@ export interface WorkflowStepResult {
   /** ISO-8601 timestamp when the step completed */
   completedAt?: string;
   /*
+   * FNXC:PlanReviewLease 2026-07-18-23:20:
+   * U3 / KTD-4 — a `pending` review-gate result is a LEASE. `leaseOwner` records
+   * the session/run id that claimed the gate; `startedAt` is the lease clock. The
+   * graph's plan-review dedup honors a live lease (adopt/skip re-dispatch) and
+   * reclaims only past the staleness floor via compare-and-set, so a crash/restart
+   * mid-review can never dispatch a second reviewer (the FN-1315-shaped duplicate
+   * "Starting workflow step: Plan Review" race). Absent on non-leased results and
+   * on every terminal (passed/failed/…) record — a lease only exists while pending.
+   */
+  leaseOwner?: string;
+  /*
    * FNXC:ReviewLaneBypass 2026-07-09-00:00:
    * A privileged operator can bypass a `status:"failed"` pre-merge review step
    * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`

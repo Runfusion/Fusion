@@ -123,11 +123,7 @@ vi.mock("@fusion/dashboard", () => ({
     sourceIssue: { provider: "github", repository: `${owner}/${repo}`, externalIssueId: String(issue.number), issueNumber: issue.number, url: issue.html_url },
     sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
   })),
-  isGitHubIssueAlreadyImported: vi.fn((task: any, input: any) =>
-    task.description?.toLowerCase().includes(input.sourceUrl.toLowerCase())
-    || (task.sourceIssue?.provider === "github"
-      && task.sourceIssue.repository?.toLowerCase() === `${input.owner}/${input.repo}`.toLowerCase()
-      && (task.sourceIssue.issueNumber === input.issueNumber || task.sourceIssue.externalIssueId === String(input.issueNumber)))),
+  isGitHubIssueAlreadyImported: vi.fn(),
   isGitLabAlreadyImported: vi.fn(),
   buildGitLabTaskDescription: vi.fn(),
 }));
@@ -208,7 +204,7 @@ import {
   isGhAvailable,
   runGhJsonAsync,
 } from "@fusion/core/gh-cli";
-import { GitHubClient, generatePrMetadata } from "@fusion/dashboard";
+import { GitHubClient, generatePrMetadata, isGitHubIssueAlreadyImported } from "@fusion/dashboard";
 import { createSession, submitResponse } from "@fusion/dashboard/planning";
 import { resolveProject, createLocalStore } from "../../project-context.js";
 import { aiMergeTask, runAiMerge, landWorkspaceTask } from "@fusion/engine";
@@ -1769,6 +1765,7 @@ describe("runTaskImportGitHubInteractive", () => {
         },
       },
     ]);
+    vi.mocked(isGitHubIssueAlreadyImported).mockImplementation((_task, input) => input.issueNumber === 1);
 
     vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
       mockIssue(1, "First Issue", "Description 1"),
@@ -2083,7 +2080,7 @@ describe("runTaskImportFromGitHub", () => {
     }));
   });
 
-  it("skips already imported issues", async () => {
+  it("delegates provenance-first deduplication to the dashboard helper", async () => {
     // Setup existing task with source URL
     mockListTasks.mockResolvedValueOnce([
       {
@@ -2100,6 +2097,7 @@ describe("runTaskImportFromGitHub", () => {
         },
       },
     ]);
+    vi.mocked(isGitHubIssueAlreadyImported).mockImplementation((_task, input) => input.issueNumber === 1);
 
     vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
       mockIssue(1, "First Issue", "Description 1"),
@@ -2109,6 +2107,14 @@ describe("runTaskImportFromGitHub", () => {
     await runTaskImportFromGitHub("owner/repo");
 
     expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    expect(isGitHubIssueAlreadyImported).toHaveBeenCalledWith(expect.objectContaining({
+      sourceIssue: expect.objectContaining({ provider: "github", issueNumber: 1 }),
+    }), expect.objectContaining({
+      owner: "owner",
+      repo: "repo",
+      issueNumber: 1,
+      sourceUrl: "https://github.com/owner/repo/issues/1",
+    }));
     const skipLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Skipping #1"),
     );

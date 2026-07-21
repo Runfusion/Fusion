@@ -1,5 +1,6 @@
 import {
   DEFAULT_TASK_PRIORITY,
+  formatPlanningPlanMd,
   MessageStore,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
@@ -17,8 +18,32 @@ import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
 import { requireAsyncLayer } from "../require-async-layer.js";
+import { randomUUID } from "node:crypto";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
+
+const planningCreateLocks = new Map<string, Promise<void>>();
+
+/**
+ * FNXC:PlanningMode 2026-07-20-15:45:
+ * The stable proposalClaimId is the cross-process authority, while this short-lived lock avoids
+ * duplicate local createTask calls before a same-process retry can observe its finalized linkage.
+ * A process death releases this memory only; retry reconciliation still queries the task mapping.
+ */
+async function acquirePlanningCreateLock(sessionId: string): Promise<() => void> {
+  const previous = planningCreateLocks.get(sessionId);
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  const tail = previous ? previous.then(() => gate) : gate;
+  planningCreateLocks.set(sessionId, tail);
+  await previous;
+  return () => {
+    releaseGate();
+    void tail.finally(() => {
+      if (planningCreateLocks.get(sessionId) === tail) planningCreateLocks.delete(sessionId);
+    });
+  };
+}
 
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
@@ -223,7 +248,12 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     try {
       const { sessionId, subtasks, parentTaskId, branch, baseBranch, branchSelection, branchAssignment, workflowId } = req.body as {
         sessionId?: string;
-        subtasks?: Array<{ tempId: string; title: string; description: string; size?: "S" | "M" | "L"; dependsOn?: string[] }>;
+        /*
+        FNXC:SubtaskPriority 2026-07-19-12:30:
+        Accept optional priority from SubtaskItem so breakdown create-tasks preserves
+        stream-assigned prioritization (client maps subtask.priority onto this field).
+        */
+        subtasks?: Array<{ tempId: string; title: string; description: string; size?: "S" | "M" | "L"; priority?: string; dependsOn?: string[] }>;
         parentTaskId?: string;
         branch?: unknown;
         baseBranch?: unknown;
@@ -320,10 +350,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         column resolution. Omitting `column` lets the store resolve intake for the
         selected-or-default workflow (byte-identical "triage" for builtin:coding).
         */
+        const priority = typeof item.priority === "string" && (TASK_PRIORITIES as readonly string[]).includes(item.priority)
+          ? (item.priority as TaskPriority)
+          : undefined;
         const { task, wasDuplicate } = await createAgentTask(scopedStore, {
           title: item.title.trim(),
           description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
           dependencies: undefined,
+          ...(priority !== undefined ? { priority } : {}),
           // Inherit parent's model settings if available
           modelProvider: parentTask?.modelProvider,
           modelId: parentTask?.modelId,
@@ -501,12 +535,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start", async (req, res) => {
     try {
-      const { initialPlan } = req.body;
+      const { initialPlan, workflowId } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
       }
-
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
@@ -528,7 +564,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         rootDir,
         settings.promptOverrides,
         ctx.options?.pluginRunner as SkillPluginRunner,
-        runtime,
+        { ...runtime, workflowId },
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -635,6 +671,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         existingSessionId,
         thinkingLevel,
         clarificationEnabled,
+        workflowId,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -649,6 +686,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("planningModelId must be a string when provided");
       }
 
+
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
 
       if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
         throw badRequest("clarificationEnabled must be a boolean when provided");
@@ -720,7 +761,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             validatedThinkingLevel,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
-            runtime,
+            { ...runtime, workflowId },
           );
         } else {
           await startExistingSession(
@@ -732,7 +773,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
             undefined,
-            runtime,
+            { ...runtime, workflowId },
           );
         }
         res.status(201).json({ sessionId: existingSessionId });
@@ -742,6 +783,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
       const planningOptions = {
         projectId,
+        workflowId,
         ...runtime,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
       };
@@ -777,6 +819,32 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       } else {
         rethrowAsApiError(err, "Failed to start planning session");
       }
+    }
+  });
+
+  /*
+  FNXC:PlanningMode 2026-07-19-12:00:
+  Rename is intentionally a lock-free, verbatim user action. The planning helper first checks the
+  persisted session type so this planning-scoped endpoint cannot mutate another AI-session surface.
+  */
+  router.patch("/planning/:sessionId/title", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const title = req.body?.title;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      if (typeof title !== "string") throw badRequest("title is required and must be a string");
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) throw badRequest("title must not be empty");
+      if (trimmedTitle.length > 60) throw badRequest("title must be 60 characters or less");
+
+      const { updatePlanningSessionTitle } = await import("../planning.js");
+      if (!(await updatePlanningSessionTitle(sessionId, trimmedTitle))) {
+        throw notFound(`Planning session ${sessionId} not found`);
+      }
+      res.json({ sessionId, title: trimmedTitle });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to rename planning session");
     }
   });
 
@@ -1059,6 +1127,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Returns: Created Task
    */
   router.post("/planning/create-task", async (req, res) => {
+    let releaseCreateLock: (() => void) | undefined;
+    let claimedOwnerToken: string | undefined;
+    let claimedSessionId: string | undefined;
     try {
       const { sessionId, summary: summaryInput, branch, baseBranch, branchSelection, workflowId } = req.body as {
         sessionId?: unknown;
@@ -1080,9 +1151,18 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const summaryOverride = parsePlanningSummaryOverride(summaryInput);
 
       const { store: scopedStore } = await getProjectContext(req);
-      const { getSession, getSummary, releaseSession } = await import("../planning.js");
+      const {
+        getSession,
+        getSummary,
+        updatePlanningCreateClaim,
+        getDurablePlanningSession,
+        claimPlanningTaskCreation,
+        finalizePlanningTaskCreation,
+        reconcilePlanningTaskCreation,
+        releasePlanningTaskCreation,
+      } = await import("../planning.js");
 
-      const session = await getSession(sessionId);
+      let session = await getSession(sessionId);
       if (session && !session.validated) throw badRequest("Planning session must be validated before creating tasks");
       let summary = summaryOverride ?? getSummary(sessionId);
       let initialPlan = session?.initialPlan;
@@ -1135,14 +1215,74 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           // Keep fallback value below
         }
 
-        if (!initialPlan) {
-          initialPlan = persistedSession.title;
-        }
-
       }
 
       if (!summary) {
         throw badRequest("Planning session is not complete");
+      }
+
+      releaseCreateLock = await acquirePlanningCreateLock(sessionId);
+      // Re-read after the local single-flight queue: an earlier caller may have finalized while we waited.
+      session = await getSession(sessionId);
+
+      /*
+      FNXC:PlanningMode 2026-07-20-15:45:
+      FN-8442 derives the never-rotated key `planning-session:${sessionId}` at task creation.
+      The task table's partial unique proposalClaimId index, not this process's claim state, is
+      the multi-process and crash-after-insert authority. A session linkage is a durable cache
+      reconciled from that key; a missing linked task fails closed rather than silently forking.
+      */
+      const proposalClaimId = `planning-session:${sessionId}`;
+      const findCreatedTask = async () =>
+        (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+      const returnLinkedTask = async (candidate = session) => {
+        if (!candidate?.createdTaskId) return false;
+        const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
+        if (!linkedTask) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        res.status(200).json({ task: linkedTask, alreadyCreated: true });
+        return true;
+      };
+
+      // A task row is the crash-window authority. Reconcile it before trying to claim.
+      const existingTask = await findCreatedTask();
+      if (existingTask) {
+        await reconcilePlanningTaskCreation(sessionId, existingTask.id);
+        res.status(200).json({ task: existingTask, alreadyCreated: true });
+        return;
+      }
+      session = await getDurablePlanningSession(sessionId) ?? session;
+      if (await returnLinkedTask(session)) return;
+
+      const claimOwnerToken = randomUUID();
+      claimedOwnerToken = claimOwnerToken;
+      claimedSessionId = sessionId;
+      const claimStartedAt = new Date().toISOString();
+      const hasDurableClaimStore = typeof (aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown } | undefined)?.claimPlanningTaskCreation === "function";
+      let claimed = hasDurableClaimStore
+        ? await claimPlanningTaskCreation(sessionId, claimOwnerToken, claimStartedAt)
+        : session
+          ? session.createClaimStatus !== "creating" && session.createClaimStatus !== "created"
+            ? (await updatePlanningCreateClaim(sessionId, { createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined }), session)
+            : undefined
+          // Legacy test/session adapters can provide only the route's persisted row. They do
+          // not model a durable claim API, so retain the pre-CAS behavior for that adapter.
+          : ({} as NonNullable<typeof session>);
+      if (!claimed) {
+        // The failed conditional update means another process owns (or completed) this claim.
+        session = await getDurablePlanningSession(sessionId) ?? session;
+        const recoveredTask = await findCreatedTask();
+        if (recoveredTask) {
+          await reconcilePlanningTaskCreation(sessionId, recoveredTask.id);
+          res.status(200).json({ task: recoveredTask, alreadyCreated: true });
+          return;
+        }
+        if (await returnLinkedTask(session)) return;
+        const startedAt = session?.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
+        const leaseExpired = session?.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
+        if (!leaseExpired || !session?.claimOwnerToken) throw conflict("Planning task creation is already in progress");
+        await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
+        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+        if (!claimed) throw conflict("Planning task creation is already in progress");
       }
 
       const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
@@ -1155,10 +1295,21 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       column resolution. Omitting `column` lets the store resolve intake for the
       selected-or-default workflow (byte-identical "triage" for builtin:coding).
       */
+      /*
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 hands the validated lean plan to triage as task description plus a plan
+      document. The raw session request remains a separate original-description document.
+      */
+      const planMd = formatPlanningPlanMd(summary);
+      // Persisted legacy sessions can lack initialPlan; retain the pre-format plan body,
+      // never the session title, as the only fail-soft operator-request substitute.
+      const originalRequest = typeof initialPlan === "string" && initialPlan.trim()
+        ? initialPlan.trim()
+        : summary.description.trim();
       // Create the task
       const task = await scopedStore.createTask({
         title: summary.title,
-        description: summary.description,
+        description: planMd,
         dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
         source: { sourceType: "api" },
@@ -1169,6 +1320,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         Planning Mode creates tasks from the board context, so an active workflow lane must be materialized at create time when the client supplies it.
         */
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        proposalClaimId,
       });
 
       // Update task with suggested size if provided.
@@ -1180,6 +1332,19 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         );
       }
 
+      await runPlanningCreateSideEffect(
+        "Planning create-task plan document write failed",
+        () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } }),
+        { taskId: task.id, sessionId },
+      );
+      if (originalRequest) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task original description document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }),
+          { taskId: task.id, sessionId },
+        );
+      }
+
       // Log the planning mode creation.
       await runPlanningCreateSideEffect(
         "Planning create-task log entry failed",
@@ -1187,18 +1352,25 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         { taskId: task.id, sessionId },
       );
 
-      // Release any live in-memory planning runtime for this session, but
-      // keep the persisted completed row so planning history can still list
-      // and restore the summary after single-task creation.
-      await runPlanningCreateSideEffect(
-        "Planning create-task session release failed",
-        () => releaseSession(sessionId),
-        { taskId: task.id, sessionId },
-      );
+      // Write the linkage before responding. If this write is interrupted, the next retry
+      // reconciles the unique proposalClaimId task mapping above and never inserts another task.
+      if (hasDurableClaimStore) {
+        await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id);
+      } else if (session) {
+        await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
+      }
 
-      res.status(201).json(task);
+      res.status(201).json({ task, alreadyCreated: false });
     } catch (err: unknown) {
+      // A failed insert may release only this request's owner token. A successful insert whose
+      // finalization failed remains recoverable through proposalClaimId on the next request.
+      if (claimedOwnerToken) {
+        const { releasePlanningTaskCreation } = await import("../planning.js");
+        await releasePlanningTaskCreation(claimedSessionId as string, claimedOwnerToken).catch(() => undefined);
+      }
       rethrowPlanningWorkflowCreateError(err, "Failed to create task", rethrowAsApiError);
+    } finally {
+      releaseCreateLock?.();
     }
   });
 
@@ -1387,6 +1559,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const tempIdToTaskId = new Map<string, string>();
 
       for (const item of mergedSubtasks) {
+        const itemDescription = typeof item.description === "string" ? item.description.trim() : item.title.trim();
+        const planMd = formatPlanningPlanMd({
+          title: item.title.trim(),
+          description: itemDescription,
+          suggestedSize: item.suggestedSize ?? session.summary.suggestedSize,
+          suggestedDependencies: item.dependsOn ?? [],
+          keyDeliverables: [itemDescription],
+        });
         const { workingBranch: taskBranch } = resolveEntryPointBranchAssignment({
           assignmentMode: branchMode,
           resolvedBranch,
@@ -1402,7 +1582,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         */
         const task = await scopedStore.createTask({
           title: item.title.trim(),
-          description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
+          description: planMd,
           dependencies: undefined,
           priority: isTaskPriority(item.priority) ? item.priority : DEFAULT_TASK_PRIORITY,
           source: { sourceType: "api", sourceMetadata: { planningSessionId } },
@@ -1418,6 +1598,26 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
         tempIdToTaskId.set(item.id, task.id);
         createdTasks.push(task);
+
+        await runPlanningCreateSideEffect(
+          "Planning create-tasks plan document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId, source: "planning-mode" } }),
+          { taskId: task.id, planningSessionId },
+        );
+        /*
+        FNXC:PlanningMode 2026-07-20-16:00:
+        Every breakdown child needs an original-description document. When a legacy
+        planning session lacks initialPlan, use that child’s pre-serialization brief
+        rather than silently omitting the request or substituting a session title.
+        */
+        const originalRequest = session.initialPlan.trim() || itemDescription;
+        if (originalRequest) {
+          await runPlanningCreateSideEffect(
+            "Planning create-tasks original description document write failed",
+            () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId, source: "planning-mode-initial-plan" } }),
+            { taskId: task.id, planningSessionId },
+          );
+        }
 
         if (item.suggestedSize === "S" || item.suggestedSize === "M" || item.suggestedSize === "L") {
           await runPlanningCreateSideEffect(
@@ -1517,14 +1717,21 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       /*
-      FNXC:PlanningMode 2026-07-19-01:45:
-      FN-8341 keeps a running `summary` on every live planning session from create time.
-      The pre-reactive stream path treated any summary as a terminal complete session and
-      ended SSE before consumeInitialTurn, so deferred first turns never ran (createFnAgent
-      call count 0 under start-streaming tests). Only validated (user-finalized) sessions
-      are terminal for this early summary+complete catch-up path.
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A running summary is persisted after every interview turn, so it is catch-up state rather
+      than completion evidence. Reconnect must refresh that plan and continue into the current
+      awaiting-input question; only Validate writes `session.validated`, which authorizes a
+      terminal complete event and closes the stream.
       */
-      if (session.validated && session.summary) {
+      /*
+      FNXC:PlanningMode 2026-07-20-18:05:
+      New and resumed sessions seed `summary` with deterministic fallback copy before the AI
+      turn starts. While `generationPurpose` is set, that value is working state rather than a
+      review-ready plan. Publishing it here moves the client out of loading early and exposes
+      Refine/Validate against the still-active generation. Only catch up a settled summary;
+      the generation path clears its purpose before broadcasting the AI-authored replacement.
+      */
+      if (session.summary && session.generationPurpose === undefined) {
         const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
         const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
         const summaryEventId = lastSummaryEvent?.id
@@ -1540,16 +1747,18 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
         }
 
-        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
-        const completeEventId = lastCompleteEvent?.id
-          ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
+        if (session.validated) {
+          const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+          const completeEventId = lastCompleteEvent?.id
+            ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
 
-        if (lastEventId === undefined || completeEventId > lastEventId) {
-          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          if (lastEventId === undefined || completeEventId > lastEventId) {
+            writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          }
+
+          res.end();
+          return;
         }
-
-        res.end();
-        return;
       }
 
       // First-connect catch-up should replay buffered thinking chunks so the

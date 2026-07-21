@@ -103,7 +103,6 @@ const gitCases = [
 ] as const;
 
 const ACTION_MUTATION_PERMANENT_READONLY_TOOLS = new Set([
-  "fn_delegate_task",
   "fn_task_import_github",
   "fn_task_import_github_issue",
   "fn_task_import_gitlab_project_issues",
@@ -118,7 +117,6 @@ const policyMatrix = [
 ] as const;
 
 const permanentReadonlySiblingTaskCreationTools = [
-  "fn_delegate_task",
   "fn_task_import_github",
   "fn_task_import_github_issue",
   "fn_task_import_gitlab_project_issues",
@@ -232,7 +230,7 @@ describe("gating-classifications parity", () => {
     for (const [permissionPolicy, disposition] of policyMatrix) {
       expect(resolvePermanentAgentToolDecision({
         toolName: "fn_task_create",
-        args: {},
+        args: { mission_lineage: { mission_id: "M-1", slice_id: "SL-1", feature_id: "F-1" } },
         gating: { permissionPolicy },
       })).toMatchObject({
         category: "task_agent_mutation",
@@ -242,7 +240,7 @@ describe("gating-classifications parity", () => {
       expect(evaluateAgentActionGate({
         agentId: "a1",
         toolName: "fn_task_create",
-        args: {},
+        args: { mission_lineage: { mission_id: "M-1", slice_id: "SL-1", feature_id: "F-1" } },
         permissionPolicy,
       })).toMatchObject({
         category: "task_agent_mutation",
