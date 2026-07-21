@@ -73,7 +73,8 @@ export interface PlanningContinuationCandidate {
   task: Task | null | undefined;
 }
 
-/** Select due planning continuations whose task remains dispatchable. */
+/** FNXC:WorkflowScheduling 2026-07-21-12:30:
+ * Select due planning continuations whose task remains dispatchable. */
 export function selectActionablePlanningContinuations(
   candidates: readonly PlanningContinuationCandidate[],
 ): Array<{ item: WorkflowWorkItem; task: Task }> {
@@ -1896,7 +1897,7 @@ export class InProcessRuntime
       });
       const candidates: PlanningContinuationCandidate[] = [];
       for (const item of items) {
-        const task = await this.taskStore.getTask(item.taskId).catch(() => undefined);
+        const task = await this.taskStore.getTask(item.taskId);
         candidates.push({ item, task });
       }
       for (const { item, task } of selectActionablePlanningContinuations(candidates)) {

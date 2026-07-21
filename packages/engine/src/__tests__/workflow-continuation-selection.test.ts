@@ -16,6 +16,8 @@ describe("selectActionablePlanningContinuations", () => {
       { item: workItem("eligible", "planning"), task: task("T-1") },
       { item: workItem("capacity", "capacity"), task: task("T-2") },
       { item: workItem("missing", "planning"), task: undefined },
+      { item: workItem("null-task", "planning"), task: null },
+      { item: workItem("no-wait-reason", null), task: task("T-5") },
       { item: workItem("paused", "planning"), task: task("T-3", { paused: true }) },
       { item: workItem("user-paused", "planning"), task: task("T-4", { userPaused: true }) },
     ]);
