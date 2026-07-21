@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PlanningModeModal } from "../PlanningModeModal";
-import { mockCreatePlanningDraft, mockFetchAiSession, mockFetchAiSessions, mockRespondToPlanning, mockStartPlanningStreaming, mockStopPlanningGeneration, mockValidatePlanningSession, mockCreateTaskFromPlanning, mockTasks, mockSummary } from "./PlanningModeModal.test-helpers";
+import { mockCreatePlanningDraft, mockFetchAiSession, mockFetchAiSessions, mockRespondToPlanning, mockRetryPlanningSession, mockStartPlanningStreaming, mockStopPlanningGeneration, mockValidatePlanningSession, mockCreateTaskFromPlanning, mockTasks, mockSummary } from "./PlanningModeModal.test-helpers";
 
 const mockViewportMode = vi.hoisted(() => vi.fn(() => "desktop" as "desktop" | "mobile"));
 const mockConnectPlanningStream = vi.hoisted(() => vi.fn());
@@ -24,12 +24,12 @@ vi.mock("../../api", () => {
     fetchAiSession: (...args: unknown[]) => mockFetchAiSession(...args), fetchAiSessions: (...args: unknown[]) => mockFetchAiSessions(...args),
     respondToPlanning: (...args: unknown[]) => mockRespondToPlanning(...args), validatePlanningSession: (...args: unknown[]) => mockValidatePlanningSession(...args), createTaskFromPlanning: (...args: unknown[]) => mockCreateTaskFromPlanning(...args),
     fetchSettings: fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }), fetchGlobalSettings: fn().mockResolvedValue({}), fetchModels: fn().mockResolvedValue([]), fetchWorkflowSteps: fn().mockResolvedValue([]), fetchBoardWorkflows: fn().mockResolvedValue({ workflows: [] }),
-    startPlanning: fn(), startPlanningStreaming: (...args: unknown[]) => mockStartPlanningStreaming(...args), createPlanningDraft: (...args: unknown[]) => mockCreatePlanningDraft(...args), connectPlanningStream: (...args: unknown[]) => mockConnectPlanningStream(...args), rewindPlanningSession: fn(), retryPlanningSession: fn(), cancelPlanning: fn(), stopPlanningGeneration: (...args: unknown[]) => mockStopPlanningGeneration(...args), updatePlanningSessionDraft: fn(), updatePlanningSessionTitle: fn(), startPlanningBreakdown: fn(), createTasksFromPlanning: fn(), parseConversationHistory: (raw: string) => JSON.parse(raw || "[]"), acquireSessionLock: fn(), releaseSessionLock: fn(), forceAcquireSessionLock: fn(), uploadAttachment: fn(), deleteAttachment: fn(), updateTask: fn(), pauseTask: fn(), unpauseTask: fn(), fetchTaskDetail: fn(), requestSpecRevision: fn(), approvePlan: fn(), rejectPlan: fn(), refineTask: fn(), deleteAiSession: fn(), refineText: fn(), getRefineErrorMessage: (error: Error) => error.message,
+    startPlanning: fn(), startPlanningStreaming: (...args: unknown[]) => mockStartPlanningStreaming(...args), createPlanningDraft: (...args: unknown[]) => mockCreatePlanningDraft(...args), connectPlanningStream: (...args: unknown[]) => mockConnectPlanningStream(...args), rewindPlanningSession: fn(), retryPlanningSession: (...args: unknown[]) => mockRetryPlanningSession(...args), cancelPlanning: fn(), stopPlanningGeneration: (...args: unknown[]) => mockStopPlanningGeneration(...args), updatePlanningSessionDraft: fn(), updatePlanningSessionTitle: fn(), startPlanningBreakdown: fn(), createTasksFromPlanning: fn(), parseConversationHistory: (raw: string) => JSON.parse(raw || "[]"), acquireSessionLock: fn(), releaseSessionLock: fn(), forceAcquireSessionLock: fn(), uploadAttachment: fn(), deleteAttachment: fn(), updateTask: fn(), pauseTask: fn(), unpauseTask: fn(), fetchTaskDetail: fn(), requestSpecRevision: fn(), approvePlan: fn(), rejectPlan: fn(), refineTask: fn(), deleteAiSession: fn(), refineText: fn(), getRefineErrorMessage: (error: Error) => error.message,
   };
 });
 
 const base = { id: "session-1", title: "Secure plan", projectId: "project-1", updatedAt: new Date().toISOString(), archived: false, conversationHistory: "[]", thinkingOutput: "" };
-function renderSession(session: Record<string, unknown>) { return render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />); }
+function renderSession() { return render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />); }
 const summaryWithRefinements = {
   ...mockSummary,
   description: "Build a **reviewed** recovery workflow with an operator [runbook](https://example.com/runbook).",
@@ -39,7 +39,198 @@ const summaryWithRefinements = {
 };
 
 describe("PlanningModeModal sequential flow", () => {
-  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); mockPlanningSse.events = null; mockViewportMode.mockReturnValue("desktop"); mockFetchAiSessions.mockResolvedValue([]); mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-1", title: "Secure plan" }); mockStartPlanningStreaming.mockResolvedValue({ sessionId: "draft-1" }); mockStopPlanningGeneration.mockResolvedValue({ success: true }); mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true }); mockCreateTaskFromPlanning.mockResolvedValue({ id: "FN-8442" }); });
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); mockPlanningSse.events = null; mockViewportMode.mockReturnValue("desktop"); mockFetchAiSessions.mockResolvedValue([]); mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-1", title: "Secure plan" }); mockStartPlanningStreaming.mockResolvedValue({ sessionId: "draft-1" }); mockRetryPlanningSession.mockResolvedValue({ success: true }); mockStopPlanningGeneration.mockResolvedValue({ success: true }); mockValidatePlanningSession.mockResolvedValue({ summary: mockSummary, validated: true }); mockCreateTaskFromPlanning.mockResolvedValue({ id: "FN-8442" }); });
+
+  /*
+  FNXC:PlanningRetry 2026-07-21-10:00:
+  Returning to Planning must recover every failed generation surface instead of rendering a
+  terminal error: both a row already persisted as error and a resumed generating stream that
+  subsequently reports its durable error dispatch the existing retry endpoint automatically.
+  */
+  it("automatically retries a persisted error when returning to Planning", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "error",
+      error: "The planning stream was interrupted",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-1", "project-1"));
+    expect(screen.queryByText("The planning stream was interrupted")).toBeNull();
+  });
+
+  it("automatically retries a stream error after returning to a generating session", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "generating",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+    });
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
+
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "error",
+      error: "The resumed stream failed",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    mockConnectPlanningStream.mock.calls[0]?.[2]?.onError?.("The resumed stream failed");
+
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-1", "project-1"));
+    expect(screen.queryByText("The resumed stream failed")).toBeNull();
+  });
+
+  it("retries all bounded attempts before surfacing a returned stream error", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "error",
+      error: "The planning stream was interrupted",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    mockRetryPlanningSession.mockRejectedValue(new Error("Temporary retry outage"));
+
+    renderSession();
+
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3));
+    expect(await screen.findByText("Temporary retry outage")).toBeInTheDocument();
+
+    mockConnectPlanningStream.mock.calls.at(-1)?.[2]?.onError?.("Late terminal stream error");
+    await act(async () => Promise.resolve());
+    expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Late terminal stream error")).toBeInTheDocument();
+  });
+
+  it("coalesces overlapping stream errors into one retry request", async () => {
+    let resolveRetry!: (value: { success: true }) => void;
+    mockRetryPlanningSession.mockReturnValue(new Promise((resolve) => {
+      resolveRetry = resolve;
+    }));
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "error",
+      error: "The planning stream was interrupted",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    renderSession();
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(1));
+
+    mockConnectPlanningStream.mock.calls[0]?.[2]?.onError?.("Duplicate stream error");
+    await act(async () => Promise.resolve());
+    expect(mockRetryPlanningSession).toHaveBeenCalledTimes(1);
+
+    resolveRetry({ success: true });
+  });
+
+  it("ignores a stale errored load after a newer session is selected", async () => {
+    const resolvers = new Map<string, (session: Record<string, unknown>) => void>();
+    mockFetchAiSession.mockImplementation((sessionId: string) => new Promise((resolve) => {
+      resolvers.set(sessionId, resolve);
+    }));
+    const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
+    const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
+    await waitFor(() => expect(resolvers.has("session-a")).toBe(true));
+
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);
+    await waitFor(() => expect(resolvers.has("session-b")).toBe(true));
+    resolvers.get("session-b")?.({
+      ...base,
+      id: "session-b",
+      status: "error",
+      error: "Session B stream failed",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-b", "project-1"));
+
+    resolvers.get("session-a")?.({
+      ...base,
+      id: "session-a",
+      status: "error",
+      error: "Session A stream failed",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    await act(async () => Promise.resolve());
+
+    expect(mockRetryPlanningSession).not.toHaveBeenCalledWith("session-a", "project-1");
+  });
+
+  it("keeps a stale retry completion from taking ownership from the newer session", async () => {
+    let resolveSessionARetry!: (value: { success: true }) => void;
+    mockRetryPlanningSession.mockImplementation((sessionId: string) => sessionId === "session-a"
+      ? new Promise((resolve) => {
+          resolveSessionARetry = resolve;
+        })
+      : Promise.resolve({ success: true }));
+    mockFetchAiSession.mockImplementation(async (sessionId: string) => ({
+      ...base,
+      id: sessionId,
+      status: "error",
+      error: `${sessionId} stream failed`,
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    }));
+    const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
+    const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-a", "project-1"));
+
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);
+    await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-b", "project-1"));
+    const connectionCountForB = mockConnectPlanningStream.mock.calls.filter(([sessionId]) => sessionId === "session-b").length;
+
+    resolveSessionARetry({ success: true });
+    await act(async () => Promise.resolve());
+
+    expect(mockConnectPlanningStream.mock.calls.at(-1)?.[0]).toBe("session-b");
+    expect(mockConnectPlanningStream.mock.calls.filter(([sessionId]) => sessionId === "session-b")).toHaveLength(connectionCountForB);
+    expect(screen.queryByText("session-a stream failed")).toBeNull();
+  });
+
+  it("automatically retries a resumed error discovered by the loading poll", async () => {
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "generating",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+    });
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
+
+    const poll = intervalSpy.mock.calls.find(([, delay]) => delay === 8000)?.[0];
+    expect(poll).toBeTypeOf("function");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "error",
+      error: "Poll observed stream error",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    await act(async () => {
+      await (poll as () => Promise<void>)();
+    });
+
+    expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-1", "project-1");
+    expect(screen.queryByText("Poll observed stream error")).toBeNull();
+    intervalSpy.mockRestore();
+  });
   it("persists a draft before generation and immediately shows initial-plan progress", async () => {
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" />);
     fireEvent.change(screen.getByLabelText("What do you want to build?"), { target: { value: "Build secure accounts" } });
@@ -57,7 +248,7 @@ describe("PlanningModeModal sequential flow", () => {
       result: JSON.stringify(summaryWithRefinements),
       inputPayload: JSON.stringify({ initialPlan: "Secure accounts" }),
     });
-    renderSession({});
+    renderSession();
     const workspace = await screen.findByTestId("planning-workspace");
     expect(workspace).toHaveTextContent("Build authentication system");
     expect(workspace).toHaveTextContent("Which outcome matters most?");
@@ -90,7 +281,7 @@ describe("PlanningModeModal sequential flow", () => {
       result: JSON.stringify(summaryWithRefinements),
       inputPayload: "{}",
     });
-    renderSession({});
+    renderSession();
     expect(await screen.findByText("Old question?")).toBeInTheDocument();
 
     mockFetchAiSession.mockResolvedValue({
@@ -128,7 +319,7 @@ describe("PlanningModeModal sequential flow", () => {
       }]),
       inputPayload: "{}",
     });
-    renderSession({});
+    renderSession();
 
     const sessionsButton = await screen.findByRole("button", { name: "Sessions" });
     const historyButton = screen.getByRole("button", { name: "History" });
@@ -198,7 +389,7 @@ describe("PlanningModeModal sequential flow", () => {
       .mockRejectedValueOnce(Object.assign(new Error("Planning task creation is already in progress"), { status: 409 }))
       .mockResolvedValueOnce({ id: "FN-8442" });
 
-    renderSession({});
+    renderSession();
     fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
 
     expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-8442");
@@ -266,7 +457,7 @@ describe("PlanningModeModal sequential flow", () => {
       result: JSON.stringify(summaryWithRefinements),
       inputPayload: "{}",
     });
-    renderSession({});
+    renderSession();
 
     const workspace = await screen.findByTestId("planning-workspace");
     // The viewport-mode hook is mocked without changing jsdom's CSS media viewport.
@@ -296,7 +487,7 @@ describe("PlanningModeModal sequential flow", () => {
       inputPayload: "{}",
     });
     mockRespondToPlanning.mockReturnValue(new Promise(() => undefined));
-    renderSession({});
+    renderSession();
     fireEvent.click(await screen.findByLabelText("Secure defaults"));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     const workspace = screen.getByTestId("planning-workspace");
@@ -327,7 +518,7 @@ describe("PlanningModeModal sequential flow", () => {
       },
       summary: summaryWithRefinements,
     });
-    renderSession({});
+    renderSession();
     fireEvent.click(await screen.findByRole("button", { name: "Refine" }));
     expect(screen.getByTestId("planning-plan-pane")).toHaveTextContent("Build authentication system");
     expect(screen.getByTestId("planning-question-pane")).toHaveTextContent("What should the plan prioritize?");
@@ -349,7 +540,7 @@ describe("PlanningModeModal sequential flow", () => {
   });
   it("restores the updating-plan progress state after refresh", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "generating", currentQuestion: null, result: JSON.stringify(summaryWithRefinements), inputPayload: JSON.stringify({ generationPurpose: "plan_update" }) });
-    renderSession({});
+    renderSession();
     expect(await screen.findByText("Generating plan…")).toBeInTheDocument();
     await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
     expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object));
@@ -390,7 +581,7 @@ describe("PlanningModeModal sequential flow", () => {
       conversationHistory: JSON.stringify([{ question: priorQuestion, response: { "q-prior": "Preserve drafts" } }]),
       inputPayload: JSON.stringify({ generationPurpose: "plan_update", generationStartedAt: new Date().toISOString() }),
     });
-    renderSession({});
+    renderSession();
 
     await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
     fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
@@ -443,7 +634,7 @@ describe("PlanningModeModal sequential flow", () => {
       currentQuestion: { id: "q-refined", type: "text", question: "Which refined area comes first?" },
       summary: summaryWithRefinements,
     });
-    renderSession({});
+    renderSession();
 
     fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
     fireEvent.click(await screen.findByRole("button", { name: "Refine" }));
@@ -469,7 +660,7 @@ describe("PlanningModeModal sequential flow", () => {
       currentQuestion: { id: "q-replaced", type: "text", question: "What should the replacement prioritize?" },
       summary: summaryWithRefinements,
     });
-    renderSession({});
+    renderSession();
 
     fireEvent.click(await screen.findByRole("button", { name: "Refine" }));
     fireEvent.change(screen.getByLabelText("Refinement instructions"), { target: { value: "Replace the current direction." } });
@@ -500,14 +691,14 @@ describe("PlanningModeModal sequential flow", () => {
       result: JSON.stringify(summaryWithRefinements),
       inputPayload: "{}",
     });
-    renderSession({});
+    renderSession();
     expect(await screen.findByText("What should come next?")).toBeInTheDocument();
     expect(screen.getAllByText("Other (write your own)")).toHaveLength(1);
   });
   it("keeps detailed plan review and freeform refinement available on mobile", async () => {
     mockViewportMode.mockReturnValue("mobile");
     mockFetchAiSession.mockResolvedValue({ ...base, status: "awaiting_input", currentQuestion: null, result: JSON.stringify(summaryWithRefinements), inputPayload: "{}" });
-    renderSession({});
+    renderSession();
     expect(await screen.findByText("What to change")).toBeInTheDocument();
     expect(screen.getByText("Acceptance criteria")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Security boundaries" })).toBeNull();
@@ -525,7 +716,7 @@ describe("PlanningModeModal sequential flow", () => {
   });
   it("restores a validated unlinked session to create-only retry", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "complete", currentQuestion: null, result: JSON.stringify(mockSummary), inputPayload: JSON.stringify({ validated: true }) });
-    renderSession({});
+    renderSession();
     expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Proceed with plan" })).toBeNull();
   });
