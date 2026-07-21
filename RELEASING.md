@@ -64,7 +64,7 @@ When you merge the Version Packages PR:
 
 ## Release tracks: beta and stable
 
-Fusion ships on two tracks. Users pick theirs with the `updateChannel` global setting (Settings → General → Release channel) or `fn update --channel <stable|beta>`.
+Fusion ships on two tracks. Users pick theirs with the `updateChannel` global setting (Settings → General → Release channel) or `fn update --channel <stable|beta>`. Older global installs that predate `--channel` can bootstrap with `npm install -g @runfusion/fusion@beta`.
 
 | Track | Cut from | Version shape | npm dist-tag | GitHub Release | Homebrew |
 |-------|----------|---------------|--------------|----------------|----------|
