@@ -1,6 +1,7 @@
 import type { WorkflowIr, WorkflowIrArtifact } from "@fusion/core";
 
 export const REQUIRED_ARTIFACT_MISSING_PREFIX = "required-artifact-missing:";
+export const REQUIRED_ARTIFACT_READ_FAILED_PREFIX = "required-artifact-read-failed:";
 
 export function requiresNonEmptyWorkflowArtifact(artifact: WorkflowIrArtifact): boolean {
   return artifact.producedBy === "planning" || artifact.role === "step-source";
@@ -22,4 +23,12 @@ export function parseRequiredArtifactMissingValue(value: string | undefined): st
     .map((key) => key.trim())
     .filter(Boolean);
   return keys.length > 0 ? [...new Set(keys)] : null;
+}
+
+export function requiredArtifactReadFailedValue(key: string): string {
+  return `${REQUIRED_ARTIFACT_READ_FAILED_PREFIX}${key}`;
+}
+
+export function isRequiredArtifactReadFailedValue(value: string | undefined): boolean {
+  return value?.startsWith(REQUIRED_ARTIFACT_READ_FAILED_PREFIX) === true;
 }

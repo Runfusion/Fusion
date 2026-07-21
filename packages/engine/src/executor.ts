@@ -190,6 +190,7 @@ import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./re
 import {
   parseRequiredArtifactMissingValue,
   requiredArtifactMissingValue,
+  requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
 } from "./required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
@@ -5588,7 +5589,18 @@ export class TaskExecutor {
       if (columnAgentIr) {
         const missingEntryArtifacts: string[] = [];
         for (const artifact of workflowEntryArtifacts(columnAgentIr)) {
-          const content = await this.readTaskArtifact(task.id, artifact.key);
+          let content: string | undefined;
+          try {
+            content = await this.readTaskArtifact(task.id, artifact.key);
+          } catch (error) {
+            await this.handleGraphFailure(task, {
+              disposition: "failed",
+              outcome: "failure",
+              reason: `workflow-required-artifact-read-failed:${artifact.key}:${error instanceof Error ? error.message : String(error)}`,
+              visitedNodeIds: [],
+            });
+            return;
+          }
           if (typeof content !== "string" || !content.trim()) missingEntryArtifacts.push(artifact.key);
         }
         if (missingEntryArtifacts.length > 0) {
@@ -6150,20 +6162,26 @@ export class TaskExecutor {
    */
   private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
     // Declared artifacts ride the task-documents layer.
+    let documentReadError: unknown;
     try {
       const doc = await this.store.getTaskDocument(taskId, key);
       if (doc) return doc.content;
-    } catch {
-      // Fall through to the PROMPT fallback below.
+    } catch (error) {
+      documentReadError = error;
     }
     if (key === "PROMPT.md") {
       try {
         const detail = await this.store.getTask(taskId);
         if (typeof detail.prompt === "string") return detail.prompt;
-      } catch {
-        // No PROMPT available.
+        return undefined;
+      } catch (error) {
+        throw new Error(
+          `Unable to read required artifact ${key} from task documents or task storage: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: documentReadError ?? error },
+        );
       }
     }
+    if (documentReadError) throw documentReadError;
     return undefined;
   }
 
@@ -16415,12 +16433,28 @@ ${scopeGuard}
      * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
      * FN-7561 established that review agents cannot reliably locate the project-root PROMPT.md from a task worktree. Load it once through the store and embed it for every review-type node. FN-8288 extends that invariant beyond Plan Review: approved planning revisions are authoritative, the original task description is historical, and a failed artifact read must stay visible instead of silently restoring superseded scope.
      */
-    const workflowReviewSpecArtifact = isReviewTypeWorkflowStep
-      ? await this.readTaskArtifact(task.id, "PROMPT.md")
-      : undefined;
+    let workflowReviewSpecArtifact: string | undefined;
+    if (isReviewTypeWorkflowStep) {
+      try {
+        workflowReviewSpecArtifact = await this.readTaskArtifact(task.id, "PROMPT.md");
+      } catch (error) {
+        const diagnostic = `PROMPT.md could not be read because task storage failed; ${workflowStep.name} must retry without replanning. ${error instanceof Error ? error.message : String(error)}`;
+        await this.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} artifact read failed: ${diagnostic}`);
+        return {
+          success: false,
+          error: diagnostic,
+          output: diagnostic,
+          failureValue: requiredArtifactReadFailedValue("PROMPT.md"),
+        };
+      }
+    }
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
 
+    /*
+    FNXC:PlanReview 2026-07-21-16:30:
+    Review steps must never approve or execute against an unavailable contract. Confirmed missing or whitespace-only PROMPT.md fails closed before reviewer creation; typed recovery routes ownership back to planning without spending the review-revision budget.
+    */
     if (isReviewTypeWorkflowStep && !workflowReviewSpecText.trim()) {
       const diagnostic = `PROMPT.md could not be loaded; ${workflowStep.name} cannot approve without the authoritative task contract.`;
       await this.store.logEntry(

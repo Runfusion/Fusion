@@ -167,7 +167,10 @@ describe("triage planning prompt single source", () => {
 
     expect(prompt).toContain("fn_task_prompt_write");
     expect(prompt).toContain("Do not use the generic filesystem write tool");
+    expect(prompt).toContain("If it returns an error, correct the problem and retry");
+    expect(prompt).toContain("do not finish planning until the tool confirms");
     expect(prompt).not.toContain("Use the write tool to write the specification file");
+    expect(prompt).not.toContain("exactly once");
   });
 
   it("uses the built-in workflow IR planning prompt when no workflow is selected", async () => {

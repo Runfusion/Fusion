@@ -3,6 +3,8 @@ import type { WorkflowIr } from "@fusion/core";
 import {
   parseRequiredArtifactMissingValue,
   requiredArtifactMissingValue,
+  isRequiredArtifactReadFailedValue,
+  requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
 } from "../required-workflow-artifacts.js";
 
@@ -22,6 +24,13 @@ describe("required workflow artifact contracts", () => {
     } as unknown as WorkflowIr;
 
     expect(workflowEntryArtifacts(ir).map((artifact) => artifact.key)).toEqual(["PROMPT.md", "steps"]);
+  });
+
+  it("keeps storage-read failures distinct from confirmed missing artifacts", () => {
+    const value = requiredArtifactReadFailedValue("PROMPT.md");
+    expect(value).toBe("required-artifact-read-failed:PROMPT.md");
+    expect(isRequiredArtifactReadFailedValue(value)).toBe(true);
+    expect(parseRequiredArtifactMissingValue(value)).toBeNull();
   });
 
   it("round-trips a deduplicated typed missing-artifact failure", () => {

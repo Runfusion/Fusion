@@ -535,6 +535,29 @@ describe("WorkflowGraphExecutor optional-group", () => {
     ]));
   });
 
+  it("keeps Plan Review task-storage read failures in place without sending the task to planning", async () => {
+    const requestFix = vi.fn(async () => true);
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => node.id === "plan-review-step"
+          ? {
+              outcome: "failure",
+              value: "required-artifact-read-failed:PROMPT.md",
+              contextPatch: { output: "PROMPT.md task storage read failed" },
+            }
+          : { outcome: "success" },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(taskWith(["plan-review"]), settingsOn(), BUILTIN_CODING_WORKFLOW_IR);
+
+    expect(requestFix).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("failure");
+    expect(result.context["node:plan-review:value"]).toBe(PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE);
+    expect(result.visitedNodeIds).not.toContain("plan-replan");
+  });
+
   it("uses an explicit graph replan node for Plan Review REVISE and does not execute before replan completes", async () => {
     const requestFix = vi.fn(async () => true);
     const calls: string[] = [];
