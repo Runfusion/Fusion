@@ -320,20 +320,27 @@ describe("runAiMerge", () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const blocker = "the merged tree still bypasses authorization";
     const { store } = makeStore(dir);
+    const integrationTipBefore = git(dir, "rev-parse main");
     let mergeCount = 0;
     const mergeAgent = vi.fn(async (cwd: string) => {
       mergeCount++;
       if (mergeCount === 1) await realMergeAgent("fusion/fn-1")(cwd, "");
-      // The corrective pass deliberately leaves the clean-room tree at the tip.
+      /*
+      FNXC:MergeReviewBlockers 2026-07-21-21:50:
+      The corrective pass deliberately leaves the clean-room tree at the integration tip so the regression proves an empty rebuild still receives review and cannot advance the integration ref.
+      */
     });
     const reviewAgent = vi.fn()
       .mockResolvedValueOnce(`${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`)
       .mockResolvedValueOnce("REVIEW_VERDICT: approve");
 
-    await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
 
+    expect(mergeAgent).toHaveBeenCalledTimes(2);
     expect(reviewAgent).toHaveBeenCalledTimes(2);
     expect(reviewAgent.mock.calls[1]?.[1]).toContain(blocker);
+    expect(result.merged).toBe(false);
+    expect(git(dir, "rev-parse main")).toBe(integrationTipBefore);
   });
 
   it("keeps earlier blockers when later reviews discover different failures", async () => {
