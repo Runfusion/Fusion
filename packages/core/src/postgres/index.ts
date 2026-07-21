@@ -83,6 +83,10 @@ export {
   getAppliedMigrations,
   readBaselineMigrationSql,
   SCHEMA_BASELINE_VERSION,
+  // FNXC:StaleBinaryGuard 2026-07-19-03:10 (U9b / R10): old-binary write refusal.
+  StaleBinarySchemaError,
+  assertBinaryNotOlderThanDatabase,
+  WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
@@ -172,6 +176,7 @@ export {
 export {
   migrateSqliteToPostgres,
   isSqliteMigrationComplete,
+  getSqliteMigrationState,
   completeSqliteMigration,
   defaultMigrationSources,
   formatMigrationProgress,
@@ -179,6 +184,7 @@ export {
   type SqliteMigrationSource,
   type SchemaName,
   type MigrationOptions,
+  type SqliteMigrationState,
   type MigrationReport,
   type MigrationProgressEvent,
   type MigrationProgressPhase,
@@ -195,8 +201,13 @@ export {
 export {
   stampMigratedProjectRows,
   lookupRegisteredProjectIdByPath,
+  rekeyFallbackProjectPartition,
+  ProjectPartitionRekeyError,
+  selectDegradedBindTarget,
   type StampMigratedProjectRowsInput,
   type StampMigratedProjectRowsResult,
+  type ProjectPartitionOwnership,
+  type ProjectPartitionRekeyReason,
 } from "./migration-stamping.js";
 
 /**

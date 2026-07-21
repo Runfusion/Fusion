@@ -58,8 +58,13 @@ export interface Mission {
   };
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
-  /** Mission-level auto-merge override for linked task branches. */
-  autoMerge?: boolean;
+  /**
+   * FNXC:MissionAutoMerge 2026-07-19-12:30:
+   * Mission-level auto-merge override for linked task branches.
+   * `null` clears an explicit override back to project default on PATCH.
+   * Keep in sync with app/api/missions.ts Mission.autoMerge.
+   */
+  autoMerge?: boolean | null;
   autoAdvance?: boolean;
   autopilotEnabled?: boolean;
   autopilotState?: AutopilotState;

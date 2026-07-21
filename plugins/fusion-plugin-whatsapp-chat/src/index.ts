@@ -16,13 +16,19 @@ const settingsSchema: Record<string, PluginSettingSchema> = {
     label: "Pairing Mode",
     enumValues: ["qr", "code"],
     defaultValue: "qr",
+    description: "Use QR to scan from WhatsApp Linked Devices, or code to pair a phone number from Plugin Manager.",
   },
   pairingPhoneNumber: {
     type: "string",
     label: "Pairing Phone Number",
-    description: "E.164 digits without + (required when pairingMode is code)",
+    description: "E.164 digits without +. Required to request a pairing code in code mode.",
   },
-  allowedSenders: { type: "array", label: "Allowed WhatsApp Senders", itemType: "string" },
+  allowedSenders: {
+    type: "array",
+    label: "Allowed WhatsApp Senders",
+    description: "WhatsApp JIDs or E.164 digits. Leave empty to block every inbound sender.",
+    itemType: "string",
+  },
   agentSystemPrompt: {
     type: "string",
     label: "Agent System Prompt",
@@ -98,6 +104,9 @@ const routes: PluginRouteDefinition[] = [
       /**
        * FNXC:WhatsAppStatusVisibility 2026-07-17-09:15:
        * /status must expose lastError: a stale-protocol 405 rejection previously showed only a bare "disconnected" with no way to diagnose it from the API surface the README points troubleshooters at.
+       *
+       * FNXC:WhatsAppSettingsPairing 2026-07-20-12:00:
+       * Status includes the current QR/code so Plugin Manager can offer settings-first pairing from one poll. Operators should not need to discover raw API endpoints or coordinate a separate QR request.
        */
       return {
         status: 200,
@@ -105,6 +114,8 @@ const routes: PluginRouteDefinition[] = [
           status: status.state,
           jid: status.jid,
           lastError: status.lastError,
+          qrDataUrl: status.qrDataUrl,
+          pairingCode: status.pairingCode,
           allowedSenders: Array.from(getAllowedSenders(ctx.settings)),
         },
       };

@@ -122,6 +122,31 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
             updateCheckFrequency: v as "manual" | "on-startup" | "daily" | "weekly",
         }))}
       />
+      {/*
+        FNXC:UpdateChannels 2026-07-19-12:50:
+        Release track selector. `stable` follows the npm `latest` dist-tag; `beta` follows
+        the semver-max of `latest` and `beta` so beta users also receive promoted stables.
+        Deliberately NOT disabled with auto-check off: the channel also governs manual
+        "Check now" and `fn update`. Switching beta → stable never downgrades — the install
+        stays on its beta until the next stable overtakes it.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "updateChannel",
+          label: t("settings.globalGeneral.releaseChannel", "Release channel"),
+          help: t("settings.globalGeneral.releaseChannelHelp", " Stable follows official releases. Beta follows pre-releases cut from main (versions like 0.73.0-beta.2) and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades; you stay on the installed beta until the next stable release passes it. Default: stable. "),
+          scope: "global",
+          options: [
+            { value: "stable", label: t("settings.globalGeneral.channelStable", "Stable (recommended)") },
+            { value: "beta", label: t("settings.globalGeneral.channelBeta", "Beta — early builds from main") },
+          ],
+        }}
+        value={form.updateChannel ?? "stable"}
+        onChange={(v) => setForm((f) => ({
+            ...f,
+            updateChannel: v as "stable" | "beta",
+        }))}
+      />
       <SettingsToggleRow
         descriptor={{
           key: "autoReloadOnVersionChange",

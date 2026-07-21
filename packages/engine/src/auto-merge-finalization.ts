@@ -1,9 +1,47 @@
-import { getTaskHardMergeBlocker, type MergeResult, type Task, type TaskStore } from "@fusion/core";
+import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
 
-export function isInvalidDoneTransitionError(error: unknown): boolean {
+/*
+FNXC:WorkflowMergeFinalization 2026-07-19-07:20 (U7 / R2/R3/KTD-1):
+Finalization moves a confirmed-merged card to the workflow's COMPLETE-trait column
+(not the literal "done"), and treats the merge-orchestration column (not literal
+"in-review") as the normal pre-complete review column. builtin:coding resolves to
+`done` / `in-review` so the default pipeline is byte-identical; a custom workflow
+(the benchmark) lands in its own `Done` / `Merging` columns. Resolution failure
+falls back to the legacy literals so a bad IR never strands a proven-merged task.
+*/
+async function resolveFinalizationColumns(
+  store: TaskStore,
+  taskId: string,
+): Promise<{ completeColumn: string; mergeColumn: string; isCompleteColumn: (columnId: string) => boolean }> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return {
+      completeColumn: resolveCompleteColumn(ir) ?? "done",
+      mergeColumn: resolveMergeOrchestrationColumn(ir) ?? "in-review",
+      isCompleteColumn: (columnId: string) => columnHasFlag(ir, columnId, "complete"),
+    };
+  } catch {
+    return {
+      completeColumn: "done",
+      mergeColumn: "in-review",
+      isCompleteColumn: (columnId: string) => columnId === "done",
+    };
+  }
+}
+
+/*
+FNXC:WorkflowMergeFinalization 2026-07-19-09:40 (R2/R7b):
+The transition-race classifier must match the workflow's resolved COMPLETE column,
+not the literal "done". moveTask targets the resolved completeColumn, so a race
+error for a custom complete column (e.g. the benchmark's "shipped") says
+"→ 'shipped'"; hardcoding "→ 'done'" skipped the already-done recovery branch and
+rethrew, stranding a proven-merged task. Default stays "done" for builtin:coding
+and legacy fallbacks.
+*/
+export function isInvalidDoneTransitionError(error: unknown, targetColumn = "done"): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Invalid transition:") && message.includes("→ 'done'");
+  return message.includes("Invalid transition:") && message.includes(`→ '${targetColumn}'`);
 }
 
 export interface AutoMergeFinalizationResult {
@@ -147,12 +185,16 @@ export async function finalizeProvenAutoMergeTask({
     return { outcome: "missing", task: null, previousColumn: null, reason: "task-not-found" };
   }
 
+  // U7: resolve the workflow's complete/merge columns once (byte-identical to
+  // done/in-review for builtin:coding).
+  const { completeColumn, mergeColumn, isCompleteColumn } = await resolveFinalizationColumns(store, taskId);
+
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);
   /*
    * FNXC:WorkflowMerge 2026-06-29-10:35:
    * Workflow-owned completion requires current merge proof, not just a stale `mergeConfirmed` flag. A task cannot reach or remain accepted as `done` when workflow steps are still pending or a no-op claims landed files. Branch-only residue is ignored because squash landing validates the task patch, not branch-history cleanliness.
    */
-  if (latest.column === "done") {
+  if (isCompleteColumn(latest.column)) {
     const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails: validationMergeDetails } as Task, { result });
     if (!proofVerdict.ok) {
       await recordFinalizationAudit({
@@ -168,7 +210,7 @@ export async function finalizeProvenAutoMergeTask({
       return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: proofVerdict.reason };
     }
     if (result) result.task = latest;
-    return { outcome: "already-done", task: latest, previousColumn: "done" };
+    return { outcome: "already-done", task: latest, previousColumn: latest.column };
   }
 
   const mergeDetails = validationMergeDetails;
@@ -192,6 +234,10 @@ export async function finalizeProvenAutoMergeTask({
     /*
     FNXC:WorkflowMerge 2026-06-29-09:15:
     Proven merge finalization is a recovery path: durable `mergeConfirmed` means the branch already landed, even if a workflow graph crash left the card in `in-progress` or `todo`. Evaluate hard blockers as review-eligible so the column mismatch itself does not block the recovery rehome to `done`; real blockers such as paused/error/incomplete steps still apply.
+    U7 note: `"in-review"` here is getTaskHardMergeBlocker's review-eligible SENTINEL
+    (a core merge-blocker assumption), NOT a lifecycle column — it is intentionally
+    NOT re-keyed to the merge-orchestration column so custom workflows evaluate the
+    same review-eligible blocker set as builtin.
     */
     column: "in-review",
     paused: false,
@@ -243,15 +289,15 @@ export async function finalizeProvenAutoMergeTask({
     mergeDetails,
   } as unknown as Partial<Task>);
 
-  const shouldRecoveryRehome = latest.column !== "in-review";
+  const shouldRecoveryRehome = latest.column !== mergeColumn;
   if (shouldRecoveryRehome) {
     await log?.(
-      `Auto-merge finalization repairing ${taskId}: authoritative row is ${latest.column}; clearing stale lifecycle blockers and moving to done`,
+      `Auto-merge finalization repairing ${taskId}: authoritative row is ${latest.column}; clearing stale lifecycle blockers and moving to ${completeColumn}`,
     );
   }
 
   try {
-    const moved = await store.moveTask(taskId, "done", shouldRecoveryRehome
+    const moved = await store.moveTask(taskId, completeColumn, shouldRecoveryRehome
       ? { moveSource: "engine", recoveryRehome: true, preserveProgress: true }
       : { moveSource: "engine", preserveProgress: true });
     if (result) result.task = moved;
@@ -267,15 +313,15 @@ export async function finalizeProvenAutoMergeTask({
       });
       await store.logEntry(
         taskId,
-        `Auto-merge finalization repaired column mismatch: ${latest.column} → done after proven merge; cleared stale status/blockers`,
+        `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`,
       ).catch(() => undefined);
     }
     const finalTask = moved ?? (await store.getTask(taskId).catch(() => null)) ?? latest;
     return { outcome: shouldRecoveryRehome ? "done" : "done", task: finalTask, previousColumn: latest.column };
   } catch (error) {
-    if (isInvalidDoneTransitionError(error)) {
+    if (isInvalidDoneTransitionError(error, completeColumn)) {
       const refreshed = await store.getTask(taskId).catch(() => null);
-      if (refreshed?.column === "done") {
+      if (refreshed && isCompleteColumn(refreshed.column)) {
         if (result) result.task = refreshed;
         return { outcome: "already-done", task: refreshed, previousColumn: latest.column };
       }

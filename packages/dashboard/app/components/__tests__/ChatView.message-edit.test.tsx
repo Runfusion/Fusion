@@ -7,7 +7,7 @@ streaming. Also covers the inline editor save/cancel interaction and the
 editMessageAndResend wiring.
 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
 import { StandardChatMessageItem } from "../StandardChatSurface";
 import * as useChatModule from "../../hooks/useChat";
@@ -227,11 +227,35 @@ describe("ChatView message edit affordance", () => {
     const textarea = editor.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("hello");
 
+    expect(screen.getByTestId("chat-message-edit-save-user-1")).toBeDisabled();
     fireEvent.change(textarea, { target: { value: "hello, edited" } });
-    fireEvent.click(screen.getByText("Save"));
+    fireEvent.click(screen.getByTestId("chat-message-edit-save-user-1"));
 
     expect(editMessageAndResend).toHaveBeenCalledWith("user-1", "hello, edited");
-    expect(screen.queryByTestId("chat-message-edit-editor-user-1")).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-message-edit-editor-user-1")).toBeNull();
+    });
+  });
+
+  it("does not treat unchanged trailing whitespace as an edit", async () => {
+    const editMessageAndResend = vi.fn();
+    await renderWithAct(
+      <StandardChatMessageItem
+        message={{ id: "whitespace-user-1", sessionId: "session-001", role: "user", content: "hello ", createdAt: "2026-04-08T00:00:00.000Z" }}
+        forcePlain={false}
+        agentName="Fusion"
+        hideAssistantIdentity={false}
+        showAssistantModelTag={false}
+        activeModelTag={null}
+        activeModelProvider={null}
+        activeSessionId="session-001"
+        onEditMessage={editMessageAndResend}
+        canEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-message-edit-whitespace-user-1"));
+    expect(screen.getByTestId("chat-message-edit-save-whitespace-user-1")).toBeDisabled();
   });
 
   it("cancel restores the original content without calling editMessageAndResend", async () => {
@@ -250,11 +274,39 @@ describe("ChatView message edit affordance", () => {
     const textarea = editor.querySelector("textarea") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "changed but cancelled" } });
 
-    fireEvent.click(screen.getByText("Cancel"));
+    fireEvent.click(screen.getByTestId("chat-message-edit-cancel-user-1"));
 
     expect(editMessageAndResend).not.toHaveBeenCalled();
     expect(screen.queryByTestId("chat-message-edit-editor-user-1")).toBeNull();
     expect(screen.getByTestId("chat-message-user-1")).toHaveTextContent("hello");
+  });
+
+  it("keeps the correction visible when an edit handler rejects", async () => {
+    const editMessageAndResend = vi.fn().mockRejectedValueOnce(new Error("PATCH failed"));
+    await renderWithAct(
+      <StandardChatMessageItem
+        message={{ id: "failed-user-1", sessionId: "session-001", role: "user", content: "original", createdAt: "2026-04-08T00:00:00.000Z" }}
+        forcePlain={false}
+        agentName="Fusion"
+        hideAssistantIdentity={false}
+        showAssistantModelTag={false}
+        activeModelTag={null}
+        activeModelProvider={null}
+        activeSessionId="session-001"
+        onEditMessage={editMessageAndResend}
+        canEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-message-edit-failed-user-1"));
+    const textarea = screen.getByTestId("chat-message-edit-editor-failed-user-1").querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "corrected" } });
+    fireEvent.click(screen.getByTestId("chat-message-edit-save-failed-user-1"));
+
+    await act(async () => undefined);
+    expect(editMessageAndResend).toHaveBeenCalledWith("failed-user-1", "corrected");
+    expect(screen.getByTestId("chat-message-edit-editor-failed-user-1")).toBeInTheDocument();
+    expect(textarea).not.toBeDisabled();
   });
 
   it("renders inline edit without a go-to-top control for non-scroll-to-top consumers", () => {

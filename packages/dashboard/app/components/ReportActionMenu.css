@@ -1,6 +1,41 @@
 .report-action-menu { position: relative; }
-.report-action-menu__list { position: absolute; z-index: var(--z-dropdown); right: 0; display: grid; gap: var(--space-1); min-inline-size: var(--space-48); padding: var(--space-2); border-radius: var(--radius-md); background: var(--bg-elevated); box-shadow: var(--shadow-lg); }
-.report-action-menu__item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); color: var(--text-primary); background: transparent; text-align: left; }
-.report-action-menu__item:hover, .report-action-menu__item:focus-visible { background: var(--bg-hover); }
+
+/*
+FNXC:ReportPipeline 2026-07-20-09:27:
+FN-8431 replaces undefined --bg-elevated, --text-primary, --bg-hover, and numeric
+spacing aliases left after FN-8406 portaled this menu. Like FN-6862's EngineControlMenu,
+the shared System and Settings portal needs the defined opaque --card surface so page
+content cannot show through its guided Report actions.
+*/
+.report-action-menu__list {
+  z-index: var(--z-dropdown);
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: calc(var(--space-2xl) * 6);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+}
+
+.report-action-menu__list--portal { position: fixed; }
+
+.report-action-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.report-action-menu__item:hover,
+.report-action-menu__item:focus-visible { background: var(--surface-hover); }
+
 .report-action-menu__item svg { inline-size: 1em; block-size: 1em; }
-@media (max-width: 768px) { .report-action-menu__list { right: auto; left: 0; } }
+
+@media (max-width: 768px) { .report-action-menu__list--portal { right: auto !important; } }

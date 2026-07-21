@@ -39,6 +39,7 @@ import {
 } from "../api";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
+import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
 import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
@@ -60,6 +61,7 @@ interface MailboxViewProps {
   projectId?: string;
   addToast?: (msg: string, type?: "success" | "error") => void;
   onOpenTask?: (taskId: string) => void;
+  onOpenPlanningSession?: (sessionId: string) => void;
   /** Opens a persisted structure from the shared preview card. */
   onOpenNativeStructure: (ref: NativeStructureRef, payload: NativeStructurePreviewResult) => void;
   nativeStructureCandidates: NativeStructureCandidate[];
@@ -221,6 +223,7 @@ export function MailboxView({
   projectId,
   addToast,
   onOpenTask,
+  onOpenPlanningSession,
   onOpenNativeStructure,
   nativeStructureCandidates,
   onUnreadCountChange,
@@ -949,6 +952,11 @@ export function MailboxView({
                     content={msg.content}
                     className="mailbox-conversation-msg-body"
                   />
+                  <MailboxRelatedWorkLink
+                    metadata={msg.metadata}
+                    onOpenTask={onOpenTask}
+                    onOpenPlanningSession={onOpenPlanningSession}
+                  />
                   <MailboxArtifactAttachment
                     artifactId={msg.metadata?.artifactId}
                     artifactType={msg.metadata?.artifactType}
@@ -957,6 +965,7 @@ export function MailboxView({
                     projectId={projectId}
                     taskId={msg.metadata?.taskId}
                     onOpenTask={onOpenTask}
+                    hideTaskLink={hasRelatedTaskLink(msg.metadata, onOpenTask)}
                   />
                   <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
@@ -977,6 +986,11 @@ export function MailboxView({
               className="mailbox-message-body"
               testId="mailbox-message-body"
             />
+            <MailboxRelatedWorkLink
+              metadata={selectedMessage.metadata}
+              onOpenTask={onOpenTask}
+              onOpenPlanningSession={onOpenPlanningSession}
+            />
             <MailboxArtifactAttachment
               artifactId={selectedMessage.metadata?.artifactId}
               artifactType={selectedMessage.metadata?.artifactType}
@@ -985,6 +999,7 @@ export function MailboxView({
               projectId={projectId}
               taskId={selectedMessage.metadata?.taskId}
               onOpenTask={onOpenTask}
+              hideTaskLink={hasRelatedTaskLink(selectedMessage.metadata, onOpenTask)}
             />
             <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
             <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />

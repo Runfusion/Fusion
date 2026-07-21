@@ -45,11 +45,24 @@ describe("report scrub", () => {
     expect(scrubReportPayload({ summary: "", context: undefined }, context)).toEqual({ summary: "", context: undefined });
   });
 
-  it("scrubs activity trace text and does not exempt arbitrary data URLs", () => {
+  /*
+   * FNXC:ReportPipeline 2026-07-19-20:45:
+   * Activity labels are intentionally unsanitized in the local ring buffer.
+   * Recursive report scrubbing must redact every nested trace egress field.
+   */
+  it("scrubs nested activity traces and does not exempt arbitrary data URLs", () => {
     const screenshot = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=";
-    const result = scrubReportPayload({ context: { activityTrace: ["private-project /Users/alice/work/acme-private ghp_abcdefghijk1234567890"] }, body: `Pasted ${screenshot}` }, context);
-    expect(JSON.stringify(result.context?.activityTrace)).not.toMatch(/\/Users\/alice|ghp_/);
+    const result = scrubReportPayload({
+      context: { activityTrace: [{ ts: "2026-07-19", kind: "tool", label: "acme-private /Users/alice/work/acme-private ghp_abcdefghijk1234567890 sk-abcdefghijklmnopqrstuvwxyz" }] },
+      body: `Pasted ${screenshot}`,
+    }, context);
+    expect(JSON.stringify(result.context?.activityTrace)).not.toMatch(/acme-private|\/Users\/alice|ghp_|sk-/);
     expect(result.body).toBe("Pasted [REDACTED_BINARY]");
+  });
+
+  it("preserves empty or undefined activity trace values without throwing", () => {
+    expect(scrubReportPayload({ context: { activityTrace: [] } }, context)).toEqual({ context: { activityTrace: [] } });
+    expect(scrubReportPayload({ context: { activityTrace: undefined } }, context)).toEqual({ context: { activityTrace: undefined } });
   });
 
 });

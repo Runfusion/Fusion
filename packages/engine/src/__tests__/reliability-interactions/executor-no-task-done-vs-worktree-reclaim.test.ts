@@ -3,9 +3,20 @@ import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { mockedCreateFnAgent, createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
 
+/*
+FNXC:EngineTests 2026-07-19-16:20 (U10b):
+These are EXECUTE-SESSION reliability tests: the subject is the no-`fn_task_done` retry loop and
+its interaction with a reclaimed worktree, not the review gates. Declare no optional pre-merge
+gates on the row so the workflow graph does not insert a Plan Review agent session ahead of the
+implementation session — otherwise the per-call `mockResolvedValueOnce`/`mockRejectedValueOnce`
+programming below lands on the reviewer instead of the implementation attempt it describes.
+The graph re-reads the row rather than trusting the object passed to `execute()`, so this must be
+on what `store.getTask` returns.
+*/
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
     id: "FN-4601",
+    enabledWorkflowSteps: [] as string[],
     title: "Test",
     description: "Test task",
     column: "in-progress",
@@ -48,6 +59,16 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       if (getTaskCalls >= 2) {
         state.worktree = null;
         state.branch = null;
+        /*
+        FNXC:EngineTests 2026-07-19-15:35 (U10b):
+        Route the simulated reclaim through the mock store's write log, not only through this
+        captured literal. The shared harness replays the executor's own `updateTask` patches over
+        a per-file `getTask` result (they are the later writes), so mutating the literal alone was
+        silently overwritten by the executor's earlier worktree write and the reclaim never fired.
+        `_setRow` records the "worktree vanished" mutation in the same log without adding an
+        `updateTask` call, which the assertions below check negatively.
+        */
+        store._setRow("FN-4601", { worktree: null, branch: null });
       }
       return { ...state };
     });
@@ -148,6 +169,16 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       if (getTaskCalls >= 2) {
         state.worktree = null;
         state.branch = null;
+        /*
+        FNXC:EngineTests 2026-07-19-15:35 (U10b):
+        Route the simulated reclaim through the mock store's write log, not only through this
+        captured literal. The shared harness replays the executor's own `updateTask` patches over
+        a per-file `getTask` result (they are the later writes), so mutating the literal alone was
+        silently overwritten by the executor's earlier worktree write and the reclaim never fired.
+        `_setRow` records the "worktree vanished" mutation in the same log without adding an
+        `updateTask` call, which the assertions below check negatively.
+        */
+        store._setRow("FN-4601", { worktree: null, branch: null });
       }
       return { ...state };
     });

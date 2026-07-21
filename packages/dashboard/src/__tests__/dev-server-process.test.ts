@@ -1,303 +1,200 @@
 // @vitest-environment node
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import os from "node:os";
-import { join } from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
-import { DevServerProcessManager } from "../dev-server-process.js";
-import { loadDevServerStore, resetDevServerStore } from "../dev-server-store.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DevServerProcessManager, type DevServerProcessManagerOptions } from "../dev-server-process.js";
+import type { DevServerState, DevServerStore } from "../dev-server-store.js";
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error("Timed out waiting for condition");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+/*
+FNXC:DevServerProcessTests 2026-07-19-18:45:
+FN-8394 replaces the quarantined real-shell test with an injected child-process
+and timer seam. The test still guards lifecycle behavior, while shard load cannot
+starve a real process, filesystem store, stdout race, or fallback network probe.
+*/
+
+class MemoryDevServerStore {
+  private state: DevServerState = {
+    id: "",
+    name: "default",
+    status: "stopped",
+    command: "",
+    cwd: "",
+    logHistory: [],
+  };
+
+  getState(): DevServerState {
+    return { ...this.state, logHistory: [...this.state.logHistory] };
+  }
+
+  async updateState(partial: Partial<DevServerState>): Promise<DevServerState> {
+    this.state = { ...this.state, ...partial, logHistory: partial.logHistory ?? this.state.logHistory };
+    return this.getState();
+  }
+
+  async appendLog(line: string): Promise<void> {
+    this.state.logHistory.push(line);
   }
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+class FakeChildProcess extends EventEmitter {
+  pid = 42;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  stdout = new PassThrough();
+  stderr = new PassThrough();
+
+  close(code = 0): void {
+    this.exitCode = code;
+    this.emit("close", code);
   }
 }
 
-type DevServerProcessManagerInternals = {
-  childProcess: ChildProcess | null;
-  handleFailure(error: Error): Promise<void>;
-};
+function createFixture(options?: { closeOnSignal?: NodeJS.Signals[]; stopTimeoutMs?: number }) {
+  const store = new MemoryDevServerStore();
+  const children: FakeChildProcess[] = [];
+  const signals: NodeJS.Signals[] = [];
+  const closeOnSignal = options?.closeOnSignal ?? ["SIGTERM"];
+  const managerOptions: DevServerProcessManagerOptions = {
+    probeDelayMs: 10_000,
+    stopTimeoutMs: options?.stopTimeoutMs,
+    spawn: (() => {
+      const child = new FakeChildProcess();
+      children.push(child);
+      return { child: child as unknown as ChildProcess };
+    }) as DevServerProcessManagerOptions["spawn"],
+    killManagedProcess: (child, signal) => {
+      signals.push(signal);
+      if (closeOnSignal.includes(signal)) {
+        (child as unknown as FakeChildProcess).close();
+      }
+    },
+  };
+  return { store, children, signals, manager: new DevServerProcessManager(store as unknown as DevServerStore, managerOptions) };
+}
+
+async function settleLifecycleWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("DevServerProcessManager", () => {
-  const tempDirs: string[] = [];
-  const managers: DevServerProcessManager[] = [];
-
-  afterEach(async () => {
-    for (const manager of managers.splice(0)) {
-      try {
-        if (manager.isRunning()) {
-          await manager.stop();
-        }
-      } catch {
-        // ignore
-      }
-      manager.cleanup();
-    }
-
-    for (const dir of tempDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
-    }
-
-    resetDevServerStore();
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  async function createManager(options?: { stopTimeoutMs?: number; probeDelayMs?: number; probeTimeoutMs?: number }) {
-    const root = mkdtempSync(join(os.tmpdir(), "fn-dev-process-"));
-    tempDirs.push(root);
-    const store = await loadDevServerStore(root);
-    const manager = new DevServerProcessManager(store, options);
-    managers.push(manager);
-    return { root, store, manager };
-  }
+  it("rejects invalid commands and duplicate starts before spawning another child", async () => {
+    const { children, manager } = createFixture();
 
-  it("start() spawns child process and updates state to running", async () => {
-    const { root, manager } = await createManager();
-    const state = await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
+    await expect(manager.start("   ", "/repo")).rejects.toThrow("command is required");
+    await expect(manager.start("echo $(unsafe)", "/repo")).rejects.toThrow("command substitution");
+    await expect(manager.start("pnpm dev", " ")).rejects.toThrow("cwd is required");
+    expect(children).toHaveLength(0);
 
-    expect(state.status).toBe("running");
-    expect(typeof state.pid).toBe("number");
+    await manager.start("pnpm dev", "/repo");
+    await expect(manager.start("pnpm dev", "/repo")).rejects.toThrow("already running");
+    expect(children).toHaveLength(1);
+    manager.cleanup();
   });
 
-  it("start() emits started event", async () => {
-    const { root, manager } = await createManager();
+  it("starts an injected child, persists output, and detects its announced URL once", async () => {
+    const { children, manager, store } = createFixture();
+    const detected: unknown[] = [];
+    manager.on("url-detected", (event) => detected.push(event));
 
-    const startedEvent = new Promise<void>((resolve) => {
-      manager.once("started", () => resolve());
-    });
+    const state = await manager.start("pnpm dev", "/repo", { scriptId: "dev" });
+    children[0].stdout.write("ready at http://localhost:4321\nready again at http://localhost:4321\n");
+    await settleLifecycleWork();
 
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
-    await startedEvent;
+    expect(state).toMatchObject({ status: "running", pid: 42, scriptId: "dev" });
+    expect(store.getState()).toMatchObject({ detectedUrl: "http://localhost:4321", detectedPort: 4321 });
+    expect(store.getState().logHistory).toEqual([
+      "ready at http://localhost:4321",
+      "ready again at http://localhost:4321",
+    ]);
+    expect(detected).toHaveLength(1);
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+    manager.cleanup();
   });
 
-  it("start() captures stdout into log buffer", async () => {
-    const { root, store, manager } = await createManager();
+  it.each([
+    ["http://127.0.0.1:4173", "http://127.0.0.1:4173", 4173],
+    ["Listening on port 5173", "http://localhost:5173", 5173],
+  ])("detects alternate announced URL format %s", async (line, detectedUrl, detectedPort) => {
+    const { children, manager, store } = createFixture();
 
-    await manager.start("node -e \"console.log('hello from stdout');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
+    await manager.start("pnpm dev", "/repo");
+    children[0].stdout.write(`${line}\n`);
+    await settleLifecycleWork();
 
-    await waitFor(() => store.getState().logHistory.some((line) => line.includes("hello from stdout")));
-
-    expect(store.getState().logHistory.some((line) => line.includes("hello from stdout"))).toBe(true);
+    expect(store.getState()).toMatchObject({ detectedUrl, detectedPort });
+    manager.cleanup();
   });
 
-  it("start() throws if already running", async () => {
-    const { root, manager } = await createManager();
+  it("stops through the injected process-tree signal and clears the fallback timer", async () => {
+    const { manager, signals, store } = createFixture();
+    await manager.start("pnpm dev", "/repo");
+    expect(manager.hasPendingProbeTimer()).toBe(true);
 
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
-    await expect(manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root)).rejects.toThrow("already running");
-  });
+    const stopped = await manager.stop();
 
-  it("start() throws if command is empty", async () => {
-    const { root, manager } = await createManager();
-    await expect(manager.start("   ", root)).rejects.toThrow("command is required");
-  });
-
-  it("stop() sends SIGTERM and waits for exit", async () => {
-    const { root, store, manager } = await createManager();
-
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
-    const state = await manager.stop();
-
-    expect(state.status).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(stopped.status).toBe("stopped");
     expect(store.getState().status).toBe("stopped");
-    expect(store.getState().exitCode).toBeDefined();
+    expect(manager.hasPendingProbeTimer()).toBe(false);
   });
 
-  it("stop() terminates the shell-launched child process tree", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
+  it("returns the current state without signaling when no child is running", async () => {
+    const { manager, signals, store } = createFixture();
 
-    const { root, manager } = await createManager();
-    const childPidFile = join(root, "managed-child.pid");
-
-    await manager.start(
-      `node -e "require('node:fs').writeFileSync('${childPidFile}', String(process.pid));process.stdin.resume();process.stdin.on('end',()=>process.exit(0))"`,
-      root,
-    );
-
-    await waitFor(() => {
-      try {
-        return Number.parseInt(readFileSync(childPidFile, "utf8").trim(), 10) > 0;
-      } catch {
-        return false;
-      }
-    });
-
-    const managedChildPid = Number.parseInt(readFileSync(childPidFile, "utf8").trim(), 10);
-    expect(isProcessAlive(managedChildPid)).toBe(true);
-
-    await manager.stop();
-
-    await waitFor(() => !isProcessAlive(managedChildPid));
+    await expect(manager.stop()).resolves.toEqual(store.getState());
+    expect(signals).toEqual([]);
   });
 
-  it("stop() falls back to SIGKILL after timeout", async () => {
-    const { root, store, manager } = await createManager({ stopTimeoutMs: 150 });
+  it("falls back to SIGKILL when the injected child ignores SIGTERM", async () => {
+    vi.useFakeTimers();
+    const { manager, signals, store } = createFixture({ closeOnSignal: ["SIGKILL"], stopTimeoutMs: 25 });
+    await manager.start("pnpm dev", "/repo");
 
-    await manager.start(
-      "node -e \"process.on('SIGTERM', () => {});process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
-      root,
-    );
+    const stopped = manager.stop();
+    await vi.advanceTimersByTimeAsync(25);
 
-    const state = await manager.stop();
-    expect(state.status).toBe("stopped");
+    await expect(stopped).resolves.toMatchObject({ status: "stopped" });
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(store.getState().status).toBe("stopped");
   });
 
-  it("stop() returns current state if nothing is running", async () => {
-    const { store, manager } = await createManager();
-
-    const state = await manager.stop();
-    expect(state).toEqual(store.getState());
-  });
-
-  it("restart() stops then starts with same command", async () => {
-    const { root, store, manager } = await createManager();
-
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root, { scriptId: "dev" });
-    const firstPid = store.getState().pid;
-
-    const state = await manager.restart();
-    expect(state.status).toBe("running");
-    expect(state.pid).toBeDefined();
-    expect(state.scriptId).toBe("dev");
-    expect(state.pid).not.toBe(firstPid);
-  });
-
-  it("detects URL from localhost output", async () => {
-    const { root, store, manager } = await createManager();
-
-    await manager.start(
-      "node -e \"console.log('Server ready at http://localhost:3000');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
-      root,
-    );
-
-    await waitFor(() => store.getState().detectedUrl === "http://localhost:3000");
-    expect(store.getState().detectedPort).toBe(3000);
-  });
-
-  it("detects URL from 127.0.0.1 output", async () => {
-    const { root, store, manager } = await createManager();
-
-    await manager.start(
-      "node -e \"console.log('ready at http://127.0.0.1:4173');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
-      root,
-    );
-
-    await waitFor(() => store.getState().detectedUrl === "http://127.0.0.1:4173");
-    expect(store.getState().detectedPort).toBe(4173);
-  });
-
-  it("detects URL from keyword plus port pattern", async () => {
-    const { root, store, manager } = await createManager();
-
-    await manager.start(
-      "node -e \"console.log('Listening on port 5173');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
-      root,
-    );
-
-    await waitFor(() => store.getState().detectedUrl === "http://localhost:5173");
-    expect(store.getState().detectedPort).toBe(5173);
-  });
-
-  it("schedules fallback probing after startup when no URL is announced", async () => {
-    const { root, manager } = await createManager({ probeDelayMs: 25, probeTimeoutMs: 5 });
-
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
-
-    expect(manager.hasPendingProbeTimer()).toBe(true);
-    await waitFor(() => manager.hasPendingProbeTimer() === false, 3_000);
-  });
-
-  it("clears fallback probe timer when URL is detected from logs", async () => {
-    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
-    const detectedEvents: unknown[] = [];
-    manager.on("url-detected", (payload) => detectedEvents.push(payload));
-
-    await manager.start(
-      "node -e \"console.log('ready at http://localhost:4321');console.log('ready again at http://localhost:4321');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
-      root,
-    );
-
-    await waitFor(() => store.getState().detectedPort === 4321);
+  it("clears the fallback timer on child failure and creates a fresh child on restart", async () => {
+    const { children, manager } = createFixture();
+    await manager.start("pnpm dev", "/repo", { scriptId: "dev" });
+    children[0].emit("error", new Error("synthetic failure"));
+    await settleLifecycleWork();
     expect(manager.hasPendingProbeTimer()).toBe(false);
-    expect(detectedEvents).toHaveLength(1);
-  });
 
-  it("clears fallback probe timer on stop", async () => {
-    const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+    await manager.start("pnpm dev", "/repo", { scriptId: "dev" });
+    const restarted = await manager.restart();
 
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
+    expect(children).toHaveLength(3);
+    expect(restarted).toMatchObject({ status: "running", scriptId: "dev" });
     expect(manager.hasPendingProbeTimer()).toBe(true);
-
-    await manager.stop();
-
+    manager.cleanup();
     expect(manager.hasPendingProbeTimer()).toBe(false);
   });
 
-  it("clears fallback probe timer when process exits naturally", async () => {
-    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
-
-    await manager.start("node -e \"setTimeout(() => process.exit(0), 20)\"", root);
-    expect(manager.hasPendingProbeTimer()).toBe(true);
-
-    await waitFor(() => store.getState().status === "stopped");
-
-    expect(manager.hasPendingProbeTimer()).toBe(false);
-  });
-
-  it("clears fallback probe timer when the child process reports failure", async () => {
-    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
-
-    await manager.start("node -e \"setTimeout(() => process.exit(0), 50)\"", root);
-    expect(manager.hasPendingProbeTimer()).toBe(true);
-
-    const internals = manager as unknown as DevServerProcessManagerInternals;
-    internals.childProcess?.emit("error", new Error("synthetic process failure"));
-
-    await waitFor(() => store.getState().status === "failed");
-
-    expect(manager.hasPendingProbeTimer()).toBe(false);
-  });
-
-  it("restarts with a fresh fallback probe timer", async () => {
-    const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
-
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root, { scriptId: "dev" });
-    expect(manager.hasPendingProbeTimer()).toBe(true);
-
-    await manager.restart();
-
-    expect(manager.hasPendingProbeTimer()).toBe(true);
-    await manager.stop();
-    expect(manager.hasPendingProbeTimer()).toBe(false);
-  });
-
-  it("cleanup() kills process and clears listeners", async () => {
-    const { root, manager } = await createManager();
-
-    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
+  it("cleanup removes manager and child stream listeners without leaving a timer", async () => {
+    const { children, manager } = createFixture();
+    await manager.start("pnpm dev", "/repo");
     manager.on("output", () => undefined);
     expect(manager.listenerCount("output")).toBeGreaterThan(0);
+    expect(children[0].stdout.listenerCount("data")).toBeGreaterThan(0);
 
     manager.cleanup();
-    await waitFor(() => manager.isRunning() === false);
 
-    expect(manager.hasPendingProbeTimer()).toBe(false);
     expect(manager.listenerCount("output")).toBe(0);
+    expect(children[0].stdout.listenerCount("data")).toBe(0);
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+    expect(manager.isRunning()).toBe(false);
   });
 });

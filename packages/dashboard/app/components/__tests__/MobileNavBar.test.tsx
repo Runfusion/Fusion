@@ -782,7 +782,28 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-more-item-command-center")).toBeNull();
   });
 
-  it("suppresses legacy roadmaps entries when roadmap plugin view is registered", () => {
+  it("removes Compound Engineering from More after disable and uninstall without creating a primary tab", () => {
+    const props = createDefaultProps();
+    const compoundEngineeringView = [{
+      pluginId: "fusion-plugin-compound-engineering",
+      view: { viewId: "compound-engineering", label: "Compound Engineering", componentPath: "./CompoundEngineeringView", icon: "Boxes", placement: "primary" as const, order: 36 },
+    }];
+    const testId = "mobile-more-item-plugin-fusion-plugin-compound-engineering-compound-engineering";
+    const rendered = render(<MobileNavBar {...props} pluginDashboardViews={compoundEngineeringView} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId(testId)).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-compound-engineering-compound-engineering")).toBeNull();
+
+    rendered.rerender(<MobileNavBar {...props} pluginDashboardViews={[]} />);
+    expect(screen.queryByTestId(testId)).toBeNull();
+    rendered.rerender(<MobileNavBar {...props} pluginDashboardViews={compoundEngineeringView} />);
+    expect(screen.getByTestId(testId)).toBeInTheDocument();
+    rendered.rerender(<MobileNavBar {...props} pluginDashboardViews={[]} />);
+    expect(screen.queryByTestId(testId)).toBeNull();
+  });
+
+  it("renders the hosted roadmaps plugin entry when roadmap plugin view is registered", () => {
     render(
       <MobileNavBar
         {...createDefaultProps()}
@@ -798,7 +819,7 @@ describe("MobileNavBar", () => {
 
     expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    expect(screen.queryByTestId("mobile-more-item-roadmaps")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-roadmap-roadmaps")).toBeInTheDocument();
   });
 
   it("shows insights in more sheet when experimentalFeatures.insights is true", () => {

@@ -253,6 +253,22 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/@media \(max-width: 640px\)\s*\{[^}]*\.detail-meta-inline-controls\s*\{[^}]*flex-direction:\s*column;/);
     });
 
+    it("scopes tokenized SVG sizing to every inline-row descendant without changing breakpoint scaffolding", () => {
+      const css = readDashboardStylesSource();
+      const tabletBlock = getCssAtRuleBlockContaining(css, "@media (min-width: 769px) and (max-width: 1024px)", ".modal.task-detail-modal");
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-meta-inline-controls");
+      const rowSvgBlock = getExactCssRuleBlock(css, ".detail-meta-inline-controls svg");
+
+      // FNXC:TaskDetailModalResponsive 2026-07-19-12:00: Source guards preserve
+      // the scoped token contract; Blink smoke separately proves computed sizes.
+      expect(rowSvgBlock).toContain("width: var(--icon-size-sm);");
+      expect(rowSvgBlock).toContain("height: var(--icon-size-sm);");
+      expect(rowSvgBlock).toContain("flex-shrink: 0;");
+      expect(css).not.toMatch(/\.detail-meta-inline-controls svg\s*\{[^}]*width:\s*1em/);
+      expect(tabletBlock).not.toBe("");
+      expect(mobileBlock).toMatch(/\.detail-meta-inline-controls\s*\{[^}]*flex-wrap:\s*wrap;/);
+    });
+
     it("gives every task-detail inline action the shared square tokenized box across themes (FN-8287)", () => {
       const css = readDashboardStylesSource();
       const sharedSizingSelector = [
@@ -275,6 +291,19 @@ describe("TaskDetailModal", () => {
       expect(sharedSizingBlock).toContain("border-width: var(--btn-border-width);");
       expect(sharedSizingBlock).toContain("border-color: var(--border);");
       expect(sharedSizingBlock).toContain("border-radius: var(--detail-control-border-radius);");
+
+      const inlineControlsBlock = getStandaloneCssRuleBlock(css, ".detail-meta-inline-controls");
+      const tabletBlock = getCssAtRuleBlockContaining(css, "@media (min-width: 769px) and (max-width: 1024px)", ".modal.task-detail-modal");
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-meta-inline-controls");
+      const mobileInlineControlsBlock = getCssRuleBlock(mobileBlock, ".detail-meta-inline-controls");
+
+      // FNXC:QuickAddActionRow 2026-07-20-12:00: Equal boxes are insufficient:
+      // desktop and tablet must use Quick Add's compact token, while mobile
+      // deliberately upgrades the same shared alias to its touch-floor token.
+      expect(inlineControlsBlock).toContain("--detail-priority-control-min-height: var(--quick-entry-action-row-height-desktop);");
+      expect(inlineControlsBlock).not.toContain("calc(var(--space-lg) + var(--space-lg) + var(--space-xs))");
+      expect(tabletBlock).not.toMatch(/\.detail-(?:oversight-menu-trigger|execution-mode-toggle)\s*\{[^}]*?(?:height|min-height|width|min-width):/);
+      expect(mobileInlineControlsBlock).toContain("--detail-priority-control-min-height: var(--quick-entry-action-row-height-mobile);");
     });
 
     it.skip("unifies border/radius/height across the Priority, Execution-mode, and Oversight quick controls (FN-7585)", () => {

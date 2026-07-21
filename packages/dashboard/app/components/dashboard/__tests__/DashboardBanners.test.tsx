@@ -30,7 +30,9 @@ vi.mock("../../PostOnboardingRecommendations", () => ({ PostOnboardingRecommenda
 vi.mock("../../UpdateAvailableBanner", () => ({ UpdateAvailableBanner: () => null }));
 vi.mock("../../MergeAdvanceNotice", () => ({ default: () => null }));
 vi.mock("../../TaskIdIntegrityBanner", () => ({ TaskIdIntegrityBanner: () => null }));
-vi.mock("../../DbCorruptionBanner", () => ({ DbCorruptionBanner: () => null }));
+vi.mock("../../DbCorruptionBanner", () => ({
+  DbCorruptionBanner: () => <section data-testid="database-health-banner" />,
+}));
 vi.mock("../../SetupWarningBanner", () => ({
   SetupWarningBanner: ({
     hasAiProvider,
@@ -64,7 +66,42 @@ vi.mock("../../ApprovalNotificationBanner", () => ({
 }));
 vi.mock("../../GitHubStarPrompt", () => ({ GitHubStarPrompt: () => null }));
 
-import { DashboardBanners } from "../DashboardBanners";
+import { DashboardBanners, isMigrationStatusBannerActive } from "../DashboardBanners";
+
+describe("isMigrationStatusBannerActive", () => {
+  it("covers boot progress and durable failed/running health without false positives", () => {
+    expect(isMigrationStatusBannerActive({ status: "migrating" } as any)).toBe(true);
+    expect(isMigrationStatusBannerActive({ status: "degraded", migration: { active: false, durableStatus: "failed" } } as any)).toBe(true);
+    expect(isMigrationStatusBannerActive({ status: "degraded", migration: { active: false, durableStatus: "running" } } as any)).toBe(true);
+    expect(isMigrationStatusBannerActive({ status: "ok", migration: { active: false } } as any)).toBe(false);
+    expect(isMigrationStatusBannerActive(undefined)).toBe(false);
+  });
+});
+
+describe("DashboardBanners database health visibility", () => {
+  it("renders degraded PostgreSQL health without claiming corruption", () => {
+    render(
+      <DashboardBanners
+        {...buildProps({
+          sessionsNeedingInput: [],
+          dashboardHealth: {
+            status: "degraded",
+            engine: { available: true },
+            database: {
+              healthy: false,
+              corruptionDetected: false,
+              corruptionErrors: ["PostgreSQL health layer unavailable"],
+              lastCheckedAt: null,
+            },
+            taskIdIntegrity: { status: "error", anomalies: [] },
+          } as DashboardBannersProps["dashboardHealth"],
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("database-health-banner")).toBeInTheDocument();
+  });
+});
 
 function buildSession(overrides: Partial<AiSessionSummary> = {}): AiSessionSummary {
   return {

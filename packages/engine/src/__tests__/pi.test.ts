@@ -130,6 +130,22 @@ describe("describeModel", () => {
     expect(describeModel(fakeSession)).toBe("anthropic/claude-sonnet-4-5");
   });
 
+  it("uses ACP lastModelDescription for string-shaped Grok sessions", () => {
+    const fakeSession = {
+      model: "grok-4.5",
+      lastModelDescription: "grok/grok-4.5",
+    } as unknown as AgentSession;
+
+    expect(describeModel(fakeSession)).toBe("grok/grok-4.5");
+    expect(formatModelMarkerDetails(describeModel(fakeSession), "low")).toBe(
+      "grok/grok-4.5 (thinking effort: low)",
+    );
+  });
+
+  it("uses a string model when ACP did not supply a description", () => {
+    expect(describeModel({ model: "claude/sonnet" } as unknown as AgentSession)).toBe("claude/sonnet");
+  });
+
   it('returns "unknown model" when session model is undefined', () => {
     const fakeSession = {
       model: undefined,

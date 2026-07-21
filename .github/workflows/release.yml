@@ -194,7 +194,10 @@ jobs:
         # Use `exec electron-builder` rather than the `dist:win` script: pnpm leaks
         # the `--` separator into script args (electron-builder then stops parsing
         # at `--` and ignores `--publish never`, auto-publishing to the wrong repo).
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --publish never
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags (v*-beta.N) build with
+        # publish.channel=beta so electron-builder emits beta*.yml update manifests;
+        # beta-channel desktop installs read those, stable installs keep latest*.yml.
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -226,6 +229,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-win-*.exe.sha256
             packages/desktop/dist-electron/Fusion-*-win-*.exe.blockmap
             packages/desktop/dist-electron/latest.yml
+            packages/desktop/dist-electron/beta.yml
 
   # ── Build macOS desktop artifacts ────────────────────────────────────
   build-desktop-macos:
@@ -252,7 +256,8 @@ jobs:
 
       - name: Package signed macOS desktop DMG/ZIP
         if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' }}
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags emit beta*.yml manifests (see Windows leg).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -265,7 +270,7 @@ jobs:
 
       - name: Package unsigned macOS desktop DMG/ZIP
         if: ${{ env.APPLE_CERTIFICATE_BASE64 == '' }}
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never -c.mac.notarize=false
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never -c.mac.notarize=false ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -330,6 +335,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-mac-*.zip.sha256
             packages/desktop/dist-electron/Fusion-*-mac-*.blockmap
             packages/desktop/dist-electron/latest-mac.yml
+            packages/desktop/dist-electron/beta-mac.yml
 
   # ── Build Linux desktop artifacts ────────────────────────────────────
   build-desktop-linux:
@@ -356,7 +362,8 @@ jobs:
 
       - name: Package Linux desktop artifacts
         # Linux desktop code-signing is deferred to FN-5605; Linux ARM64 CLI binaries are tracked in FN-5606.
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --linux --x64 --arm64 --publish never
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags emit beta*.yml manifests (see Windows leg).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --linux --x64 --arm64 --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -425,6 +432,7 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.sha256
             packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.asc
             packages/desktop/dist-electron/latest-linux.yml
+            packages/desktop/dist-electron/beta-linux.yml
 
 
   # ── Build Android APK/AAB artifacts ──────────────────────────────────
@@ -619,7 +627,7 @@ jobs:
           # The self-contained fn-cli-<platform>.tar.gz (+ .sha256) matches the
           # existing *.tar.gz globs and reaches the release alongside the bare
           # fn-cli-* binaries.
-          find artifacts \( -path "*/runtime/*" -o -path "*/migrations/*" \) -prune -o -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.apk" -o -name "*.aab" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" \) -print -exec cp {} release-files/ \;
+          find artifacts \( -path "*/runtime/*" -o -path "*/migrations/*" \) -prune -o -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.apk" -o -name "*.aab" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" -o -name "beta*.yml" \) -print -exec cp {} release-files/ \;
           ls -la release-files/
           count=$(find release-files -type f | wc -l | tr -d ' ')
           echo "count=$count" >> "$GITHUB_OUTPUT"
@@ -660,10 +668,17 @@ jobs:
           ")
           echo "$NOTES" > /tmp/release-notes.md
 
+      # FNXC:UpdateChannels 2026-07-19-13:30:
+      # Beta tags (vX.Y.Z-beta.N, cut from main by `pnpm release --channel beta`)
+      # must be GitHub PRERELEASES: the desktop stable auto-updater and the
+      # /releases/latest URL follow the "latest" release, which GitHub only
+      # assigns to non-prerelease releases. The tag name is the single source
+      # of truth so tag-push-triggered binary builds do the right thing.
       - name: Create GitHub Release
         if: ${{ steps.collect.outputs.count != '0' }}
         uses: softprops/action-gh-release@v2
         with:
           body_path: /tmp/release-notes.md
           fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-beta') }}
           files: release-files/*

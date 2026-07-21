@@ -22,7 +22,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
-import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
 import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
@@ -69,9 +69,9 @@ type SortField = "title" | "status" | "column" | "retries";
 FNXC:MergeQueue 2026-07-15-10:45:
 List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
 */
-function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
+function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string): string {
   if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
-  return getTaskStatusBadgeLabel(status, t);
+  return getTaskStatusBadgeLabel(status, t, workflowStepLabel);
 }
 type SortDirection = "asc" | "desc";
 
@@ -2743,7 +2743,7 @@ export function ListView({
                                       ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                                       : isTransientPlannerActive
                                         ? t("tasks.statusPlanning", "Planning")
-                                        : getTaskStatusLabel(visualStatus ?? "", t)}
+                                        : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
                                   </span>
                                 ) : null}
                                 {planReviewRunning && isAgentActive && (
@@ -2976,7 +2976,7 @@ export function ListView({
                                           ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                                           : isTransientPlannerActive
                                             ? t("tasks.statusPlanning", "Planning")
-                                            : getTaskStatusLabel(visualStatus ?? "", t)}
+                                            : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>

@@ -33,7 +33,8 @@ export interface DashboardHealthResponse {
   "starting") and this progress snapshot — and OMITS engine/database/
   taskIdIntegrity. Consumers of those fields must optional-chain (the
   DashboardBanners gates already do) so boot-window polls don't fire the
-  engine/db-corruption banners. The real server never sets `migration`.
+  engine/db-corruption banners. After real listen, durable incomplete migration
+  status is attached so the cutover banner remains visible while degraded.
   */
   holding?: boolean;
   migration?: {
@@ -45,6 +46,10 @@ export interface DashboardHealthResponse {
     tableCount?: number;
     processedRows?: number;
     sourceRows?: number;
+    durableStatus?: "running" | "failed";
+    lastError?: string | null;
+    migrationKey?: string;
+    updatedAt?: string;
   };
   engine?: {
     available: boolean;

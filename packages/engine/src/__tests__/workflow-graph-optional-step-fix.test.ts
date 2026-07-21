@@ -178,6 +178,44 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
   });
 
+  it("does not hard-cancel the graph that performs its own Plan Review replan move", async () => {
+    const store = createMockStore();
+    const liveTask = task({ postReviewFixCount: 0, column: "in-progress", status: null });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const abortSpy = vi
+      .spyOn(executor as any, "awaitAbortInFlightTaskWork")
+      .mockResolvedValue(undefined);
+    store.moveTask.mockImplementation(async (_taskId: string, column: string) => {
+      await (store as any)._triggerAsync("task:moved", {
+        task: { ...liveTask, column },
+        from: "in-progress",
+        to: column,
+        source: "engine",
+      });
+      return { ...liveTask, column };
+    });
+
+    (executor as any).graphRouting.add(liveTask.id);
+    try {
+      await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+        stepName: "Plan Review",
+        feedback: "PROMPT.md needs a revision",
+        phase: "pre-merge" as const,
+        status: "failed" as const,
+        verdict: "REVISE",
+        nodeId: "plan-review",
+      });
+
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+      expect(abortSpy).not.toHaveBeenCalled();
+      expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
+    } finally {
+      (executor as any).graphRouting.delete(liveTask.id);
+    }
+  });
+
   it("honors Plan Review workflow-setting caps before automatic replan", async () => {
     const zeroStore = createMockStore();
     const zeroTask = task({ postReviewFixCount: 0, column: "in-progress" });
@@ -215,8 +253,21 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       verdict: "REVISE",
       nodeId: "plan-review",
       maxRevisions: "unbounded",
-    })).resolves.toBe(false);
+      /*
+      FNXC:PlanReviewReplanCap 2026-07-19-2d:10 (U3 / SHIP):
+      Cap-exhausted now returns TRUE, and true means "handled" — not "replanned". U3 re-owned the
+      cap park from the deleted triage gate, so instead of silently leaving the task in place
+      (the old `false`) the seam parks it awaiting-approval for a human. Asserting the park rather
+      than the bare boolean is what makes this test state the contract: the replan did NOT happen,
+      AND the task is now visibly waiting on a person.
+      */
+    })).resolves.toBe(true);
     expect(cappedStore.moveTask).not.toHaveBeenCalled();
+    expect(cappedStore.updateTask).toHaveBeenCalledWith(
+      "FN-7066",
+      expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+      undefined,
+    );
   });
 
   /*
@@ -268,15 +319,28 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       verdict: "REVISE",
       nodeId: "plan-review",
       maxRevisions: "unbounded",
-    })).resolves.toBe(false);
+      /*
+      FNXC:PlanReviewReplanCap 2026-07-19-2d:10 (U3 / SHIP):
+      Same U3 contract change as the finite-cap case above: the unbounded-default safety ceiling
+      parks awaiting-approval instead of leaving the task in place, so the seam reports handled.
+      The halt log moved with it — the escalation message names the cap and carries the reviewer's
+      last feedback, which is the operator-visible half of "leaves the task for a human".
+      */
+    })).resolves.toBe(true);
 
     // Halted: no replan side effects.
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 16 }, undefined);
-    // Loud, human-visible halt log.
+    // Parked for a person, with the distinct replan-cap reason.
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-7066",
+      expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+      undefined,
+    );
+    // Loud, human-visible halt log naming the cap and the last feedback.
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
-      expect.stringContaining("Plan Review replan safety cap reached (15/15)"),
+      expect.stringContaining("Plan Review replan cap reached"),
       expect.stringContaining("still disagreeing after fifteen tries"),
       undefined,
     );

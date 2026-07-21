@@ -110,11 +110,16 @@ describe("retryOnLock", () => {
  */
 describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found, and teardown (FN-7731)", () => {
   beforeEach(() => {
+    // FNXC:CliBoardMutation 2026-07-19-18:20: mcp-lock-retry installs a
+    // per-test @fusion/core factory. Clear it before importing task.js so
+    // concurrent CLI test files cannot supply its secrets-store double here.
+    vi.doUnmock("@fusion/core");
     vi.resetModules();
   });
 
   afterEach(() => {
     vi.doUnmock("../../project-context.js");
+    vi.doUnmock("@fusion/core");
     vi.restoreAllMocks();
     delete process.env.FUSION_CLI_LOCK_RETRY_MS;
   });
@@ -273,11 +278,16 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
 // wrapper around a fresh, uncached `TaskStore`).
 describe("FN-7734: generalized retry+teardown across representative fn task subcommands", () => {
   beforeEach(() => {
+    // FNXC:CliBoardMutation 2026-07-19-18:20: mcp-lock-retry installs a
+    // per-test @fusion/core factory. Clear it before importing task.js so
+    // concurrent CLI test files cannot supply its secrets-store double here.
+    vi.doUnmock("@fusion/core");
     vi.resetModules();
   });
 
   afterEach(() => {
     vi.doUnmock("../../project-context.js");
+    vi.doUnmock("@fusion/core");
     vi.restoreAllMocks();
     delete process.env.FUSION_CLI_LOCK_RETRY_MS;
   });

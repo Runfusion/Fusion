@@ -1306,6 +1306,7 @@
     "relativeTimeMinutes_one": "",
     "relativeTimeMinutes_other": "",
     "removeAttachment": "移除 {{name}}",
+    "recent": "最近",
     "rename": "",
     "renameConversationAria": "",
     "renameConversationBody": "",
@@ -1602,19 +1603,6 @@
         "confirmTitle": "匯入組織包？",
         "confirmMessage": "這會將預覽的設定套用到此專案。",
         "confirmApply": "匯入包"
-      },
-      "versions": {
-        "title": "設定版本",
-        "description": "還原任意已記錄的專案設定版本。",
-        "loading": "正在載入版本…",
-        "empty": "尚無設定版本。",
-        "loadError": "無法載入設定版本",
-        "rollback": "回滾",
-        "rollingBack": "正在回滾…",
-        "rollbackError": "無法回滾設定",
-        "confirmTitle": "回滾設定？",
-        "confirmMessage": "還原此版本？回滾會記錄為新版本。",
-        "confirmRollback": "回滾"
       }
     },
     "ecosystem": {
@@ -2009,12 +1997,12 @@
     "title": "專案儀表板"
   },
   "dbBanner": {
-    "body": "Fusion 的背景 SQLite 完整性檢查報告有損毀。繼續重要操作之前，請查看下面的失敗物件。",
-    "instructions": "備份專案，如果資料庫仍然可以乾淨地開啟，請嘗試 {{cmd}}，如果損毀仍然存在，請從已知的良好備份中恢復。有關儲存配置和恢復指導，請參閱 {{link}}。",
+    "body": "Fusion 的 PostgreSQL 健康檢查回報失敗。在繼續關鍵操作前，請檢查下方詳細資訊。",
+    "instructions": "請備份專案，檢查<cmd>資料庫記錄</cmd>以及 PostgreSQL 連線與權限，然後重新整理健康狀態。關於儲存與復原指南，請參閱 <docsLink>docs/storage.md</docsLink>。",
     "lastChecked": "上次檢查：{{checkedAtLabel}}",
     "refreshHealth": "重新整理健康狀態",
     "refreshing": "正在重新整理…",
-    "title": "偵測到資料庫損毀",
+    "title": "資料庫健康檢查失敗",
     "whatToDo": "該怎麼做："
   },
   "deepLink": {
@@ -4687,7 +4675,12 @@
     "usingDefault": "使用預設",
     "whatToBuild": "您想建構什麼？",
     "whatToBuildPlaceholder": "例如，建構一個包含登入、註冊和密碼重設的使用者驗證系統...",
-    "agentClarification": ""
+    "agentClarification": "",
+    "nextQuestion": "下一個問題",
+    "answeredQuestions": "已回答的問題",
+    "runningPlan": "進行中的計畫",
+    "renameSession": "重新命名工作階段",
+    "editAnswer": "編輯 {{question}} 的回答"
   },
   "plugins": {
     "addItem": "新增項目",
@@ -5946,10 +5939,32 @@
       "ephemeralAgentTaskCreationPolicyDeny": "拒絕",
       "reportModeHelp": "應用內缺陷/回饋/想法/說明報告的提交方式。預設：draft-review（提交前由操作者審閱草稿）。",
       "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。",
+      "reportRoadmapDedupeEnabled": "Deduplicate reports against public roadmap",
+      "reportRoadmapDedupeEnabledHelp": "Match open, labeled roadmap issues before filing. Default: on.",
+      "reportRoadmapLabel": "Public roadmap label",
+      "reportRoadmapLabelHelp": "Open GitHub Issues with this label are considered roadmap items. Default: roadmap.",
+      "reportRoadmapRepo": "Public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "reviewArtifacts": "審查產物",
       "reviewArtifactsHint": "控制符合條件的未來任務是否產生審查交付物。面向使用者的報告與活動擷取保持獨立。預設：關閉。",
-      "reportRoadmapDedup": "提交報告前檢查路線圖",
-      "reportRoadmapDedupHelp": "啟用後，符合的路線圖功能會內嵌顯示，而不會建立另一個 GitHub Issue 或討論。預設：關閉。"
+      "reportRoadmapDedup": "Check roadmap before filing reports",
+      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
+      "reportTarget": "預設報告目標",
+      "reportTargetHelp": "可選的議題或討論目標。未設定時，回饋和說明使用討論，錯誤和想法使用議題。",
+      "reportTargetInherit": "保留操作預設目標",
+      "reportTargetIssue": "GitHub 議題",
+      "reportTargetDiscussion": "GitHub 討論",
+      "reportTargetOverride": {
+        "bug": "錯誤目標覆寫",
+        "feedback": "回饋目標覆寫",
+        "idea": "想法目標覆寫",
+        "help": "說明目標覆寫"
+      },
+      "reportDiscussionCategory": "討論分類",
+      "reportDiscussionCategoryHelp": "Required when filing to GitHub Discussions. Categories are loaded from the configured repository.",
+      "reportDiscussionCategorySelect": "選擇討論分類",
+      "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
+      "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5964,6 +5979,12 @@
       "frequency": "",
       "general": "",
       "globalDefaultTrackingRepo": "",
+      "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",
+      "reportRoadmapDedupeEnabledHelp": "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled).",
+      "reportRoadmapLabel": "Global public roadmap label",
+      "reportRoadmapLabelHelp": "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap).",
+      "reportRoadmapRepo": "Global public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "leaveBothThinkingTogglesOffToKeepThe": "",
       "manualOnlyNeverAutoCheck": "",
       "onStartupOncePerServerLaunch": "",
@@ -6315,7 +6336,8 @@
         "project": "特定於此專案"
       },
       "globalMcp": "MCP Servers · Global",
-      "mcp": "MCP Servers · Project"
+      "mcp": "MCP Servers · Project",
+      "configVersions": "設定版本"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6821,6 +6843,19 @@
       "embeddedConnectionCap": "內嵌 PostgreSQL 連線上限",
       "embeddedConnectionCapError": "請輸入 32 到 2,000 之間的值。",
       "advanced": "進階資料庫設定"
+    },
+    "configVersions": {
+      "title": "設定版本",
+      "description": "還原任意已記錄的專案設定版本。",
+      "loading": "正在載入版本…",
+      "empty": "尚無設定版本。",
+      "loadError": "無法載入設定版本",
+      "rollback": "回滾",
+      "rollingBack": "正在回滾…",
+      "rollbackError": "無法回滾設定",
+      "confirmTitle": "回滾設定？",
+      "confirmMessage": "還原此版本？回滾會記錄為新版本。",
+      "confirmRollback": "回滾"
     }
   },
   "setup": {
@@ -7920,7 +7955,7 @@
     },
     "tokenTotalsAria": "任務 Token 總計",
     "tokenUsage": "Token 使用量",
-    "totalExecutionTime": "總執行時間",
+    "totalExecutionTime": "總活躍時間",
     "totalTokens": "總計",
     "updateFailed": "更新 {{id}} 失敗：{{error}}",
     "updateSuccess": "已更新 {{id}}",
@@ -9141,6 +9176,13 @@
     "roadmapMatch": {
       "title": "已在路線圖中",
       "message": "此報告與已規劃的功能相符。"
-    }
+    },
+    "roadmapDuplicate": {
+      "title": "已在路線圖中 — 新增您的資料點？"
+    },
+    "targetLabel": "提交目標",
+    "targetInherit": "使用設定的操作目標",
+    "targetIssue": "GitHub 議題",
+    "targetDiscussion": "GitHub 討論"
   }
 }

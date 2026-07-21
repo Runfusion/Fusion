@@ -38,6 +38,25 @@ describe("compound engineering bundled agent-persona install", () => {
     }
   });
 
+  it("fails loudly when a published package omits all bundled persona defs", () => {
+    const missingSourceRoot = join(tmp, "missing-agents");
+
+    expect(() => installBundledCeAgents({
+      sourceRoot: missingSourceRoot,
+      targetRoot: join(tmp, ".fusion-ce-agents"),
+    })).toThrow(/bundled agent persona source.*missing/i);
+  });
+
+  it("fails loudly when the bundled persona directory is empty", () => {
+    const emptySourceRoot = join(tmp, "empty-agents");
+    mkdirSync(emptySourceRoot);
+
+    expect(() => installBundledCeAgents({
+      sourceRoot: emptySourceRoot,
+      targetRoot: join(tmp, ".fusion-ce-agents"),
+    })).toThrow(/contains no markdown definitions/i);
+  });
+
   it("is idempotent when the plugin-local install provenance is current", () => {
     const targetRoot = join(tmp, ".fusion-ce-agents");
     const first = installBundledCeAgents({ targetRoot });

@@ -33,6 +33,7 @@ import { and, Column, eq, is, isNull, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { isPostgresUniqueError } from "../postgres-errors.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
 import {
   TASK_COLUMN_DESCRIPTORS,
@@ -491,9 +492,5 @@ export function isTaskIdConflictError(error: unknown): boolean {
   if (/SQLITE_CONSTRAINT|UNIQUE constraint failed: tasks\.(id|proposalClaimId)|PRIMARY KEY constraint failed: tasks\.id/i.test(message)) {
     return true;
   }
-  // PostgreSQL unique_violation (23505). The code may be on the error directly
-  // (raw postgres.js) or on the `cause` (Drizzle wraps postgres errors).
-  const directCode = (error as { code?: string } | null)?.code;
-  const causeCode = (error as { cause?: { code?: string } } | null)?.cause?.code;
-  return directCode === "23505" || causeCode === "23505";
+  return isPostgresUniqueError(error);
 }

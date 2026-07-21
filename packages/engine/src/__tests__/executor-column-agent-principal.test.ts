@@ -260,7 +260,17 @@ describe("column-agent principal alignment (plan U5)", () => {
         experimentalFeatures: { workflowGraphExecutor: true, workflowColumns: true },
       } as any);
       store.listTasks.mockResolvedValue([task] as any);
+      /*
+      FNXC:EngineTests 2026-07-19-13:05 (U10b):
+      A task's workflow selection is resolved ASYNCHRONOUSLY when the store offers it
+      (`resolveWorkflowIrForTask` prefers `getTaskWorkflowSelectionAsync`, because backend-mode
+      selection is async and the sync fallback reports "no selection" and silently pins every task
+      to builtin:coding). Pass 2's column-agent match therefore has to be told which workflow the
+      task is on through BOTH accessors, or it resolves the default coding IR — which has no
+      column agent — and the re-dispatch assertion measures the wrong graph.
+      */
       store.getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId: "wf-1", stepIds: [] });
+      store.getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({ workflowId: "wf-1", stepIds: [] });
       store.getWorkflowDefinition = vi.fn().mockResolvedValue({ ir });
       return store;
     }

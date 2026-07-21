@@ -212,6 +212,17 @@ html {
   --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 10%, transparent);
   --shadow-md: 0 4px 6px color-mix(in srgb, #000000 10%, transparent);
   --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+
+  /*
+  FNXC:DashboardStyling 2026-07-19-14:00:
+  FN-8406 defines the report-menu/modal stacking scale because both components
+  previously referenced undefined tokens, silently resolving z-index to auto
+  and letting dashboard scroll owners clip or cover guided report actions.
+  */
+  --z-popover: 60;
+  --z-dropdown: 1000;
+  --z-modal: 1100;
+
   --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);

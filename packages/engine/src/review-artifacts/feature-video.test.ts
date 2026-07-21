@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,22 @@ function store(document: typeof scenario | null = scenario) {
 }
 
 describe("generateFeatureVideo", () => {
+  /*
+  FNXC:ReviewArtifacts 2026-07-20-00:00:
+  FN-8416 requires the lazy playwright-core import to remain directly declared by
+  @fusion/engine. pnpm isolation otherwise turns this best-effort capture seam into
+  a TS2307 bootstrap failure before its browser-unavailable fallback can run.
+  */
+  it("keeps playwright-core directly declared for the lazy feature-video client", async () => {
+    const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    const source = await readFile(new URL("./feature-video.ts", import.meta.url), "utf8");
+
+    expect(packageJson.dependencies?.["playwright-core"], "FN-8416: missing direct dependency causes TS2307 in engine typecheck").toBeTruthy();
+    expect(source).toContain('import("playwright-core")');
+  });
+
   it("registers a WebM video linked to its task through the existing registry", async () => {
     const artifactStore = store();
     const result = await generateFeatureVideo({ store: artifactStore, task, settings: { reviewArtifacts: "on" }, client: await videoClient(), sleep: async () => undefined });

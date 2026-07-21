@@ -447,19 +447,6 @@ export {
   generateSyntheticRunId,
 } from "./run-audit.js";
 export {
-  observeWorkflowParity,
-  WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG,
-  type WorkflowParityObserverInput,
-  type WorkflowParityObserverLegacyRunResult,
-  type WorkflowParityObserverShadowRunResult,
-} from "./workflow-parity-observer.js";
-export {
-  WorkflowAuthoritativeDriver,
-  type WorkflowAuthoritativeDriverDeps,
-  type WorkflowAuthoritativeDriverResult,
-  type WorkflowAuthoritativeDriverStore,
-} from "./workflow-authoritative-driver.js";
-export {
   auditSquashMerge,
   formatSquashAuditReport,
   type SquashAuditFindings,

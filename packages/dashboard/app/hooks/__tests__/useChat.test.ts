@@ -505,9 +505,9 @@ describe("useChat", () => {
       mockFetchChatMessages.mockResolvedValueOnce({ messages: [m2, m1] });
       mockStreamChatResponse.mockClear();
 
-      await act(async () => {
+      await expect(act(async () => {
         await result.current.editMessageAndResend("msg-1", "edited");
-      });
+      })).rejects.toThrow("boom");
 
       await waitFor(() => {
         expect(result.current.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
@@ -700,9 +700,21 @@ describe("useChat", () => {
     const projectId = "proj-pagination-cache";
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     const newestPage = Array.from({ length: 50 }, (_, index) =>
-      makeMessage({ id: `msg-${index + 1}`, sessionId: session.id, role: "assistant", content: `Message ${index + 1}` }),
+      makeMessage({
+        id: `msg-${index + 1}`,
+        sessionId: session.id,
+        role: "assistant",
+        content: `Message ${index + 1}`,
+        createdAt: new Date(Date.UTC(2026, 3, 8, 0, 0, 50 - index)).toISOString(),
+      }),
     );
-    const olderPage = [makeMessage({ id: "msg-old", sessionId: session.id, role: "assistant", content: "Older message" })];
+    const olderPage = [makeMessage({
+      id: "msg-old",
+      sessionId: session.id,
+      role: "assistant",
+      content: "Older message",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    })];
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
     mockFetchChatMessages
       .mockResolvedValueOnce({ messages: newestPage })
@@ -1489,7 +1501,7 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+      expect(result.current.messages.find((message) => message.id === "msg-002")).toEqual(expect.objectContaining({
         id: "msg-002",
         role: "assistant",
         content: "Snapshot reply",
@@ -1561,7 +1573,7 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+      expect(result.current.messages.find((message) => message.id === "msg-003")).toEqual(expect.objectContaining({
         id: "msg-003",
         content: expected,
       }));
@@ -2203,7 +2215,7 @@ describe("useChat", () => {
         "Primary model unavailable. Switched to fallback zai/glm-5.1.",
         "warning",
       );
-      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+      expect(result.current.messages.find((message) => message.id === "msg-fallback")).toEqual(expect.objectContaining({
         id: "msg-fallback",
         role: "assistant",
         content: "Fallback reply",
@@ -3811,6 +3823,84 @@ describe("useChat", () => {
           "Second question",
           "Second answer",
         ]);
+      });
+    });
+
+    it("FN-8408 keeps persisted user echoes chronological after returning mid-generation", async () => {
+      const generatingSession = {
+        ...makeSession({ id: "session-message-order", agentId: "agent-001", title: "Message order" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "working",
+          streamingThinking: "",
+          toolCalls: [],
+          replayFromEventId: 301,
+          updatedAt: "2026-04-08T00:05:00.000Z",
+        },
+      };
+      const priorUser = makeMessage({
+        id: "msg-001",
+        sessionId: generatingSession.id,
+        role: "user",
+        content: "First question",
+        createdAt: "2026-04-08T00:01:00.000Z",
+      });
+      const persistedUser = makeMessage({
+        id: "msg-003",
+        sessionId: generatingSession.id,
+        role: "user",
+        content: "Persisted while away",
+        createdAt: "2026-04-08T00:03:00.000Z",
+      });
+      const laterAssistant = makeMessage({
+        id: "msg-005",
+        sessionId: generatingSession.id,
+        role: "assistant",
+        content: "Later answer",
+        createdAt: "2026-04-08T00:05:00.000Z",
+      });
+      const sseUser = makeMessage({
+        id: "msg-002",
+        sessionId: generatingSession.id,
+        role: "user",
+        content: "SSE sibling",
+        createdAt: "2026-04-08T00:03:00.000Z",
+      });
+
+      // FNXC:ChatMessageOrder 2026-07-19-00:00: This restored partial cache has no temp row,
+      // but does retain a later assistant turn before the authoritative mid-stream reload.
+      cacheMessages("proj-123", generatingSession.id, [priorUser, laterAssistant]);
+      mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession] });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [laterAssistant, persistedUser, priorUser] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-003",
+          "msg-005",
+        ]);
+      });
+
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({ data: JSON.stringify(sseUser) } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        const messages = result.current.messages;
+        expect(messages.map((message) => message.id)).toEqual(["msg-001", "msg-002", "msg-003", "msg-005"]);
+        expect(messages.map((message) => Date.parse(message.createdAt))).toEqual([
+          ...messages.map((message) => Date.parse(message.createdAt)).sort((a, b) => a - b),
+        ]);
+        expect(messages.filter((message) => message.role === "user").every((message) =>
+          messages.filter((candidate) => candidate.role === "assistant" && candidate.createdAt > message.createdAt).every(
+            (assistant) => messages.indexOf(message) < messages.indexOf(assistant),
+          ),
+        )).toBe(true);
       });
     });
 

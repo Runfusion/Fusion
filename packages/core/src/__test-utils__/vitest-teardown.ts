@@ -97,6 +97,15 @@ export default function setup(): () => Promise<void> {
     // orphaned root alive. Teardown still owns this root by absolute path.
   }
   process.env.FUSION_TEST_WORKER_ROOT = workerRoot;
+  /*
+  FNXC:PgTestTemplateDb 2026-07-19-17:20:
+  Publish the vitest MAIN-process pid so every fork resolves the SAME run-shared
+  "golden" PostgreSQL schema template (see pg-test-harness.ts). Forks inherit
+  this env at spawn (globalSetup runs before workers start), and the pid segment
+  keeps the existing dead-pid template sweep able to reclaim the golden once this
+  run's main process exits.
+  */
+  process.env.FUSION_PG_TEMPLATE_OWNER_PID = String(process.pid);
 
   return async function teardown() {
     try {

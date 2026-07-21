@@ -58,6 +58,7 @@ import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
+import { startMigrationHoldingServer } from "./migration-holding-server.js";
 import {
   ensureClaudeSkillsForAllProjectsOnStartup,
   maybeInstallClaudeSkillForNewProject,
@@ -271,6 +272,18 @@ export async function runServe(
   const selectedHost = opts.host ?? "127.0.0.1";
   const cwd = await resolveRuntimeProjectPath();
 
+  /*
+  FNXC:MigrationHoldingPage 2026-07-19-12:05:
+  `fn serve` owns a known operator-facing port before its direct backend factory
+  boot. Hold that port through SQLite→PostgreSQL cutover and forward progress,
+  then release it immediately before the real listener binds. Bind failure is soft.
+  */
+  const migrationHoldingServer = await startMigrationHoldingServer({
+    port: selectedPort,
+    host: selectedHost,
+    log: (message) => console.log(`[serve] ${message}`),
+  });
+
   // ── CentralCore: global coordination + ntfy project ID lookup ─────────
   //
   // Created once and reused for:
@@ -301,7 +314,10 @@ export async function runServe(
   const logPhase = (message: string, scope = "serve") => console.log(`[${scope}] ${message}`);
   const centralBootResult = await phaseTime(
     "backend.factory",
-    () => createTaskStoreForBackend({ rootDir: cwd }),
+    () => createTaskStoreForBackend({
+      rootDir: cwd,
+      onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
+    }),
     logPhase,
   );
   /*
@@ -1048,6 +1064,8 @@ export async function runServe(
     https: loadTlsCredentialsFromEnv(),
   });
 
+  // Release the temporary owner before the production listener claims this port.
+  await migrationHoldingServer?.close();
   const server = app.listen(selectedPort, selectedHost);
 
   await new Promise<void>((resolve, reject) => {

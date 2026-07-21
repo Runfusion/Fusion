@@ -6,7 +6,6 @@
 .report-modal__warning { color: var(--color-warning); }
 .report-modal__screenshot-option { display: flex; gap: var(--space-2); align-items: center; }
 .report-modal__screenshot-preview { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-raised) 85%, transparent); }
-.report-modal__screenshot-preview img { max-inline-size: 100%; max-block-size: var(--space-96); object-fit: contain; }
 .report-modal__activity-trace { padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-raised) 85%, transparent); }
 .report-modal__activity-trace ul { margin: var(--space-2) 0 0; padding-inline-start: var(--space-5); }
-@media (max-width: 768px) { .report-modal { inline-size: 100%; padding: var(--space-4); } .report-modal__screenshot-preview img { max-block-size: var(--space-64); } }
+@media (max-width: 768px) { .report-modal { inline-size: 100%; padding: var(--space-4); } }

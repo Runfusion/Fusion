@@ -86,6 +86,23 @@ FNXC:Quality 2026-07-14-21:50:
 Static host registry for Quality hub. Literal import() so Vite can code-split;
 do not use @vite-ignore (reports footgun).
 */
+/*
+FNXC:RoadmapsNavigation 2026-07-19-12:00:
+Register the manifest-advertised roadmaps destination with a literal bundled import so
+roadmap-item open targets resolve to RoadmapsView instead of the unavailable fallback.
+*/
+async function loadRoadmapView(): Promise<{ default: PluginViewComponent }> {
+  const moduleId = "@fusion-plugin-examples/roadmap/dashboard-view";
+  const exportName = "RoadmapDashboardView";
+  const mod = await import("@fusion-plugin-examples/roadmap/dashboard-view") as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
+  const component = mod[exportName];
+  if (!component) {
+    console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+    return { default: createMissingPluginView(moduleId, exportName) };
+  }
+  return { default: component as PluginViewComponent };
+}
+
 async function loadQualityView(): Promise<{ default: PluginViewComponent }> {
   const moduleId = "@fusion-plugin-examples/quality/dashboard-view";
   const exportName = "QualityDashboardView";
@@ -136,6 +153,12 @@ export function registerBundledPluginViews(): void {
     "fusion-plugin-quality",
     "quality",
     lazy(loadQualityView),
+  );
+
+  registerPluginView(
+    "fusion-plugin-roadmap",
+    "roadmaps",
+    lazy(loadRoadmapView),
   );
 }
 

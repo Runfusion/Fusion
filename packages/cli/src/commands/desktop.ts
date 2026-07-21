@@ -36,6 +36,12 @@ async function startDashboardRuntime(rootDir: string, paused: boolean, noAuth: b
   // factory (embedded by default, external via DATABASE_URL), mirroring dashboard.ts.
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Desktop startup has no SQLite
   // fallback; an obsolete backend opt-out fails explicitly in the factory.
+  /*
+  FNXC:MigrationHoldingPage 2026-07-19-12:15:
+  CLI desktop intentionally does not use the HTTP holding server: it listens on
+  port 0 only after factory boot, so no fixed browser URL exists during cutover.
+  The Electron local-runtime/DesktopLaunchGate path owns launch progress instead.
+  */
   const boot = await createTaskStoreForBackend({ rootDir });
   const backendShutdown = boot.shutdown;
   const store: TaskStore = boot.taskStore;

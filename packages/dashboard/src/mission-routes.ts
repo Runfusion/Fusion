@@ -15,8 +15,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TaskStore, resolvePlanningSettingsModel, AgentStore, THINKING_LEVELS } from "@fusion/core";
-import type { Goal, ThinkingLevel } from "@fusion/core";
-import { listEligibleExecutorAgents } from "@fusion/engine";
+import type { Goal, Settings, ThinkingLevel } from "@fusion/core";
+import { listEligibleExecutorAgents, resolvePlanningThinkingLevel } from "@fusion/engine";
 import {
   getScopedStore as resolveScopedRequestStore,
   getProjectContext as resolveSharedProjectContext,
@@ -63,6 +63,14 @@ import {
 } from "./api-error.js";
 import type { AiSessionStore } from "./ai-session-store.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection } from "./routes/branch-selection.js";
+
+/** Resolve the mission-start override through the planning settings hierarchy. */
+export function resolveMissionInterviewThinkingLevel(
+  settings: Partial<Settings> | undefined,
+  thinkingLevel: ThinkingLevel | undefined,
+): ThinkingLevel | undefined {
+  return resolvePlanningThinkingLevel(settings, thinkingLevel) as ThinkingLevel | undefined;
+}
 
 // ── Validation Utilities ────────────────────────────────────────────────────
 
@@ -558,6 +566,13 @@ export function createMissionRouter(
         const effectiveModel = resolvePlanningSettingsModel(settings);
         const resolvedProvider = modelProvider ?? effectiveModel.provider;
         const resolvedModelId = modelId ?? effectiveModel.modelId;
+        /*
+        FNXC:MissionInterview 2026-07-19-20:46:
+        FN-8414 / GitHub #2356 makes omitted request thinkingLevel inherit the planning
+        settings hierarchy, matching model resolution above. The fixed session signature
+        then preserves projectId and pluginRunner instead of shifting positional arguments.
+        */
+        const resolvedThinkingLevel = resolveMissionInterviewThinkingLevel(settings, validatedThinkingLevel);
 
         const sessionId = await createMissionInterviewSession(
           ip,
@@ -567,7 +582,7 @@ export function createMissionRouter(
           settings.promptOverrides,
           resolvedProvider,
           resolvedModelId,
-          validatedThinkingLevel,
+          resolvedThinkingLevel,
           projectId ?? null,
           pluginRunner,
         );

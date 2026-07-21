@@ -885,6 +885,27 @@ describe("PluginManager", () => {
     });
   });
 
+  it("mounts WhatsApp pairing instructions above its settings form", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([{
+      ...mockPlugins[0],
+      id: "fusion-plugin-whatsapp-chat",
+      name: "WhatsApp Chat",
+      settings: { pairingMode: "qr", allowedSenders: [] },
+      settingsSchema: {
+        pairingMode: { type: "enum", label: "Pairing Mode", enumValues: ["qr", "code"] },
+        allowedSenders: { type: "array", label: "Allowed WhatsApp Senders", itemType: "string" },
+      },
+    }]);
+    vi.mocked(fetchPluginSettings).mockResolvedValueOnce({ pairingMode: "qr", allowedSenders: [] });
+
+    render(<PluginManager addToast={addToast} projectId="project-a" />);
+    await screen.findAllByText("WhatsApp Chat");
+    await userEvent.click(screen.getByTitle("Settings"));
+
+    expect(await screen.findByTestId("whatsapp-pairing-instructions")).toBeTruthy();
+    expect(screen.getAllByText("Allowed WhatsApp Senders")).toHaveLength(2);
+  });
+
   it("shows plugin detail view when settings button is clicked", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce(mockPlugins);
 

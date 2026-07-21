@@ -80,6 +80,53 @@ export function parseChangesetBody(body) {
 }
 
 /**
+ * FNXC:Changelog 2026-07-19-21:40:
+ * Changesets renders each release entry as a commit-prefixed bullet followed by indented labeled fields. Release-note distillation must parse the complete bullet and remove only the generated commit prefix so `category` and `dev` are not lost or mislabeled as Internal.
+ *
+ * @param {string} notes - A version section from a Changesets package changelog.
+ * @returns {Array<{summary: string, category: string, dev?: string, legacy: boolean}>}
+ */
+export function parseChangesetChangelogEntries(notes) {
+  if (!notes || !notes.trim()) {
+    return [];
+  }
+
+  const bodies = [];
+  let current = null;
+
+  const flush = () => {
+    if (current?.length) {
+      bodies.push(current.join("\n"));
+    }
+    current = null;
+  };
+
+  for (const line of notes.split(/\r?\n/)) {
+    const bulletMatch = line.match(/^-\s+(.*)$/);
+    if (bulletMatch) {
+      flush();
+      current = [bulletMatch[1].trimEnd()];
+      continue;
+    }
+
+    if (current && /^\s+\S/.test(line)) {
+      current.push(line.trim());
+      continue;
+    }
+
+    if (current && line.trim()) {
+      flush();
+    }
+  }
+  flush();
+
+  return bodies
+    .map((body) => body.replace(/^[0-9a-f]{7,40}:\s*(?=(?:summary|category|dev):)/i, ""))
+    .map((body) => parseChangesetBody(body))
+    .filter(Boolean);
+}
+
+/**
  * Extract `key: value` labeled fields from the changeset body.
  * `dev` allows multi-line content until the next labeled field or EOF.
  * Returns an empty object if no labeled fields are found.

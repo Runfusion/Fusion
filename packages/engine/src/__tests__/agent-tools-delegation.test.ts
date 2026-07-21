@@ -11,8 +11,18 @@ function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   } as unknown as AgentStore;
 }
 
+const APPROVED_LINEAGE = { mission_id: "M-001", slice_id: "SL-001", feature_id: "F-001" };
+
 function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  const missionStore = {
+    getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+    getFeatureByTaskId: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+    getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+    getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+    getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+  };
   return {
+    getMissionStore: vi.fn().mockReturnValue(missionStore),
     getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
     getRootDir: vi.fn().mockReturnValue("/project"),
     searchTasks: vi.fn().mockResolvedValue([]),
@@ -216,6 +226,7 @@ describe("createDelegateTaskTool", () => {
     vi.mocked(taskStore.createTask).mockResolvedValue({
       id: "FN-050",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: [],
       column: "todo" as const,
       steps: [],
@@ -229,6 +240,7 @@ describe("createDelegateTaskTool", () => {
     const result = await tool.execute("session-1", {
       agent_id: "agent-001",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -250,6 +262,7 @@ describe("createDelegateTaskTool", () => {
     const existing = {
       id: "FN-duplicate",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: [],
       column: "triage" as const,
       assignedAgentId: "agent-001",
@@ -269,6 +282,7 @@ describe("createDelegateTaskTool", () => {
     const result = await createDelegateTaskTool(agentStore, taskStore).execute("session-1", {
       agent_id: "agent-002",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-duplicate", { assignedAgentId: "agent-002" });
@@ -282,6 +296,7 @@ describe("createDelegateTaskTool", () => {
     const existing = {
       id: "FN-duplicate",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: [],
       column: "todo" as const,
       assignedAgentId: "agent-001",
@@ -295,6 +310,7 @@ describe("createDelegateTaskTool", () => {
 
     const result = await createAgentTask(taskStore, {
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       column: "todo",
       assignedAgentId: "agent-001",
     });
@@ -458,10 +474,22 @@ describe("createDelegateTaskTool", () => {
 
   it("persists option-based parent provenance on the step-session fn_task_create surface", async () => {
     const tool = createTaskCreateTool(taskStore, undefined, { sourceTaskId: "FN-PARENT", sourceAgentId: "agent-worker" });
-    await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);
+    await tool.execute("call-1", { description: "Capture optional report screenshots", mission_lineage: APPROVED_LINEAGE }, undefined as any, undefined as any, undefined as any);
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       source: expect.objectContaining({ sourceType: "api", sourceAgentId: "agent-worker", sourceParentTaskId: "FN-PARENT" }),
     }), expect.anything());
+  });
+
+  it("requires an explicit lineage when a no-task heartbeat cannot inherit one", async () => {
+    const tool = createTaskCreateTool(taskStore, undefined, {
+      sourceTaskId: "FN-PARENT",
+      requireMissionLineage: true,
+    });
+
+    const result = await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);
+
+    expect(result).toMatchObject({ isError: true, details: { rule: "mission-lineage-required" } });
+    expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
   it("serializes three concurrent paraphrased creates from one parent", async () => {
@@ -517,6 +545,7 @@ describe("createDelegateTaskTool", () => {
     const created = {
       id: "FN-new",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: [],
       column: "todo" as const,
       steps: [], currentStep: 0, log: [],
@@ -538,6 +567,7 @@ describe("createDelegateTaskTool", () => {
 
     const result = await createAgentTask(taskStore, {
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       column: "todo",
       assignedAgentId: "agent-002",
     });
@@ -554,6 +584,7 @@ describe("createDelegateTaskTool", () => {
     vi.mocked(taskStore.createTask).mockResolvedValue({
       id: "FN-051",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: [],
       column: "todo" as const,
       steps: [],
@@ -567,6 +598,7 @@ describe("createDelegateTaskTool", () => {
     const result = await tool.execute("session-1", {
       agent_id: "agent-001",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     const text = (result.content[0] as { text: string }).text;
@@ -616,6 +648,7 @@ describe("createDelegateTaskTool", () => {
     const result = await tool.execute("session-1", {
       agent_id: "agent-001",
       description: "Write tests",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect((result as { isError?: boolean }).isError).toBe(true);
@@ -642,6 +675,7 @@ describe("createDelegateTaskTool", () => {
     await tool.execute("session-1", {
       agent_id: "agent-009",
       description: "Do something",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -685,6 +719,7 @@ describe("createDelegateTaskTool", () => {
     await tool.execute("session-1", {
       agent_id: "agent-002",
       description: "Do something",
+      mission_lineage: APPROVED_LINEAGE,
       override: true,
     }, undefined as any, undefined as any, undefined as any);
 
@@ -736,6 +771,7 @@ describe("createDelegateTaskTool", () => {
     await tool.execute("session-1", {
       agent_id: "agent-explicit",
       description: "Do something",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.createTask).toHaveBeenCalledWith(
@@ -750,6 +786,7 @@ describe("createDelegateTaskTool", () => {
     vi.mocked(taskStore.createTask).mockResolvedValue({
       id: "FN-052",
       description: "Integration test",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: ["FN-010"],
       column: "todo" as const,
       steps: [],
@@ -763,6 +800,7 @@ describe("createDelegateTaskTool", () => {
     const result = await tool.execute("session-1", {
       agent_id: "agent-001",
       description: "Integration test",
+      mission_lineage: APPROVED_LINEAGE,
       dependencies: ["FN-010"],
     }, undefined as any, undefined as any, undefined as any);
 
@@ -797,6 +835,7 @@ describe("createDelegateTaskTool", () => {
     const result = await tool.execute("session-1", {
       agent_id: "agent-001",
       description: "Simple task",
+      mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.createTask).toHaveBeenCalledWith(

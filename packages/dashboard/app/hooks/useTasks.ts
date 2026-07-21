@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
-import { normalizeColumn } from "@fusion/core";
+import { normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
 import { clearCache, readCache, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
@@ -10,10 +10,21 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 const loggedTaskCacheHitProjects = new Set<string>();
 const TASK_VIEW_REENTRY_FRESHNESS_MS = SWR_TASKS_MAX_AGE_MS;
 
+/*
+FNXC:WorkflowColumns 2026-07-19-2b:05 (U12 / R2 / R11):
+Every task the dashboard ingests — initial list, SWR revalidation, and each SSE event — passes
+through here, so this one line decided whether custom columns exist in the UI at all. It used
+`normalizeColumn`, which keeps only the six legacy ids and rewrites everything else to `triage`:
+a card sitting in a user-authored `Merging` column rendered in Triage, and dragging it appeared to
+do nothing. The move handler below already worked around this for its own `to` id ("normalizeColumn
+alone would drop custom ids"), which fixed the symptom for one event and left the ingest path lossy.
+`normalizeColumnId` sanitizes structurally (non-string/empty -> fallback) and passes real ids
+through; membership belongs to the task's resolved workflow, not to a client-side enum.
+*/
 function normalizeTask(task: Task): Task {
   return {
     ...task,
-    column: normalizeColumn((task as Task & { column?: unknown }).column),
+    column: normalizeColumnId((task as Task & { column?: unknown }).column),
     dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
     steps: Array.isArray(task.steps) ? task.steps : [],
     log: Array.isArray((task as Task & { log?: unknown }).log)

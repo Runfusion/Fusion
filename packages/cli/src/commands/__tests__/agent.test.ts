@@ -96,13 +96,13 @@ const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 import { runAgentStop, runAgentStart } from "../agent.js";
 
-function makeAgent(state: string) {
+function makeAgent(state: string, taskId?: string) {
   return {
     id: "agent-test123",
     name: "test-agent",
     role: "executor" as const,
     state,
-    taskId: undefined,
+    taskId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     metadata: {},
@@ -140,6 +140,19 @@ describe("runAgentStop", () => {
     expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "paused");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("✓ Agent agent-test123 stopped"));
     expect(mockClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops an assigned agent through the agent-store-only bridge", async () => {
+    mockGetAgent.mockResolvedValue(makeAgent("running", "FN-user-paused"));
+
+    await runAgentStop("agent-test123");
+
+    // FNXC:AgentLifecyclePause 2026-07-19-00:00: CLI stop changes only the
+    // agent row; this command constructs no TaskStore and cannot cascade an
+    // assigned task's user pause or reason.
+    expect(mockUpdateAgentState).toHaveBeenCalledTimes(1);
+    expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "paused");
+    expect(mockResolveAgentStoreBase).toHaveBeenCalledTimes(1);
   });
 
   it("should report when agent is not found", async () => {
@@ -249,6 +262,16 @@ describe("runAgentStart", () => {
 
     expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "active");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("✓ Agent agent-test123 started"));
+  });
+
+  it("starts an assigned agent through the agent-store-only bridge", async () => {
+    mockGetAgent.mockResolvedValue(makeAgent("paused", "FN-agent-paused"));
+
+    await runAgentStart("agent-test123");
+
+    expect(mockUpdateAgentState).toHaveBeenCalledTimes(1);
+    expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "active");
+    expect(mockResolveAgentStoreBase).toHaveBeenCalledTimes(1);
   });
 
   it("should start an error agent", async () => {

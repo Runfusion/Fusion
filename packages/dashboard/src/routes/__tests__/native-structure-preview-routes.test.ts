@@ -12,6 +12,8 @@ const milestone = { id: "MS-1", missionId: "M-1", title: "Milestone", descriptio
 const insight = { id: "INS-1", title: "Finding", content: "Finding content", status: "stale" };
 const evaluation = { id: "EV-1", taskId: "FN-1", taskSnapshot: { title: "Evaluated task" }, overallScore: 8, maxScore: 10 };
 const goal = { id: "G-1", title: "Goal", description: "Goal description", status: "active" };
+const roadmapFeature = { id: "RF-1", milestoneId: "RM-1", title: "Roadmap feature", description: "Roadmap feature description", orderIndex: 0 };
+const roadmapMilestone = { id: "RM-1", roadmapId: "R-1", title: "Roadmap milestone", orderIndex: 0 };
 
 function store(overrides: Record<string, unknown> = {}): TaskStore {
   return {
@@ -19,6 +21,10 @@ function store(overrides: Record<string, unknown> = {}): TaskStore {
     getInsightStore: vi.fn(() => ({ getInsight: vi.fn(async (id) => id === insight.id ? insight : undefined) })),
     getEvalStore: vi.fn(() => ({ getTaskResult: vi.fn(async (id) => id === evaluation.id ? evaluation : undefined) })),
     getGoalStore: vi.fn(() => ({ getGoal: vi.fn(async (id) => id === goal.id ? goal : null) })),
+    getRoadmapStore: vi.fn(() => ({
+      getFeature: vi.fn(async (id) => id === roadmapFeature.id ? roadmapFeature : undefined),
+      getMilestone: vi.fn(async (id) => id === roadmapMilestone.id ? roadmapMilestone : undefined),
+    })),
     getRootDir: vi.fn(() => process.cwd()),
     ...overrides,
   } as unknown as TaskStore;
@@ -31,12 +37,13 @@ describe("resolveNativeStructurePreview", () => {
     ["research-finding", insight.id, { view: "insights", id: insight.id }],
     ["eval-result", evaluation.id, { view: "evals", id: evaluation.id }],
     ["goal", goal.id, { view: "goals", id: goal.id }],
+    ["roadmap-item", roadmapFeature.id, { view: "roadmaps", id: roadmapFeature.id, milestoneId: roadmapFeature.milestoneId, roadmapId: roadmapMilestone.roadmapId }],
   ] as const)("projects %s into its owning view", async (kind, id, openTarget) => {
     const result = await resolveNativeStructurePreview(store(), { kind, id });
     expect(result).toMatchObject({ available: true, kind, openTarget });
   });
 
-  it.each(["mission", "milestone", "research-finding", "eval-result", "goal"] as const)("returns missing for absent %s", async (kind) => {
+  it.each(["mission", "milestone", "research-finding", "eval-result", "goal", "roadmap-item"] as const)("returns missing for absent %s", async (kind) => {
     const result = await resolveNativeStructurePreview(store(), { kind, id: "absent" });
     expect(result).toEqual({ available: false, kind, id: "absent", reason: "missing" });
   });
@@ -51,8 +58,17 @@ describe("resolveNativeStructurePreview", () => {
     expect(result).toMatchObject({ available: false, reason: "soft-deleted" });
   });
 
-  it("never maps a missing eval to soft-deleted", async () => {
+  it("never maps a missing eval or roadmap item to soft-deleted", async () => {
     await expect(resolveNativeStructurePreview(store(), { kind: "eval-result", id: "absent" })).resolves.toMatchObject({ reason: "missing" });
+    await expect(resolveNativeStructurePreview(store(), { kind: "roadmap-item", id: "absent" })).resolves.toEqual({ available: false, kind: "roadmap-item", id: "absent", reason: "missing" });
+  });
+
+  it("degrades roadmap adapter and PostgreSQL layer failures to missing", async () => {
+    const unavailableLayer = store({ getRoadmapStore: undefined, getAsyncLayer: vi.fn(() => null) });
+    const throwingRead = store({ getRoadmapStore: vi.fn(() => { throw new Error("adapter unavailable"); }) });
+
+    await expect(resolveNativeStructurePreview(unavailableLayer, { kind: "roadmap-item", id: roadmapFeature.id })).resolves.toEqual({ available: false, kind: "roadmap-item", id: roadmapFeature.id, reason: "missing" });
+    await expect(resolveNativeStructurePreview(throwingRead, { kind: "roadmap-item", id: roadmapFeature.id })).resolves.toEqual({ available: false, kind: "roadmap-item", id: roadmapFeature.id, reason: "missing" });
   });
 
   it("normalizes and bounds long excerpts for compact cards", async () => {
@@ -77,6 +93,7 @@ describe("native structure preview route", () => {
     ["research-finding", insight.id, { view: "insights", id: insight.id }],
     ["eval-result", evaluation.id, { view: "evals", id: evaluation.id }],
     ["goal", goal.id, { view: "goals", id: goal.id }],
+    ["roadmap-item", roadmapFeature.id, { view: "roadmaps", id: roadmapFeature.id, milestoneId: roadmapFeature.milestoneId, roadmapId: roadmapMilestone.roadmapId }],
   ] as const)("returns the %s preview projection", async (kind, id, openTarget) => {
     const app = express();
     app.use("/api", createApiRoutes(store()));
@@ -93,7 +110,15 @@ describe("native structure preview route", () => {
     expect(res.body).toMatchObject({ available: false, reason: "missing" });
   });
 
-  it.each(["roadmap-item", "unknown"])("rejects unsupported %s", async (kind) => {
+  it("returns roadmap-item missing payload with 200", async () => {
+    const app = express();
+    app.use("/api", createApiRoutes(store()));
+    const res = await REQUEST(app, "GET", "/api/native-structures/roadmap-item/absent/preview");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: false, kind: "roadmap-item", id: "absent", reason: "missing" });
+  });
+
+  it.each(["unknown"])("rejects unsupported %s", async (kind) => {
     const app = express();
     app.use("/api", createApiRoutes(store()));
     const res = await REQUEST(app, "GET", `/api/native-structures/${kind}/id/preview`);

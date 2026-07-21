@@ -26,6 +26,7 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "fn-agent-view",
   "kb-terminal-tabs",
   "kb-planning-last-description",
+  "kb-planning-active-session",
   "kb-subtask-last-description",
   "kb-mission-last-goal",
   "kb-usage-view-mode",

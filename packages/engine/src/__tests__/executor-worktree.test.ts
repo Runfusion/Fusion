@@ -429,6 +429,15 @@ describe("TaskExecutor worktree naming", () => {
     });
 
     const store = createMockStore();
+    /*
+    FNXC:EngineTests 2026-07-19-16:20 (U10b):
+    Worktree reuse is decided from the PERSISTED row, not the object handed to `execute()`.
+    Under graph ownership the executor re-reads the task before any write-capable node, so a
+    resumed task's stored worktree must exist in the store for the reuse branch to be reachable.
+    Seeding it through `_setRow` states that requirement explicitly; the assertion (no new name
+    is generated for a resumed task) is unchanged.
+    */
+    store._setRow("FN-031", { worktree: existingPath });
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask("FN-031", existingPath));
@@ -450,6 +459,13 @@ describe("TaskExecutor worktree naming", () => {
     });
 
     const store = createMockStore();
+    /*
+    FNXC:EngineTests 2026-07-19-16:22 (U10b):
+    The stale-worktree detection reads the PERSISTED worktree path (the graph re-reads the row
+    rather than trusting the object passed to `execute()`), so the unusable path must be on the
+    stored row for the clear-and-recreate branch to be reachable at all.
+    */
+    store._setRow("FN-032", { worktree: stalePath });
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask("FN-032", stalePath));
@@ -497,6 +513,13 @@ describe("TaskExecutor worktree naming", () => {
         worktreeNaming: "task-title",
       });
 
+      /*
+      FNXC:EngineTests 2026-07-19-16:26 (U10b):
+      `worktreeNaming: "task-title"` names the worktree from the PERSISTED title. The graph
+      re-reads the row before the write-capable node, so a title supplied only on the literal
+      passed to `execute()` is provably ignored — the requirement is about stored task data.
+      */
+      store._setRow("FN-043", { title: "Fix login bug with OAuth" });
       const executor = new TaskExecutor(store, "/tmp/test");
       await executor.execute({
         ...makeTask("FN-043"),
@@ -525,6 +548,12 @@ describe("TaskExecutor worktree naming", () => {
 
       const executor = new TaskExecutor(store, "/tmp/test");
       const taskDescription = "Implement user authentication flow";
+      /*
+      FNXC:EngineTests 2026-07-19-16:28 (U10b):
+      Same persisted-row requirement as the title case: the empty-title -> description fallback
+      is evaluated against the stored task, which the graph re-reads before naming the worktree.
+      */
+      store._setRow("FN-044", { title: "", description: taskDescription });
       await executor.execute({
         ...makeTask("FN-044"),
         title: "",
@@ -912,6 +941,110 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
+  it.each(["reclaimable", "fully-subsumed"] as const)(
+    "relocates an out-of-root %s same-task worktree before reclaiming it",
+    async (kind) => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
+      const targetPath = "/tmp/test/.worktrees/pearl-otter";
+      vi.spyOn(executor as any, "shouldGenerateNewWorktreeName").mockResolvedValue(false);
+      const relocate = vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(targetPath);
+      vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+        kind,
+        livePath: conflictPath,
+        tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+        taskAttributedCommitCount: kind === "reclaimable" ? 1 : 0,
+        strandedCommits: kind === "reclaimable"
+          ? [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8400): preserve implementation" }]
+          : [],
+      } as any);
+
+      const result = await (executor as any).handleWorktreeConflict(
+        conflictPath,
+        "fusion/fn-8400",
+        targetPath,
+        "FN-8400",
+        "main",
+        0,
+        false,
+        {},
+      );
+
+      expect(relocate).toHaveBeenCalledWith(conflictPath, targetPath, "FN-8400", {});
+      expect(result).toEqual({ path: targetPath, branch: "fusion/fn-8400" });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-8400",
+        expect.stringContaining(`at ${targetPath}`),
+        "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+      );
+    },
+  );
+
+  it("normalizes an out-of-root branch-conflict reclaim before persisting it", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees" } as any);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
+    const targetPath = "/tmp/test/.worktrees/recover-fn-8400";
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: conflictPath,
+      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8400): preserve implementation" }],
+    } as any);
+    const normalize = vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(targetPath);
+
+    const result = await (executor as any).handleBranchConflict(
+      { ...makeTask("FN-8400"), branch: "fusion/fn-8400", worktree: conflictPath },
+      new BranchConflictError({
+        branchName: "fusion/fn-8400",
+        conflictingWorktreePath: conflictPath,
+        existingTipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+        strandedCommits: [],
+        startPoint: "main",
+        recommendedAction: "reclaim",
+      }),
+    );
+
+    expect(result).toBe("reclaimed");
+    expect(normalize).toHaveBeenCalledWith(conflictPath, targetPath, "FN-8400", expect.objectContaining({ worktreesDir: ".worktrees" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: targetPath }));
+  });
+
+  it("uses the task-pinned target when normalizing a branch-conflict reclaim", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees", worktreeNaming: "task-id" } as any);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
+    const pinnedPath = "/tmp/test/.worktrees/fn-8400";
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: conflictPath,
+      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8400): preserve implementation" }],
+    } as any);
+    const normalize = vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(pinnedPath);
+
+    const result = await (executor as any).handleBranchConflict(
+      { ...makeTask("FN-8400"), branch: "fusion/fn-8400", worktree: conflictPath },
+      new BranchConflictError({
+        branchName: "fusion/fn-8400",
+        conflictingWorktreePath: conflictPath,
+        existingTipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+        strandedCommits: [],
+        startPoint: "main",
+        recommendedAction: "reclaim",
+      }),
+    );
+
+    expect(result).toBe("reclaimed");
+    expect(normalize).toHaveBeenCalledWith(conflictPath, pinnedPath, "FN-8400", expect.objectContaining({ worktreeNaming: "task-id" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: pinnedPath }));
+  });
+
   it("records recovery context when handling a branch conflict (FN-4847: now discards + requeues instead of pausing)", async () => {
     // FN-4847: branch-conflict-unrecoverable previously paused the task with
     // status=failed + pausedReason="branch-conflict-unrecoverable". The user has
@@ -1052,6 +1185,14 @@ describe("TaskExecutor worktree recovery", () => {
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    /*
+    FNXC:EngineTests 2026-07-19-16:32 (U10b):
+    `executionStartBranch` is a PERSISTED field: the missing-base fallback reads it from the row
+    (and clears it there) so a later retry picks up the default base. The graph re-reads the task
+    before worktree creation, so setting it only on the literal passed to `execute()` exercises
+    nothing. Seeding the row is what the FN-2165 requirement actually describes.
+    */
+    store._setRow("FN-050", { executionStartBranch: "fusion/missing-base" });
     await executor.execute({ ...makeTask(), executionStartBranch: "fusion/missing-base" });
 
     // Should log the soft fallback, not a terminal failure
@@ -1113,6 +1254,15 @@ describe("TaskExecutor worktree recovery", () => {
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    /*
+    FNXC:EngineTests 2026-07-19-16:35 (U10b):
+    The nested-worktree refusal guards the PERSISTED worktree path. The graph re-reads the row,
+    so the nested path has to be stored for the guard to see it — otherwise the executor treats
+    the task as having no worktree and happily creates a fresh (non-nested) one.
+    */
+    store._setRow("FN-050", {
+      worktree: "/tmp/test/.worktrees/green-finch/.worktrees/amber-panda",
+    });
     // Task has a worktree path nested inside green-finch — must be refused
     await executor.execute({
       ...makeTask(),
@@ -1454,6 +1604,13 @@ describe("TaskExecutor worktree recovery", () => {
     mockedGenerateWorktreeName.mockReturnValueOnce("jade-finch");
 
     const executor = new TaskExecutor(store, "/tmp/test");
+    /*
+    FNXC:EngineTests 2026-07-19-16:38 (U10b):
+    The suffix-rename retry must reuse the task's persisted start point, so `executionStartBranch`
+    has to live on the stored row the graph re-reads — the literal passed to `execute()` is not
+    what the worktree creator consults.
+    */
+    store._setRow("FN-050", { executionStartBranch: "fusion/fn-049" });
     await executor.execute({ ...makeTask(), executionStartBranch: "fusion/fn-049" });
 
     // FN-4811 contract: the active worktree must NOT have been force-removed.
@@ -2038,6 +2195,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
 
+    /*
+    FNXC:EngineTests 2026-07-19-16:41 (U10b):
+    The dependency-derived base branch is read from the PERSISTED row (the graph re-reads the task
+    before creating the worktree), so `executionStartBranch` must be seeded on the store for the
+    "worktree is cut from the dependency's branch" requirement to be exercised.
+    */
+    store._setRow("FN-060", { executionStartBranch: "fusion/fn-059" });
     await executor.execute(makeTask({
       id: "FN-060",
       executionStartBranch: "fusion/fn-059",
@@ -2072,6 +2236,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
 
+    /*
+    FNXC:EngineTests 2026-07-19-16:42 (U10b):
+    The "Worktree created ... (based on <base>)" log names the PERSISTED base branch; seed the row
+    because the graph re-reads the task rather than trusting the object passed to `execute()`.
+    */
+    store._setRow("FN-062", { executionStartBranch: "fusion/fn-061" });
     await executor.execute(makeTask({
       id: "FN-062",
       executionStartBranch: "fusion/fn-061",
@@ -2194,6 +2364,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
 
+    /*
+    FNXC:EngineTests 2026-07-19-16:44 (U10b):
+    The pooled-worktree path forwards the task's PERSISTED base branch to `prepareForTask`; seed
+    the row because the graph re-reads the task before preparing the worktree.
+    */
+    store._setRow("FN-064", { executionStartBranch: "fusion/fn-063" });
     await executor.execute(makeTask({
       id: "FN-064",
       executionStartBranch: "fusion/fn-063",
@@ -2373,6 +2549,19 @@ describe("TaskExecutor worktree pool integration", () => {
       expect.stringContaining("Acquired worktree from pool"),
       undefined,
       expect.objectContaining({ agentId: "executor" }),
+    );
+
+    /*
+    FNXC:WorktreeIdentity 2026-07-19-16:05:
+    Reassigning a pooled checkout must refresh its task marker after the pool
+    changes branches; otherwise the shared pre-commit hook still names the
+    previous owner and blocks the new task's first commit.
+    */
+    expect(mockedInstallTaskWorktreeIdentityGuard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: "/tmp/test/.worktrees/idle-wt",
+        taskId: "FN-020",
+      }),
     );
 
     // Pool should be empty after acquire

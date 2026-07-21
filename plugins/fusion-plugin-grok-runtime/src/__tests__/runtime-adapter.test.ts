@@ -139,6 +139,30 @@ describe("GrokRuntimeAdapter (ACP)", () => {
     await adapter.dispose(session);
   });
 
+  it("surfaces a fixed diagnostic and omits the broken MCP entry when the tool bridge fails", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const onText = vi.fn();
+    const adapter = new GrokRuntimeAdapter({
+      createAcpAdapter: (settings) => {
+        const base = makeFakeAcpAdapter()(settings);
+        return { ...base, createSession: async (options) => {
+          captured = options as Record<string, unknown>;
+          return base.createSession(options);
+        } };
+      },
+      startToolBridge: async () => { throw new Error("bind failed"); },
+    });
+
+    const { session } = await adapter.createSession({
+      onText,
+      customTools: [{ name: "fn_task_list", execute: async () => ({}) }],
+    });
+
+    expect(onText).toHaveBeenCalledWith("FUSION_TOOL_BRIDGE_FAILED: bridge-start-failed");
+    expect(session.fusionToolBridgeError).toEqual({ reasonCode: "bridge-start-failed" });
+    expect((captured?.mcpServers as Array<{ name: string }>).some((server) => server.name === "fusion-custom-tools")).toBe(false);
+  });
+
   it("omits -m for the no-model grok/default fallback but still injects plugin-dir", async () => {
     const settingsOut: Record<string, unknown>[] = [];
     const adapter = new GrokRuntimeAdapter({ createAcpAdapter: makeFakeAcpAdapter({ settingsOut }) });

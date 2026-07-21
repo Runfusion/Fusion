@@ -14,19 +14,14 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
-import {
-  buildWorkflowObservationFromTask,
-  buildWorkflowObservation,
-  type WorkflowStage,
-  type WorkflowRunObservation,
-} from "@fusion/core";
-import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult } from "./workflow-graph-task-runner.js";
+import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
+import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./code-node-runner.js";
 import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./review-checkout.js";
@@ -37,7 +32,6 @@ import type {
   WorkflowStepInstancePersistence,
   WorkflowStepInstanceState,
 } from "./workflow-graph-foreach.js";
-import { observeWorkflowParity, WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG } from "./workflow-parity-observer.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
@@ -49,6 +43,7 @@ import {
 import {
   MERGE_REGION_KINDS,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
+  WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
 } from "./workflow-graph-executor.js";
@@ -100,7 +95,8 @@ import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.j
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { accumulateSessionTokenUsage, mergeTokenUsagePerModel } from "./session-token-usage.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
+import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
@@ -113,7 +109,7 @@ import {
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
-import { reviewStep, proseSignalsClearApproval, extractJsonObjectCandidates, ReviewerProviderError, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
+import { proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
@@ -121,7 +117,6 @@ import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession }
 import {
   PRIORITY_EXECUTE,
   dropPreHeldExecutorSlot,
-  registerPreHeldExecutorSlot,
   takePreHeldExecutorSlot,
   type AgentSemaphore,
 } from "./concurrency.js";
@@ -131,7 +126,8 @@ import {
 // filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
+import { preservedWorktreeTargetPathForTask } from "./worktree-pinning.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
@@ -474,31 +470,6 @@ import {
 
 const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
 const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 1_000;
-/**
- * FNXC:ReviewerUnavailableBudget 2026-07-15-11:20:
- * Hard cap on how many times one step's CODE review may come back UNAVAILABLE before the tool
- * stops inviting the model to retry. Mirrors the `planSpecUnavailableCounts` limiter's posture
- * (and `STEP_REVIEW_UNAVAILABLE_RETRY_CAP` on the graph path) so both review paths bound repeats
- * in code rather than in prompt text. See `createReviewStepTool`.
- */
-const MAX_CODE_REVIEW_UNAVAILABLE_RETRIES = 3;
-
-/**
- * FNXC:ReviewerProviderErrors 2026-07-15-11:20:
- * Re-raise a provider failure that a `fn_review_step` tool handler recorded but could not throw
- * (pi-agent-core turns tool throws into `tool_error` results the model just reads and retries).
- * Called immediately after each `promptWithFallback`, alongside `checkSessionError`, so the error
- * escapes `agentWork` and reaches `withRateLimitRetry` + the outer usage-limit/transient handlers.
- * Clears the ref so a later successful prompt in the same run cannot re-throw a stale error.
- */
-function throwDeferredReviewerFatal(ref: { current: Error | null }): void {
-  const deferred = ref.current;
-  if (deferred) {
-    ref.current = null;
-    throw deferred;
-  }
-}
-
 /** How long to wait before recovering a completed task still stuck in in-progress. */
 const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
@@ -508,17 +479,7 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
 
-export const DISSENT_PATTERNS: RegExp[] = [
-  /\btask (is|was)(?: not|n['’]?t) complete\b/i,
-  /\b(?:i (?:could|can)(?:not|n['’]?t)|unable to|failed to) (?:complete|finish|implement)\b/i,
-  /\b(?:partially|not fully) (?:complete|implemented|done|finished)\b/i,
-  /\b(?:i['’]?m blocked|blocked from|blocking issue prevents)\b/i,
-  /\bto unblock\b/i,
-  /\b(?:needs|requires) (?:FN-\d+|further work|additional work|follow[- ]?up)\b/i,
-];
-
 type TaskDoneRefusalClass =
-  | "summary-claims-incomplete"
   | "bulk-step-completion-without-review"
   | "pending-code-review-revise";
 
@@ -612,7 +573,7 @@ function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: strin
 
 export function evaluateTaskDoneRefusal(
   task: Task,
-  params: { summary?: string },
+  _params: { summary?: string },
   codeReviewVerdicts: Map<number, ReviewVerdict>,
 ): TaskDoneRefusalResult {
   const pendingSteps: number[] = [];
@@ -630,48 +591,6 @@ export function evaluateTaskDoneRefusal(
         reason,
         message: formatTaskDoneRefusal("pending-code-review-revise", reason),
       };
-    }
-  }
-
-  const summary = params.summary?.trim();
-  // Preflight escape hatch: when the agent's preflight finds PROMPT.md is out
-  // of sync with HEAD (work already done on the base), it marks remaining
-  // steps `skipped` and calls fn_task_done with a `PREMISE STALE:` summary.
-  // Skip the summary-text refusals (dissent + scoped-incomplete) for this
-  // sentinel so a natural premise-stale explanation like "...the work is
-  // already done on HEAD" cannot deadlock the executor. The pending-review
-  // and bulk-step-completion guards above/below still apply.
-  const isPremiseStale = !!summary && /^premise stale:/i.test(summary);
-  if (summary && !isPremiseStale) {
-    const dissentMatch = DISSENT_PATTERNS.find((pattern) => pattern.test(summary));
-    if (dissentMatch) {
-      const matchText = summary.match(dissentMatch)?.[0] ?? dissentMatch.source;
-      const reason = `summary indicates incomplete work (${JSON.stringify(matchText)})`;
-      return {
-        ok: false,
-        refusalClass: "summary-claims-incomplete",
-        reason,
-        message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
-      };
-    }
-
-    const scopedPattern = /\b(incomplete|not implemented|not done|not finished)\b/i;
-    const scopedMatch = scopedPattern.exec(summary);
-    if (scopedMatch) {
-      const start = Math.max(0, scopedMatch.index - 40);
-      const end = Math.min(summary.length, scopedMatch.index + scopedMatch[0].length + 40);
-      const scopedWindow = summary.slice(start, end);
-      const hasFirstPersonContext = /\b(i|i['’]?m|i['’]?ve|my|we)\b/i.test(scopedWindow)
-        || /\b(the task|this task)\b/i.test(scopedWindow);
-      if (hasFirstPersonContext) {
-        const reason = `summary indicates incomplete work (${JSON.stringify(scopedMatch[0])})`;
-        return {
-          ok: false,
-          refusalClass: "summary-claims-incomplete",
-          reason,
-          message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
-        };
-      }
     }
   }
 
@@ -917,7 +836,15 @@ function evaluatePromptDerivedNoCommitEligibility(task: Task, promptContent: str
     return { eligible: true, reason: "prompt-derived source-free task-artifact contract" };
   }
 
-  const reviewLevel = typeof task.reviewLevel === "number" ? task.reviewLevel : parseReviewLevelFromPrompt(promptContent);
+  /*
+  FNXC:ReviewLevelPreset 2026-07-19-10:35 (U8 / R6):
+  reviewLevel is a CREATION-TIME preset (it writes enabledWorkflowSteps at create),
+  so the runtime no longer reads `task.reviewLevel`. The plan-only (level-1)
+  eligibility signal here is derived from the PROMPT contract, not the row field —
+  removing the last `task.reviewLevel` runtime read (R6 tombstone). The explicit
+  preset-set field re-key lands with U9's schema (reviewLevel backfill + field adds).
+  */
+  const reviewLevel = parseReviewLevelFromPrompt(promptContent);
   const isPlanOnly = reviewLevel === 1 && (/plan\s*only/.test(combined) || combined.includes("plan-only"));
   if (!isPlanOnly) return { eligible: false };
 
@@ -1128,6 +1055,42 @@ export function parseAwaitInputSentinel(output: string | undefined): string | nu
   return question ? question : null;
 }
 
+const USER_QUESTION_TOOL_NAMES = new Set([
+  "askuserquestion",
+  "ask_user",
+  "ask_followup_question",
+  "request_user_input",
+  "elicit",
+  "ask_question",
+  "fn_ask_question",
+]);
+
+/**
+ * Normalize a question-tool invocation into the same durable await-input
+ * contract used by skill sentinels. Some runtimes expose an interactive
+ * question tool even though Fusion workflow-step sessions have no synchronous
+ * listener; detecting the call at the session event boundary prevents the
+ * task from continuing after the unanswered question is rendered.
+ */
+export function parseAwaitInputQuestionToolCall(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+): string | null {
+  if (!USER_QUESTION_TOOL_NAMES.has(toolName.trim().toLowerCase()) || !args) return null;
+
+  const records = Array.isArray(args.questions) ? args.questions : [args];
+  const questions = records.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const record = value as Record<string, unknown>;
+    const question = [record.question, record.prompt, record.message, record.text, record.title]
+      .find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)
+      ?.trim();
+    return question ? [question] : [];
+  });
+
+  return questions.length > 0 ? questions.join("\n\n") : null;
+}
+
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
  * step's prompt at the skill-prompt build path (runGraphCustomNode). It teaches
@@ -1318,22 +1281,6 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
   return { output: trimmed, malformed: true };
 }
 
-const reviewStepParams = Type.Object({
-  step: Type.Number({ description: "Step number to review (0-indexed; matches the `### Step N:` numbers in PROMPT.md — Step 0 is Preflight)." }),
-  type: Type.Union(
-    [Type.Literal("plan"), Type.Literal("code")],
-    { description: 'Review type: "plan" or "code"' },
-  ),
-  step_name: Type.String({ description: "Name of the step being reviewed" }),
-  baseline: Type.Optional(
-    Type.String({
-      description:
-        "Git commit SHA for code review diff baseline. " +
-        "Capture HEAD before starting a step and pass it here.",
-    }),
-  ),
-});
-
 /*
 FNXC:ExecutorPrompt 2026-06-21-03:59:
 Agents must not run the full/workspace-wide test suite by default; targeted/package-scoped verification is the norm, full runs require explicit task/workflow opt-in.
@@ -1413,38 +1360,6 @@ When creating multiple related tasks, declare dependencies between them:
 \`fn_task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
 
 **Discovered a dependency:** \`fn_task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-planning.
-
-## Cross-model review via fn_review_step tool
-
-You have a \`fn_review_step\` tool. It spawns a SEPARATE reviewer agent (different
-model, read-only access) to independently assess your work.
-
-**When to call it** — based on the Review Level in the PROMPT.md:
-
-| Review Level | Before implementing | After implementing + committing |
-|-------------|--------------------|---------------------------------|
-| 0 (None)    | —                  | —                               |
-| 1 (Plan)    | \`fn_review_step(step, "plan", step_name)\` | —              |
-| 2 (Plan+Code) | \`fn_review_step(step, "plan", step_name)\` | \`fn_review_step(step, "code", step_name, baseline)\` |
-| 3 (Full)    | plan review        | code review + test review       |
-
-**Skip reviews for** Step 0 (Preflight) and the final documentation/delivery step.
-
-**Code review flow:**
-1. Before starting a step, capture baseline: \`git rev-parse HEAD\`
-2. Implement the step
-3. Commit
-4. Call \`fn_review_step\` with the baseline SHA so the reviewer sees only your changes
-
-**Handling verdicts:**
-- **APPROVE** → proceed to next step
-- **REVISE (code review)** → **enforced**. You MUST fix the issues, commit again,
-  and re-run \`fn_review_step(type="code")\` before the step can be marked done.
-  \`fn_task_update(status="done")\` will be rejected until the code review passes.
-- **REVISE (plan review)** → advisory. Incorporate the feedback at your discretion
-  and proceed with implementation. No re-review is required.
-- **RETHINK (code review)** → your code changes have been reverted and conversation rewound. Read the feedback carefully and take a fundamentally different approach. Do NOT repeat the rejected strategy.
-- **RETHINK (plan review)** → conversation rewound to before the step (no git reset since no code was written). Read the feedback and take a fundamentally different approach to planning this step.
 
 ## Task Documents
 
@@ -1637,10 +1552,6 @@ export interface TaskExecutorOptions {
   onError?: (task: Task, error: Error) => void;
   /** Testable, best-effort completion-deliverable seam; production uses generateFeatureVideo. */
   reviewArtifactGenerator?: (options: GenerateFeatureVideoOptions) => Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>;
-  /** Optional runtime-owned dispatch seam that lets a flag-gated workflow
-   * interpreter own the authoritative lifecycle for default coding tasks.
-   * Return true when the task was fully handled and legacy execute() should stop. */
-  workflowAuthoritativeDispatch?: (task: Task) => Promise<boolean>;
   onAgentText?: (taskId: string, delta: string) => void;
   onAgentTool?: (taskId: string, toolName: string) => void;
   /*
@@ -1700,6 +1611,48 @@ interface ActiveExecutorSessionState {
   lastEffectiveColumnAgentId?: string | null;
 }
 
+/*
+FNXC:WorkflowLifecycleTraits 2026-07-19-09:10 (U5b / KTD-10 / KTD-1):
+Every executor "requeue to backlog for retry/resume" rebound targets the task's
+TRAIT-derived backlog column (resolveReboundTarget: hold → intake → first), not the
+literal "todo". builtin:coding resolves to `todo` so the default pipeline is
+byte-identical; a custom/renamed workflow lands its recovered card in a valid
+backlog column. These are the KTD-1 RECOVERABLE rebounds (they preserve progress /
+resume state); the KTD-1 exhaustion parks (FN-8141 blocked, retry-exhausted) set
+`status:"failed"` in place WITHOUT a move and are intentionally untouched here.
+One IR resolution per rebound (a recovery path, not an enumeration loop); any
+resolution failure falls back to the legacy "todo" so a rebound is never stranded.
+*/
+async function resolveReboundColumnFor(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    return resolveReboundTarget(await resolveWorkflowIrForTask(store, taskId)) ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
+
+/*
+FNXC:WorkflowExecution 2026-07-19-01:30:
+U5d (R9): explicit replacement for the deleted `graphCompletionInterceptors` Map. When this
+callback is present the run IS a graph-owned implementation phase: execution stops at the
+implementation-complete boundary (no workflow steps, no legacy in-review handoff),
+`fn_review_step` is not injected, review gates are marked graph-owned, and the captured
+modifiedFiles are handed back through the callback. Absent callback == the legacy path.
+
+FNXC:WorkflowExecution 2026-07-19-02:10:
+U5e (R9): this is now a parameter of `runImplementation()`, NOT of `execute()`. The graph
+calls the runner directly, so the callback no longer travels through routing.
+
+Remaining U5e work: the callback should become MANDATORY and collapse into an ordinary
+return value. It is still optional only because `executeWorkflowGraph` keeps one
+legacy fallback (executor.ts, the workflow-selection-api-unavailable branch) that minimal
+TEST stores reach; production stores always expose a workflow-selection reader and are
+always graph-owned. Deleting that fallback makes every `runImplementation` call
+graph-owned, at which point this type disappears in favor of a returned outcome. See
+docs/plans/2026-07-19-002-u5e-remaining-deletions-handoff.md.
+*/
+export type GraphCompletionCallback = (info: { modifiedFiles: string[] }) => void;
+
 export class TaskExecutor {
   /*
   FNXC:Workspace 2026-06-21-12:00:
@@ -1744,6 +1697,14 @@ export class TaskExecutor {
    *  Prevents the task:moved handler from dispatching execute() before the
    *  bounce finishes its own dispatch. */
   private workflowRerunPending = new Set<string>();
+  /**
+   * Task ids whose current `task:moved` event is being emitted by this
+   * executor's workflow lifecycle handling (column boundaries or Plan Review
+   * replans). The store emits synchronously, so this narrowly distinguishes a
+   * graph's own transition from an external engine/user move that must still
+   * hard-cancel the active run.
+   */
+  private workflowLifecycleMovesInFlight = new Set<string>();
   /** FN-5256: in-flight session-disposal promises keyed by taskId. The
    *  task:moved (away from in-progress) and task:deleted listeners populate
    *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
@@ -1770,6 +1731,12 @@ export class TaskExecutor {
   private effectiveColumnAgentByTask = new Map<string, string>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
+  /**
+   * FNXC:TaskTiming 2026-08-01-12:00:
+   * Only graph-owned Plan Review sessions appear here. Self-healing uses this
+   * narrow liveness proof so it never finalizes an in-flight planning segment.
+   */
+  private activePlanningWorkflowSessions = new Set<string>();
   /** Steering comments already observed for active workflow step sessions. */
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
   /** Active configured-command abort controllers keyed by task. */
@@ -2267,10 +2234,6 @@ export class TaskExecutor {
       });
     }
 
-    // Dual-observe parity (CU-U5): post-execute observation point. Flag-gated
-    // and fully isolated — never affects the authoritative handoff result.
-    await this.maybeObserveWorkflowParity(task.id, settings);
-
     return handedOff;
   }
 
@@ -2503,6 +2466,17 @@ export class TaskExecutor {
     ]);
   }
 
+  /**
+   * FNXC:TaskTiming 2026-08-01-12:00:
+   * A planning segment has one owner: a graph Plan Review session is live only
+   * while both its session registration and planning ownership marker remain.
+   * This is intentionally narrower than isTaskActive(), which also covers
+   * implementation and non-planning workflow sessions.
+   */
+  hasActivePlanningWorkflowSession(taskId: string): boolean {
+    return this.activePlanningWorkflowSessions.has(taskId) && this.activeWorkflowStepSessions.has(taskId);
+  }
+
   isTaskActive(taskId: string): boolean {
     return (
       this.executing.has(taskId)
@@ -2669,10 +2643,13 @@ export class TaskExecutor {
     this.options.stuckTaskDetector?.untrackTask(taskId);
     this.clearWorkflowRerunWatchdog(taskId);
     this.clearCompletedTaskWatchdog(taskId);
-    // Defensive graph-interpreter cleanup: a pause/abort mid-graph must not
-    // leave a stale completion interceptor or routing claim behind. The graph
-    // runner's own finally blocks also clear these; double-delete is harmless.
-    this.graphCompletionInterceptors.delete(taskId);
+    // Defensive graph-interpreter cleanup: a pause/abort mid-graph must not leave a
+    // stale routing claim behind. The graph runner's own finally blocks also clear
+    // this; double-delete is harmless.
+    // FNXC:WorkflowExecution 2026-07-19-01:30: U5d — there is no completion-interceptor
+    // entry to clear anymore. The graph-owned signal is now a call-scoped callback
+    // parameter (see GraphCompletionCallback), so it cannot outlive the run that created
+    // it and needs no abort-time cleanup.
     TaskExecutor.processWideGraphRouting.delete(taskId);
 
     // FN-5256: claim each surface synchronously BEFORE awaiting any async
@@ -3123,6 +3100,12 @@ export class TaskExecutor {
           }),
         );
       } else if (from === "in-progress") {
+        if (this.workflowLifecycleMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
+          executorLog.log(
+            `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
+          );
+          return;
+        }
         this.trackTaskDisposal(
           task.id,
           this.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
@@ -3953,12 +3936,12 @@ export class TaskExecutor {
         // directory, so releasing it would publish a misleading snapshot
         // and could let self-healing reclaim the worktree as idle.
         if (preserveResumeState) {
-          await this.store.moveTask(taskId, "todo", {
+          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), {
             preserveResumeState: true,
             preserveWorktree: true,
           });
         } else {
-          await this.store.moveTask(taskId, "todo", { preserveWorktree: true });
+          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), { preserveWorktree: true });
         }
         // Restore worktree + executionStartedAt unconditionally to match
         // the original bounce contract: even with preserveWorktree the
@@ -4094,7 +4077,7 @@ export class TaskExecutor {
     FN-7926: completed work with a persistent `getTaskCompletionBlocker` result must not self-requeue through the execute node. Re-running implementation cannot clear dependency/blockedBy state, so it only feeds FN-7863's generic no-progress backstop and misclassifies good work as `EXECUTION_DISPATCH_LOOP_EXHAUSTED`. Park in a scheduler-skipped todo state, preserve worktree/branch/steps, and reset the FN-7863 signature so the backstop remains reserved for genuinely incomplete no-progress loops.
     */
     if (task.column !== "todo") {
-      await this.store.moveTask(task.id, "todo", {
+      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), {
         preserveProgress: true,
         preserveResumeState: true,
         preserveWorktree: true,
@@ -4226,7 +4209,7 @@ export class TaskExecutor {
         sessionFile: null,
       });
       this.markGraphExecuteSelfRequeued(task.id);
-      await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
       return true;
     }
 
@@ -4348,6 +4331,20 @@ export class TaskExecutor {
     const runContext = this.getRunContextFor(taskId);
     await this.store.updateTask(taskId, { tokenUsage }, runContext);
     await enforceTaskTokenBudgetForPersist(this.store, taskId, runContext);
+  }
+
+  /*
+   * FNXC:TokenAnalytics 2026-07-17-14:00:
+   * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
+   */
+  private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
+    this.tokenUsageBaselines.set(taskId, (await this.extractSessionTokenUsage(session)) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+    });
   }
 
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
@@ -4581,7 +4578,7 @@ export class TaskExecutor {
             FNXC:WorkflowExecution 2026-06-25-00:00:
             U4 (KTD-2) watchdog re-entry. The legacy `runWorkflowSteps` recovery path
             was deleted; the workflow graph is the sole executor. A stranded completed
-            task is recovered by RE-ENTERING the graph via `maybeExecuteWorkflowGraph`
+            task is recovered by RE-ENTERING the graph via `executeWorkflowGraph`
             (the same entry execute() uses), which: (1) re-runs any pending
             optional-group / gate nodes, (2) records their outcomes into
             `task.workflowStepResults` (U2) and emits the `[pre-merge]` logs, and
@@ -4593,23 +4590,27 @@ export class TaskExecutor {
             graph's gate semantics — a GATE node REVISE/failure routes the task back for
             fix, while an ADVISORY REVISE is non-blocking and proceeds to review. KTD-5:
             for a store lacking `getTaskWorkflowSelection` that has enabled steps,
-            `maybeExecuteWorkflowGraph` itself fails closed (parks) rather than letting
+            `executeWorkflowGraph` itself fails closed (parks) rather than letting
             recovery silently skip the gates.
             */
-            const graphOwned = await this.maybeExecuteWorkflowGraph(task);
-            if (graphOwned) {
-              this.clearCompletedTaskWatchdog(task.id);
-              await this.store.logEntry(
-                task.id,
-                `Auto-recovered: stranded completed task re-dispatched through the workflow graph — the graph re-ran pending workflow steps (recording results) and owns the in-review / back-for-fix transition`,
-              ).catch(() => undefined);
-              executorLog.log(`✓ ${task.id} auto-recovered completed task via workflow-graph re-entry`);
-              return true;
-            }
-          // Graph declined (minimal store WITHOUT the workflow-selection API and no
-          // enabled gates to run — a store WITH enabled steps would have been parked
-          // fail-closed above): there is nothing to gate, so fall through to the
-          // legacy in-review handoff below.
+            /*
+            FNXC:WorkflowExecution 2026-07-19-17:55 (U10b / R9):
+            Re-entry is unconditional. This used to branch on a `graphOwned` boolean and, when
+            the graph "declined", fall through to the legacy in-review handoff below. The graph
+            can no longer decline — the fallback is deleted — so that fall-through was a path
+            where recovery could reach review having skipped the gates it re-entered to run.
+            The handoff below is still reachable, but now only via the two branches that have
+            legitimately decided there is nothing left to gate: gates already satisfied, or
+            fast mode with no unsatisfied explicit selection.
+            */
+            await this.executeWorkflowGraph(task);
+            this.clearCompletedTaskWatchdog(task.id);
+            await this.store.logEntry(
+              task.id,
+              `Auto-recovered: stranded completed task re-dispatched through the workflow graph — the graph re-ran pending workflow steps (recording results) and owns the in-review / back-for-fix transition`,
+            ).catch(() => undefined);
+            executorLog.log(`✓ ${task.id} auto-recovered completed task via workflow-graph re-entry`);
+            return true;
         } else if (task.executionMode === "fast") {
           /*
           FNXC:FastOptionalSteps 2026-06-30-12:00:
@@ -4624,13 +4625,32 @@ export class TaskExecutor {
       }
       await this.persistTokenUsage(task.id);
       const originColumn = task.column;
-      const promotedFromTodo = originColumn === "todo";
-      if (promotedFromTodo) {
+      const promotedFromPlannerColumn = originColumn === "todo" || originColumn === "triage";
+      let completionTask = task;
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
-        await this.store.moveTask(task.id, "in-progress");
+        /*
+        FNXC:WorkflowLifecycle 2026-07-20-08:42:
+        Advanced-triage recovery reaches this shared seam with completed work, a
+        preserved worktree, and a durable merge pin. The workflow transition map
+        deliberately rejects triage -> in-review, so re-home through the legal
+        triage -> todo -> in-progress path while the recovery ownership set prevents
+        scheduler/executor dispatch. Todo callers retain their existing single hop.
+        */
+        if (originColumn === "triage") {
+          completionTask = await this.store.moveTask(task.id, "todo", {
+            moveSource: "engine",
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+        }
+        completionTask = await this.store.moveTask(task.id, "in-progress");
       }
-      await this.handoffTaskToReview(task, "completed-task-recovered");
-      if (promotedFromTodo) {
+      await this.handoffTaskToReview(completionTask, "completed-task-recovered");
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.delete(task.id);
       }
       this.clearCompletedTaskWatchdog(task.id);
@@ -4656,6 +4676,45 @@ export class TaskExecutor {
    * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
    * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.
    */
+  /*
+   * FNXC:PlanReviewReplanCap 2026-07-19-00:10:
+   * U3 — the graph is the sole Plan Review owner (triage's out-of-graph gate and
+   * its blockAfterPlanReviewRevise cap-park are deleted). Re-own the replan-cap
+   * escalation here: when the plan-review replan budget (node `maxRevisions` /
+   * `planReviewReplanCap` setting, or the unbounded-default hard cap) is exhausted,
+   * park the task at `awaiting-approval` with reason `plan-review-replan-cap` so a
+   * persistent planner/reviewer disagreement surfaces to a human instead of looping
+   * forever or silently sitting in place. The reason string is special-cased by the
+   * dashboard + notifications, so it must be preserved verbatim.
+   */
+  private async parkPlanReviewReplanCapExhausted(
+    taskId: string,
+    capLabel: string,
+    currentCount: number,
+    feedback: string,
+  ): Promise<void> {
+    await this.store.logEntry(
+      taskId,
+      "Plan Review replan cap reached — escalating to manual approval",
+      `The Plan Review gate requested a planning revision ${currentCount} times without converging (cap ${capLabel}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${feedback}`,
+      this.getRunContextFor(taskId),
+    );
+    // awaitingApprovalReason is written through a Record<string, unknown> (matching
+    // the manual plan-approval hold + the deleted triage cap-park) so the distinct
+    // reason survives the update path.
+    const escalationUpdates: Record<string, unknown> = {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      error: null,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    };
+    await this.store.updateTask(taskId, escalationUpdates as Partial<Task>, this.getRunContextFor(taskId));
+    executorLog.warn(
+      `${taskId}: Plan Review replan cap (${capLabel}) reached after ${currentCount} attempts — escalating to awaiting-approval`,
+    );
+  }
+
   private async requestPreMergeOptionalStepFix(
     taskId: string,
     fallbackTask: Task,
@@ -4723,21 +4782,30 @@ export class TaskExecutor {
       if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
       const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
       const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
-      if (!budget.unbounded && currentCount >= budget.max) return false;
+      if (!budget.unbounded && currentCount >= budget.max) {
+        // U3: finite replan budget exhausted → park awaiting-approval (cap park
+        // re-owned from the deleted triage gate), not a silent leave-in-place.
+        const feedbackForPark = info.feedback?.trim()
+          || "Plan Review requested another planning revision but the replan budget is exhausted.";
+        await this.parkPlanReviewReplanCapExhausted(taskId, String(budget.max), currentCount, feedbackForPark);
+        return true;
+      }
       /*
        * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
        * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud halting log entry and STOP replanning (return false) so the gate falls through to a visible failed/parked state a human can act on, instead of looping indefinitely. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
        */
       const PLAN_REVIEW_REPLAN_HARD_CAP = 15;
       if (budget.unbounded && currentCount >= PLAN_REVIEW_REPLAN_HARD_CAP) {
-        await this.store.logEntry(
+        // U3: the unbounded-default safety ceiling now parks awaiting-approval with
+        // the replan-cap reason (re-owned from the deleted triage gate) so the
+        // non-convergence surfaces to a human instead of silently sitting in place.
+        await this.parkPlanReviewReplanCapExhausted(
           taskId,
-          `Plan Review replan safety cap reached (${currentCount}/${PLAN_REVIEW_REPLAN_HARD_CAP}) — halting automatic replan and leaving the task for human review`,
-          `Plan Review requested another planning revision but the unbounded replan loop hit its safety ceiling of ${PLAN_REVIEW_REPLAN_HARD_CAP} attempts. This usually means the reviewer and planner disagree persistently, or the reviewer keeps failing to produce a verdict. The task is being left in place for a human to inspect rather than looping further. Latest feedback:\n${feedback}`,
-          this.getRunContextFor(taskId),
+          String(PLAN_REVIEW_REPLAN_HARD_CAP),
+          currentCount,
+          feedback,
         );
-        executorLog.warn(`${taskId}: Plan Review replan safety cap (${PLAN_REVIEW_REPLAN_HARD_CAP}) reached after ${currentCount} attempts — halting automatic replan`);
-        return false;
+        return true;
       }
       const nextCount = currentCount + 1;
       const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
@@ -4763,7 +4831,12 @@ export class TaskExecutor {
         optionalStepRevisionLogOutcome(feedback, revisionKey),
         this.getRunContextFor(taskId),
       );
-      await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      this.workflowLifecycleMovesInFlight.add(taskId);
+      try {
+        await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      } finally {
+        this.workflowLifecycleMovesInFlight.delete(taskId);
+      }
       await this.store.updateTask(taskId, {
         status: "needs-replan",
         error: null,
@@ -5191,11 +5264,24 @@ export class TaskExecutor {
   // Interpreter-level failure parks the task as a workflow failure rather than
   // falling through to a second runtime path.
 
-  /** Completion interceptors for graph-driven tasks: when present for a task,
-   *  execute() stops at the implementation-complete boundary (no workflow
-   *  steps, no review handoff) and hands control back to the graph runner.
-   *  Doubles as the re-entrancy guard for graph routing. */
-  private graphCompletionInterceptors = new Map<string, (info: { modifiedFiles: string[] }) => void>();
+  /*
+  FNXC:WorkflowExecution 2026-07-19-01:30:
+  U5d (R9) — the `graphCompletionInterceptors` Map is DELETED. It was shared per-task
+  mutable state used to signal "this execute() call is a graph implementation phase":
+  the graph set an entry, re-entered execute(), and execute() read the Map at ~12 sites
+  to decide whether to stop at the implementation-complete boundary, skip outer routing,
+  suppress `fn_review_step`, and mark review gates graph-owned. Signalling through a
+  shared Map made the graph/legacy split invisible at the call site and left stale
+  entries to clean up on abort. It is replaced by an EXPLICIT optional
+  `graphCompletion` callback: presence of the callback IS the "graph-owned implementation
+  phase" signal, and invoking it hands the captured modifiedFiles back to the graph runner.
+
+  FNXC:WorkflowExecution 2026-07-19-02:10:
+  U5e (R9) — the RE-ENTRY is now gone too. `executeCore`'s implementation body was lifted
+  into `runImplementation()`, which the graph seam calls DIRECTLY; `executeCore` is routing
+  only and `execute()` no longer carries a completion parameter. There is no longer any path
+  by which the graph runner calls back into `execute()`.
+  */
   /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */
   private graphToolFailureRunCursors = new Map<string, number>();
 
@@ -5204,7 +5290,7 @@ export class TaskExecutor {
    *  before step-review. Default final-review coding does not pin here and
    *  therefore respects `runStepsInNewSessions` (reuse one session when false,
    *  fresh per-step sessions when true). Cleared when the graph run ends
-   *  (maybeExecuteWorkflowGraph finally). */
+   *  (executeWorkflowGraph finally). */
   private graphStepSessionPinned = new Set<string>();
 
   /** Step-inversion (U6/U8): caches the per-run implementation-phase result for a
@@ -5238,7 +5324,7 @@ export class TaskExecutor {
 
   /** Column-agent seam wiring (column-agent plan U4, R2/R3/R4). Per-run binding
    *  resolver keyed by task id: maps a governing node id to its column-agent
-   *  binding (if any), computed once per run in maybeExecuteWorkflowGraph from the
+   *  binding (if any), computed once per run in executeWorkflowGraph from the
    *  resolved IR. The execute / step-execute seams consume it to decide whether the
    *  coding/step session runs as a column agent. Cleared in the run's finally. */
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
@@ -5247,7 +5333,7 @@ export class TaskExecutor {
    *  pipeline / disable-model-invocation — no human will ever answer). Set only
    *  by an explicit `unattended` workflow-run option; default-absent means a
    *  board run. runGraphCustomNode reads this to set FUSION_HEADLESS on skill
-   *  steps. Cleared in maybeExecuteWorkflowGraph's finally alongside the resolver. */
+   *  steps. Cleared in executeWorkflowGraph's finally alongside the resolver. */
   private graphUnattendedRuns = new Set<string>();
 
   /** Column-agent seam wiring (column-agent plan U4). The governing graph node id
@@ -5288,7 +5374,7 @@ export class TaskExecutor {
    * Returns true when the graph owned the task to a terminal disposition
    * (completed or failed); false when the legacy pipeline should run.
    */
-  private async maybeExecuteWorkflowGraph(task: Task): Promise<boolean> {
+  private async executeWorkflowGraph(task: Task): Promise<void> {
     // Claim synchronously before any await so concurrent execute() calls for
     // the same task cannot both enter graph routing (mirrors executingTaskLock).
     this.graphRouting.add(task.id);
@@ -5301,8 +5387,6 @@ export class TaskExecutor {
     if (hadPreHeldExecutorSlot) {
       this.outerConcurrencyClaims.add(task.id);
     }
-    /** When true, re-register the pre-held slot for the legacy execute path instead of releasing it. */
-    let transferPreHeldToLegacy = false;
     try {
       let settings: Settings;
       try {
@@ -5314,7 +5398,7 @@ export class TaskExecutor {
           reason: `settings-load-failed: ${err instanceof Error ? err.message : String(err)}`,
           visitedNodeIds: [],
         });
-        return true;
+        return;
       }
       /*
       FNXC:WorkflowExecution 2026-06-22-18:00:
@@ -5341,41 +5425,35 @@ export class TaskExecutor {
         }
       }
       let selection: { workflowId: string; stepIds: string[] } | undefined;
+      /*
+      FNXC:WorkflowExecution 2026-07-19-17:30 (U10b / R9):
+      The legacy fallback is DELETED. It used to return `false` here — handing the run to a
+      legacy execute path — when the store exposed neither workflow-selection reader. That
+      escape hatch is gone: graph ownership is now UNCONDITIONAL, which is what lets
+      `graphCompletion` be a required callback rather than an optional one and collapses the
+      three completion boundaries in `runImplementation` to plain returns.
+      A store that cannot resolve a workflow now ALWAYS fails closed, not only when the task
+      has enabled pre-merge steps. The old "no enabled steps means nothing to gate, so the
+      legacy path is safe" carve-out died with the path it protected: there is no second
+      executor left to fall back to, so returning `false` would silently run nothing.
+      */
       if (
         typeof this.store.getTaskWorkflowSelectionAsync !== "function"
         && typeof this.store.getTaskWorkflowSelection !== "function"
       ) {
         /*
-        FNXC:WorkflowExecution 2026-06-23-22:01:
-        Graph execution is the default for production TaskStore implementations, which expose workflow-selection APIs. Minimal test stores and older embedded adapters can lack that API; fall back to the legacy executor instead of half-entering graph routing with no workflow persistence surface.
-
-        FNXC:WorkflowExecution 2026-06-25-00:00:
-        U4 (KTD-2/KTD-5) FAIL-CLOSED. The legacy `runWorkflowSteps` execution path was deleted; the graph is now the sole workflow-step executor. A store without `getTaskWorkflowSelection` can no longer reach a legacy executor that runs the enabled pre-merge gates. If we returned `false` here for a task that has enabled workflow steps, execute() would proceed and SILENTLY SKIP every gate (the exact FN-7039 silent-skip class) before handing off to review. So when the task has enabled pre-merge workflow steps, park the task as a workflow failure instead — loud, never silent. Tasks with NO enabled steps have nothing to gate, so they keep the legacy implementation path (no behavior change), which is what minimal test stores exercise.
-
         FNXC:FastOptionalSteps 2026-06-30-09:45:
-        Fast mode only clears optional workflow steps by default; explicit `enabledWorkflowSteps` remains operator intent. Minimal or older stores that cannot resolve the graph must fail closed for non-empty explicit selections, even in fast mode, rather than falling through and silently skipping the selected optional-group body.
+        Fast mode only clears optional workflow steps by default; explicit `enabledWorkflowSteps` remains operator intent. Minimal or older stores that cannot resolve the graph must fail closed, even in fast mode, rather than falling through and silently skipping the selected optional-group body.
         */
-        let liveForGate: Task | null = null;
-        try {
-          liveForGate = await this.store.getTask(task.id);
-        } catch {
-          liveForGate = null;
-        }
-        const gateTask = liveForGate ?? task;
-        const hasEnabledSteps = (gateTask.enabledWorkflowSteps?.length ?? 0) > 0;
-        if (hasEnabledSteps) {
-          await this.handleGraphFailure(task, {
-            disposition: "failed",
-            outcome: "failure",
-            reason:
-              "workflow-selection-api-unavailable: store lacks a workflow-selection reader so the workflow graph cannot run "
-              + `${gateTask.enabledWorkflowSteps?.length ?? 0} enabled pre-merge workflow step(s); the legacy runWorkflowSteps path was removed (U4). Failing closed rather than skipping gates (KTD-5).`,
-            visitedNodeIds: [],
-          });
-          return true;
-        }
-        transferPreHeldToLegacy = true;
-        return false;
+        await this.handleGraphFailure(task, {
+          disposition: "failed",
+          outcome: "failure",
+          reason:
+            "workflow-selection-api-unavailable: store lacks a workflow-selection reader so the workflow graph cannot run; "
+            + "the legacy execute fallback was removed (U10b) and the graph is the only executor. Failing closed rather than running nothing (KTD-5).",
+          visitedNodeIds: [],
+        });
+        return;
       }
       try {
         selection = typeof this.store.getTaskWorkflowSelectionAsync === "function"
@@ -5388,7 +5466,7 @@ export class TaskExecutor {
           reason: `workflow-selection-failed: ${err instanceof Error ? err.message : String(err)}`,
           visitedNodeIds: [],
         });
-        return true;
+        return;
       }
       selection ??= { workflowId: "builtin:coding", stepIds: [] };
 
@@ -5560,6 +5638,12 @@ export class TaskExecutor {
           }
         },
         requestPreMergeOptionalStepFix: (taskId, info) => this.requestPreMergeOptionalStepFix(taskId, task, info),
+        // U5c (U1 KTD-1/2/3/12): wire the production lifecycle-move hooks so the
+        // graph interpreter owns the card's column moves (was reverted in U5a
+        // pending U6/U7 trait re-key; safe now). Absent → the graph performs no
+        // lifecycle moves (pre-cutover byte-identical); present → the controller
+        // moves the card on each node-column boundary with all move-safety.
+        columnBoundaryHooks: this.buildColumnBoundaryHooks(task),
       });
       let result: WorkflowGraphTaskRunResult;
       try {
@@ -5582,7 +5666,7 @@ export class TaskExecutor {
           reason: `interpreter-error: ${err instanceof Error ? err.message : String(err)}`,
           visitedNodeIds: [],
         });
-        return true;
+        return;
       }
       if (result.disposition === "fell-back") {
         executorLog.warn(`[workflow-graph] ${task.id} could not resolve workflow — parking task instead of legacy fallback: ${result.reason}`);
@@ -5592,7 +5676,7 @@ export class TaskExecutor {
           outcome: "failure",
           reason: result.reason ?? "workflow-resolution-failed",
         });
-        return true;
+        return;
       }
       if (result.disposition === "failed") {
         await this.handleGraphFailure(task, result);
@@ -5601,11 +5685,12 @@ export class TaskExecutor {
         if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
         }
+        await this.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
         if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
           await this.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, this.getRunContextFor(task.id));
         }
       }
-      return true;
+      return;
     } finally {
       // FNXC:WorkflowGraph 2026-06-20-23:35:
       // Terminate child agents spawned by this graph run's coding-mode skill steps.
@@ -5623,15 +5708,14 @@ export class TaskExecutor {
       }
       if (hadPreHeldExecutorSlot) {
         this.outerConcurrencyClaims.delete(task.id);
-        if (transferPreHeldToLegacy) {
-          /*
-          FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
-          Graph declined ownership and is handing the reserved global slot to the legacy execute path. Re-register only; do not release here. execute() must take this registration via runWithExecutorSemaphore or dropPreHeldExecutorSlot on every early return (authoritative dispatch accept, work-engine claim, heartbeat defer, lock contention, soft-delete, etc.). Leaving the registration live after execute returns permanently reduces global capacity.
-          */
-          registerPreHeldExecutorSlot(task.id);
-        } else {
-          this.options.semaphore?.release();
-        }
+        /*
+        FNXC:GlobalConcurrencyControls 2026-07-19-17:40 (U10b):
+        Always release. The `transferPreHeldToLegacy` branch — which re-registered the reserved
+        global slot for a legacy execute path to pick up — died with that path: the graph can no
+        longer decline ownership, so there is no second executor to hand the slot to. Holding the
+        registration with nothing left to claim it would permanently reduce global capacity.
+        */
+        this.options.semaphore?.release();
       }
       if (graphAbortController && this.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
         this.activeWorkflowGraphAbortControllers.delete(task.id);
@@ -5707,6 +5791,160 @@ export class TaskExecutor {
         await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId) ?? store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
       clearStaleInstanceStates: (taskId, keepRunId) =>
         store.clearWorkflowRunStepInstancesAsync?.(taskId, keepRunId) ?? store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
+    };
+  }
+
+  /*
+  FNXC:WorkflowLifecycle 2026-07-18-14:20 (U5c / U1 KTD-1/2/3/12):
+  Build the PRODUCTION column-boundary hooks for one graph run. This is the piece
+  that makes the graph the single source of truth for lifecycle MOVES: as the
+  interpreter enters each node, the controller (createWorkflowColumnBoundary) moves
+  the card to the node's trait column via these hooks. All the move-safety lives in
+  the controller (same-column no-op, KTD-2 hold→wip parked for the scheduler,
+  rejected-move leaves the card in place), so the executor only supplies the raw
+  seams:
+    - moveTask   → real store.moveTask, engine-sourced with workflowMoveSource so
+                   the move is attributed to the graph; bypassGuards (KTD-9: the
+                   graph IS the lifecycle owner, so its own moves must not be
+                   re-vetoed by the same trait guards it implements — capacity
+                   KTD-10 is still enforced by moveTask).
+    - emitAudit  → ids/counts-only run-audit (KTD-12) for column-transition/drift.
+    - onWarn     → executor log sink; diagnostics never affect the run.
+
+  FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
+  The KTD-3 durable IR pin is WIRED: the U9b store schema landed the pin as task-row
+  fields (workflowIrPin/workflowIrPinNodeId/workflowIrPinColumnId, migration 0026), so
+  pinNodeEntry/loadPriorPin bind to that row via createStoreIrPinPersistence. Each real
+  node entry persists the resolved IR's content hash (change-only writes); on restart/
+  re-entry the runner loads the prior pin and detectDrift parks the run with
+  task:reconcile-workflow-drift when the pinned node/column is gone or the hash no longer
+  resolves, instead of traversing a mutated graph. Stores without the fields (in-memory
+  fakes, pre-U9b DBs) degrade to the previous inert no-pin posture.
+  */
+  /*
+  FNXC:WorkflowNoMergeCompletion 2026-07-19-12:40:
+  A workflow with NO merge region had no way to reach its `complete` column.
+
+  `end` is a graph terminal, never a column destination (KTD-1 — the boundary
+  deliberately does not fire on it), so a card only lands in the complete column
+  when a REAL node lives there. Every merge-bearing built-in gets that for free
+  from `post-merge-verification`; a no-merge workflow does not. The two existing
+  movers to the complete column (merger.completeTask, finalizeProvenAutoMergeTask)
+  are both merge-proof-gated and unreachable without a merge, and the merge queue
+  is only fed on entry to `in-review` — a column a no-merge workflow need not even
+  declare. Net effect before this: a `builtin:lead-generation` card completed its
+  whole graph and then sat in `outreach` forever, and its dependents never
+  released because `complete` never became true for it.
+
+  This is the trait-keyed completion mover for exactly that class. It is
+  deliberately narrow:
+   - it fires ONLY when the IR declares no merge-orchestration column, so every
+     merge-bearing workflow (builtin:coding included) is byte-identical — the
+     merge path keeps sole ownership of complete-column entry and the
+     done-only-on-confirmed-merge invariant is untouched;
+   - it does NOT reintroduce a move on `end`; KTD-1 stands;
+   - an IR with no complete-trait column is a legal shape and no-ops here;
+   - a task with no worktree (the normal case for a no-merge workflow) is not an
+     error — nothing about the move depends on one.
+  */
+  private async advanceNoMergeWorkflowToCompleteColumn(task: TaskDetail): Promise<void> {
+    let ir: WorkflowIr;
+    try {
+      ir = await resolveWorkflowIrForTask(this.store, task.id);
+    } catch {
+      // IR resolution is best-effort here: a card that already finished its graph
+      // must never be failed by a bookkeeping lookup.
+      return;
+    }
+    // Merge-bearing workflow → the merge path owns the complete column. Return
+    // before reading anything else so this branch is provably inert for them.
+    if (resolveMergeOrchestrationColumn(ir) !== undefined) return;
+
+    const completeColumn = resolveCompleteColumn(ir);
+    if (!completeColumn || completeColumn === task.column) return;
+
+    try {
+      /*
+       * The normal move path first. A no-merge workflow's last real node sits in
+       * the column immediately before the complete column, but the graph's own
+       * column adjacency is derived from node placement — and NOTHING is placed
+       * in the complete column (that is the whole gap), so `resolveAllowedColumns`
+       * cannot see the edge and the shared validator rejects it. `bypassGuards`
+       * is therefore required for adjacency alone; every other guard the flag
+       * relaxes (merge-blocker in particular) is vacuous here because this branch
+       * only runs for a workflow with no merge region at all.
+       */
+      await this.store.moveTask(task.id, completeColumn, {
+        moveSource: "engine",
+        workflowMoveSource: "workflow-graph",
+        bypassGuards: true,
+        preserveProgress: true,
+        workflowMoveMetadata: { fromColumn: task.column, reason: "no-merge-workflow-completed" },
+      });
+    } catch (err) {
+      executorLog.warn(
+        `[workflow-graph] ${task.id} completed a no-merge workflow but could not advance to '${completeColumn}': ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    // ids/outcomes-only metadata — no prose, no node/run internals.
+    await this.store.recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "executor",
+      runId: generateSyntheticRunId("workflow-no-merge-completion", task.id),
+      domain: "database",
+      mutationType: "task:workflow-complete-column-advanced",
+      target: task.id,
+      metadata: { taskId: task.id, fromColumn: task.column, toColumn: completeColumn, reason: "no-merge-workflow-completed" },
+    });
+  }
+
+  private buildColumnBoundaryHooks(task: Pick<Task, "id">): WorkflowColumnBoundaryHooks {
+    // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
+    // buildBranchPersistence — structural probe of the row surface so a store
+    // lacking the pin fields degrades to the inert no-pin seam.
+    const pinPersistence = createStoreIrPinPersistence(
+      this.store as unknown as WorkflowIrPinStoreSurface,
+      task.id,
+    );
+    return {
+      pinNodeEntry: pinPersistence.pinNodeEntry,
+      loadPriorPin: pinPersistence.loadPriorPin,
+      // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
+      // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
+      clearPin: pinPersistence.clearPin,
+      moveTask: async (toColumn, ctx) => {
+        this.workflowLifecycleMovesInFlight.add(task.id);
+        try {
+          await this.store.moveTask(task.id, toColumn, {
+            moveSource: "engine",
+            workflowMoveSource: "workflow-graph",
+            bypassGuards: true,
+            preserveProgress: true,
+            workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
+          });
+        } finally {
+          this.workflowLifecycleMovesInFlight.delete(task.id);
+        }
+      },
+      emitAudit: async (event) => {
+        await this.store.recordRunAuditEvent?.({
+          taskId: event.taskId,
+          agentId: "executor",
+          runId: generateSyntheticRunId("workflow-column-boundary", event.taskId),
+          domain: "database",
+          mutationType: event.type,
+          target: event.taskId,
+          metadata:
+            event.type === "task:column-transition"
+              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId }
+              : { taskId: event.taskId, workflowId: event.workflowId, pinnedNodeId: event.pinnedNodeId, reason: event.reason },
+        });
+      },
+      onWarn: (message, detail) => {
+        executorLog.log(`[workflow-column-boundary] ${task.id}: ${message} ${JSON.stringify(detail)}`);
+      },
     };
   }
 
@@ -5793,7 +6031,7 @@ export class TaskExecutor {
         try {
           // Any persisted instance row for THIS run means a foreach has expanded —
           // re-parsing would desynchronize the pinned instance set (KTD-3). Probe
-          // under the REAL run id (threaded from maybeExecuteWorkflowGraph) so the
+          // under the REAL run id (threaded from executeWorkflowGraph) so the
           // pin protection actually fires; fall back to the legacy literal only when
           // the run id was not threaded (older store / no definition).
           const rows = await store.loadWorkflowRunStepInstancesAsync?.(task.id, runId ?? `${task.id}:run`)
@@ -6209,148 +6447,25 @@ export class TaskExecutor {
   }
 
   /**
-   * Dual-observe parity (CU-U5): for a workflow-selected task, compare the
-   * selected graph's routing against the legacy authoritative run for the SAME
-   * task and record the result as workflow:parity-observed / -drift audit
-   * events. Observe-only — the shadow walks the graph with no-side-effect seams
-   * driven by the legacy task's actual outcomes, so it never mutates anything.
-   * Gated by workflowInterpreterDualObserve (off by default) and fully isolated
-   * (never throws into the caller). Hooked at the post-execute handoff point.
+   * Run ONLY the implementation phase for a graph-driven task — full setup plus the
+   * agent session up to fn_task_done, stopping at the implementation-complete boundary
+   * so the graph owns workflow gates, review, and merge.
    *
-   * Scope: this validates execute→review→merge ROUTING parity. Full
-   * execution-fidelity parity (a real isolated shadow run) is future work.
-   */
-  private async maybeObserveWorkflowParity(taskId: string, settings: Settings): Promise<void> {
-    if (!isExperimentalFeatureEnabled(settings, WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG)) return;
-    if (
-      typeof this.store.getTaskWorkflowSelectionAsync !== "function"
-      && typeof this.store.getTaskWorkflowSelection !== "function"
-    ) return;
-    try {
-      const selection = typeof this.store.getTaskWorkflowSelectionAsync === "function"
-        ? await this.store.getTaskWorkflowSelectionAsync(taskId)
-        : this.store.getTaskWorkflowSelection(taskId);
-      if (!selection) return;
-      const def = await this.store.getWorkflowDefinition?.(selection.workflowId);
-      if (!def) return;
-      const live = await this.store.getTask(taskId);
-
-      const legacyObs = buildWorkflowObservationFromTask(
-        {
-          column: live.column,
-          status: live.status ?? null,
-          review: live.review as { verdict?: string } | null,
-          mergeDetails: live.mergeDetails as { outcome?: string } | null,
-        },
-        { columnSequence: this.inferLegacyColumnSequence(live.column) },
-      );
-      const legacyAudit = await this.store.getRunAuditEventsAsync({ taskId });
-
-      await observeWorkflowParity({
-        settings,
-        store: this.store,
-        agentId: "workflow-shadow",
-        legacy: { taskId, observation: legacyObs, auditEvents: legacyAudit },
-        runShadow: async () => ({
-          observation: await this.buildShadowObservation(live, def, settings, legacyObs),
-          auditEvents: [],
-        }),
-      });
-    } catch (err) {
-      executorLog.warn(
-        `${taskId}: dual-observe parity skipped: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-
-  /** Canonical column path a legacy run took to reach its terminal column
-   *  (excluding the pre-execute todo/triage prefix so it lines up with the
-   *  graph's execute→review→merge seam nodes). */
-  private inferLegacyColumnSequence(terminalColumn: string): string[] {
-    switch (terminalColumn) {
-      case "done": return ["in-progress", "in-review", "done"];
-      case "in-review": return ["in-progress", "in-review"];
-      case "in-progress": return ["in-progress"];
-      default: return [terminalColumn];
-    }
-  }
-
-  /** Build the interpreter-side observation by walking the selected graph with
-   *  no-side-effect seams whose outcomes mirror the legacy task's reality. */
-  private async buildShadowObservation(
-    live: TaskDetail,
-    def: { ir: { nodes: Array<{ id: string; kind: string; config?: Record<string, unknown> }> } },
-    settings: Settings,
-    legacyObs: WorkflowRunObservation,
-  ): Promise<WorkflowRunObservation> {
-    const reachedReview = live.column === "in-review" || live.column === "done";
-    const merged = live.column === "done";
-    const verdict = (live.review as { verdict?: string } | undefined)?.verdict;
-    const outcome = (ok: boolean): WorkflowNodeResult => ({ outcome: ok ? "success" : "failure" });
-    const seams: WorkflowLegacySeams = {
-      planning: async () => outcome(true),
-      execute: async () => outcome(reachedReview || merged),
-      review: async () => outcome(verdict !== "REVISE"),
-      merge: async () => outcome(merged),
-      schedule: async () => outcome(true),
-    };
-    const runner = new WorkflowGraphTaskRunner({
-      store: this.store,
-      seams,
-      runCustomNode: async () => outcome(true),
-    });
-    const result = await runner.run(live, settings);
-
-    const stageByNodeId = new Map<string, WorkflowStage>();
-    for (const node of def.ir.nodes) {
-      const seam = typeof node.config?.seam === "string" ? node.config.seam : undefined;
-      if (seam === "execute" || seam === "review" || seam === "merge") {
-        stageByNodeId.set(node.id, seam);
-      }
-    }
-    // The built-in coding IR now enters an interpreter-owned merge-policy
-    // primitive region after review; graph execution collapses that region to a
-    // synthetic legacy merge seam recorded as `merge` until merge-policy cutover.
-    stageByNodeId.set("merge", "merge");
-    // Stop the shadow walk at the live terminal seam. The graph walker records a
-    // merge stage before/while invoking its seam, so even a failing merge seam
-    // (the case when the live task is parked in-review with autoMerge off) still
-    // records a "merge" stage. The legacy side never reports merge for an
-    // in-review task, so that phantom stage manufactures stageTransitions drift.
-    // Truncate the visited-stage sequence at the stage the live task actually
-    // reached: merged → merge, reachedReview → review, else → execute.
-    const terminalStage: WorkflowStage = merged ? "merge" : reachedReview ? "review" : "execute";
-    const stages: WorkflowStage[] = [];
-    for (const nodeId of result.visitedNodeIds) {
-      const stage = stageByNodeId.get(nodeId);
-      if (!stage || stages[stages.length - 1] === stage) continue;
-      stages.push(stage);
-      if (stage === terminalStage) break;
-    }
-
-    return buildWorkflowObservation({
-      stageTransitions: stages,
-      terminalColumn: result.disposition === "completed" ? (merged ? "done" : "in-review") : live.column,
-      terminalStatus: live.status ?? null,
-      reviewVerdict: legacyObs.reviewVerdict,
-      mergeOutcome: merged ? "merged" : null,
-    });
-  }
-
-  /**
-   * Run ONLY the implementation phase of execute() for a graph-driven task —
-   * full legacy setup plus the agent session up to fn_task_done. The registered
-   * interceptor makes execute() stop at the completion boundary instead of
-   * running workflow steps and the review handoff.
+   * FNXC:WorkflowExecution 2026-07-19-02:10:
+   * U5e (R9) — this now calls `runImplementation()` DIRECTLY. It used to re-enter
+   * `execute()`, which meant every graph-driven implementation pass made a second trip
+   * through routing (dependency/ephemeral gates, graph-routing duplicate check,
+   * authoritative dispatch) that had to be suppressed by a signal. There is no re-entry
+   * left: routing runs once, in `executeCore`, and the graph calls the runner.
    */
   private async runImplementationPhase(
     task: Task,
     prepared?: PreparedWorktree,
   ): Promise<{ taskDone: boolean; modifiedFiles: string[] }> {
     let captured: { taskDone: boolean; modifiedFiles: string[] } = { taskDone: false, modifiedFiles: [] };
-    this.graphCompletionInterceptors.set(task.id, (info) => {
+    const graphCompletion: GraphCompletionCallback = (info) => {
       captured = { taskDone: true, modifiedFiles: info.modifiedFiles };
-    });
+    };
     const executionTask = prepared
       ? {
           ...task,
@@ -6358,11 +6473,7 @@ export class TaskExecutor {
           branch: prepared.branchName || task.branch,
         }
       : task;
-    try {
-      await this.execute(executionTask);
-    } finally {
-      this.graphCompletionInterceptors.delete(task.id);
-    }
+    await this.runImplementation(executionTask, graphCompletion);
     return captured;
   }
 
@@ -6903,13 +7014,57 @@ export class TaskExecutor {
     };
   }
 
+  /*
+  FNXC:WorkflowMerge 2026-07-19-04:30 (U5a / R1 / KTD-7):
+  Resolve the merge boundary's target column from the merge NODE's own IR column.
+  builtin:coding places its merge-class nodes in `in-review` (parity oracle); a
+  user workflow (benchmark) places the merge node in `Merging`. Resolution failure
+  falls back to `in-review` so a bad IR never strands the merge boundary.
+  */
+  private async resolveMergeBoundaryColumn(taskId: string, nodeId: string): Promise<string> {
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId);
+      // Prefer the named node's column when it is itself a merge-class node
+      // (merge-gate/merge-attempt/…). Otherwise fall back to the FIRST merge-class
+      // node's column — the boundary's caller may pass a synthetic id
+      // ("legacy-merge-seam") or a non-merge node, so keying on merge-class kinds
+      // (not an arbitrary node's column) is what reliably lands the card in the
+      // workflow's merge column: `in-review` for builtin:coding (KTD-7 parity),
+      // `Merging` for the benchmark.
+      const named = ir.nodes.find((n) => n.id === nodeId);
+      if (named && MERGE_REGION_KINDS.has(named.kind) && named.column) return named.column;
+      const mergeNode = ir.nodes.find((n) => MERGE_REGION_KINDS.has(n.kind) && n.column);
+      if (mergeNode?.column) return mergeNode.column;
+      return "in-review";
+    } catch {
+      return "in-review";
+    }
+  }
+
   private async ensureWorkflowMergeBoundaryTask(
     task: TaskDetail,
     metadata: { reason: string; nodeId: string; workflowId: string; runId: string },
   ): Promise<TaskDetail> {
     let live = await this.store.getTask(task.id);
     if (!live) return task;
-    if (live.column === "in-review" || live.column === "done") return live;
+
+    /*
+    FNXC:WorkflowMerge 2026-07-19-04:10 (U5a / R1 / KTD-7):
+    The merge NODE's OWN column drives the pre-merge handoff — not a hardcoded
+    "in-review". builtin:coding places its merge-class nodes (merge-gate /
+    merge-attempt / …) in `in-review`, so the default pipeline lands in `in-review`
+    exactly as before (KTD-7 parity oracle). A user-authored workflow (the 6-column
+    benchmark) places the merge node in `Merging`, so the card lands there because
+    the IR says so — deleting the hardcoded-"in-review" +
+    handoff-invariant-violation-allowlist assumption. Resolution failures fall back
+    to `in-review` so a bad/unresolvable IR never strands the merge boundary.
+    */
+    const targetColumn = await this.resolveMergeBoundaryColumn(task.id, metadata.nodeId);
+
+    // Already at the merge column, or in the terminal (done/complete) column:
+    // nothing to do. builtin:coding's targetColumn is `in-review`, so this stays
+    // byte-identical to the pre-cutover `in-review || done` guard.
+    if (live.column === targetColumn || live.column === "done") return live;
     if (live.paused || live.userPaused) return live;
 
     /*
@@ -6951,13 +7106,13 @@ export class TaskExecutor {
       moveTask?: (id: string, column: string, options?: unknown) => Promise<TaskDetail | undefined>;
     };
     if (typeof storeWithMove.moveTask === "function") {
-      const moved = await storeWithMove.moveTask(live.id, "in-review", moveOptions); // handoff-invariant-violation-allowlist: workflow merge node owns the merge lifecycle boundary for custom workflows.
-      await this.store.logEntry(live.id, "Workflow merge boundary moved task to in-review before requesting merge", undefined, this.getRunContextFor(live.id));
-      return moved ?? { ...live, column: "in-review" };
+      const moved = await storeWithMove.moveTask(live.id, targetColumn, moveOptions);
+      await this.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, this.getRunContextFor(live.id));
+      return moved ?? { ...live, column: targetColumn };
     }
-    await this.store.updateTask(live.id, { column: "in-review" } as Partial<TaskDetail>, this.getRunContextFor(live.id));
-    await this.store.logEntry(live.id, "Workflow merge boundary moved task to in-review before requesting merge", undefined, this.getRunContextFor(live.id));
-    return { ...live, column: "in-review" };
+    await this.store.updateTask(live.id, { column: targetColumn } as Partial<TaskDetail>, this.getRunContextFor(live.id));
+    await this.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, this.getRunContextFor(live.id));
+    return { ...live, column: targetColumn };
   }
 
   private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
@@ -7082,9 +7237,8 @@ export class TaskExecutor {
       // `workflow-step` seam (an IR node still declaring it now fails loudly via
       // WorkflowIrError rather than silently no-opping).
       review: async (seamTask) => {
-        // The legacy "review" stage is the in-review handoff: per-step AI review
-        // already ran during implementation (fn_review_step), and the in-review
-        // column is the staging state the merge queue consumes.
+        // The legacy "review" stage is the in-review handoff: the in-review column is
+        // the staging state the merge queue consumes.
         const live = await this.store.getTask(seamTask.id);
         await this.persistTokenUsage(seamTask.id);
         await this.handoffTaskToReview(live, "workflow-graph-review");
@@ -7236,7 +7390,7 @@ export class TaskExecutor {
         };
       },
       // Step-inversion (KTD-4, U5): review the foreach-active step. Mirrors the
-      // in-session fn_review_step call (executor.ts createReviewStepTool): run
+      // legacy in-session review call (deleted in U10): run
       // reviewStep under semaphore.runNested against the instance's step number/
       // name and the task's PROMPT content. On an authoritative (non-advisory)
       // APPROVE, mark the step done through the projection (updateStep, KTD-7) —
@@ -7958,7 +8112,7 @@ export class TaskExecutor {
   /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
    *
    *  `columnBinding` (plan U3) is the agent binding governing this node's
-   *  declared column, resolved by the seam wiring in maybeExecuteWorkflowGraph
+   *  declared column, resolved by the seam wiring in executeWorkflowGraph
    *  (the IR is not in scope here). When present, the core resolver decides
    *  whether the column agent supersedes (override) or defers to the node's own
    *  `cfg.agentId`/model pair — never a reimplemented precedence. */
@@ -8698,7 +8852,7 @@ export class TaskExecutor {
 
   /*
   FNXC:WorkflowRemediation 2026-07-01-23:40:
-  A live agent session surface for a task proves the work is still executing, independent of the persisted column/pause/status row that handleGraphFailure re-fetches. This mirrors clearPhantomExecutorBinding's `hasLiveSessionSurface` (FN-6736) but deliberately EXCLUDES `this.executing` and graph-routing membership: those are still set for the graph run that is currently ending (graphRouting is cleared in maybeExecuteWorkflowGraph's finally, AFTER handleGraphFailure returns), so including them would report every ending run as "still executing" and suppress all failures. Only a registered coding/step/CLI session surface means a SEPARATE, live agent is working the task.
+  A live agent session surface for a task proves the work is still executing, independent of the persisted column/pause/status row that handleGraphFailure re-fetches. This mirrors clearPhantomExecutorBinding's `hasLiveSessionSurface` (FN-6736) but deliberately EXCLUDES `this.executing` and graph-routing membership: those are still set for the graph run that is currently ending (graphRouting is cleared in executeWorkflowGraph's finally, AFTER handleGraphFailure returns), so including them would report every ending run as "still executing" and suppress all failures. Only a registered coding/step/CLI session surface means a SEPARATE, live agent is working the task.
   */
   private hasLiveTaskSessionSurface(taskId: string): boolean {
     return (
@@ -9119,7 +9273,7 @@ export class TaskExecutor {
             executorLog.log(`${live.id}: skipping stale parse graph retry — task is no longer in a safe in-review resume state`);
             return;
           }
-          await this.maybeExecuteWorkflowGraph(resumeTask);
+          await this.executeWorkflowGraph(resumeTask);
         } catch (err) {
           executorLog.error(`Failed stale parse graph retry for ${live.id}:`, err);
         }
@@ -9240,11 +9394,11 @@ export class TaskExecutor {
             return;
           }
           if (preservedInReview) {
-            await this.maybeExecuteWorkflowGraph(resumeTask);
+            await this.executeWorkflowGraph(resumeTask);
           } else if (resumeTask.column === "todo") {
             await this.execute(resumeTask);
           } else {
-            await this.maybeExecuteWorkflowGraph(resumeTask);
+            await this.executeWorkflowGraph(resumeTask);
           }
         } catch (err) {
           executorLog.error(`Failed paused-node graph re-entry for ${live.id}:`, err);
@@ -9391,6 +9545,29 @@ export class TaskExecutor {
         const blockedParkHonored = `Workflow graph run ended after an honest blocked park (${live.error}) — honoring park, not requeueing, retrying, or clearing state`;
         executorLog.log(`${task.id}: ${blockedParkHonored}`);
         await this.store.logEntry(task.id, blockedParkHonored, undefined, this.getRunContextFor(task.id));
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      /*
+      FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift park, PR #2342):
+      A graph run that exited on the drift guard carries WORKFLOW_DRIFT_PARK_CONTEXT_KEY
+      and visited no nodes. Before this branch existed the result fell through to the
+      generic terminal sink as a misleading `failedNode: 'unknown'` failure — and,
+      combined with the stale pin (now cleared by detectDrift itself), that made a
+      permanent requeue→drift→fail loop. Park it here with an accurate drift reason
+      instead: preserve worktree/branch/step progress untouched, do NOT re-emit the
+      `task:reconcile-workflow-drift` audit (detectDrift already emitted the ids-only
+      event once), and leave the row recoverable by ordinary requeue — which now
+      succeeds because the cleared pin lets the next run re-resolve the CURRENT IR
+      and adopt the changed workflow.
+      */
+      if (result.context?.[WORKFLOW_DRIFT_PARK_CONTEXT_KEY] === true) {
+        const driftMessage = "Workflow drift park: the workflow definition changed under this run (pinned node/column no longer in the current IR). Stale IR pin cleared — requeue the task to re-resolve the current workflow and continue.";
+        executorLog.warn(`${task.id}: ${driftMessage}`);
+        await this.store.logEntry(task.id, driftMessage, undefined, this.getRunContextFor(task.id));
+        if (live.status == null && live.error == null) {
+          await this.store.updateTask(task.id, { error: driftMessage, status: "failed" }, this.getRunContextFor(task.id));
+        }
         await this.persistTokenUsage(task.id);
         return;
       }
@@ -10150,7 +10327,7 @@ export class TaskExecutor {
       error: null,
     }, this.getRunContextFor(live.id));
     if (live.column !== "todo") {
-      await this.store.moveTask(live.id, "todo", {
+      await this.store.moveTask(live.id, await resolveReboundColumnFor(this.store, live.id), {
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
@@ -10198,7 +10375,7 @@ export class TaskExecutor {
       graphResumeRetryCount: 0,
     }, this.getRunContextFor(live.id));
     if (live.column !== "todo") {
-      await this.store.moveTask(live.id, "todo", { preserveProgress: false });
+      await this.store.moveTask(live.id, await resolveReboundColumnFor(this.store, live.id), { preserveProgress: false });
     }
     const message = "Auto-recovered: cleared stale workflow parse pins after reset/retry — task requeued before execution";
     executorLog.warn(`${live.id}: ${message}`);
@@ -10355,7 +10532,7 @@ export class TaskExecutor {
     Requeue with blockedBy instead of executing so missing or soft-deleted dependency residue keeps the scheduler helper's non-blocking semantics while live todo/queued/in-progress/triage dependencies block every dispatch surface.
     */
     if (liveTask.column !== "todo") {
-      await this.store.moveTask(liveTask.id, "todo", {
+      await this.store.moveTask(liveTask.id, await resolveReboundColumnFor(this.store, liveTask.id), {
         preserveProgress: true,
         preserveWorktree: true,
         preserveResumeState: true,
@@ -10376,7 +10553,7 @@ export class TaskExecutor {
 
   /*
   FNXC:EphemeralAgents 2026-07-01-00:00:
-  `ephemeralAgentsEnabled: false` means "never spawn short-lived executor-FN-XXXX workers; only permanent agents run work" (see types.ts ephemeralAgentsEnabled). The legacy spawn refusal lives in EphemeralWorkerManager.onTaskStart (ephemeral-worker-manager.ts), but that runs as a fire-and-forget bookkeeping callback AFTER execution has already begun, so it cannot stop a run. The workflow-engine dispatch paths (maybeExecuteWorkflowGraph, workflowAuthoritativeDispatch, maybeDispatchWorkflowWorkEngine) execute tasks in-process without ever consulting the toggle. Any task that reaches execute() without a permanent assignment via a non-scheduler path (resume-after-restart, heartbeat re-entry, mission/autopilot, work-engine claim) therefore ran despite the operator disabling ephemeral agents.
+  `ephemeralAgentsEnabled: false` means "never spawn short-lived executor-FN-XXXX workers; only permanent agents run work" (see types.ts ephemeralAgentsEnabled). The legacy spawn refusal lives in EphemeralWorkerManager.onTaskStart (ephemeral-worker-manager.ts), but that runs as a fire-and-forget bookkeeping callback AFTER execution has already begun, so it cannot stop a run. The workflow-engine dispatch paths (executeWorkflowGraph, maybeDispatchWorkflowWorkEngine) execute tasks in-process without ever consulting the toggle. Any task that reaches execute() without a permanent assignment via a non-scheduler path (resume-after-restart, heartbeat re-entry, mission/autopilot, work-engine claim) therefore ran despite the operator disabling ephemeral agents.
 
   This guard is the executor's last line of defense, mirroring the scheduler cutover gate (scheduler.ts:2464) and the spawn refusal (ephemeral-worker-manager.ts:132). It runs once at the top of the outer dispatch — before all three workflow paths — so a single check covers every workflow dispatch entry point. A task explicitly assigned to a permanent (non-ephemeral) agent is exactly how ephemeral-off mode is meant to run, so those are allowed through; everything else is re-queued for the scheduler to auto-assign a permanent agent or hold.
   */
@@ -10398,7 +10575,7 @@ export class TaskExecutor {
 
     const liveTask = (await this.store.getTask(task.id).catch(() => null)) ?? task;
     if (liveTask.column !== "todo") {
-      await this.store.moveTask(liveTask.id, "todo", {
+      await this.store.moveTask(liveTask.id, await resolveReboundColumnFor(this.store, liveTask.id), {
         preserveProgress: true,
         preserveWorktree: true,
         preserveResumeState: true,
@@ -10433,55 +10610,83 @@ export class TaskExecutor {
     }
   }
 
+  /*
+  FNXC:WorkflowExecution 2026-07-19-02:10:
+  U5e (R9) — `executeCore` is ROUTING ONLY. It decides who owns the task (duplicate-dispatch
+  drop, dependency/ephemeral gates, the workflow graph, authoritative dispatch) and, when no
+  one else claims it, drives the implementation phase itself.
+
+  The routing block used to be wrapped in `if (!graphCompletion)` because the graph re-ENTERED
+  `execute()` to run the implementation phase, and that inner call had to skip routing or it
+  would recurse. The graph now calls `runImplementation()` directly, so there is no inner
+  invocation to exclude and the gates are unconditional.
+  */
   private async executeCore(task: Task): Promise<void> {
     this.completionFinalizedTaskIds.delete(task.id);
     await this.clearStalePauseAbortBeforeDispatch(task);
-    // Workflow graph interpreter routing (cutover M-C): graph-selected tasks
-    // are orchestrated by the interpreter. The execute seam re-enters this
-    // method with a completion interceptor registered (which claims the task
-    // lock normally), so routing is skipped for that inner invocation.
-    if (!this.graphCompletionInterceptors.has(task.id)) {
-      if (this.graphRouting.has(task.id)) {
-        // Duplicate dispatch while the graph runner owns this task — drop it,
-        // mirroring the executingTaskLock duplicate-invocation behavior.
-        executorLog.log(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
-        return;
-      }
-      if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
-        // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-        return;
-      }
-      // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
-      // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
-      // them can claim the task. Placed inside the outer-dispatch block so seam
-      // re-entry (interceptor registered) is unaffected, and ahead of every path
-      // so the single check covers all three entry points.
-      if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-        return;
-      }
-      const graphOwned = await this.maybeExecuteWorkflowGraph(task);
-      if (graphOwned) return;
-      /*
-      FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
-      After graph falls back it may have re-registered a scheduler pre-held slot for legacy execute. Any return that does not reach runWithExecutorSemaphore (which take()s the registration) must dropPreHeldExecutorSlot or the shared semaphore stays permanently inflated.
-
-      FNXC:GlobalConcurrencyControls 2026-07-15-03:10:
-      workflowAuthoritativeDispatch can reject as well as return true. Rejection propagates out of execute() before the explicit drop below and before the main executor try/finally, so the re-registered pre-held registration and underlying semaphore claim would otherwise stay active forever. Drop before rethrowing.
-      */
-      let authoritativeOwned: boolean | undefined;
-      try {
-        authoritativeOwned = await this.options.workflowAuthoritativeDispatch?.(task);
-      } catch (err) {
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-        throw err;
-      }
-      if (authoritativeOwned) {
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-        return;
-      }
+    if (this.graphRouting.has(task.id)) {
+      // Duplicate dispatch while the graph runner owns this task — drop it,
+      // mirroring the executingTaskLock duplicate-invocation behavior.
+      executorLog.log(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
+      return;
     }
+    if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
+      // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      return;
+    }
+    // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
+    // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
+    // them can claim the task, so the single check covers all three entry points.
+    if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      return;
+    }
+    /*
+    FNXC:WorkflowExecution 2026-07-19-10:40:
+    U10 (R9) — the `workflowAuthoritativeDispatch` branch is DELETED along with
+    WorkflowAuthoritativeDriver. It was the pre-graph "authoritative" runtime: a second
+    in-process execution path that could claim a task between the graph and the legacy
+    implementation. The graph is now the sole orchestrator, so a second claimant is not a
+    fallback, it is a race.
+
+    FNXC:WorkflowExecution 2026-07-19-17:45 (U10b / R9):
+    The trailing `await this.runImplementation(task)` is DELETED too, and
+    `maybeExecuteWorkflowGraph` is now `executeWorkflowGraph` returning void. The old boolean
+    meant "did the graph claim this task"; with the legacy fallback gone the answer is always
+    yes, so a bare `runImplementation` call with NO `graphCompletion` — an implementation pass
+    that nothing owns the completion of — is unreachable by construction rather than by
+    convention. That is what makes `graphCompletion` a required parameter below.
+    */
+    await this.executeWorkflowGraph(task);
+  }
+
+  /*
+  FNXC:WorkflowExecution 2026-07-19-02:10:
+  U5e (R9) — the implementation phase, lifted out of the dual-purpose `executeCore` into a
+  standalone runner the workflow graph calls DIRECTLY. Before the lift the graph re-entered
+  `execute()` under a completion signal, because worktree / taskEnv / agent / semaphore state
+  is assembled here and was not available standalone at `createGraphSeams` time. Lifting the
+  body moves that assembly behind an ordinary method call, so the graph gets the state it
+  needs without a second trip through routing.
+
+  Owns: the process-wide task lock, soft-delete refusal, work-engine dispatch, heartbeat
+  deferral, settings merge, worktree acquisition, the agent session, and everything up to the
+  implementation-complete boundary. It does NOT own workflow gates, review handoff, or merge —
+  those are the graph's.
+  */
+  private async runImplementation(
+    task: Task,
+    /*
+    FNXC:WorkflowExecution 2026-07-19-17:50 (U10b / R9):
+    REQUIRED, and an explicit parameter rather than an options bag. It was optional only to
+    describe "a run the graph does not own" — the legacy fallback. That fallback is deleted, so
+    every implementation pass is graph-owned and every completion boundary below is an
+    unconditional handoff. Making it required is the type-level statement of that invariant:
+    an implementation pass whose completion nothing owns can no longer be constructed.
+    */
+    graphCompletion: GraphCompletionCallback,
+  ): Promise<void> {
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
     // PROCESS-WIDE lock synchronously before any other work. Per-instance
@@ -10960,7 +11165,7 @@ export class TaskExecutor {
             this.getRunContextFor(task.id),
           );
           this.markGraphExecuteSelfRequeued(task.id);
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
           executorLog.log(`✗ ${task.id} worktree liveness failed — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
         } else {
           await this.store.updateTask(task.id, {
@@ -11164,7 +11369,7 @@ export class TaskExecutor {
             this.clearPausedAborted(task.id);
             await this.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, this.getRunContextFor(task.id));
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
             return;
           }
           if (this.stuckAborted.has(task.id)) {
@@ -11377,38 +11582,20 @@ export class TaskExecutor {
             // records results into task.workflowStepResults (U2). The legacy
             // runWorkflowSteps loop was deleted. A NON-graph run reaching here has no
             // enabled workflow steps to run (a minimal store WITH enabled steps is
-            // parked fail-closed inside maybeExecuteWorkflowGraph, KTD-5), so there
+            // parked fail-closed inside executeWorkflowGraph, KTD-5), so there
             // is nothing to gate before the in-review handoff.
-            const graphCompletion = this.graphCompletionInterceptors.get(task.id);
-            if (graphCompletion) {
-              this.clearCompletedTaskWatchdog(task.id);
-              executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
-              const liveModified = (await this.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
-              graphCompletion({ modifiedFiles: liveModified });
-              return;
-            }
-            if (executionMode === "fast") {
-              executorLog.log(`${task.id}: fast mode — skipping pre-merge workflow steps`);
-              await this.store.logEntry(task.id, "Fast mode — pre-merge workflow steps skipped", undefined, this.getRunContextFor(task.id));
-            }
-
-            // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
-            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after step-session completion")) {
-              return;
-            }
-
-            await this.handoffTaskToReview(task, "step-session-completed");
             this.clearCompletedTaskWatchdog(task.id);
-            executorLog.log(`✓ ${task.id} completed (step-session) → in-review`);
-            this.signalTaskComplete(task);
+            executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            const liveModified = (await this.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
+            graphCompletion({ modifiedFiles: liveModified });
+            return;
           } else {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
             await this.store.updateTask(task.id, { status: null, error: null });
             await this.store.logEntry(task.id, `Step-session failed — requeued for execution resume: ${errorSummary}`, undefined, this.getRunContextFor(task.id));
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
             executorLog.log(`✗ ${task.id} step-session failed → todo resume: ${errorSummary}`);
             this.options.onError?.(task, new Error(errorSummary));
           }
@@ -11444,7 +11631,7 @@ export class TaskExecutor {
             this.clearPausedAborted(task.id);
             await this.store.logEntry(task.id, "Execution paused during step-session", undefined, this.getRunContextFor(task.id));
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
           } else if (this.stuckAborted.has(task.id)) {
             stuckRequeue = this.stuckAborted.get(task.id) ?? true;
             this.stuckAborted.delete(task.id);
@@ -11488,7 +11675,7 @@ export class TaskExecutor {
                 branch: null,
               });
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
               stuckRequeue = null; // Prevent outer finally from re-processing
               return;
             }
@@ -11519,7 +11706,7 @@ export class TaskExecutor {
             await this.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, this.getRunContextFor(task.id));
             await this.store.updateTask(task.id, { status: null, error: null });
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
             executorLog.log(`✗ ${task.id} step-session execution failed → todo resume`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           }
@@ -11584,7 +11771,7 @@ export class TaskExecutor {
                 });
                 if (latestTask.column !== "todo") {
                   this.markGraphExecuteSelfRequeued(task.id);
-                  await this.store.moveTask(task.id, "todo", preserveProgress ? { preserveProgress: true } : undefined);
+                  await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), preserveProgress ? { preserveProgress: true } : undefined);
                   executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
                 }
               }
@@ -11610,16 +11797,15 @@ export class TaskExecutor {
       // Mutable ref — populated after createFnAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
       /*
-      FNXC:ReviewerProviderErrors 2026-07-15-11:20:
-      Deferred re-raise channel for provider failures that surface INSIDE `fn_review_step`.
-
-      Why a ref instead of just throwing: pi-agent-core's `executePreparedToolCall` catches every throw from a tool handler and converts it into a `tool_error` result fed back to the model — a tool can NOT propagate an error out of `session.prompt()`. So throwing a rate-limit error from the review tool would just become more text for the model to read and retry against, which is exactly the loop this fixes (14 identical reviewer model markers hammering an already-limited provider).
-
-      Instead the tool records the fatal error here and returns a stop instruction; `agentWork` re-raises it right after `promptWithFallback` returns (next to `checkSessionError`, which exists for the same reason on the session's own errors). Once thrown from `agentWork` it reaches the machinery that already handles it: `withRateLimitRetry` backoff, then the outer catch's `UsageLimitPauser` global pause (usage-limit) or bounded `computeRecoveryDecision` requeue (transient).
+      FNXC:ReviewerProviderErrors 2026-07-19-02:30:
+      DELETED (U10/R9): the deferred provider-error re-raise channel (`reviewerFatalRef`) and the
+      per-step conversation checkpoint map (`stepCheckpoints`, the RETHINK rewind target) existed
+      only to serve the legacy in-session `fn_review_step` tool. Both die with it. Graph-owned
+      review nodes run on their own session and can throw directly, and a RETHINK is a graph edge
+      rather than an in-conversation `navigateTree` rewind — so neither mechanism has a caller.
+      Do not re-introduce a tool-handler-deferred error channel here: it only ever existed because
+      pi-agent-core converts a tool throw into a `tool_error` result the model reads and retries.
       */
-      const reviewerFatalRef: { current: Error | null } = { current: null };
-      // Keyed by 0-indexed step (stepIndex) to match fn_review_step.
-      const stepCheckpoints = new Map<number, string>();
 
       const stuckDetector = this.options.stuckTaskDetector;
       const assignedAgentId = detail.assignedAgentId?.trim();
@@ -11649,7 +11835,7 @@ export class TaskExecutor {
 
       // Log fast mode status
       if (executionMode === "fast") {
-        executorLog.log(`${task.id}: fast mode — fn_review_step tool not injected`);
+        executorLog.log(`${task.id}: fast mode`);
       }
 
       /*
@@ -11690,7 +11876,7 @@ export class TaskExecutor {
       await runPendingTaskVerification();
 
       const customTools = [
-        this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
+        this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stuckDetector),
         this.createTaskLogTool(task.id),
         this.createTaskLogsReadTool(task.id),
         this.createTaskCreateTool(!identityAgent || isEphemeralAgent(identityAgent), task.id, identityAgent?.id),
@@ -11711,12 +11897,12 @@ export class TaskExecutor {
           },
         }),
         /*
-        FNXC:WorkflowReviewGates 2026-06-29-20:41:
-        Workflow-graph execution owns plan/code/browser review gates as nodes. Do not expose legacy in-session `fn_review_step` during graph-owned execute seams; otherwise default coding can duplicate Plan Review inside implementation steps after the workflow-level Plan Review has already passed.
+        FNXC:WorkflowReviewGates 2026-07-19-02:30:
+        U10 (R9): the legacy in-session `fn_review_step` tool is DELETED. Plan/code/browser
+        review gates are owned exclusively by workflow-graph nodes, so an implementation
+        session never spawns its own reviewer. Nothing is injected here; the entry is kept
+        as a tombstone marker so a future reader does not re-add a second review authority.
         */
-        ...(executionMode !== "fast" && !this.graphCompletionInterceptors.has(task.id) ? [
-          this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail, reviewerFatalRef, stuckDetector),
-        ] : []),
         this.createSpawnAgentTool(task.id, worktreePath, settings, taskEnv),
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
@@ -11771,7 +11957,7 @@ export class TaskExecutor {
         // Agent delegation tools — discover and delegate work to other agents.
         ...(this.options.agentStore ? [
           createListAgentsTool(this.options.agentStore),
-          createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir }),
+          createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgentId }),
           createTaskAssignTool(this.options.agentStore, this.store),
           ...(assignedAgentId ? [
             createGetAgentConfigTool(this.options.agentStore, assignedAgentId),
@@ -12016,7 +12202,11 @@ export class TaskExecutor {
         }
         await this.store.appendAgentLog(task.id, executorModelMarker, "status", undefined, "executor");
 
-        // Make session available to custom tools (fn_task_update checkpoint capture, fn_review_step rewind)
+        // Capture both executor and session-helper baselines before any task prompt consumes tokens.
+        await this.captureExecutorTokenUsageBaseline(task.id, session);
+        captureSessionTokenBaseline(session);
+
+        // Make session available to custom tools
         sessionRef.current = session;
 
         // Register session so the pause listener can terminate it.
@@ -12091,7 +12281,6 @@ export class TaskExecutor {
               customFieldDefs,
               this.workspaceConfig,
               {
-                workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
                 pluginTaskContributions,
               },
             );
@@ -12102,13 +12291,7 @@ export class TaskExecutor {
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
-          // FNXC:ReviewerProviderErrors 2026-07-15-11:20: same re-raise contract as
-          // checkSessionError above, for provider failures a tool handler could not throw.
-          throwDeferredReviewerFatal(reviewerFatalRef);
-          await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+          await this.persistTokenUsage(task.id, session);
 
           // Check if proactive context compaction is needed based on token cap setting.
           // This runs after the main prompt completes to avoid interrupting active work.
@@ -12166,13 +12349,7 @@ export class TaskExecutor {
 
             await promptWithFallback(session, resumePrompt);
             checkSessionError(session);
-            // FNXC:ReviewerProviderErrors 2026-07-15-11:20: a resumed session runs the same
-            // review tool, so it needs the same deferred provider-error re-raise.
-            throwDeferredReviewerFatal(reviewerFatalRef);
-            await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
+            await this.persistTokenUsage(task.id, session);
           }
 
           // If dependency was added during execution, discard worktree and move to triage
@@ -12225,7 +12402,7 @@ export class TaskExecutor {
               executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
               await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
             }
             return;
           }
@@ -12255,7 +12432,7 @@ export class TaskExecutor {
             const implicitCheck = await this.store.getTask(task.id);
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
-              // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
+              // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
               const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
               if (!refusal.ok) {
                 await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
@@ -12280,42 +12457,10 @@ export class TaskExecutor {
             // Graph-driven completion (interpreter cutover): the workflow graph
             // owns workflow steps, review handoff, and merge from here — stop
             // at the implementation-complete boundary and hand control back.
-            const graphCompletion = this.graphCompletionInterceptors.get(task.id);
-            if (graphCompletion) {
-              this.clearCompletedTaskWatchdog(task.id);
-              executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
-              graphCompletion({ modifiedFiles });
-              return;
-            }
-
-            this.scheduleCompletedTaskWatchdog(task.id, "task completion");
-            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion")) {
-              return;
-            }
-
-            // FNXC:WorkflowExecution 2026-06-25-00:00: U4 (KTD-2/KTD-5) — the legacy
-            // runWorkflowSteps loop was deleted; workflow gates are graph-owned and
-            // record into task.workflowStepResults (U2). The graph-interceptor
-            // short-circuit above already returns for every graph-driven run, so a
-            // run reaching here is a non-graph fallback with NO enabled workflow
-            // steps (a minimal store WITH enabled steps is parked fail-closed in
-            // maybeExecuteWorkflowGraph, KTD-5) — nothing to gate before handoff.
-            if (executionMode === "fast") {
-              executorLog.log(`${task.id}: fast mode — skipping pre-merge workflow steps`);
-              await this.store.logEntry(task.id, "Fast mode — pre-merge workflow steps skipped", undefined, this.getRunContextFor(task.id));
-            }
-
-            // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
-            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion (post-reset)")) {
-              return;
-            }
-
-            await this.persistTokenUsage(task.id);
-            await this.handoffTaskToReview(task, "fn_task_done");
             this.clearCompletedTaskWatchdog(task.id);
-            executorLog.log(`✓ ${task.id} completed → in-review`);
-            this.signalTaskComplete(task);
+            executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            graphCompletion({ modifiedFiles });
+            return;
           } else {
             let taskDoneSessionRetries = 0;
             let retryAbortedDueToReclaim = false;
@@ -12456,6 +12601,8 @@ export class TaskExecutor {
                   taskId: task.id,
                 });
                 retrySession = createdRetrySession.session;
+                await this.captureExecutorTokenUsageBaseline(task.id, retrySession);
+                captureSessionTokenBaseline(retrySession);
                 if (createdRetrySession.sessionFile) {
                   this.store.updateTask(task.id, { sessionFile: createdRetrySession.sessionFile }).catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -12508,7 +12655,6 @@ export class TaskExecutor {
                       retryCustomFieldDefs,
                       this.workspaceConfig,
                       {
-                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
                         pluginTaskContributions: retryPluginTaskContributions,
                       },
                     ),
@@ -12530,7 +12676,6 @@ export class TaskExecutor {
                       retryCustomFieldDefs,
                       this.workspaceConfig,
                       {
-                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
                         pluginTaskContributions: retryPluginTaskContributions,
                       },
                     ),
@@ -12540,10 +12685,7 @@ export class TaskExecutor {
                 stuckDetector?.recordActivity(task.id);
                 await promptWithFallback(retrySession, retryPrompt);
                 checkSessionError(retrySession);
-                await accumulateSessionTokenUsage(this.store, task.id, retrySession, {
-                  agentId: task.assignedAgentId ?? undefined,
-                  role: "executor",
-                });
+                await this.persistTokenUsage(task.id, retrySession);
               } catch (retryError) {
                 this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
@@ -12558,7 +12700,7 @@ export class TaskExecutor {
                 const implicitCheck = await this.store.getTask(task.id);
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
-                  // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
+                  // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
                   const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
                   if (!refusal.ok) {
                     await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
@@ -12596,29 +12738,11 @@ export class TaskExecutor {
               // implementation boundary and let the graph own the remaining
               // lifecycle. A non-graph fallback reaching here has NO enabled workflow
               // steps (a minimal store WITH enabled steps is parked fail-closed in
-              // maybeExecuteWorkflowGraph, KTD-5) — nothing to gate before handoff.
-              const graphCompletion = this.graphCompletionInterceptors.get(task.id);
-              if (graphCompletion) {
-                this.clearCompletedTaskWatchdog(task.id);
-                executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
-                graphCompletion({ modifiedFiles });
-                return;
-              }
-              if (executionMode === "fast") {
-                executorLog.log(`${task.id}: fast mode — skipping pre-merge workflow steps`);
-                await this.store.logEntry(task.id, "Fast mode — pre-merge workflow steps skipped", undefined, this.getRunContextFor(task.id));
-              }
-
-              await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
-              if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion retry")) {
-                return;
-              }
-
-              await this.persistTokenUsage(task.id);
-              await this.handoffTaskToReview(task, "fn_task_done-retry-completed");
+              // executeWorkflowGraph, KTD-5) — nothing to gate before handoff.
               this.clearCompletedTaskWatchdog(task.id);
-              executorLog.log(`✓ ${task.id} completed on retry → in-review`);
-              this.signalTaskComplete(task);
+              executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
+              graphCompletion({ modifiedFiles });
+              return;
             } else if (terminallyParked) {
               // FN-7965: the in-session refusal handler already wrote the terminal failure and cleared
               // the binding. Nothing further to do — requeueing or handing off to review here is exactly
@@ -12644,7 +12768,7 @@ export class TaskExecutor {
               await this.store.updateTask(task.id, { worktree: null, branch: null, baseCommitSha: null });
               await this.persistTokenUsage(task.id);
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
               executorLog.log(silentMessage);
             } else if (refusalHandled) {
               return;
@@ -12672,7 +12796,7 @@ export class TaskExecutor {
                   this.getRunContextFor(task.id),
                 );
                 this.markGraphExecuteSelfRequeued(task.id);
-                await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+                await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
               } else {
                 await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
@@ -12695,6 +12819,8 @@ export class TaskExecutor {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${task.id}: failed to persist final single-session token usage before dispose: ${msg}`);
           });
+          this.tokenUsageBaselines.delete(task.id);
+          resetSessionTokenBaseline(session);
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await this.terminateAllChildren(task.id);
@@ -12922,7 +13048,7 @@ export class TaskExecutor {
             this.getRunContextFor(task.id),
           );
           this.markGraphExecuteSelfRequeued(task.id);
-          await this.store.moveTask(task.id, "todo", {
+          await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), {
             ...(hasResumableProgress ? { preserveResumeState: true } : {}),
             ...(pauseStillInForce ? { preservePause: true } : {}),
           });
@@ -12978,10 +13104,7 @@ export class TaskExecutor {
 
               await promptWithFallback(activeEntry.session, reducedPrompt);
               checkSessionError(activeEntry.session);
-              await accumulateSessionTokenUsage(this.store, task.id, activeEntry.session, {
-                agentId: task.assignedAgentId ?? undefined,
-                role: "executor",
-              });
+              await this.persistTokenUsage(task.id, activeEntry.session);
 
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.
@@ -13033,7 +13156,7 @@ export class TaskExecutor {
               sessionFile: null,
             });
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
             return;
           }
 
@@ -13216,7 +13339,7 @@ export class TaskExecutor {
               // recovery paths in auto-recovery-handlers/contamination.ts,
               // tryBootstrapMisbindingRecovery, and self-healing reclaim.
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, "todo", { preserveResumeState: true, preserveWorktree: true });
+              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true, preserveWorktree: true });
               return;
             }
 
@@ -13408,7 +13531,7 @@ export class TaskExecutor {
               branch: null,
             });
             this.markGraphExecuteSelfRequeued(task.id);
-            await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+            await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
             return;
           }
 
@@ -13519,7 +13642,7 @@ export class TaskExecutor {
                 this.activeWorktrees.delete(task.id);
                 executingTaskLock.release(task.id);
                 cleanupLockHeld = false;
-                await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+                await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
               } else {
                 this.activeWorktrees.delete(task.id);
               }
@@ -13604,7 +13727,7 @@ export class TaskExecutor {
             // any concurrent recovery (see comment above).
             if (latestTask.column !== "todo") {
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, "todo", preserveProgress ? { preserveProgress: true } : undefined);
+              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), preserveProgress ? { preserveProgress: true } : undefined);
               // Audit trail: record task move (FN-1404)
               await audit.database({ type: "task:move", target: task.id, metadata: { to: "todo" } });
               executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
@@ -13637,7 +13760,6 @@ export class TaskExecutor {
     taskId: string,
     codeReviewVerdicts: Map<number, ReviewVerdict>,
     sessionRef: { current: AgentSession | null },
-    stepCheckpoints: Map<number, string>,
     stuckDetector?: StuckTaskDetector,
   ): ToolDefinition {
     const store = this.store;
@@ -13800,22 +13922,13 @@ export class TaskExecutor {
           }
         }
 
-        // Enforce code review REVISE: block advancing to "done" when the last
-        // code review for this step returned REVISE. The agent must fix the
-        // issues and call fn_review_step(type="code") again before proceeding.
-        // FN-6607: verdict/checkpoint maps are keyed directly by the 0-indexed tool step.
-        if (status === "done" && codeReviewVerdicts.get(stepIndex) === "REVISE") {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Cannot mark Step ${step} as done — the last code review returned REVISE. ` +
-                `Fix the issues from the code review, commit your changes, and call ` +
-                `fn_review_step(step=${step}, type="code") again. The step can only advance ` +
-                `after the code review passes.`,
-            }],
-            details: {},
-          };
-        }
+        /*
+        FNXC:WorkflowReviewGates 2026-07-19-02:30:
+        U10 (R9): the in-session code-review REVISE gate on `fn_task_update(status="done")` is
+        deleted. Its verdict source was the legacy `fn_review_step` tool, which no longer exists,
+        so the map it read is permanently empty. A REVISE from a graph-owned Code Review node routes back to
+        the implementation node as a graph edge instead of blocking a step-status tool call.
+        */
 
         // Handle dependencies parameter if provided
         if (dependencies !== undefined) {
@@ -13868,22 +13981,12 @@ export class TaskExecutor {
         const persistedStatus = stepInfo.status;
         const progress = task.steps.filter((s) => s.status === "done").length;
 
-        // Capture session checkpoint only when the store actually moved the
-        // step to in-progress, so RETHINK can rewind to it. Doing this AFTER
-        // updateStep means a regression that updateStep ignores (e.g. the
-        // agent re-marking an already-done step) cannot replace the
-        // pre-step leaf with a later one.
-        if (
-          status === "in-progress" &&
-          persistedStatus === "in-progress" &&
-          sessionRef.current
-        ) {
-          const leafId = sessionRef.current.sessionManager.getLeafId();
-          if (leafId) {
-            // FN-6607: verdict/checkpoint maps are keyed directly by the 0-indexed tool step.
-            stepCheckpoints.set(stepIndex, leafId);
-          }
-        }
+        /*
+        FNXC:WorkflowReviewGates 2026-07-19-02:30:
+        U10 (R9): the pre-step conversation-checkpoint capture is deleted with `fn_review_step`.
+        Its only consumer was that tool's RETHINK rewind (`session.navigateTree`); a graph-owned
+        RETHINK re-enters the implementation node instead of rewinding the live conversation.
+        */
 
         // If the persisted status doesn't match the requested status, the
         // store rejected the transition (currently: in-progress regression
@@ -14718,7 +14821,7 @@ export class TaskExecutor {
         this.getRunContextFor(task.id),
       );
       this.markGraphExecuteSelfRequeued(task.id);
-      await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
     } else {
       await this.store.updateTask(task.id, {
         status: "failed",
@@ -14911,7 +15014,7 @@ export class TaskExecutor {
               undefined,
               this.getRunContextFor(task.id),
             );
-            await store.moveTask(taskId, "todo", { preserveProgress: true });
+            await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
             executorLog.log(`✗ ${taskId} failed invariant check — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
           } else {
             await store.updateTask(taskId, {
@@ -14965,7 +15068,7 @@ export class TaskExecutor {
               undefined,
               this.getRunContextFor(task.id),
             );
-            await store.moveTask(taskId, "todo", { preserveProgress: true });
+            await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
             executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
           } else {
             await store.updateTask(taskId, {
@@ -15126,349 +15229,6 @@ export class TaskExecutor {
           content: [{ type: "text" as const, text: successMessage }],
           details: {},
         };
-      },
-    };
-  }
-
-  /**
-   * Create the fn_review_step tool for the executor agent.
-   *
-   * When the reviewer returns a RETHINK verdict, this tool:
-   * 1. Runs `git reset --hard <baseline>` to revert file changes
-   * 2. Rewinds the conversation to the pre-step checkpoint via `session.navigateTree()`
-   * 3. Resets the step status to "pending"
-   * 4. Returns a re-prompt instructing the agent to take a different approach
-   */
-  private createReviewStepTool(
-    taskId: string,
-    worktreePath: string,
-    promptContent: string,
-    codeReviewVerdicts: Map<number, ReviewVerdict>,
-    sessionRef: { current: AgentSession | null },
-    stepCheckpoints: Map<number, string>,
-    detail: TaskDetail,
-    reviewerFatalRef: { current: Error | null },
-    stuckDetector?: StuckTaskDetector,
-  ): ToolDefinition {
-    const store = this.store;
-    const options = this.options;
-    const planSpecUnavailableCounts = new Map<string, number>();
-    /*
-    FNXC:ReviewerUnavailableBudget 2026-07-15-11:20:
-    Code review needs the same hard UNAVAILABLE bound plan/spec reviews already have.
-
-    Plan/spec reviews cap repeats via `planSpecUnavailableCounts` and tell the model "Do NOT re-call". Code review had NO counter and instead told the model "retry once or escalate" — but "retry once" is a SUGGESTION TO AN LLM, not a bound. A model that ignores it re-calls the tool indefinitely, and each call spawns reviewer sessions against a provider that is already failing. Prompt text is not a control-flow mechanism; this counter is.
-
-    Code review stays BLOCKING on exhaustion (unlike advisory plan/spec, which proceed) — an unreviewed code change must not pass as approved. The step simply stops being retried and the operator is pointed at the dashboard.
-    */
-    const codeUnavailableCounts = new Map<string, number>();
-
-    return {
-      name: "fn_review_step",
-      label: "Review Step",
-      description:
-        "Spawn a reviewer agent to evaluate your plan or code for a step. " +
-        "Returns APPROVE, REVISE, RETHINK, or UNAVAILABLE. " +
-        "Call at step boundaries based on the task's review level. " +
-        "Skip reviews for Step 0 (Preflight) and the final documentation step.",
-      parameters: reviewStepParams,
-      execute: async (_toolCallId: string, params: Static<typeof reviewStepParams>) => {
-        const { step, type: reviewType, step_name, baseline } = params;
-        const stepIndex = step;
-        const currentTask = await store.getTask(taskId);
-        const taskSteps = currentTask.steps.length > 0 ? currentTask.steps : detail.steps;
-        if (!Number.isInteger(step) || step < 0 || step >= taskSteps.length) {
-          return {
-            content: [{ type: "text" as const, text: `Invalid step ${step}. Task has ${taskSteps.length} step(s) and fn_review_step is 0-indexed; Step 0 is Preflight.` }],
-            details: {
-              error: "invalid_step",
-              step,
-              maxStep: taskSteps.length > 0 ? taskSteps.length - 1 : -1,
-            },
-          };
-        }
-
-        reviewerLog.log(`${taskId}: ${reviewType} review for Step ${step} (${step_name})`);
-        await store.logEntry(taskId, `${reviewType} review requested for Step ${step} (${step_name})`);
-
-        // Auto-advance the step to "in-progress" if the agent is requesting a
-        // review without having flipped it themselves. Some runtimes (notably
-        // permanent-agent CEO sessions on the openai-codex transport) skip the
-        // bookkeeping fn_task_update call entirely. Tying step state to the
-        // review tool keeps the dashboard accurate without a second tool call.
-        // Skip the auto-update if the step is already done/skipped (don't
-        // regress completed work) — updateStep guards against that anyway.
-        try {
-          if (taskSteps[stepIndex]?.status === "pending") {
-            await store.updateStep(taskId, stepIndex, "in-progress");
-          }
-        } catch (autoUpdateErr) {
-          reviewerLog.warn(
-            `${taskId}: failed to auto-advance Step ${step} to in-progress on review entry: ${autoUpdateErr instanceof Error ? autoUpdateErr.message : String(autoUpdateErr)}`,
-          );
-        }
-
-        let rollbackFailureNarrated = false;
-        try {
-          // Merge per-task effective workflow settings (U3, KTD-3) so the
-          // validator model-lane reads below pick up workflow values; this tool
-          // closure re-fetches independently. Behavior-inert by default.
-          const latestDetailForReview = await store.getTask(taskId);
-          /*
-          FNXC:AgentSteering 2026-06-30-12:38:
-          The in-session fn_review_step tool must select fresh unified comments plus legacy steering immediately before spawning a reviewer so explicit user requirements posted during execution are reviewed.
-
-          FNXC:AgentSteering 2026-06-30-13:20:
-          In-session reviewer calls use uncapped selection so the manual review tool cannot lose older operator instructions while validating the current step.
-          */
-          const userComments = selectUserCommentsForAgentContext(latestDetailForReview, { limit: null });
-          const settings = await mergeEffectiveSettings(store, latestDetailForReview, await store.getSettings());
-          const reviewCwd = resolveReviewCheckoutCwd(latestDetailForReview, worktreePath);
-          this.logReviewCheckoutRouting(taskId, latestDetailForReview, reviewCwd, worktreePath);
-          // Run the reviewer via semaphore.runNested so its slot accounting
-          // is honest: activeCount transiently bumps to reflect the second
-          // agent session, but the reviewer doesn't enter the wait queue
-          // (avoiding a fairness regression where unrelated work could
-          // overtake this task at low maxConcurrent). The parent (this
-          // executor) makes no LLM calls while suspended awaiting the tool
-          // result, so the soft breach of `limit` does not push real
-          // LLM-active concurrency above the configured cap.
-          const sem = options.semaphore;
-          // FNXC:Workspace 2026-06-22-00:30: KTD3 — in-session fn_review_step loops per sub-repo.
-          // `reviewStep` stays single-cwd; THIS CALLER loops. Single-cwd by default reviews `worktreePath`;
-          // in workspace mode that is the browse-only non-git root, so we spawn one reviewer per acquired
-          // sub-repo (cwd = repo.worktreePath) via reviewWorkspacePerRepo and aggregate as a conjunction.
-          // `invokeReviewerForCwd` is the per-cwd reviewStep call both modes share.
-          const invokeReviewerForCwd = (cwd: string) => reviewStep(
-            cwd, taskId, step, step_name,
-            reviewType, promptContent, baseline,
-            {
-              onText: (delta) => options.onAgentText?.(taskId, delta),
-              // Execution defaults as final fallback
-              defaultProvider: settings.defaultProvider,
-              defaultModelId: settings.defaultModelId,
-              fallbackProvider: settings.fallbackProvider,
-              fallbackModelId: settings.fallbackModelId,
-              /*
-               * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
-               * Pre-merge review sessions honor the per-task validator override before shared task thinking, preserving shared-task fallback for legacy tasks.
-               */
-              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(latestDetailForReview.validatorThinkingLevel ?? latestDetailForReview.thinkingLevel, settings),
-              defaultThinkingLevel: resolveValidatorThinkingLevel(latestDetailForReview.validatorThinkingLevel ?? latestDetailForReview.thinkingLevel, settings),
-              // Task-level validator override (from task)
-              taskValidatorProvider: latestDetailForReview.validatorModelProvider,
-              taskValidatorModelId: latestDetailForReview.validatorModelId,
-              // Project-level validator override
-              projectValidatorProvider: settings.validatorProvider,
-              projectValidatorModelId: settings.validatorModelId,
-              // Project-level validator fallback
-              projectValidatorFallbackProvider: settings.validatorFallbackProvider,
-              projectValidatorFallbackModelId: settings.validatorFallbackModelId,
-              // Global validator lane
-              globalValidatorProvider: settings.validatorGlobalProvider,
-              globalValidatorModelId: settings.validatorGlobalModelId,
-              // Project-level default override (fallback before execution defaults)
-              projectDefaultOverrideProvider: settings.defaultProviderOverride,
-              projectDefaultOverrideModelId: settings.defaultModelIdOverride,
-              store,
-              taskId,
-              task: latestDetailForReview,
-              userComments: userComments.length > 0 ? userComments : undefined,
-              agentPrompts: settings.agentPrompts,
-              agentStore: this.options.agentStore,
-              rootDir: this.rootDir,
-              settings,
-              // Track the reviewer's session under this task so it's disposed
-              // alongside the main session when the task moves out of
-              // in-progress, is paused, or the engine globally pauses.
-              onSessionCreated: (s) => this.registerSubagentSession(taskId, s),
-              onSessionEnded: (s) => this.unregisterSubagentSession(taskId, s),
-            },
-          );
-          const runForCwd = (cwd: string) => {
-            const invoke = () => invokeReviewerForCwd(cwd);
-            return sem ? sem.runNested(invoke) : invoke();
-          };
-          const result = this.workspaceConfig && reviewCwd === worktreePath
-            ? await this.reviewWorkspacePerRepo(currentTask, (cwd) => runForCwd(cwd))
-            : await runForCwd(reviewCwd);
-
-          await store.logEntry(
-            taskId,
-            `${reviewType} review Step ${step}: ${result.verdict}`,
-            result.summary,
-          );
-          reviewerLog.log(`${taskId}: Step ${step} ${reviewType} → ${result.verdict}`);
-          const narration = (reviewType === "plan" || reviewType === ("spec" as typeof reviewType)) && result.verdict === "APPROVE"
-            ? buildPlanVerifiedMessage()
-            : result.verdict === "UNAVAILABLE"
-              ? buildReviewUnavailableMessage(result.summary)
-              : buildReviewVerdictMessage(result.verdict, result.summary);
-          // A RETHINK message asserts rollback completion, so wait for resetStepToBaseline below.
-          if (result.verdict !== "RETHINK") {
-            void emitProactiveStatus(store, taskId, narration, "reviewer", narration ? sanitizeFailureReason(result.summary) : undefined);
-          }
-          stuckDetector?.recordProgress(taskId);
-
-          // Track code review verdicts for enforcement. Plan reviews remain
-          // advisory — only code reviews write to the verdict map. FN-6607 keeps
-          // the map keyed by the same 0-indexed `step` value the tool receives.
-          if (reviewType === "code") {
-            if (result.verdict === "REVISE") {
-              codeReviewVerdicts.set(stepIndex, "REVISE");
-            } else if (result.verdict === "APPROVE") {
-              codeReviewVerdicts.delete(stepIndex);
-              // Auto-mark the step as done once its code review passes. The
-              // recoverApprovedStepsOnResume path (executor.ts) already does
-              // this on engine restart from log scan; doing it inline avoids
-              // depending on the agent's follow-up fn_task_update call, which
-              // permanent-agent runtimes routinely skip.
-              try {
-                const currentTask = await store.getTask(taskId);
-                if (
-                  stepIndex >= 0 &&
-                  stepIndex < currentTask.steps.length &&
-                  currentTask.steps[stepIndex].status !== "done" &&
-                  currentTask.steps[stepIndex].status !== "skipped"
-                ) {
-                  await store.updateStep(taskId, stepIndex, "done");
-                  await store.logEntry(
-                    taskId,
-                    `Step ${step} (${step_name}) auto-marked done by code review APPROVE`,
-                  );
-                }
-              } catch (autoDoneErr) {
-                reviewerLog.warn(
-                  `${taskId}: failed to auto-mark Step ${step} done after APPROVE: ${autoDoneErr instanceof Error ? autoDoneErr.message : String(autoDoneErr)}`,
-                );
-              }
-            }
-          }
-
-          let text: string;
-          switch (result.verdict) {
-            case "APPROVE": text = "APPROVE"; break;
-            case "REVISE":
-              if (reviewType === "code") {
-                text = `REVISE — this step cannot be marked done until the code review passes.\n\n` +
-                  `Fix the issues below, commit your changes, and call fn_review_step(step=${step}, ` +
-                  `type="code", step_name="${step_name}", baseline="<new SHA>") again.\n\n${result.review}`;
-              } else {
-                text = `REVISE\n\n${result.review}`;
-              }
-              break;
-            case "RETHINK": {
-              // RETHINK mechanics (git reset to baseline + session rewind +
-              // step→pending + RETHINK log entry) are the U2 substrate seam.
-              // The legacy in-session path delegates to the single extracted
-              // implementation in step-runner.ts so there is exactly one copy.
-              // No blast-radius guard here: this path is intra-session with an
-              // agent-supplied baseline (KTD-2 — the guard is for graph-owned
-              // shared-isolation resets), so behavior stays byte-identical.
-              const checkpointId = stepCheckpoints.get(stepIndex);
-              try {
-                await resetStepToBaseline(
-                  {
-                    store,
-                    worktreePath,
-                    sessionRef,
-                    reviewType: reviewType === "plan" ? "plan" : "code",
-                    summary: result.summary,
-                  },
-                  { id: taskId, steps: taskSteps },
-                  stepIndex,
-                  reviewType === "code" ? baseline : undefined,
-                  checkpointId,
-                );
-              } catch (error) {
-                const safeReason = sanitizeFailureReason(error);
-                void emitProactiveStatus(
-                  store,
-                  taskId,
-                  buildReviewRollbackFailureMessage(safeReason),
-                  "reviewer",
-                  safeReason,
-                );
-                rollbackFailureNarrated = true;
-                throw error;
-              }
-              void emitProactiveStatus(store, taskId, narration, "reviewer", sanitizeFailureReason(result.summary));
-
-              if (reviewType === "plan") {
-                text = `RETHINK\n\nYour plan was rejected. Here is why:\n\n${result.review}\n\nTake a different approach to planning this step. Do NOT repeat the rejected strategy.`;
-              } else {
-                text = `RETHINK\n\nYour previous approach was rejected. Here is why:\n\n${result.review}\n\nTake a different approach. Do NOT repeat the rejected strategy. Re-read the step requirements and find an alternative solution.`;
-              }
-              break;
-            }
-            default: {
-              const isAdvisoryReview = reviewType === "plan" || reviewType === ("spec" as typeof reviewType);
-              if (isAdvisoryReview) {
-                const key = `${reviewType}:${step}`;
-                const count = (planSpecUnavailableCounts.get(key) ?? 0) + 1;
-                planSpecUnavailableCounts.set(key, count);
-                const advisoryType = reviewType === "plan" ? "plan" : "spec";
-                const advisoryMessage = `${advisoryType} review Step ${step}: UNAVAILABLE — proceeding advisory after fallback retry exhausted`;
-                await store.logEntry(taskId, advisoryMessage);
-                reviewerLog.warn(`${taskId}: ${advisoryMessage}`);
-                if (count >= 2) {
-                  await store.logEntry(
-                    taskId,
-                    `${advisoryType} review Step ${step}: repeated UNAVAILABLE (${count}) — advisory continuation active; operator may inspect reviewer logs in dashboard`,
-                  );
-                }
-                text = `UNAVAILABLE (advisory) — reviewer could not produce a verdict after fallback retry. ${advisoryType === "plan" ? "Plan" : "Spec"} reviews are advisory; proceed with implementation. Do NOT re-call fn_review_step for the ${advisoryType} of Step ${step}.`;
-              } else {
-                const key = `code:${step}`;
-                const count = (codeUnavailableCounts.get(key) ?? 0) + 1;
-                codeUnavailableCounts.set(key, count);
-                const blockingMessage = `code review Step ${step}: UNAVAILABLE (${count}/${MAX_CODE_REVIEW_UNAVAILABLE_RETRIES}) — blocking until reviewer returns a usable verdict`;
-                await store.logEntry(taskId, blockingMessage);
-                reviewerLog.warn(`${taskId}: ${blockingMessage}`);
-                text = count >= MAX_CODE_REVIEW_UNAVAILABLE_RETRIES
-                  ? `UNAVAILABLE — the reviewer failed to produce a usable verdict ${count} times for Step ${step}. Do NOT re-call fn_review_step for the code review of Step ${step}; retrying is not working. Code review is blocking, so this step cannot be marked done — stop working on it and report that the code review is stuck so an operator can inspect the reviewer logs in the dashboard.`
-                  : "UNAVAILABLE — reviewer did not produce a usable verdict. Code review remains blocking; retry once or escalate via dashboard.";
-              }
-              break;
-            }
-          }
-
-          return { content: [{ type: "text" as const, text }], details: {} };
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          reviewerLog.error(`${taskId}: review failed: ${errorMessage}`);
-          await store.logEntry(taskId, `${reviewType} review failed: ${errorMessage}`);
-          if (!rollbackFailureNarrated) {
-            const narration = buildReviewUnavailableMessage(err);
-            void emitProactiveStatus(store, taskId, narration, "reviewer", sanitizeFailureReason(err));
-          }
-
-          /*
-          FNXC:ReviewerProviderErrors 2026-07-15-11:20:
-          This catch used to swallow EVERY reviewer failure into an in-band "UNAVAILABLE" string handed back to the model. That is what neutralized the engine's existing protections: because the error became tool OUTPUT rather than a thrown exception, `withRateLimitRetry` never backed off, `UsageLimitPauser` never paused, and `RetryStormError` never reached its terminalizer — while the model, told code review was still blocking, simply called the tool again against a failing provider.
-
-          Two classes must escape instead of becoming model-visible text:
-            - `ReviewerProviderError` — a rate limit or a network outage that survived the reviewer's own bounded backoff. Not a verdict; the engine must back off or pause, not re-ask.
-            - `RetryStormError` — the deliberate "budget exhausted, stop" signal from `recordRetry`. Answering it with a retry instruction is precisely backwards.
-
-          They cannot be re-thrown here (pi-agent-core converts tool throws into `tool_error` results — see `reviewerFatalRef`), so record them for `agentWork` to re-raise after the prompt and return a STOP instruction so the model stops calling in the meantime. Everything else keeps the existing in-band UNAVAILABLE behavior: a genuinely unparseable review is a review problem, and the model can legitimately act on it.
-          */
-          if (err instanceof ReviewerProviderError || err instanceof RetryStormError) {
-            reviewerFatalRef.current ??= err;
-            return {
-              content: [{
-                type: "text" as const,
-                text: `UNAVAILABLE — the review could not run and this task is being handed back to the engine to retry: ${errorMessage}. Do NOT call fn_review_step again. Stop working and end your turn now.`,
-              }],
-              details: {},
-            };
-          }
-
-          return {
-            content: [{ type: "text" as const, text: `UNAVAILABLE — reviewer error: ${errorMessage}` }],
-            details: {},
-          };
-        }
       },
     };
   }
@@ -16222,7 +15982,8 @@ ${scopeGuard}
    * The reviewer is an AGENT spawned with `cwd = worktree`, told (in prompt text, reviewer.ts) to run `git diff`
    * itself — it does NOT read a diff passed in code. So per-repo review = ONE reviewer agent per sub-repo. We keep
    * `reviewStep` single-cwd; the CALLERS loop. This helper is the shared loop+aggregate so both review entry points
-   * (`createReviewStepTool` and the step-inversion `stepReview` seam) iterate identically: it invokes the caller's
+   * (historically the deleted in-session review tool, now only the step-inversion `stepReview` seam) iterate
+   * identically: it invokes the caller's
    * own `invokeForCwd(cwd)` once per acquired worktree (cwd = repo.worktreePath) and aggregates the repo-tagged
    * verdicts as a CONJUNCTION — the task is "reviewed" only if EVERY repo passes; the FIRST non-APPROVE repo's
    * verdict becomes the aggregate verdict (mirroring verifyWorktreeInvariants' first-failing-repo return), and its
@@ -16548,7 +16309,7 @@ ${scopeGuard}
      * unrelated local commits can make a plan-only gate reject implementation
      * state and loop back to triage after the planner already approved the spec.
      */
-    const approvedContractBlock = !isPlanReviewStep
+    const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
       ? workflowReviewSpecText
         ? `
 
@@ -16892,9 +16653,27 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
       );
       this.setActiveWorkflowStepSession(task.id, session, worktreePath, this.createSeenSteeringIds(task));
+      // FNXC:TaskTiming 2026-08-01-10:00: graph-owned Plan Review is the only
+      // post-spec planning lane. Start before prompting and finalize in finally before any replan handoff.
+      const ownsPlanningSegment = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
+      if (ownsPlanningSegment) {
+        this.activePlanningWorkflowSessions.add(task.id);
+        const planningStart = startPlanningSegment(task);
+        try {
+          if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
+        } catch (error) {
+          this.activePlanningWorkflowSessions.delete(task.id);
+          throw error;
+        }
+      }
 
       let output = "";
       const deltaNormalizer = createStreamingDeltaNormalizer();
+      let detectedQuestion: string | null = null;
+      let resolveQuestion: ((value: "await-input") => void) | undefined;
+      const questionPromise = new Promise<"await-input">((resolve) => {
+        resolveQuestion = resolve;
+      });
       session.subscribe((event) => {
         if (event.type === "message_update") {
           const msgEvent = event.assistantMessageEvent;
@@ -16913,6 +16692,16 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         }
         if (event.type === "tool_execution_start") {
           agentLogger.onToolStart(event.toolName, event.args as Record<string, unknown> | undefined);
+          if (!unattended && detectedQuestion === null) {
+            const question = parseAwaitInputQuestionToolCall(
+              event.toolName,
+              event.args as Record<string, unknown> | undefined,
+            );
+            if (question) {
+              detectedQuestion = question;
+              resolveQuestion?.("await-input");
+            }
+          }
         }
         if (event.type === "tool_execution_end") {
           agentLogger.onToolEnd(event.toolName, event.isError, event.result);
@@ -16938,7 +16727,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         const outcome = await Promise.race([
           promptPromise.then(() => "completed" as const),
           timeoutPromise,
+          questionPromise,
         ]);
+
+        if (outcome === "await-input" && detectedQuestion) {
+          try { session.dispose(); } catch { /* best-effort */ }
+          await agentLogger.flush();
+          return {
+            success: true,
+            output: `===FUSION_AWAIT_INPUT===\n${detectedQuestion}\n===END_FUSION_AWAIT_INPUT===`,
+          };
+        }
 
         if (outcome === "timeout") {
           executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' (${attemptLabel}) timed out after ${timeoutMs}ms — disposing session`);
@@ -16949,6 +16748,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: timed out`);
           }
+          // FNXC:TaskCost 2026-08-01-10:00: Plan Review tokens are task cost;
+          // snapshot before timeout disposal just like normal completion.
+          await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
           try { session.dispose(); } catch { /* best-effort */ }
           await agentLogger.flush();
           return { success: false, error: `workflow step timed out after ${timeoutMs}ms`, timedOut: true };
@@ -17004,6 +16806,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         return { success: true, output: parsed.output };
       } catch (err: unknown) {
         await agentLogger.flush();
+        // Persist the delta before error disposal so graph-owned planning reviews
+        // cannot disappear from operator cost totals.
+        await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
         try { session.dispose(); } catch { /* best-effort */ }
         if ((err instanceof ReadonlyViolationError) || ((err as { code?: string } | null)?.code === "READONLY_VIOLATION")) {
           const violation = err as ReadonlyViolationError;
@@ -17024,9 +16829,22 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         return { success: false, error: errorMessage };
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (ownsPlanningSegment) {
+          try {
+            const livePlanningTask = await this.store.getTask(task.id);
+            if (livePlanningTask) {
+              const planningEnd = finalizePlanningSegment(livePlanningTask);
+              if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+            }
+          } finally {
+            // Finalize before releasing Plan Review ownership so triage can only
+            // begin a subsequent, non-overlapping planning segment.
+            this.activePlanningWorkflowSessions.delete(task.id);
+          }
+        }
         const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
         if (activeWorkflowStepSession === session) {
-          this.deleteActiveWorkflowStepSession(task.id);
+          this.deleteActiveWorkflowStepSession(task.id, worktreePath);
         }
         // Suppress unused-variable warning; `timedOut` documents intent.
         void timedOut;
@@ -17174,7 +16992,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         pausedReason: null,
       });
       this.markGraphExecuteSelfRequeued(task.id);
-      await this.store.moveTask(task.id, "todo", { preserveResumeState: false, preserveWorktree: true });
+      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: false, preserveWorktree: true });
       return true;
     } catch (error) {
       await this.store.logEntry(task.id, `[recovery] bootstrap re-anchor failed; falling back to contamination safety path: ${formatError(error)}`, undefined, this.getRunContextFor(task.id));
@@ -17188,14 +17006,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     branch: string,
     tipSha: string,
     count: number,
+    settings: Partial<Settings>,
   ): Promise<void> {
-    await this.store.updateTask(task.id, { worktree: livePath, branch });
+    const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, this.rootDir);
+    const normalizedPath = await this.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
+    await this.store.updateTask(task.id, { worktree: normalizedPath, branch });
     const latestTask = await this.store.getTask(task.id);
-    const baseRef = await this.resolveDiffBaseRef(livePath, latestTask.baseCommitSha);
+    const baseRef = await this.resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
     if (baseRef) {
       await assertCleanBranchAtBase(this.rootDir, branch, baseRef, task.id);
     }
-    const message = `[recovery] reclaimed existing worktree for ${task.id} at ${livePath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
+    const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
     await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
     await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
   }
@@ -17212,6 +17033,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       await this.store.logEntry(task.id, refusalMessage, undefined, this.getRunContextFor(task.id));
       return "sticky";
     }
+    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
 
     const integrationRef = task.mergeDetails?.mergeTargetBranch ?? task.baseBranch ?? task.executionStartBranch ?? await resolveIntegrationBranch(this.rootDir, undefined);
     const inspection = await inspectBranchConflict({
@@ -17262,12 +17084,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     if (inspection.kind === "reclaimable") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, inspection.taskAttributedCommitCount);
+      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, inspection.taskAttributedCommitCount, settings);
       return "reclaimed";
     }
 
     if (inspection.kind === "fully-subsumed") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, 0);
+      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, 0, settings);
       return "reclaimed";
     }
 
@@ -17330,6 +17152,13 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     return "retry";
   }
 
+  /*
+  FNXC:Worktrees 2026-07-19-15:47:
+  Branch-needing task work must be created with `git worktree add` in an isolated checkout. Per the
+  AGENTS.md “Prefer main For Direct Work; Use Worktrees For Branches” standing rule, this.rootDir is
+  never switched with `git checkout` or `git switch` to select a task branch; see the primary-checkout
+  invariant regression test for the executable guard.
+  */
   private async createWorktree(
     branch: string,
     path: string,
@@ -18284,21 +18113,27 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     });
 
     if (inspection.kind === "reclaimable") {
+      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
+        ? inspection.livePath
+        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
       await this.store.logEntry(
         taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
         inspection.tipSha,
       );
-      return { path: inspection.livePath, branch };
+      return { path: livePath, branch };
     }
 
     if (inspection.kind === "fully-subsumed") {
+      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
+        ? inspection.livePath
+        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
       await this.store.logEntry(
         taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${inspection.livePath} (0 commits preserved)`,
+        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (0 commits preserved)`,
         inspection.tipSha,
       );
-      return { path: inspection.livePath, branch };
+      return { path: livePath, branch };
     }
 
     if (shouldGenerateNewName) {
@@ -18346,6 +18181,53 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     return null;
+  }
+
+  private async normalizeReclaimableWorktreePath(
+    sourcePath: string,
+    targetPath: string,
+    taskId: string,
+    settings: Partial<Settings>,
+  ): Promise<string> {
+    const isRelocationActive = async (path: string) =>
+      this.hasActiveWorktreeBinding(taskId, path)
+      || await this.isLiveCleanupRefusal(path, taskId);
+    try {
+      const placement = await relocateReclaimableWorktreeIntoRoot({
+        rootDir: this.rootDir,
+        sourcePath,
+        targetPath,
+        taskId,
+        settings,
+        isPathActive: isRelocationActive,
+      });
+      if (placement.kind === "deferred-live") {
+        await this.store.logEntry(
+          taskId,
+          `[recovery] deferred relocation of active preserved worktree ${sourcePath}`,
+          sourcePath,
+        );
+        return placement.path;
+      }
+      if (placement.relocated) {
+        await this.store.logEntry(
+          taskId,
+          `[recovery] relocated preserved worktree from ${sourcePath} to ${placement.path}`,
+          placement.path,
+        );
+      }
+      return placement.path;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.store.logEntry(
+        taskId,
+        `[recovery] failed to relocate preserved worktree from ${sourcePath} to ${targetPath}: ${detail}`,
+        sourcePath,
+      );
+      throw new NonRetryableWorktreeError(
+        `Could not relocate preserved ${taskId} worktree into the configured worktrees directory: ${detail}`,
+      );
+    }
   }
 
   private async tryFreshWorktreeAfterLiveConflict(input: {
@@ -19384,7 +19266,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             worktree: null,
             branch: null,
           });
-          await this.store.moveTask(taskId, "todo", preserveProgress ? { preserveProgress: true } : undefined);
+          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), preserveProgress ? { preserveProgress: true } : undefined);
           // Remove from executing only after the hung surfaces and worktree have
           // been reaped, preventing a scheduler re-dispatch onto stale resources.
           this.executing.delete(taskId);
@@ -19882,7 +19764,7 @@ export function buildExecutionPrompt(
   pluginRunner?: PluginRunner,
   customFieldDefs?: WorkflowFieldDefinition[],
   workspaceConfig?: WorkspaceConfig | null,
-  options?: { workflowReviewGatesOwnedByGraph?: boolean; pluginTaskContributions?: string },
+  options?: { pluginTaskContributions?: string },
 ): string {
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
@@ -19890,7 +19772,6 @@ export function buildExecutionPrompt(
    * FNXC:WorkflowReviewGates 2026-06-29-20:41:
    * Default Coding and other workflow-graph tasks run review gates as graph nodes, so the executor prompt must not ask implementation agents to call legacy per-step review tools. This keeps Plan Review once-before-execution and Code Review once-before-merge unless a workflow explicitly adds a step-review node.
    */
-  const workflowReviewGatesOwnedByGraph = options?.workflowReviewGatesOwnedByGraph === true;
 
   // Build co-author trailer arg for git commits based on settings. The user's
   // configured git identity remains the primary author; Fusion is appended as
@@ -20033,12 +19914,7 @@ ${prompt}
 ${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}${customFieldsSection}
 ## Review level: ${reviewLevel}
 
-${workflowReviewGatesOwnedByGraph ? `Workflow review gates are handled by the workflow graph outside this implementation session. Do not request per-step plan review or per-step code review from inside execution; complete the implementation steps and let the graph run enabled Plan Review, Browser Verification, and Code Review nodes at their configured positions.` : `${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}
-${reviewLevel >= 1 ? `Before implementing each step (except Step 0 and the final step), call:
-\`fn_review_step(step=N, type="plan", step_name="...")\`` : ""}
-${reviewLevel >= 2 ? `After implementing + committing each step, call:
-\`fn_review_step(step=N, type="code", step_name="...", baseline="<SHA from before step>")\`` : ""}
-${reviewLevel >= 3 ? `After tests, also call fn_review_step with type="code" for test review.` : ""}`}
+Workflow review gates are handled by the workflow graph outside this implementation session. Do not request per-step plan review or per-step code review from inside execution; complete the implementation steps and let the graph run enabled Plan Review, Browser Verification, and Code Review nodes at their configured positions.
 ${pluginTaskContributions ? `
 
 ${pluginTaskContributions}

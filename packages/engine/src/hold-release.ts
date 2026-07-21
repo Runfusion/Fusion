@@ -38,8 +38,10 @@
 
 import {
   resolveColumnCapacity,
+  resolveWipBudgetColumns,
   resolveColumnFlags,
   resolveColumnAdjacency,
+  PLAN_REVIEW_GROUP_ID,
   DEFAULT_WORKFLOW_POOL_ID,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
@@ -125,16 +127,6 @@ function isHeldTask(ir: WorkflowIr, task: Task): boolean {
 }
 
 /**
- * True when the card carries the `intake` trait on its CURRENT column, in its
- * OWN resolved workflow IR.
- */
-function columnHasIntakeTrait(ir: WorkflowIr, columnId: string): boolean {
-  const column = findColumn(ir, columnId);
-  if (!column) return false;
-  return resolveColumnFlags(column).intake === true;
-}
-
-/**
  * FNXC:WorkflowScheduling 2026-07-07-00:00:
  * A card must never be released into a processing (`countsTowardWip`) column
  * while it is unplanned — regardless of which literal column id it currently
@@ -148,7 +140,49 @@ function columnHasIntakeTrait(ir: WorkflowIr, columnId: string): boolean {
  * `reserveSlot` guard (FN-7648) so every release surface (sweep, explicit
  * `promoteHeldTask`, `releaseHeldTaskByEvent`) enforces the same invariant.
  */
+/**
+ * U3 — a card is "unplanned for execution" via a PRE-RELEASE Plan Review gate
+ * when: the workflow contains a plan-review node placed in a NON-wip (pre-release)
+ * column, Plan Review is ENABLED for the task (`enabledWorkflowSteps` includes the
+ * group), and no PASSED plan-review step result exists yet. Returns false when the
+ * plan-review node sits in a wip column (post-release gate — builtin `in-progress`),
+ * is absent, is disabled, or has already passed. Pure (no store/clock).
+ */
+function isPlanReviewPreReleaseGateUnpassed(task: Task, ir: WorkflowIr): boolean {
+  const planReviewNode = ir.nodes.find((n) => n.id === PLAN_REVIEW_GROUP_ID);
+  if (!planReviewNode?.column) return false;
+  const column = findColumn(ir, planReviewNode.column);
+  if (!column) return false;
+  // Post-release gate (plan-review lives in a wip column): do not hold release.
+  if (resolveColumnFlags(column).countsTowardWip === true) return false;
+  // Disabled → releases without any reviewer (U3 scenario 5).
+  if (!Array.isArray(task.enabledWorkflowSteps) || !task.enabledWorkflowSteps.includes(PLAN_REVIEW_GROUP_ID)) {
+    return false;
+  }
+  // Already passed → planned; release.
+  const passed = task.workflowStepResults?.some(
+    (r) => r.workflowStepId === PLAN_REVIEW_GROUP_ID && r.status === "passed",
+  );
+  return !passed;
+}
+
 export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
+  /*
+  FNXC:PlanReview 2026-07-19-00:40 (U3):
+  The graph is the SOLE Plan Review owner (triage's out-of-graph gate is deleted).
+  When a workflow places the plan-review node in a PRE-RELEASE column (the
+  benchmark's Plan Review in the Todo hold column — i.e. NOT a wip column), the
+  card must not release into execution until the graph's plan-review gate has
+  PASSED — releasing first would skip the gate. This re-keys the old
+  triage-`status:"planning"` hold onto workflow step state. It intentionally does
+  NOT fire when plan-review is placed in a wip column (builtin: in-progress), where
+  the gate runs post-release, nor when Plan Review is disabled — so a disabled or
+  post-release plan-review workflow releases normally (never deadlocks).
+  */
+  if (isPlanReviewPreReleaseGateUnpassed(task, ir)) return true;
+  // Still-live triage/executor statuses (kept, not triage-plan-review-owned):
+  // `planning` = triage is actively writing PROMPT.md; `needs-replan` = the
+  // executor's graph replan rebound parked the card for another planning pass.
   if (task.status === "planning") return true;
   /*
   FNXC:WorkflowScheduling 2026-07-13-11:20:
@@ -161,9 +195,18 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   */
   if (task.status === "needs-replan") return true;
 
-  const isLegacyTodoColumn = task.column === "todo";
-  const isIntakeColumn = columnHasIntakeTrait(ir, task.column);
-  if (!isLegacyTodoColumn && !isIntakeColumn) return false;
+  /*
+  FNXC:WorkflowScheduling 2026-07-19-02:10 (U4):
+  Gate the bootstrap-stub check on the TRAIT, not the literal "todo" id. An
+  unplanned card rests in a pre-wip column — an `intake` column (Ideas / the
+  renamed "Planning") OR a `hold` column (the default workflow's `todo` is
+  hold+reset-on-entry). Keying the OR-branch on `task.column === "todo"` both
+  hard-coded the default id and missed a renamed intake column (FN-7648); the
+  trait predicate covers every variant, so the literal-todo branch is removed.
+  */
+  const currentColumn = findColumn(ir, task.column);
+  const currentFlags = currentColumn ? resolveColumnFlags(currentColumn) : {};
+  if (currentFlags.intake !== true && currentFlags.hold !== true) return false;
 
   if (typeof store.getTasksDir !== "function") return false;
   try {
@@ -325,20 +368,23 @@ function countCapacitySlot(
   // Pre-built taskId → effective workflowId map (one pass per sweep) so this
   // counting loop avoids a per-task `effectiveWorkflowId` DB call.
   effectiveWorkflowIdByTask: Map<string, string>,
-  targetColumn: string,
+  // U4/KTD-9: the SET of columns whose occupancy shares one budget with the
+  // target (resolveWipBudgetColumns). Two wip columns sharing a `limitSetting`
+  // are counted together so the pooled budget cannot silently multiply.
+  budgetColumns: ReadonlySet<string>,
   workflowId: string,
   countPending: boolean,
 ): number {
   let count = 0;
   for (const t of allTasks) {
     if ((effectiveWorkflowIdByTask.get(t.id) ?? DEFAULT_WORKFLOW_POOL_ID) !== workflowId) continue;
-    if (t.column === targetColumn) {
+    if (budgetColumns.has(t.column)) {
       count += 1;
       continue;
     }
     if (!countPending) continue;
     const tp = (t as Task & { transitionPending?: { toColumn?: string } | null }).transitionPending;
-    if (tp && typeof tp === "object" && tp.toColumn === targetColumn) count += 1;
+    if (tp && typeof tp === "object" && typeof tp.toColumn === "string" && budgetColumns.has(tp.toColumn)) count += 1;
   }
   return count;
 }
@@ -421,7 +467,10 @@ export async function runHoldReleaseSweep(
       const capacity = resolveColumnCapacity(ir, target, settings);
       if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
         const workflowId = effectiveWorkflowIdByTask.get(task.id) ?? DEFAULT_WORKFLOW_POOL_ID;
-        const occupants = countCapacitySlot(allTasks, effectiveWorkflowIdByTask, target, workflowId, capacity.countPending);
+        // U4/KTD-9: count occupants across every column sharing the target's
+        // budget (a shared `limitSetting` pools multiple wip columns).
+        const budgetColumns = new Set(resolveWipBudgetColumns(ir, target));
+        const occupants = countCapacitySlot(allTasks, effectiveWorkflowIdByTask, budgetColumns, workflowId, capacity.countPending);
         if (occupants >= capacity.limit) {
           result.held.push({ taskId: task.id, reason: "downstream-full" });
           continue;

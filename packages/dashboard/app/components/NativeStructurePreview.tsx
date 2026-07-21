@@ -18,6 +18,7 @@ const icons = {
   "research-finding": Lightbulb,
   "eval-result": BarChart3,
   goal: Target,
+  "roadmap-item": Map,
 } satisfies Record<NativeStructureRef["kind"], typeof Map>;
 
 function isSupportedKind(kind: string): kind is NativeStructureRef["kind"] {
@@ -33,6 +34,9 @@ function unavailableLabel(kind: string): string {
  * Chat and mail use this one memoized renderer for compact structure cards. Navigation remains
  * owned by each consumer through `onOpen` because dashboard views use callback/view state rather
  * than URL routes; rendering an anchor here would create dead destinations.
+ *
+ * FNXC:NativeStructureEmbed 2026-07-19-12:45:
+ * Roadmap items join this shared renderer with the roadmap icon and callback-only open action.
  */
 export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, capturedLabel, onOpen }: NativeStructurePreviewProps) {
   const supportedKind = isSupportedKind(ref.kind);
@@ -46,9 +50,9 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
   useEffect(() => {
     /*
     FNXC:NativeStructureEmbed 2026-07-19-18:00:
-    Refs can arrive from persisted chat/mail content, so reject a future or malformed kind before
-    fetching. The five-kind route is the sole resolver contract; roadmap-item must not trigger a
-    plugin read or turn an invalid icon lookup into a render crash.
+    Refs can arrive from persisted chat/mail content, so reject a malformed kind before fetching.
+    The six-kind route owns resolution; an invalid icon lookup must not trigger a plugin read or
+    turn into a render crash.
     */
     if (payload || !supportedKind) return;
     let active = true;

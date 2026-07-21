@@ -89,12 +89,32 @@ import {
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
+/*
+FNXC:TuiLogs 2026-07-20-09:50:
+Dense TUI log rows must reserve horizontal space for the level, prefix, and
+message instead of detailed capture timestamps. A compact clock is sufficient
+for list rows, clipboard text, and expanded-entry capture time; the Date stays
+intact for ordering and raw-message debugging.
+*/
 function formatTimestamp(date: Date): string {
   const h = date.getHours().toString().padStart(2, "0");
   const m = date.getMinutes().toString().padStart(2, "0");
   const s = date.getSeconds().toString().padStart(2, "0");
-  const ms = date.getMilliseconds().toString().padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
+  return `${h}:${m}:${s}`;
+}
+
+/*
+FNXC:TuiLogs 2026-07-20-09:55:
+Captured upstream logs can repeat a date, fractional seconds, and timezone in
+message text after the TUI already records capture time. Strip that leading
+wall-clock block only at list/copy display time so narrow panes show the useful
+content while ExpandedLog keeps the raw message for diagnosis.
+*/
+export function stripLeadingDetailedTimestamp(message: string): string {
+  return message.replace(
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(?:[A-Za-z]{2,5}|[+-]\d{2}:?\d{2})\s*/,
+    "",
+  );
 }
 
 function formatUptime(ms: number): string {
@@ -665,6 +685,8 @@ function LogsPanel({
             // the outer header off the top of the alt-screen.
             const entryHeight = logsWrapEnabled ? undefined : 1;
 
+            const displayMessage = stripLeadingDetailedTimestamp(entry.message);
+
             if (isNarrow) {
               const idx = narrowTimestamp(absoluteIndex);
               const pfx = narrowPrefix(entry.prefix, NARROW_PREFIX_WIDTH);
@@ -683,7 +705,7 @@ function LogsPanel({
                     <Text color={fg} dimColor={!isSelected}>{idx} </Text>
                     <Text color={lvlColor}>{lvl}</Text>
                     <Text color={fg} dimColor={!isSelected}>{` ${pfx} `}</Text>
-                    <Text color={fg} bold={isSelected}>{entry.message}</Text>
+                    <Text color={fg} bold={isSelected}>{displayMessage}</Text>
                   </Text>
                 </Box>
               );
@@ -708,7 +730,7 @@ function LogsPanel({
                   <Text color={fg} dimColor={!isSelected}>{ts} </Text>
                   <Text color={lvlColor}>{lvl}</Text>
                   <Text color={fg} dimColor={!isSelected}>{` ${prefixSlot} `}</Text>
-                  <Text color={fg} bold={isSelected}>{entry.message}</Text>
+                  <Text color={fg} bold={isSelected}>{displayMessage}</Text>
                 </Text>
               </Box>
             );
@@ -4574,7 +4596,8 @@ export function DashboardApp({ controller }: DashboardAppProps) {
         if (target) {
           const ts = formatTimestamp(target.timestamp);
           const prefix = target.prefix ? `[${target.prefix}] ` : "";
-          const text = `${ts} ${target.level.toUpperCase()} ${prefix}${target.message}`;
+          const displayMessage = stripLeadingDetailedTimestamp(target.message);
+          const text = `${ts} ${target.level.toUpperCase()} ${prefix}${displayMessage}`;
           void copyToClipboard(text).then((ok) => {
             controller.flashClipboard(ok);
             if (ok) {

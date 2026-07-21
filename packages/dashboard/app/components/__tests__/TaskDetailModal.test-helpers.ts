@@ -101,6 +101,13 @@ vi.mock("lucide-react", () => ({
   Maximize2: () => null,
   Minimize2: () => null,
   Loader2: (props: any) => React.createElement("svg", { "data-testid": "loader2-icon", ...props }),
+  /*
+  FNXC:TaskDetailTabPersistence 2026-07-20-19:10:
+  FN-8394's restored mocked-session guard reaches TaskVerificationStatus. Keep
+  its success-icon mock available so this deterministic tab-state regression
+  does not depend on the unrelated lucide module implementation.
+  */
+  CheckCircle2: () => null,
   Send: (props: any) => React.createElement("svg", { "data-testid": "send-icon", ...props }),
   Square: (props: any) => React.createElement("svg", { "data-testid": "square-icon", ...props }),
   Info: (props: any) => React.createElement("svg", { "data-testid": "info-icon", ...props }),
@@ -162,6 +169,17 @@ vi.mock("lucide-react", () => ({
   Package: (props: any) => React.createElement("svg", { "data-testid": "package-icon", ...props }),
   Download: (props: any) => React.createElement("svg", { "data-testid": "download-icon", ...props }),
   User: (props: any) => React.createElement("svg", { "data-testid": "user-icon", ...props }),
+  /*
+  FNXC:NativeStructureEmbed 2026-07-19-04:30:
+  FN-8291/8292/8293 mount NativeStructurePreview from chat/mail surfaces reachable via
+  StandardChatSurface under TaskDetailModal. Keep Map/Lightbulb/BarChart3/Target/CircleAlert
+  on this shared mock or every focused TaskDetailModal suite fails at import.
+  */
+  Map: (props: any) => React.createElement("svg", { "data-testid": "map-icon", ...props }),
+  Lightbulb: (props: any) => React.createElement("svg", { "data-testid": "lightbulb-icon", ...props }),
+  BarChart3: (props: any) => React.createElement("svg", { "data-testid": "bar-chart-3-icon", ...props }),
+  Target: (props: any) => React.createElement("svg", { "data-testid": "target-icon", ...props }),
+  CircleAlert: (props: any) => React.createElement("svg", { "data-testid": "circle-alert-icon", ...props }),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({

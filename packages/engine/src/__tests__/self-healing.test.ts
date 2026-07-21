@@ -91,6 +91,7 @@ vi.mock("../worktree-pool.js", () => ({
   getRegisteredWorktreePaths: vi.fn().mockResolvedValue(new Set<string>()),
   getRegisteredWorktreeBranchMap: vi.fn().mockResolvedValue(new Map<string, string>()),
   removeWorktree: vi.fn().mockResolvedValue(undefined),
+  relocateReclaimableWorktreeIntoRoot: vi.fn(async ({ sourcePath }: { sourcePath: string }) => ({ kind: "ready", path: sourcePath, relocated: false })),
   resolveWorktreeBackend: vi.fn(),
 }));
 
@@ -120,7 +121,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "../worktree-pool.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "../worktree-pool.js";
 import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
 import * as branchConflictModule from "../branch-conflicts.js";
 import { createLogger } from "../logger.js";
@@ -1055,6 +1056,8 @@ describe("SelfHealingManager", () => {
       ]));
       expect(recordRunAuditEvent.mock.calls.map(([event]) => event.mutationType).filter((type) => type === "agent:auto-recover-error-state")).toHaveLength(0);
       expect(agentStore.updateAgentState).toHaveBeenCalledTimes(4);
+      // Startup error reset is also agent-only; it cannot clear a task pause.
+      expect(storeWithSettings.updateTask).not.toHaveBeenCalled();
 
       for (const untouchedId of ["operator-actionable", "stale-module", "error-unrecoverable", "user-paused", "ephemeral", "disabled", "live-agent", "healthy-active", "healthy-idle"]) {
         expect(agentStore.updateAgentState).not.toHaveBeenCalledWith(untouchedId, expect.anything());
@@ -1079,6 +1082,34 @@ describe("SelfHealingManager", () => {
     it("returns 0 when no agentStore", async () => {
       const result = await manager.recoverOrphanedAgents();
       expect(result).toBe(0);
+    });
+
+    it("leaves assigned task pause states untouched across recovery, exhaustion, and unrecoverable parks", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const assignedTasks = [
+        { id: "FN-user", paused: true, userPaused: true, pausedByAgentId: undefined, pausedReason: "manual" },
+        { id: "FN-agent", paused: true, userPaused: false, pausedByAgentId: "agent-recover", pausedReason: "legacy-agent-pause" },
+        { id: "FN-live", paused: false, userPaused: false, pausedByAgentId: undefined, pausedReason: undefined },
+      ];
+      const before = structuredClone(assignedTasks);
+      const agentStore = createMockAgentStore([
+        { id: "agent-recover", taskId: "FN-user", state: "error", lastError: "socket hang up", metadata: {}, updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+        { id: "agent-exhaust", taskId: "FN-agent", state: "error", lastError: "socket hang up", metadata: { durableErrorRecovery: { attempts: 4 } }, updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+        { id: "agent-park", taskId: "FN-live", state: "error", lastError: "invalid api key", metadata: {}, updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+      ]);
+      const managerWithAgents = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      await managerWithAgents.recoverOrphanedAgents();
+
+      // FNXC:AgentLifecyclePause 2026-07-19-00:00: These three agent-only
+      // outcomes must never invoke TaskStore pause/update mutation APIs.
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(assignedTasks).toEqual(before);
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-recover", "active");
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-exhaust", "paused");
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-park", "paused");
+      managerWithAgents.stop();
     });
 
     it("recovers a manager-present error-state agent whose lastError is absent", async () => {
@@ -8204,6 +8235,67 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("finalizeOrphanedPlanningSegments", () => {
+    it("finalizes an orphan exactly once and records an ids-only audit event", async () => {
+      const task = {
+        id: "FN-PLAN-1",
+        planningStartedAt: "2026-01-01T00:00:00.000Z",
+        cumulativePlanningMs: 50,
+      } as Task;
+      const updateTaskAtomic = vi.fn(async (_id: string, updater: (live: Task) => Partial<Task> | null) => {
+        const patch = updater(task);
+        if (patch) Object.assign(task, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        updateTaskAtomic,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set<string>(),
+        hasActivePlanningWorkflowSession: () => false,
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(1);
+      expect(updateTaskAtomic).toHaveBeenCalledOnce();
+      expect(task).toMatchObject({ cumulativePlanningMs: 1050, planningStartedAt: null });
+      expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment",
+        metadata: { taskId: "FN-PLAN-1", finalizedCount: 1, reason: "no-live-planning-owner" },
+      }));
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(0);
+      expect(updateTaskAtomic).toHaveBeenCalledOnce();
+
+      recovery.stop();
+    });
+
+    it("does not finalize a live graph Plan Review segment", async () => {
+      const task = {
+        id: "FN-PLAN-REVIEW",
+        planningStartedAt: "2026-01-01T00:00:00.000Z",
+        cumulativePlanningMs: 50,
+      } as Task;
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue([task]) });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set<string>(),
+        hasActivePlanningWorkflowSession: (taskId) => taskId === "FN-PLAN-REVIEW",
+      });
+
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(0);
+      expect(recoveryStore.updateTask).not.toHaveBeenCalled();
+      expect(recoveryStore.updateTaskAtomic).toBeUndefined();
+      expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment-no-action",
+        metadata: { finalizedCount: 0, reason: "no-eligible-orphan" },
+      }));
+
+      recovery.stop();
+    });
+  });
+
   describe("recoverOrphanedPlanningTasks", () => {
     it("clears status for orphaned planning tasks without a recoverable prompt", async () => {
       const getPlanning = vi.fn().mockReturnValue(new Set<string>());
@@ -8235,6 +8327,32 @@ describe("SelfHealingManager", () => {
         "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",
       );
 
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:Triage 2026-07-29-13:00:
+    FN-8361 regression: a stale candidate may be claimed by execution after
+    listTasks but before the recovery patch acquires the task lock.
+    */
+    it.each([
+      { column: "in-progress", status: null, worktree: "/tmp/claimed" },
+      { column: "todo", status: null, worktree: undefined, steps: [{ id: "planned" }] },
+      { column: "triage", status: "planning", worktree: "/tmp/claimed" },
+    ])("does not clear a stale candidate advanced to $column", async (live) => {
+      const candidate = {
+        id: "FN-8361", column: "triage", status: "planning", paused: false,
+        log: [], updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      const updateTaskAtomic = vi.fn(async (_id: string, updater: (row: any) => any) => updater({ ...candidate, ...live }));
+      const managerWithRecovery = new SelfHealingManager(createMockStore({
+        listTasks: vi.fn().mockResolvedValue([candidate]),
+        updateTaskAtomic,
+      }), { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      expect(await managerWithRecovery.recoverOrphanedPlanningTasks()).toBe(0);
+      expect(updateTaskAtomic).toHaveBeenCalledOnce();
       managerWithRecovery.stop();
     });
 
@@ -10401,6 +10519,36 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({ worktree: "/tmp/fn-500", branch: "fusion/fn-500", status: null, paused: false }));
   });
 
+  it("normalizes an out-of-root self-healing reclaim before persisting it", async () => {
+    const outsidePath = "/tmp/legacy-worktrees/recover-fn-8400";
+    const targetPath = "/tmp/test-project/.worktrees/recover-fn-8400";
+    (store.listTasks as any)
+      .mockResolvedValueOnce([{ id: "FN-8400", checkedOutBy: null, branch: "fusion/fn-8400", worktree: outsidePath, lineageId: "lin-8400" }])
+      .mockResolvedValueOnce([]);
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: outsidePath,
+      tipSha: "abc123def456",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "abc123", subject: "work" }],
+    } as any);
+    vi.mocked(relocateReclaimableWorktreeIntoRoot).mockResolvedValueOnce({ kind: "ready", path: targetPath, relocated: true });
+
+    const recovered = await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(recovered).toBe(1);
+    expect(relocateReclaimableWorktreeIntoRoot).toHaveBeenCalledWith(expect.objectContaining({
+      rootDir: "/tmp/test-project",
+      sourcePath: outsidePath,
+      targetPath,
+      taskId: "FN-8400",
+    }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: targetPath }));
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ worktreePath: targetPath }),
+    }));
+  });
+
   it("skips blocked todo tasks with preserved branches", async () => {
     (store.listTasks as any)
       .mockResolvedValueOnce([{ id: "FN-516", column: "todo", blockedBy: "FN-216", checkedOutBy: null, branch: "fusion/fn-516", worktree: "/tmp/fn-516" }])
@@ -11133,7 +11281,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     });
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
     vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: false, reason: "test" });
-    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValue({ kind: "reclaimable", tipSha: "abc", taskAttributedCommitCount: 1, strandedCommits: [{ sha: "abc", subject: "work" }] } as any);
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValue({ kind: "reclaimable", livePath: "/tmp/wt-rsbc", tipSha: "abc", taskAttributedCommitCount: 1, strandedCommits: [{ sha: "abc", subject: "work" }] } as any);
 
     const result = await manager.reclaimSelfOwnedBranchConflicts();
     expect(result).toBeGreaterThanOrEqual(0);

@@ -153,8 +153,8 @@ export const PROMPT_KEY_CATALOG: Record<PromptKey, PromptKeyMetadata> = {
     key: "planning-system",
     name: "Planning System",
     roles: ["triage"],
-    description: "System prompt for the AI planning assistant",
-    defaultContent: "You are a planning assistant for the fn task board system...",
+    description: "Explicit full system-prompt replacement for Planning Mode; otherwise it uses the workflow planning seam plus interview adapter",
+    defaultContent: "Runtime default: selected workflow planning seam plus the user-validated JSON interview adapter.",
   },
   "subtask-breakdown-system": {
     key: "subtask-breakdown-system",

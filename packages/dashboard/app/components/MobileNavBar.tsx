@@ -245,8 +245,11 @@ export function MobileNavBar({
     navigationHistory.pushNav({ type: "modal", close: closeMore });
   }, [closeMore, isMoreOpen, navigationHistory]);
 
-  const dismissMore = useCallback(() => {
-    navigationHistory?.removeNav(closeMore);
+  const dismissMore = useCallback((forNavigation?: boolean) => {
+    navigationHistory?.removeNav(
+      closeMore,
+      forNavigation === true ? { preserveHistoryPosition: true } : undefined,
+    );
     closeMore();
   }, [closeMore, navigationHistory]);
 
@@ -315,9 +318,15 @@ export function MobileNavBar({
     }
   }, [dismissMore, resetSheetDrag]);
 
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-20-23:12:
+  More actions transition directly into their destination. Preserve the
+  current history position while removing More so its asynchronous back
+  consumption cannot dismiss Import or its nested candidate detail afterward.
+  */
   const handleMoreAction = useCallback(
     (callback?: () => void) => {
-      dismissMore();
+      dismissMore(true);
       callback?.();
     },
     [dismissMore],
@@ -521,7 +530,7 @@ export function MobileNavBar({
         <>
           <div
             className="mobile-more-sheet-backdrop"
-            onClick={dismissMore}
+            onClick={() => dismissMore()}
           />
           <div
             ref={sheetRef}

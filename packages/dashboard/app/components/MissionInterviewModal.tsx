@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { PlanningQuestion, ThinkingLevel } from "@fusion/core";
+import type { PlanningQuestion, Settings, ThinkingLevel } from "@fusion/core";
 import { getErrorMessage, THINKING_LEVELS } from "@fusion/core";
 import {
   startMissionInterview,
@@ -11,6 +11,7 @@ import {
   fetchAiSession,
   parseConversationHistory,
   fetchModels,
+  fetchSettings,
   updateGlobalSettings,
   type MissionPlanSummary,
   type ConversationHistoryEntry,
@@ -154,8 +155,28 @@ export function MissionInterviewModal({
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const [settings, setSettings] = useState<Pick<Settings, "defaultThinkingLevel">>();
 
   const modelSelectionValue = getModelSelectionValue(modelProvider, modelId);
+
+  /*
+  FNXC:MissionInterview 2026-07-19-20:46:
+  FN-8414 / GitHub #2356 requires the untouched mission interview picker to show
+  the configured thinking default instead of a hardcoded "off" placeholder.
+  Server-side planning resolution remains authoritative when the request omits it.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    setSettings(undefined);
+    void fetchSettings(projectId)
+      .then((loadedSettings) => {
+        if (!cancelled) setSettings(loadedSettings);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Load models on mount
   useEffect(() => {
@@ -892,7 +913,7 @@ export function MissionInterviewModal({
                     showThinkingLevel
                     thinkingLevel={thinkingLevel}
                     onThinkingLevelChange={(level) => setThinkingLevel(THINKING_LEVELS.includes(level as ThinkingLevel) ? (level as ThinkingLevel) : "")}
-                    defaultThinkingLevel="off"
+                    defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
                   />
                   {modelsError && (
                     <div className="form-hint form-hint-error">

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import {
+  captureNamedTool,
   createMockStore,
   mockedCreateFnAgent,
   mockedExistsSync,
@@ -14,6 +15,15 @@ function createBaseTask() {
     title: "Test",
     description: "Test task",
     column: "in-progress",
+    /*
+    FNXC:EngineTests 2026-07-19-16:40 (U10b):
+    Summary replace-vs-append is keyed on whether any WORKFLOW STEP has produced a result, so
+    the test owns that variable via `workflowStepResults`. Under graph ownership the optional
+    pre-merge review nodes would run and record results of their own, making "no workflow steps
+    have run yet" unreachable; declaring no pre-merge gates keeps the fixture in control of the
+    only input the branch reads.
+    */
+    enabledWorkflowSteps: [],
     dependencies: [],
     steps: [{ name: "Step 1", status: "in-progress" as const }],
     currentStep: 0,
@@ -38,7 +48,7 @@ async function setupTaskDoneTool(currentTaskOverrides: Record<string, unknown> =
   }));
 
   mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    capturedTool = customTools?.find((tool: any) => tool.name === "fn_task_done");
+    capturedTool = captureNamedTool(customTools, "fn_task_done", capturedTool);
     return {
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),

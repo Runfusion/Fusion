@@ -9,11 +9,19 @@ FNXC:EphemeralAgents 2026-07-01-00:00:
 Regression coverage for the ephemeral-disabled dispatch gate. `ephemeralAgentsEnabled: false`
 must stop the workflow engine from running unassigned work, not just the legacy spawn path.
 The bug: EphemeralWorkerManager.onTaskStart is a fire-and-forget bookkeeping callback that runs
-AFTER execution begins, and the three workflow dispatch paths in TaskExecutor.execute()
-(maybeExecuteWorkflowGraph, workflowAuthoritativeDispatch, maybeDispatchWorkflowWorkEngine)
+AFTER execution begins, and the workflow dispatch paths in TaskExecutor.execute()
+(executeWorkflowGraph, and the work-engine dispatch downstream of it)
 never consulted the toggle — so tasks reaching execute() without a permanent assignment ran
-anyway. These tests assert the invariant across ALL THREE workflow dispatch entry points
-(Surface Enumeration), not just one reproduction.
+anyway. These tests assert the invariant at the single routing boundary that fronts every
+workflow dispatch entry point (Surface Enumeration), not just one reproduction.
+
+FNXC:EngineTests 2026-07-19-19:20 (U10b):
+The enumerated dispatch surfaces collapsed from three to one. `maybeExecuteWorkflowGraph`
+(which could DECLINE a task and fall through to a legacy implementation path) and the
+workflow-authoritative driver are deleted; routing now ends in `executeWorkflowGraph(task)`
+and work-engine dispatch lives inside `runImplementation`, downstream of the graph. The
+requirement is unchanged: with the toggle off and no permanent assignment, execute() must
+requeue the task and reach NO execution surface at all.
 */
 
 const now = "2026-07-01T00:00:00.000Z";
@@ -158,10 +166,10 @@ describe("executor ephemeral-disabled dispatch gate", () => {
 
   /*
   FNXC:EphemeralAgents 2026-07-01-00:00:
-  Surface Enumeration — one gate must cover all three workflow dispatch entry points.
-  Drive the real execute() and assert none of maybeExecuteWorkflowGraph,
-  workflowAuthoritativeDispatch, or maybeDispatchWorkflowWorkEngine is reached when the
-  gate blocks. This is the invariant that prevented the fix from being repro-only.
+  Surface Enumeration — one gate must cover every workflow dispatch entry point.
+  Drive the real execute() and assert that neither the graph nor the work-engine dispatch it
+  fronts is reached when the gate blocks. This is the invariant that prevented the fix from
+  being repro-only.
   */
   it("execute() reaches no workflow dispatch path when ephemeral is disabled and task is unassigned", async () => {
     resetExecutorMocks();
@@ -170,10 +178,9 @@ describe("executor ephemeral-disabled dispatch gate", () => {
     store.getTask.mockResolvedValue(live);
     store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: false }));
 
-    const workflowAuthoritativeDispatch = vi.fn().mockResolvedValue(false);
-    const executor = new TaskExecutor(store, "/tmp/test", { workflowAuthoritativeDispatch } as any);
+    const executor = new TaskExecutor(store, "/tmp/test", {} as any);
 
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(false);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
     const workEngineSpy = vi
       .spyOn(executor as any, "maybeDispatchWorkflowWorkEngine")
       .mockResolvedValue(false);
@@ -182,7 +189,6 @@ describe("executor ephemeral-disabled dispatch gate", () => {
 
     // Every workflow dispatch entry point must be unreachable once the gate blocks.
     expect(graphSpy).not.toHaveBeenCalled();
-    expect(workflowAuthoritativeDispatch).not.toHaveBeenCalled();
     expect(workEngineSpy).not.toHaveBeenCalled();
 
     // And the task is re-queued for the scheduler to assign a permanent agent.
@@ -201,9 +207,9 @@ describe("executor ephemeral-disabled dispatch gate", () => {
     store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: true }));
 
     const executor = new TaskExecutor(store, "/tmp/test");
-    // Return true so execute() stops after the first workflow path — we only need
+    // Stub the graph so execute() stops at the routing boundary — we only need
     // to prove the gate did NOT short-circuit dispatch when the toggle is on.
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await executor.execute(live);
 

@@ -23,6 +23,7 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
 
       const result = await performUpdateCheck(resolveGlobalDir(), cliPackageVersion, {
         frequency: globalSettings.updateCheckFrequency,
+        channel: globalSettings.updateChannel,
       });
       res.json(result);
     } catch (error) {
@@ -32,12 +33,14 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/update-check/refresh", async (_req, res) => {
     try {
+      const globalSettings = await store.getGlobalSettingsStore().getSettings();
       const fusionDir = resolveGlobalDir();
       await clearUpdateCheckCache(fusionDir);
       // Explicit `force: true` so a "manual" frequency setting doesn't short
       // out the network fetch on the user's deliberate "Check now" click.
       const result = await performUpdateCheck(fusionDir, cliPackageVersion, {
         force: true,
+        channel: globalSettings.updateChannel,
       });
       res.json(result);
     } catch (error) {
@@ -47,9 +50,11 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/update-check/install", async (_req, res) => {
     try {
+      const globalSettings = await store.getGlobalSettingsStore().getSettings();
       const fusionDir = resolveGlobalDir();
       const updateCheck = await performUpdateCheck(fusionDir, cliPackageVersion, {
         force: true,
+        channel: globalSettings.updateChannel,
       });
 
       if (!updateCheck.updateAvailable || !updateCheck.latestVersion) {

@@ -117,6 +117,12 @@ export function rowToTask(row: TaskRow): Task {
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
     // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; empty/null → undefined (no taint).
     bulkCompletionRefusalAt: row.bulkCompletionRefusalAt || undefined,
+    // FNXC:WorkflowIrPin 2026-07-19-03:10: U9b/KTD-3 — hydrate the durable pin; empty/null → undefined (unpinned).
+    workflowIrPin: row.workflowIrPin || undefined,
+    workflowIrPinNodeId: row.workflowIrPinNodeId || undefined,
+    workflowIrPinColumnId: row.workflowIrPinColumnId || undefined,
+    // FNXC:LegacyAdoption 2026-07-19-03:10: U9b/KTD-8 — empty/null → undefined (never adopted).
+    legacyAdoptedAt: row.legacyAdoptedAt || undefined,
     worktreeSessionRetryCount: row.worktreeSessionRetryCount ?? undefined,
     completionHandoffLimboRecoveryCount: row.completionHandoffLimboRecoveryCount ?? undefined,
     verificationFailureCount: row.verificationFailureCount ?? undefined,
@@ -143,6 +149,8 @@ export function rowToTask(row: TaskRow): Task {
     columnMovedAt: row.columnMovedAt || undefined,
     firstExecutionAt: row.firstExecutionAt || undefined,
     cumulativeActiveMs: row.cumulativeActiveMs ?? undefined,
+    cumulativePlanningMs: row.cumulativePlanningMs ?? undefined,
+    planningStartedAt: row.planningStartedAt || undefined,
     columnDwellMs: fromJson<Record<string, number>>(row.columnDwellMs) ?? undefined,
     workflowTransitionNotification: fromJson<import("../types.js").WorkflowTransitionNotificationMarker>(row.workflowTransitionNotification) ?? undefined,
     plannerOversightLevel: (row.plannerOversightLevel || undefined) as Task["plannerOversightLevel"],
@@ -247,6 +255,7 @@ export function rowToTask(row: TaskRow): Task {
     // materialized" are different states (mirrors main's SQLite-path fix).
     enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return Array.isArray(e) ? e : undefined; })(),
     modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
+    declaredSymbols: (() => { const v = fromJson<string[]>(row.declaredSymbols); return v && v.length > 0 ? v : undefined; })(),
     missionId: row.missionId || undefined,
     sliceId: row.sliceId || undefined,
     assignedAgentId: row.assignedAgentId || undefined,
@@ -355,6 +364,11 @@ export function archiveEntryToTask(
     columnMovedAt: entry.columnMovedAt,
     firstExecutionAt: entry.firstExecutionAt,
     cumulativeActiveMs: entry.cumulativeActiveMs,
+    // FNXC:TaskTiming 2026-08-01-13:00: archive/restore must retain both
+    // planning fields so archived tasks neither lose accumulated AI time nor
+    // revive without the live segment anchor needed for exactly-once finalize.
+    cumulativePlanningMs: entry.cumulativePlanningMs,
+    planningStartedAt: entry.planningStartedAt,
     executionStartedAt: entry.executionStartedAt,
     executionCompletedAt: entry.executionCompletedAt,
     modelPresetId: entry.modelPresetId,
@@ -372,6 +386,7 @@ export function archiveEntryToTask(
     branchContext: entry.branchContext,
     autoMerge: entry.autoMerge,
     modifiedFiles: slim ? undefined : entry.modifiedFiles,
+    declaredSymbols: entry.declaredSymbols,
     missionId: entry.missionId,
     sliceId: entry.sliceId,
     assigneeUserId: entry.assigneeUserId,
