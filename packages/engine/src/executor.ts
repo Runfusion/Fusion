@@ -16328,6 +16328,21 @@ ${scopeGuard}
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
 
+    if (isPlanReviewStep && !planReviewSpecText.trim()) {
+      const diagnostic = "PROMPT.md could not be loaded; Plan Review cannot approve an unavailable plan.";
+      await this.store.logEntry(
+        task.id,
+        `[pre-merge] Plan Review refused to run without PROMPT.md: ${diagnostic}`,
+      );
+      return {
+        success: false,
+        revisionRequested: true,
+        output: `REVISE: ${diagnostic}`,
+        verdict: "REVISE",
+        notes: diagnostic,
+      };
+    }
+
     if (isPlanReviewStep && requireExternalIntegrationEvidence) {
       /*
        * FNXC:PlanValidation 2026-06-30-09:03:
@@ -16415,7 +16430,7 @@ Approved Task Contract Unavailable:
 - If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
 
 --- BEGIN PROMPT.md ---
-${planReviewSpecText || `(The plan artifact could not be loaded into this prompt. Read it read-only from the project root at .fusion/tasks/${task.id}/PROMPT.md before judging; do not treat an unavailable artifact as a plan defect.)`}
+${planReviewSpecText}
 --- END PROMPT.md ---`
       : `Diff Scope (files changed by THIS task vs base):
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}

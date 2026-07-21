@@ -955,6 +955,32 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(cap.last?.systemPrompt).toContain("Return REVISE with the single reason that the approved contract could not be loaded");
     });
 
+    it("fails Plan Review closed before creating a reviewer when PROMPT.md is unavailable", async () => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(undefined);
+
+      const result = await (executor as any).executeWorkflowStep(
+        baseStepTask(),
+        makeStep({ id: "graph:plan-review-step", name: "Plan Review", optionalGroupId: "plan-review", gateMode: "gate" }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.all).toHaveLength(0);
+      expect(result).toMatchObject({
+        success: false,
+        revisionRequested: true,
+        verdict: "REVISE",
+        notes: expect.stringContaining("PROMPT.md could not be loaded"),
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-CE-1",
+        expect.stringContaining("Plan Review refused to run without PROMPT.md"),
+      );
+    });
+
     it.each([
       ["completion summary", { name: "Completion summary", summaryTarget: "task" }],
       ["ordinary advisory prompt", { name: "Publish artifacts" }],
