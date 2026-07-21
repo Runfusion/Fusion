@@ -27,6 +27,7 @@ import type { TaskStore } from "@fusion/core";
 import {
   resolveTaskMergeTarget,
   getCurrentRepo,
+  getPushRepo,
   isBranchGroupMemberLanded,
   resolveEffectiveSettings,
   isWorkspaceTask,
@@ -464,12 +465,16 @@ export function createPrNodeGithubOps(
       const headBranch = entity.headBranch || getTaskBranchName(task.id);
       await pushTaskBranchToOrigin(cwd, headBranch);
       const { owner, name } = splitRepoSlug(entity.repo);
+      const pushRepo = getPushRepo(cwd);
+      const qualifiedHead = pushRepo?.owner && owner && pushRepo.owner !== owner
+        ? `${pushRepo.owner}:${headBranch}`
+        : headBranch;
       const created = await github.createPr({
         owner,
         repo: name,
         title: task.title ?? `Task ${task.id}`,
         body: task.description ?? "",
-        head: headBranch,
+        head: qualifiedHead,
         base: entity.baseBranch,
       });
       const headOid = await resolveBranchHeadOid(cwd, headBranch);
