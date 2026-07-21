@@ -130,12 +130,20 @@ describe("WorkflowColumnBoundary controller", () => {
     });
 
     // execute lives in the wip column; entering it from the hold column must NOT move.
-    await c.onNodeEntry(ir.nodes.find((n) => n.id === "execute")!);
+    const entry = await c.onNodeEntry(ir.nodes.find((n) => n.id === "execute")!);
 
     expect(moves).toHaveLength(0);
     expect(audit).toHaveLength(0);
     expect(c.currentColumn()).toBe("todo");
     expect(warnings.some((w) => w.includes("hold→wip"))).toBe(true);
+    expect(entry).toEqual({
+      kind: "suspended",
+      reason: "capacity",
+      nodeId: "execute",
+      fromColumn: "todo",
+      toColumn: "in-progress",
+      irHash: expect.any(String),
+    });
   });
 
   it("settles a repeated transition exactly once (scenario 4: kill/restart idempotency)", async () => {
@@ -164,7 +172,7 @@ describe("WorkflowColumnBoundary controller", () => {
       rejectMove: (to) => to === "in-review",
     });
 
-    await c.onNodeEntry(ir.nodes.find((n) => n.id === "review")!);
+    await expect(c.onNodeEntry(ir.nodes.find((n) => n.id === "review")!)).rejects.toThrow("rejected move to in-review");
 
     expect(moves).toHaveLength(0);
     expect(audit).toHaveLength(0);
@@ -212,6 +220,32 @@ describe("WorkflowColumnBoundary controller", () => {
 });
 
 describe("WorkflowGraphExecutor × column boundary (integration)", () => {
+  it("suspends before a wip node and resumes it explicitly after scheduler release", async () => {
+    const ir = benchmarkSliceIr();
+    const handler = vi.fn(async () => ({ outcome: "success" as const }));
+    const heldBoundary = wiredController({ ir, initialColumn: "todo", moves: [], audit: [] });
+    const heldExecutor = new WorkflowGraphExecutor({ handlers: { prompt: handler }, columnBoundary: heldBoundary });
+    const task = { id: "T-1", column: "todo" } as TaskDetail;
+
+    const suspended = await heldExecutor.run(task, settingsOn(), ir);
+
+    expect(suspended.suspended).toMatchObject({ nodeId: "execute", toColumn: "in-progress" });
+    expect(handler).not.toHaveBeenCalled();
+
+    const releasedBoundary = wiredController({ ir, initialColumn: "in-progress", moves: [], audit: [] });
+    const resumedExecutor = new WorkflowGraphExecutor({ handlers: { prompt: handler }, columnBoundary: releasedBoundary });
+    const resumed = await resumedExecutor.run(
+      { ...task, column: "in-progress" },
+      settingsOn(),
+      ir,
+      suspended.suspended!.nodeId,
+    );
+
+    expect(resumed.suspended).toBeUndefined();
+    expect(resumed.visitedNodeIds[0]).toBe("execute");
+    expect(handler).toHaveBeenCalled();
+  });
+
   it("drives one move per real boundary through traversal and no move to done on success-to-end (scenarios 1-3)", async () => {
     const ir = benchmarkSliceIr();
     const moves: MoveRecord[] = [];

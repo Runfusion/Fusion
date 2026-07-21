@@ -1553,6 +1553,22 @@ function validateColumnAgent(column: WorkflowIrColumn): void {
 function validateV2(ir: WorkflowIrV2): void {
   validateColumns(ir);
 
+  // Capacity holds must have somewhere the scheduler can actually release
+  // them. Failing authoring here avoids durable continuations that can never
+  // become runnable.
+  for (const [index, column] of ir.columns.entries()) {
+    const hold = column.traits.find((trait) => trait.trait === "hold");
+    if (hold?.config?.release !== "capacity") continue;
+    const hasDownstreamCapacity = ir.columns
+      .slice(index + 1)
+      .some((candidate) => resolveColumnFlags(candidate).countsTowardWip === true);
+    if (!hasDownstreamCapacity) {
+      throw new WorkflowIrError(
+        `Workflow IR capacity hold column '${column.id}' requires a downstream wip column`,
+      );
+    }
+  }
+
   const columnIds = new Set(ir.columns.map((c) => c.id));
   const nodeIds = new Set<string>();
   for (const node of ir.nodes) {

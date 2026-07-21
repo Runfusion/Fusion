@@ -56,6 +56,12 @@ export interface WorkflowWorkItem {
   leaseExpiresAt: string | null;
   lastError: string | null;
   blockedReason: string | null;
+  stableWorkflowRunId: string | null;
+  continuationSequence: number | null;
+  waitReason: "planning" | "capacity" | null;
+  sourceColumn: string | null;
+  targetColumn: string | null;
+  irHash: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +79,12 @@ export interface WorkflowWorkItemUpsertInput {
   leaseExpiresAt?: string | null;
   lastError?: string | null;
   blockedReason?: string | null;
+  stableWorkflowRunId?: string | null;
+  continuationSequence?: number | null;
+  waitReason?: "planning" | "capacity" | null;
+  sourceColumn?: string | null;
+  targetColumn?: string | null;
+  irHash?: string | null;
   now?: string;
 }
 

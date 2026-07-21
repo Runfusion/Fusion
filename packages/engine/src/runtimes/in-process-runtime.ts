@@ -15,7 +15,13 @@ import type {
   CliSession,
   NotificationPayload,
 } from "@fusion/core";
-import { AsyncCentralClaimStore, ChatStore, isEphemeralAgent } from "@fusion/core";
+import {
+  AsyncCentralClaimStore,
+  ChatStore,
+  computeWorkflowIrPin,
+  isEphemeralAgent,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
@@ -53,6 +59,7 @@ import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
+import { resolvePreReleasePlanReviewNode } from "../hold-release.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
@@ -228,6 +235,8 @@ export class InProcessRuntime
   private missionExecutionLoop?: MissionExecutionLoop;
   private missionAutopilot?: MissionAutopilot;
   private triageProcessor?: TriageProcessor;
+  private workflowContinuationTimer?: ReturnType<typeof setInterval>;
+  private workflowContinuationDrainActive = false;
   private messageStore?: MessageStore;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
@@ -980,6 +989,33 @@ export class InProcessRuntime
           onSpecifyComplete: (t) => {
             this.recordActivity();
             runtimeLog.log(`Specified ${t.id} → todo`);
+            void (async () => {
+              const live = await this.taskStore.getTask(t.id);
+              if (!live || live.paused || live.userPaused) return;
+              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
+              const planReview = resolvePreReleasePlanReviewNode(ir);
+              if (!planReview || planReview.column !== live.column) return;
+
+              const active = await this.taskStore.listWorkflowWorkItemsForTask(live.id, { kinds: ["task"] });
+              if (!active.some((item) => ["held", "runnable", "running", "retrying"].includes(item.state))) {
+                await this.taskStore.replaceActiveTaskWorkflowContinuation({
+                  runId: `${live.id}:planning-continuation:${planReview.id}:${active.length}`,
+                  taskId: live.id,
+                  nodeId: planReview.id,
+                  kind: "task",
+                  state: "runnable",
+                  stableWorkflowRunId: `${live.id}:${ir.name}`,
+                  continuationSequence: active.length,
+                  waitReason: "planning",
+                  sourceColumn: live.column,
+                  targetColumn: live.column,
+                  irHash: computeWorkflowIrPin(ir, planReview.id).irHash,
+                });
+              }
+              this.kickWorkflowContinuationProcessor();
+            })().catch((error) => {
+              runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
+            });
           },
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
@@ -1218,6 +1254,11 @@ export class InProcessRuntime
       }
 
       this.setStatus("active");
+      this.workflowContinuationTimer = setInterval(() => {
+        this.kickWorkflowContinuationProcessor();
+      }, 2_000);
+      this.workflowContinuationTimer.unref?.();
+      this.kickWorkflowContinuationProcessor();
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -1274,6 +1315,10 @@ export class InProcessRuntime
     this.backendShutdown = undefined;
     let stopError: Error | undefined;
     try {
+      if (this.workflowContinuationTimer) {
+        clearInterval(this.workflowContinuationTimer);
+        this.workflowContinuationTimer = undefined;
+      }
       // 1. Remove concurrency change listener (if we registered one)
       if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
         this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
@@ -1793,6 +1838,37 @@ export class InProcessRuntime
    */
   getMissionExecutionLoop(): MissionExecutionLoop | undefined {
     return this.missionExecutionLoop;
+  }
+
+  /** Wake the durable task-continuation consumer without nesting execution in triage. */
+  private kickWorkflowContinuationProcessor(): void {
+    queueMicrotask(() => {
+      void this.drainWorkflowContinuations().catch((error) => {
+        runtimeLog.error("Workflow continuation processor failed:", error);
+      });
+    });
+  }
+
+  private async drainWorkflowContinuations(): Promise<void> {
+    if (this.workflowContinuationDrainActive || this.status !== "active") return;
+    this.workflowContinuationDrainActive = true;
+    try {
+      const items = await this.taskStore.listDueWorkflowWorkItems({
+        kinds: ["task"],
+        states: ["runnable", "retrying"],
+        limit: 20,
+      });
+      for (const item of items) {
+        if (item.waitReason !== "planning") continue;
+        const task = await this.taskStore.getTask(item.taskId).catch(() => undefined);
+        if (!task || task.paused || task.userPaused) continue;
+        void this.executor.execute(task).catch((error) => {
+          runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
+        });
+      }
+    } finally {
+      this.workflowContinuationDrainActive = false;
+    }
   }
 
   /**

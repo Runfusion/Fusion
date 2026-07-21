@@ -9,7 +9,7 @@ import type {
   WorkflowNodeExtensionResult,
   WorkflowStepResult,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "./transient-error-detector.js";
 
 import {
@@ -269,6 +269,19 @@ export interface WorkflowGraphExecutorResult {
   outcome: WorkflowNodeOutcome;
   context: Record<string, unknown>;
   visitedNodeIds: string[];
+  suspended?: {
+    reason: "capacity";
+    nodeId: string;
+    fromColumn: string;
+    toColumn: string;
+    irHash: string;
+  };
+}
+
+class WorkflowGraphSuspended extends Error {
+  public constructor(public readonly suspension: NonNullable<WorkflowGraphExecutorResult["suspended"]>) {
+    super(`Workflow suspended before node ${suspension.nodeId}`);
+  }
 }
 
 /**
@@ -380,8 +393,11 @@ export class WorkflowGraphExecutor {
     task: TaskDetail,
     settings: (WorkflowNodeSettings & Partial<Pick<Settings, "autoMerge">>) | undefined,
     ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR,
+    startNodeId?: string,
   ): Promise<WorkflowGraphExecutorResult> {
-    const startNode = ir.nodes.find((node) => node.kind === "start");
+    const startNode = startNodeId
+      ? ir.nodes.find((node) => node.id === startNodeId)
+      : ir.nodes.find((node) => node.kind === "start");
     if (!startNode) throw new WorkflowIrError("Workflow IR missing start node");
 
     const nodeMap = new Map(ir.nodes.map((node) => [node.id, node]));
@@ -553,7 +569,8 @@ export class WorkflowGraphExecutor {
         // columnless node, a same-column node, or a hold→wip boundary produces no
         // move; the controller owns that decision. Runs BEFORE the node executes,
         // so an execute failure parks the card in the column it just entered.
-        await this.deps.columnBoundary?.onNodeEntry(node);
+        const boundary = await this.deps.columnBoundary?.onNodeEntry(node);
+        if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
 
         if (node.kind === "split") {
           // Concurrent fan-out: branches run in parallel up to their join, which
@@ -667,9 +684,11 @@ export class WorkflowGraphExecutor {
            * workflow-authored `defaultOn` so default Coding still runs Plan Review
            * before execution and Code Review before merge.
            */
-          const enabled = Array.isArray(task.enabledWorkflowSteps)
-            ? task.enabledWorkflowSteps.includes(node.id)
-            : node.config?.defaultOn === true;
+          const enabled = isWorkflowOptionalGroupEnabled(
+            task.enabledWorkflowSteps,
+            node.id,
+            node.config?.defaultOn === true,
+          );
           const requiresAutoMergeOff = node.config?.requiresAutoMergeOff === true;
           const autoMergeOff = task.autoMerge === false || (settings?.autoMerge === false && task.autoMerge !== true);
           /*
@@ -1062,7 +1081,8 @@ export class WorkflowGraphExecutor {
       visitedNodeIds.push(mergeNode.id);
       // U1: the synthetic merge seam carries the merge-region's column; cross the
       // boundary on entry so a custom "Merging" column receives the card (KTD-1).
-      await this.deps.columnBoundary?.onNodeEntry(mergeNode);
+      const boundary = await this.deps.columnBoundary?.onNodeEntry(mergeNode);
+      if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
       const result = await this.executeNodeWithRetries(
         mergeNode,
         task,
@@ -1145,12 +1165,32 @@ export class WorkflowGraphExecutor {
                 break;
               }
             } catch (err) {
+              if (err instanceof WorkflowGraphSuspended) throw err;
               this.deps.logTaskEntry?.(
                 `[post-merge] traversal error: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           }
           if (aggregate.outcome === "failure") break;
+          // A deliberately minimal merge workflow may route success straight
+          // to end with no post-merge work node to enter the complete column.
+          // Preserve end's handler-free terminal semantics while still entering
+          // its authored column after merge proof.
+          if (postMergeEntryNodeIds.length === 0) {
+            const terminalEdge = [...outgoingMap.entries()].flatMap(([from, outgoing]) => {
+              const fromNode = nodeMap.get(from);
+              if (!fromNode || !isMergeRegionKind(fromNode.kind)) return [];
+              return outgoing.filter((candidate) => {
+                const terminal = nodeMap.get(candidate.to);
+                return terminal?.kind === "end" && (!candidate.condition || candidate.condition === "success");
+              });
+            })[0];
+            const terminalNode = terminalEdge ? nodeMap.get(terminalEdge.to) : undefined;
+            if (terminalNode) {
+              const boundary = await this.deps.columnBoundary?.onNodeEntry(terminalNode);
+              if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+            }
+          }
           continue;
         }
         const child = await walk(edge.to);
@@ -1175,7 +1215,19 @@ export class WorkflowGraphExecutor {
       return { executed: true, outcome: "failure", context, visitedNodeIds };
     }
 
-    const terminal = await walk(startNode.id);
+    let terminal: WorkflowNodeResult | ReworkSignal;
+    try {
+      terminal = await walk(startNode.id);
+    } catch (error) {
+      if (!(error instanceof WorkflowGraphSuspended)) throw error;
+      return {
+        executed: true,
+        outcome: "success",
+        context,
+        visitedNodeIds,
+        suspended: error.suspension,
+      };
+    }
     if (isReworkSignal(terminal)) {
       // A rework edge whose target is not an enclosing head on the stack — i.e. a
       // rework edge pointing at a node never entered as a loop head. Malformed IR.

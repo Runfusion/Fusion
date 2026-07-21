@@ -19,7 +19,7 @@ import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
-import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
@@ -5643,9 +5643,10 @@ export class TaskExecutor {
         // pending U6/U7 trait re-key; safe now). Absent → the graph performs no
         // lifecycle moves (pre-cutover byte-identical); present → the controller
         // moves the card on each node-column boundary with all move-safety.
-        columnBoundaryHooks: this.buildColumnBoundaryHooks(task),
+        columnBoundaryHooks: this.buildColumnBoundaryHooks(task, resolvedRunId),
       });
       let result: WorkflowGraphTaskRunResult;
+      let continuation: WorkflowWorkItem | undefined;
       try {
         const loadedDetail = await this.store.getTask(task.id);
         /*
@@ -5655,8 +5656,30 @@ export class TaskExecutor {
         const detail: TaskDetail = loadedDetail?.id === task.id
           ? loadedDetail
           : { ...task, prompt: task.prompt ?? task.description ?? "" };
-        result = await runner.run(detail, settings);
+        const workItems = await this.store.listWorkflowWorkItemsForTask?.(task.id, { kinds: ["task"] }) ?? [];
+        for (let index = workItems.length - 1; index >= 0; index -= 1) {
+          const candidate = workItems[index];
+          if (["held", "runnable", "running", "retrying"].includes(candidate.state)) {
+            continuation = candidate;
+            break;
+          }
+        }
+        if (continuation && continuation.state !== "running") {
+          continuation = await this.store.transitionWorkflowWorkItem(continuation.id, "running", {
+            leaseOwner: `executor:${task.id}`,
+            leaseExpiresAt: null,
+            lastError: null,
+          });
+        }
+        result = await runner.run(detail, settings, continuation?.nodeId);
       } catch (err) {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: "workflow-continuation-dispatch-failed",
+          }).catch(() => undefined);
+        }
         executorLog.error(
           `[workflow-graph] ${task.id} interpreter threw — parking task as workflow failure: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -5678,9 +5701,26 @@ export class TaskExecutor {
         });
         return;
       }
+      if (result.disposition === "suspended") {
+        return;
+      }
       if (result.disposition === "failed") {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: "workflow-continuation-failed",
+          });
+        }
         await this.handleGraphFailure(task, result);
       } else if (result.disposition === "completed") {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "succeeded", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: null,
+          });
+        }
         const live = await this.store.getTask(task.id).catch(() => task);
         if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
@@ -5900,7 +5940,7 @@ export class TaskExecutor {
     });
   }
 
-  private buildColumnBoundaryHooks(task: Pick<Task, "id">): WorkflowColumnBoundaryHooks {
+  private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): WorkflowColumnBoundaryHooks {
     // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
     // buildBranchPersistence — structural probe of the row surface so a store
     // lacking the pin fields degrades to the inert no-pin seam.
@@ -5914,6 +5954,24 @@ export class TaskExecutor {
       // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
       // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
       clearPin: pinPersistence.clearPin,
+      onSuspend: async (suspension) => {
+        const items = await this.store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
+        const live = items.filter((item) => ["held", "runnable", "running", "retrying"].includes(item.state));
+        if (live.some((item) => item.nodeId === suspension.nodeId)) return;
+        await this.store.replaceActiveTaskWorkflowContinuation({
+          runId: `${workflowRunId ?? `${task.id}:workflow`}:continuation:${suspension.nodeId}:${items.length}`,
+          taskId: task.id,
+          nodeId: suspension.nodeId,
+          kind: "task",
+          state: "held",
+          stableWorkflowRunId: workflowRunId ?? `${task.id}:workflow`,
+          continuationSequence: items.length,
+          waitReason: "capacity",
+          sourceColumn: suspension.fromColumn,
+          targetColumn: suspension.toColumn,
+          irHash: suspension.irHash,
+        });
+      },
       moveTask: async (toColumn, ctx) => {
         this.workflowLifecycleMovesInFlight.add(task.id);
         try {

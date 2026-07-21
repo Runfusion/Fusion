@@ -282,6 +282,7 @@ export { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.j
 export {
   resolveWorkflowOptionalSteps,
   resolveDefaultOnOptionalGroupIds,
+  isWorkflowOptionalGroupEnabled,
 } from "./workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflow-optional-steps.js";
 export {
