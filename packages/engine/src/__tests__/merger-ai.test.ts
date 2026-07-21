@@ -295,6 +295,27 @@ describe("runAiMerge", () => {
     expect(reviewAgent.mock.calls[0]?.[1]).toContain("complete resulting tree");
   });
 
+  it("reviews a durable blocker even when the retried branch has zero commits ahead", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const blocker = "the integrated tree still bypasses authorization";
+    const { store } = makeStore(dir, {
+      log: [{
+        action: `AI merge BLOCKED after 1 corrective pass(es) — unresolved correctness concern: ${blocker}`,
+        timestamp: new Date().toISOString(),
+      }],
+    });
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* zero-ahead corrective review */ }),
+      reviewAgent,
+    });
+
+    expect(reviewAgent).toHaveBeenCalledOnce();
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blocker);
+  });
+
   it("reviews an empty corrective rebuild before accepting it as a no-op", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const blocker = "the merged tree still bypasses authorization";
@@ -332,6 +353,27 @@ describe("runAiMerge", () => {
 
     expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerX);
     expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerY);
+  });
+
+  it("recovers every blocker from interrupted per-pass rejection logs", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blockerX = "authorization is bypassed";
+    const blockerY = "audit metadata is missing";
+    const { store } = makeStore(dir, {
+      log: [
+        { action: `AI merge review (pass 1): rejected (blocking) — ${blockerX}` },
+        { action: `AI merge review (pass 2): rejected (blocking) — ${blockerY}` },
+      ],
+    });
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent,
+    });
+
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerX);
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerY);
   });
 
   it("merges a clean branch, advances main, and finalizes the task", async () => {

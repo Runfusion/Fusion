@@ -163,15 +163,25 @@ function taskHasApprovedAiMergeReview(task: Task | undefined): boolean {
 
 function getOutstandingBlockingMergeReasons(task: Task | undefined): string[] {
   const actions = task?.log?.map((entry) => entry.action).filter((action): action is string => typeof action === "string") ?? [];
+  const reasons: string[] = [];
+  const addReasons = (value: string): void => {
+    for (const reason of value.split(/;\s*/).map((part) => part.trim()).filter(Boolean)) {
+      if (!reasons.includes(reason)) reasons.push(reason);
+    }
+  };
   for (let index = actions.length - 1; index >= 0; index--) {
     const action = actions[index];
     if (/AI merge: (?:landed|finalized).*task → done/i.test(action)) return [];
+    if (/AI merge review \(pass \d+\): approved/i.test(action)) return [];
     const blocked = action.match(/AI merge BLOCKED .*?unresolved correctness concern:\s*(.+)$/i);
-    if (blocked?.[1]) return [blocked[1].trim()];
+    if (blocked?.[1]) {
+      addReasons(blocked[1]);
+      return reasons;
+    }
     const rejected = action.match(/AI merge review \(pass \d+\): rejected \(blocking\) —\s*(.+)$/i);
-    if (rejected?.[1]) return [rejected[1].trim()];
+    if (rejected?.[1]) addReasons(rejected[1]);
   }
-  return [];
+  return reasons;
 }
 
 function matchesApprovedAiMergeSha(squashSha: string, approvedShas: Set<string>): boolean {
@@ -822,7 +832,11 @@ export async function landOneRepo(
     // exhaustion and the card is parked failed. Only short-circuit on a CONFIDENT
     // 0: a git failure yields "" → parseInt → NaN (≠ 0) and falls through.
     const aheadRaw = await git(["rev-list", "--count", `${integrationBranch}..${branch}`], repoRootDir).catch(() => "");
-    if (Number.parseInt(aheadRaw.trim(), 10) === 0) {
+    /*
+    FNXC:MergeReviewBlockers 2026-07-21-21:45:
+    Zero commits ahead is only an unconditional no-op when no durable blocker remains. A retry after reset, rebase, or prior integration must still review the complete integration tree before clearing previously rejected correctness concerns.
+    */
+    if (Number.parseInt(aheadRaw.trim(), 10) === 0 && outstandingReviewReasons.length === 0) {
       await audit.git({ type: "merge:ai-empty", target: integrationBranch, metadata: { taskId, tipSha } });
       return { outcome: "empty", tipSha, integrationBranch };
     }
@@ -2069,6 +2083,9 @@ async function mergeAndReview(input: {
     /*
     FNXC:MergeReviewBlockers 2026-07-21-21:30:
     Every rejected blocker remains part of the corrective contract until a reviewer approves the complete result. Review an empty corrective rebuild instead of treating it as an unreviewed no-op, and accumulate newly discovered blockers so a later pass cannot regress an earlier concern.
+
+    FNXC:MergeReviewBlockers 2026-07-21-21:45:
+    Persist the accumulated set in every rejection log so crash recovery restores all outstanding concerns rather than only the latest pass.
     */
     const unresolvedReasons = [...new Set([...priorReasons, ...verdict.reasons])];
     const budgetExhausted = attempt >= maxPasses;
@@ -2085,7 +2102,7 @@ async function mergeAndReview(input: {
     }
 
     priorReasons = unresolvedReasons;
-    await log(`AI merge review (pass ${attempt + 1}): rejected (${verdict.severity}) — ${verdict.reasons.join("; ")}`);
+    await log(`AI merge review (pass ${attempt + 1}): rejected (${verdict.severity}) — ${unresolvedReasons.join("; ")}`);
   }
 }
 
