@@ -12,6 +12,11 @@ const PROVIDER_RATE_LIMIT_PREFIX = "provider-rate-limit:";
 const DEFAULT_POLL_INTERVAL_MS = 300_000;
 const DEFAULT_MAX_POLL_INTERVAL_MS = 3_600_000;
 const CHECKS_BEFORE_BACKOFF = 5;
+const INDEPENDENTLY_METERED_PROVIDERS = new Set([
+  "anthropic",
+  "anthropic-subscription",
+  "openai-codex",
+]);
 
 export type ProviderHealthProbe = (
   providerId: string,
@@ -25,6 +30,7 @@ export interface ProviderHealthMonitorOptions {
   pollIntervalMs?: number;
   maxPollIntervalMs?: number;
   probe?: ProviderHealthProbe;
+  supportsProbe?: (providerId: string) => boolean;
   now?: () => number;
 }
 
@@ -39,9 +45,14 @@ function normalizeProviderId(providerId: string): string {
 }
 
 export function providerIdFromRateLimitReason(reason: string | undefined): string | null {
+  if (reason === "provider-rate-limit") return "unknown";
   if (!reason?.startsWith(PROVIDER_RATE_LIMIT_PREFIX)) return null;
   const providerId = normalizeProviderId(reason.slice(PROVIDER_RATE_LIMIT_PREFIX.length));
   return providerId || null;
+}
+
+export function hasIndependentProviderHealthProbe(providerId: string): boolean {
+  return INDEPENDENTLY_METERED_PROVIDERS.has(normalizeProviderId(providerId));
 }
 
 /**
@@ -90,6 +101,7 @@ export class ProviderHealthMonitor {
   private readonly pollIntervalMs: number;
   private readonly maxPollIntervalMs: number;
   private readonly probe: ProviderHealthProbe;
+  private readonly supportsProbe: (providerId: string) => boolean;
   private readonly now: () => number;
   private readonly states = new Map<string, ProviderMonitorState>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -99,6 +111,8 @@ export class ProviderHealthMonitor {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.maxPollIntervalMs = options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS;
     this.probe = options.probe ?? probeMeteredProviderHealth;
+    this.supportsProbe = options.supportsProbe
+      ?? (options.probe ? () => true : hasIndependentProviderHealthProbe);
     this.now = options.now ?? Date.now;
   }
 
@@ -141,6 +155,40 @@ export class ProviderHealthMonitor {
       const state = this.states.get(providerId);
       const checkedAt = this.now();
       if (state && state.nextCheckAt > checkedAt) return;
+
+      /*
+      FNXC:ProviderRateLimitRecovery 2026-07-21-21:30:
+      A provider without an independent quota meter must never be parked forever. Give it one normal poll interval as a cooldown, then requeue its exact provider-qualified parks so ordinary execution can confirm that capacity returned. Legacy unqualified parks use the same bounded fallback under the synthetic "unknown" provider id.
+      */
+      if (!this.supportsProbe(providerId)) {
+        if (!state || state.status !== "unavailable") {
+          this.states.set(providerId, {
+            status: "unavailable",
+            failedChecks: 1,
+            nextCheckAt: checkedAt + this.pollIntervalMs,
+          });
+          this.options.logger.warn("Provider has no independent health probe; applying bounded cooldown", {
+            providerId,
+          });
+          return;
+        }
+
+        const recoveredCounts = await Promise.all(stores.map(async (store) =>
+          new UsageLimitPauser(store).onProviderAvailable(providerId)));
+        const recoveredTasks = recoveredCounts.reduce((total, count) => total + count, 0);
+        this.states.set(providerId, {
+          status: "available",
+          failedChecks: 0,
+          nextCheckAt: checkedAt + this.pollIntervalMs,
+        });
+        if (recoveredTasks > 0) {
+          this.options.logger.info("Provider cooldown elapsed; resumed provider-paused tasks", {
+            providerId,
+            recoveredTasks,
+          });
+        }
+        return;
+      }
 
       const usage = await this.probe(providerId, this.options.authStorage).catch((error: unknown) => {
         this.options.logger.warn("Provider health probe failed", {

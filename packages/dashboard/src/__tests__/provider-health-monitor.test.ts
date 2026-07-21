@@ -3,6 +3,7 @@ import type { ProviderUsage } from "../usage.js";
 import {
   hasUsableProviderCapacity,
   ProviderHealthMonitor,
+  hasIndependentProviderHealthProbe,
   providerHealthProbeDelayMs,
   providerIdFromRateLimitReason,
 } from "../provider-health-monitor.js";
@@ -47,10 +48,16 @@ function createLogger() {
 }
 
 describe("ProviderHealthMonitor", () => {
-  it("derives only provider-qualified rate-limit parks", () => {
+  it("derives provider-qualified and legacy unqualified rate-limit parks", () => {
     expect(providerIdFromRateLimitReason("provider-rate-limit:Anthropic")).toBe("anthropic");
-    expect(providerIdFromRateLimitReason("provider-rate-limit")).toBeNull();
+    expect(providerIdFromRateLimitReason("provider-rate-limit")).toBe("unknown");
     expect(providerIdFromRateLimitReason("manual")).toBeNull();
+  });
+
+  it("identifies providers with independent capacity meters", () => {
+    expect(hasIndependentProviderHealthProbe("Anthropic")).toBe(true);
+    expect(hasIndependentProviderHealthProbe("openai-codex")).toBe(true);
+    expect(hasIndependentProviderHealthProbe("openrouter")).toBe(false);
   });
 
   it("requires positive auth and non-exhausted metered capacity", () => {
@@ -94,6 +101,34 @@ describe("ProviderHealthMonitor", () => {
     now = 300_000;
     await monitor.checkNow();
     expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("requeues unsupported and legacy-unqualified provider parks after a bounded cooldown", async () => {
+    let now = 0;
+    const store = createStore([
+      { id: "FN-7", paused: true, pausedReason: "provider-rate-limit:openrouter" },
+      { id: "FN-8", paused: true, pausedReason: "provider-rate-limit:unknown" },
+      { id: "FN-9", paused: true, pausedReason: "provider-rate-limit" },
+    ]);
+    const probe = vi.fn();
+    const monitor = new ProviderHealthMonitor({
+      getStores: () => [store],
+      logger: createLogger(),
+      probe,
+      supportsProbe: () => false,
+      now: () => now,
+      pollIntervalMs: 1_000,
+    });
+
+    await monitor.checkNow();
+    expect(store.pauseTask).not.toHaveBeenCalled();
+    now = 1_000;
+    await monitor.checkNow();
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-7", false);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-8", false);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-9", false);
   });
 
   it("probes a persisted unavailable provider once and resumes exact matching parks across projects", async () => {

@@ -177,7 +177,7 @@ describe("UsageLimitPauser", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      "Usage limit detected (triage): overloaded_error",
+      "Usage limit detected (triage/unknown): overloaded_error",
     );
   });
 
@@ -213,13 +213,13 @@ describe("UsageLimitPauser", () => {
     expect(store.pauseTask).toHaveBeenCalledWith("FN-010", true, undefined, { pausedReason: "provider-rate-limit:anthropic" });
   });
 
-  it("uses a generic structured reason when the caller cannot identify the provider", async () => {
+  it("uses a recoverable qualified reason when the caller cannot identify the provider", async () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
     await pauser.onUsageLimitHit("executor", "FN-001", "rate limit");
     expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, {
-      pausedReason: "provider-rate-limit",
+      pausedReason: "provider-rate-limit:unknown",
     });
   });
 

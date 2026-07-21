@@ -97,7 +97,8 @@ export class UsageLimitPauser {
     const recoverableTasks = tasks.filter((task) =>
       task.paused === true
       && task.userPaused !== true
-      && task.pausedReason === pausedReason);
+      && (task.pausedReason === pausedReason
+        || (providerId === "unknown" && task.pausedReason === "provider-rate-limit")));
 
     /*
     FNXC:ProviderRateLimitRecovery 2026-07-19-20:15:
@@ -147,8 +148,8 @@ export class UsageLimitPauser {
    * @param provider - Best-effort provider identifier used in the pause reason
    */
   async onUsageLimitHit(agentType: string, taskId: string, errorMessage: string, provider?: string): Promise<void> {
-    const providerId = provider ? this.normalizeProviderId(provider) : "";
-    const pausedReason = providerId ? `provider-rate-limit:${providerId}` : "provider-rate-limit";
+    const providerId = this.normalizeProviderId(provider ?? "unknown") || "unknown";
+    const pausedReason = `provider-rate-limit:${providerId}`;
 
     /*
     FNXC:ProviderRateLimitIsolation 2026-07-19-19:10:
@@ -163,12 +164,6 @@ export class UsageLimitPauser {
       `Usage limit detected (${agentType}${providerId ? `/${providerId}` : ""}): ${errorMessage}`,
     );
 
-    if (!providerId) {
-      await this.store.pauseTask(taskId, true, undefined, { pausedReason });
-      log.warn(`Paused ${taskId} for ${pausedReason}; other provider lanes remain active`);
-      return;
-    }
-
     const [settings, tasks] = await Promise.all([
       this.store.getSettings(),
       this.store.listTasks(),
@@ -177,6 +172,7 @@ export class UsageLimitPauser {
       task.column !== "done"
       && task.column !== "archived"
       && task.paused !== true
+      && providerId !== "unknown"
       && this.taskUsesProvider(task, providerId, settings, agentType));
 
     // Always include the task that produced the 429 even if its actual provider
