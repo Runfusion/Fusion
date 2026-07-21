@@ -7955,7 +7955,7 @@
     },
     "tokenTotalsAria": "任务 Token 总计",
     "tokenUsage": "Token 使用情况",
-    "totalExecutionTime": "总执行时间",
+    "totalExecutionTime": "总活跃时间",
     "totalTokens": "总计",
     "updateFailed": "更新 {{id}} 失败：{{error}}",
     "updateSuccess": "已更新 {{id}}",

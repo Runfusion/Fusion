@@ -2531,6 +2531,10 @@ export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from ".
 export {
   upsertAiSession,
   getAiSession,
+  claimPlanningSessionTaskCreation,
+  finalizePlanningSessionTaskCreation,
+  reconcilePlanningSessionTaskCreation,
+  releasePlanningSessionTaskCreation,
   listActiveAiSessions,
   listAllAiSessions,
   listRecoverableAiSessions,
@@ -2603,3 +2607,4 @@ export {
 export type { LanguageFamily, DetectedContentLanguage } from "./detect-content-language.js";
 export { promoteResearchFinding } from "./research-feature-promotion.js";
 export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";
+export { getTotalAgentActiveMs, startPlanningSegment, finalizePlanningSegment } from "./task-timing.js";

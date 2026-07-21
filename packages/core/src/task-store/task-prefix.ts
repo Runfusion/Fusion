@@ -10,5 +10,5 @@ export function resolveTaskPrefix(
   settingsTaskPrefix: string | undefined,
   fallback: string,
 ): string {
-  return (taskPrefixHint?.trim() || settingsTaskPrefix || fallback).trim().toUpperCase();
+  return (taskPrefixHint?.trim() || settingsTaskPrefix?.trim() || fallback).trim().toUpperCase();
 }

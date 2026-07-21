@@ -8235,6 +8235,67 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("finalizeOrphanedPlanningSegments", () => {
+    it("finalizes an orphan exactly once and records an ids-only audit event", async () => {
+      const task = {
+        id: "FN-PLAN-1",
+        planningStartedAt: "2026-01-01T00:00:00.000Z",
+        cumulativePlanningMs: 50,
+      } as Task;
+      const updateTaskAtomic = vi.fn(async (_id: string, updater: (live: Task) => Partial<Task> | null) => {
+        const patch = updater(task);
+        if (patch) Object.assign(task, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        updateTaskAtomic,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set<string>(),
+        hasActivePlanningWorkflowSession: () => false,
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(1);
+      expect(updateTaskAtomic).toHaveBeenCalledOnce();
+      expect(task).toMatchObject({ cumulativePlanningMs: 1050, planningStartedAt: null });
+      expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment",
+        metadata: { taskId: "FN-PLAN-1", finalizedCount: 1, reason: "no-live-planning-owner" },
+      }));
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(0);
+      expect(updateTaskAtomic).toHaveBeenCalledOnce();
+
+      recovery.stop();
+    });
+
+    it("does not finalize a live graph Plan Review segment", async () => {
+      const task = {
+        id: "FN-PLAN-REVIEW",
+        planningStartedAt: "2026-01-01T00:00:00.000Z",
+        cumulativePlanningMs: 50,
+      } as Task;
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue([task]) });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set<string>(),
+        hasActivePlanningWorkflowSession: (taskId) => taskId === "FN-PLAN-REVIEW",
+      });
+
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(0);
+      expect(recoveryStore.updateTask).not.toHaveBeenCalled();
+      expect(recoveryStore.updateTaskAtomic).toBeUndefined();
+      expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment-no-action",
+        metadata: { finalizedCount: 0, reason: "no-eligible-orphan" },
+      }));
+
+      recovery.stop();
+    });
+  });
+
   describe("recoverOrphanedPlanningTasks", () => {
     it("clears status for orphaned planning tasks without a recoverable prompt", async () => {
       const getPlanning = vi.fn().mockReturnValue(new Set<string>());

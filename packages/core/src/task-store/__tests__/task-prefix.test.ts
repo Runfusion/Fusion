@@ -19,5 +19,6 @@ describe("resolveTaskPrefix", () => {
   it("uses the path-specific fallback when neither hint nor settings are set", () => {
     expect(resolveTaskPrefix(undefined, undefined, "FN")).toBe("FN");
     expect(resolveTaskPrefix(undefined, undefined, "KB")).toBe("KB");
+    expect(resolveTaskPrefix(undefined, "  ", "KB")).toBe("KB");
   });
 });

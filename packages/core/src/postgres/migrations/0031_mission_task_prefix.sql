@@ -3,9 +3,10 @@ FNXC:MissionTaskPrefix 2026-07-14-19:00:
 Per-mission taskPrefix override (PR #1930). Missions may set a letter-led
 alphanumeric prefix used when triaging features into tasks; NULL means inherit
 the project-wide settings.taskPrefix. Additive only — no backfill.
-FNXC:MissionTaskPrefix 2026-07-20-12:00:
-Renumbered 0028→0029 after main claimed 0028 for durable task declarations.
-Existing databases that already applied 0000–0028 must receive this column via
+FNXC:MissionTaskPrefix 2026-07-21-18:55:
+Renumbered 0028→0029→0031 after main claimed 0028 for durable task declarations,
+0029 for planning timing, and 0030 for SQLite migration status. Existing databases
+that already applied 0000–0030 must receive this column via
 an independent version so upgrade paths cannot skip it.
 
 */

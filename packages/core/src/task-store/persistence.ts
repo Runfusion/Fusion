@@ -106,6 +106,8 @@ export interface TaskRow {
   columnMovedAt: string | null;
   firstExecutionAt: string | null;
   cumulativeActiveMs: number | null;
+  cumulativePlanningMs: number | null;
+  planningStartedAt: string | null;
   columnDwellMs: string | null;
   workflowTransitionNotification: string | null;
   plannerOversightLevel: string | null;
@@ -307,6 +309,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("columnMovedAt", (task) => task.columnMovedAt ?? null),
   defineTaskColumn("firstExecutionAt", (task) => task.firstExecutionAt ?? null),
   defineTaskColumn("cumulativeActiveMs", (task) => task.cumulativeActiveMs ?? null),
+  defineTaskColumn("cumulativePlanningMs", (task) => task.cumulativePlanningMs ?? null),
+  defineTaskColumn("planningStartedAt", (task) => task.planningStartedAt ?? null),
   /*
   FNXC:TaskLifecyclePersistence 2026-07-14-13:17:
   Persist the late task lifecycle fields through the shared descriptor seam so both SQLite and PostgreSQL retain per-column timing, workflow transition dedupe, oversight overrides, and manual-plan approval state after migration.

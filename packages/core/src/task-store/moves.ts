@@ -691,6 +691,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     });
 
     const movedAt = internal.now ?? new Date().toISOString();
+    // FNXC:TaskTiming 2026-08-01-10:00: column dwell is wall-clock stage data,
+    // accumulated before replacing the prior column anchor and never used as AI active time.
+    const priorColumnMovedAt = Date.parse(task.columnMovedAt ?? "");
+    const moveMs = Date.parse(movedAt);
+    if (fromColumn !== toColumn && Number.isFinite(priorColumnMovedAt) && Number.isFinite(moveMs)) {
+      task.columnDwellMs = { ...(task.columnDwellMs ?? {}), [fromColumn]: Math.max(0, task.columnDwellMs?.[fromColumn] ?? 0) + Math.max(0, moveMs - priorColumnMovedAt) };
+    }
     task.column = toColumn;
     task.columnMovedAt = movedAt;
     task.updatedAt = movedAt;

@@ -2,35 +2,168 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
-## 0.72.0
+## 0.73.0-beta.0
 
 ### Highlights
-- OpenAI Codex sign-in now front-and-center in onboarding quick start
-- OAuth logins reliably open the system browser on desktop instead of silently failing
-- Embedded PostgreSQL always inits UTF-8, and Fusion auto-repairs older broken clusters
-- Project setup warns when Git is missing, with install-or-continue options
-- Windows close dialog adds Minimize to tray, plus safer elevated Postgres boot
+- Breaking: Planning Mode is now an open-ended interview you explicitly validate — no more fixed depth caps or checkpoint gating
+- Security: in-app reports scrub the full activity trace before filing, so paths and tokens never leave your machine
+- Pick your update track — beta or stable release channels in Settings or `fn update --channel <stable|beta>`
+- Your custom workflow now fully drives the board — cards move through the columns you actually defined, not a fixed six
+- Review artifacts: auto-generated task verification videos and deliverable galleries in a new Quality hub
 
 ### New
-- OpenAI Codex subscription sign-in moved into onboarding quick start, right after Anthropic
-- Project creation now warns when Git is missing, offering install or create-anyway options
-- Windows desktop close dialog adds a Minimize to tray option that keeps Fusion and embedded PostgreSQL running in the background
-- Windows desktop close dialog can prompt to shut down embedded PostgreSQL when the app closes
+- Beta and stable release channels — choose your update track in Settings or `fn update --channel <stable|beta>`.
+- Your workflow now drives the board — cards move through the columns you define, not a fixed six-column set.
+- Review artifact controls: auto-generated task verification videos and deliverable galleries in a new Quality hub.
+- Guided in-app Bug/Feedback/Idea/Help reporting with screenshots, GitHub Issues or Discussions filing, and roadmap deduplication.
+- Mission auto-merge override — bundle a mission's features onto one branch and one PR.
+- Mailbox approval for ephemeral agent follow-up tasks.
+- Ideation: persisted sessions with promotion of research findings into mission roadmap features.
+- Mission hierarchy tools exposed to agents and dashboard chat; scheduled mission work with symbol-level concurrency control.
+- Portable org export/import (`fn org-export` / `fn org-import`), now surfaced in the Team tab.
+- Configuration revision history and rollback, now in Settings.
+- Native structure previews (missions, findings, evals, goals, roadmap items) in chat and Mail, with drag-to-attach.
+- Optional Task chat progress feed narrating steps, failures, reviews, and rollbacks.
+- Dashboard chat agents can now edit files and run bash directly with coding workspace tools.
+- WhatsApp plugin: pairing QR code and setup instructions surfaced in plugin settings.
+- Embedded PostgreSQL connection cap is now configurable in Advanced Settings.
+- Planning Mode simplified into a sequential flow: question → plan review → refine/validate.
 
 ### Fixed
-- OAuth sign-ins (OpenAI Codex and others) now reliably open the system browser from the desktop app instead of getting silently popup-blocked
-- Creating a new folder during project setup now selects it correctly so Select confirms the right folder
-- Embedded PostgreSQL clusters are now always created UTF-8, fixing dashboard crash-loops on non-UTF-8 Windows locales
-- Fusion now auto-repairs embedded PostgreSQL clusters left in a broken non-UTF-8 state by earlier versions
-- Floating windows now keep a stable stacking order based on last-opened and last-interacted
-- Git installed while Fusion is running is now detected without needing a restart during project setup
-- Onboarding GitHub setup links now follow the dashboard's theme instead of default browser blue
-- Elevated Windows boots now start embedded PostgreSQL without creating a local system account, and clean up old ones
-- Fixed elevated Windows desktop boot failing with a "directory name is invalid" error when starting embedded PostgreSQL
-- Hardening pass across onboarding, Git preflight, and Windows PostgreSQL lifecycle based on review feedback
+- Planning Mode: dozens of reliability fixes — stable timers and session restore across refresh/stop/resume, reliable refinement submission on mobile, synced questions and running plan, durable initial plan generation, mobile/tablet layout, collapsed history by default, and rejection of truncated final plans.
+- SQLite→PostgreSQL migration status now surfaces on the dashboard while cutover is pending; several PostgreSQL stability fixes (permission errors reading migration health, concurrent project-init races, NUL-byte crashes in chat/mailbox writes, restored activity logs).
+- Workflow/board fixes: no-merge workflows now finish in their completion column, custom Merging columns receive cards correctly, hold nodes no longer crash the Pull Request workflow, and tasks without a saved workflow selection can move again.
+- Fixed Codex weekly usage reporting, Grok/Claude MCP bridge packaging, OMP (Oh My Pi) model runtime failures, and GitHub Copilot re-login banner persistence.
+- Task detail and Kanban UI polish: consistent action-button sizing across themes/breakpoints, mobile swipe settling on one column, cost badge placement, and deduplicated agent name badges.
+- Restored translations (zh-CN/zh-TW roadmap duplicate label; Settings Configuration Versions across five locales).
+- Duplicate-task guards: prevented duplicate follow-ups from retried steps, cross-parent diagnostic duplicates, and stale "needs your decision" states.
+- GitHub/GitLab: fixed foreign-language issue-form auto-translation and forced transport selection for Discussions.
+- Fixed a dashboard build failure caused by a missing dependency; Settings now autosaves instead of requiring an explicit Save.
+- Windows update timeouts extended; Compound Engineering personas restored in npm installs; Claude CLI pi extension load fixed via SDK dependency pinning.
 
 ### Breaking
-- Existing non-UTF-8 embedded PostgreSQL clusters are not retroactively fixed; affected installs must delete their local embedded-postgres data directory to complete the repair
+- Removed the Planning Mode deepening checkpoint and fixed interview depth caps — plans are now validated explicitly by the operator instead of by AI completion.
+
+### Security
+- In-app report filing now scrubs the full activity trace before it leaves your machine, so paths and tokens never reach the pipeline.
+
+### Internal
+- Review gates (plan/code/browser) now run exclusively as workflow-graph nodes; the legacy in-session step reviewer and its git-reset rewind path are removed.
+- Tasks left mid-flight by an older Fusion version are now adopted cleanly on upgrade instead of getting stuck.
+
+## 0.72.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.72.0
+- @fusion/engine@0.72.0
+- @fusion/i18n@0.39.30
+- @fusion-plugin-examples/claude-runtime@0.1.5
+- @fusion-plugin-examples/cli-printing-press@0.1.47
+- @fusion-plugin-examples/compound-engineering@0.1.30
+- @fusion-plugin-examples/dependency-graph@0.1.61
+- @fusion-plugin-examples/grok-runtime@0.2.8
+- @fusion-plugin-examples/omp-runtime@0.1.5
+- @fusion-plugin-examples/quality@0.1.5
+- @fusion-plugin-examples/roadmap@0.1.49
+- @fusion-plugin-examples/cursor-runtime@0.1.49
+- @fusion-plugin-examples/droid-runtime@0.1.56
+- @fusion-plugin-examples/hermes-runtime@0.2.80
+- @fusion-plugin-examples/openclaw-runtime@0.2.80
+- @fusion-plugin-examples/paperclip-runtime@0.2.80
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.72.0
+- @fusion/dashboard@0.72.0
+- @fusion/engine@0.72.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.72.0
+- @fusion/pi-claude-cli@0.72.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.72.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 26054de: summary: The OpenAI Codex subscription sign-in now appears in onboarding quick start, right after the Anthropic subscription.
+  category: feature
+  dev: "ModelOnboardingModal QUICK_START_PROVIDER_IDS: openai-codex inserted between anthropic-subscription and anthropic-api-key; previously it was only reachable under Advanced."
+- c7b1529: summary: Project creation warns when Git is missing, with install or create-anyway options.
+  category: feature
+  dev: "SetupWizardModal probes gitCli before registering and shows a three-way ConfirmDialog (create anyway / open downloads / cancel; clone mode offers install-only). New skipGitInit passthrough: ProjectCreateInput → POST /api/projects (rejected for clone mode) → EnsureProjectForPathInput → ensureProjectForPath skips ensureGitRepositoryForProjectPath."
+- c4a00d7: summary: The Windows desktop close dialog now offers Minimize to tray, keeping Fusion and the embedded PostgreSQL running in the background.
+  category: feature
+  dev: "win32 close dialog gains a Minimize to tray default alongside Exit-and-stop-PostgreSQL / Exit-leave-it-running (or a two-button variant when no embedded runtime is active); tray click restores the window. OS session end still skips dialogs and performs the full stop."
+- 7550637: summary: Closing the Windows desktop app now asks whether to also shut down the embedded PostgreSQL server.
+  category: feature
+  dev: "User-initiated window close on win32 shows a sync dialog (default: shut down); 'leave it running' skips only the embedded-cluster teardown in stopLocal({keepEmbeddedPostgres}) so pools/runtime still close. Programmatic quits (dashboard restart) never prompt and keep the full stop."
+
+#### Patch Changes
+
+- 7bf83bb: summary: OAuth sign-ins (OpenAI Codex and others) now reliably open the system browser from the desktop app.
+  category: fix
+  dev: "window.open after the /auth/login await can outlive Chromium's transient user activation (~5s) and get silently popup-blocked on desktop — Codex's slower flow (method select + localhost callback server) hit this while Anthropic's usually didn't. New shell:openExternal IPC (http/https-validated) + preload openExternal + dashboard openExternalUrl helper used by all auth-URL opens, with window.open fallback on web."
+- b60833c: summary: Creating a folder in project setup now selects it so Select confirms it.
+  category: fix
+  dev: "DirectoryPicker: with selectCreatedDirectory, handleCreateFolder now navigates the browse panel into the created directory instead of refreshing the parent; the footer Select button commits browser.currentPath, so staying on the parent let the next click overwrite the auto-selected new folder."
+- 95e011f: summary: Fusion now auto-repairs embedded PostgreSQL clusters left in the non-UTF-8 encoding state by earlier versions.
+  category: fix
+  dev: "Issue #2286 follow-up: on the encoding-conversion schema failure, the startup factory proves the embedded cluster is non-UTF-8 AND empty (no tables in project/central/archive, no recorded migrations — guaranteed for affected installs since the baseline never applied) and that this process owns the postmaster, then deletes the data dir and re-boots once with the UTF-8 initdb defaults. Joined instances and any non-proven state keep the manual re-init hint."
+- d4ee80a: summary: Embedded PostgreSQL clusters are now always created UTF-8, fixing dashboard crash-loops on non-UTF-8 Windows locales.
+  category: fix
+  dev: "GitHub issue #2286: initdb inherited the OS locale encoding (e.g. Turkish WIN1254, English WIN1252), so the UTF-8 schema SQL failed with 'character has no equivalent in encoding'. DEFAULT_EMBEDDED_INITDB_FLAGS now forces --encoding=UTF8 --locale=C on every platform (caller flags appended after, so overridable). Not retroactive: existing non-UTF-8 clusters must delete ~/.fusion/embedded-postgres/default; the schema-apply failure now says exactly that, and boot errors include the full error cause chain instead of dropping it."
+- 38c6fdc: summary: Keep floating windows stacked by last-opened and last-interacted order.
+  category: fix
+  dev: FloatingWindow only reclaims z-index on hidden→visible (not every mount effect), restoring shared-stack cross-type ordering with RightDockExpandModal.
+- 924e0df: summary: Git installed while Fusion runs is detected without restart for project setup.
+  category: fix
+  dev: "New core git-binary resolver: on PATH ENOENT, probes well-known install locations (win32 Program Files/LocalAppData Git\\cmd, macOS homebrew//usr/local//usr/bin, linux /usr/bin//usr/local/bin) with caching + invalidation on later ENOENT. Wired into ensureGitRepositoryForProjectPath's runner, probeGitCliStatus (onboarding git indicator), and the dashboard clone route."
+- 6cdebe1: summary: Links on the onboarding GitHub setup step now follow the dashboard theme instead of default browser blue.
+  category: fix
+  dev: "ModelOnboardingModal.css: GitHub-step anchors (non-.btn) get color var(--color-info) + hover underline; layout rules unchanged."
+- 68ce5c3: summary: Hardening pass over the onboarding, git-preflight, and Windows Postgres lifecycle features from this cycle's review.
+  category: fix
+  dev: "Uninstaller kills only the first (numeric) postmaster.pid line; git-missing dialogs render even with skip-confirmations (new ConfirmOptions.alwaysAsk); quit prompt only for embedded-local runtimes and skipped during OS session end; 'leave it running' now disarms the embedded lifecycle's process shutdown hook (detachKeepingEmbedded); wizard double-submit guard; clone route ENOENT invalidate-and-retry; openExternalUrl drops the always-popup-blocked async window.open fallback; DirectoryPicker closes the panel if listing the created folder fails; git status probe bounded to two spawns."
+- d4ee80a: summary: Elevated Windows boots embedded PostgreSQL without a local fusion-pg account; leftovers are cleaned up.
+  category: fix
+  dev: "Replaces the Start-Process -Credential non-admin-user launcher with pg_ctl's built-in restricted-token re-exec (embedded-windows-elevated.ts). Removes user creation, icacls grants, and the cmd/PowerShell wrapper — also eliminating the 'directory name is invalid' launch failure and the EBUSY on wrapper-held postgres.log. The elevated path now best-effort deletes a legacy fusion-pg account on start."
+- fd87c3f: summary: Fix elevated Windows desktop boot failing with "The directory name is invalid" when starting embedded PostgreSQL.
+  category: fix
+  dev: "Start-Process -Credential (CreateProcessWithLogonW) validates the working directory as the target non-admin user; the launcher inherited the desktop app's cwd (admin profile / install dir) which fusion-pg cannot access. launch.ps1 now pins -WorkingDirectory to the granted .pgrunner run dir, passed as a -File param (buildNonAdminLauncherPs1 in packages/core embedded-windows-admin.ts)."
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [26054de]
+- Updated dependencies [7bf83bb]
+- Updated dependencies [b60833c]
+- Updated dependencies [95e011f]
+- Updated dependencies [d4ee80a]
+- Updated dependencies [38c6fdc]
+- Updated dependencies [c7b1529]
+- Updated dependencies [924e0df]
+- Updated dependencies [6cdebe1]
+- Updated dependencies [68ce5c3]
+- Updated dependencies [c4a00d7]
+- Updated dependencies [d4ee80a]
+- Updated dependencies [fd87c3f]
+- Updated dependencies [7550637]
+  - @runfusion/fusion@0.72.0
 
 ## 0.71.0
 

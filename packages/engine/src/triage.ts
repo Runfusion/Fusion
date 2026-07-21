@@ -31,6 +31,8 @@ import {
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
+  resolveWorkflowIrForTask,
+  getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
@@ -178,6 +180,7 @@ import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
+import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 
@@ -804,6 +807,31 @@ export class TriageProcessor {
     if (deterministicSpecFailure) {
       planLog.warn(`${task.id} planning recovery skipped — PROMPT.md failed deterministic validation (${deterministicSpecFailure})`);
       return false;
+    }
+
+    /*
+    FNXC:TriageStuckRecovery 2026-07-20:
+    A stuck planner may leave a partially edited seed that no longer matches the
+    byte-exact unplanned-seed detector. For step-heading workflows, non-empty prose
+    is not executable proof: require parsed steps unless the plan explicitly opts
+    into the legitimate zero-work contract. Otherwise recovery would release the
+    task to parse-steps, whose empty foreach could advance toward merge.
+    */
+    const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+    const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
+      node.kind === "parse-steps"
+      && (node.config?.artifact === undefined || node.config.artifact === "PROMPT.md")
+      && node.config?.parser === "step-headings"
+      && node.config?.requireStepsUnlessNoCommits === true
+    ) === true;
+    if (requiresPromptImplementationSteps && !promptDeclaresNoCommitsExpected(written)) {
+      const parsedSteps = getStepParser("step-headings")?.parse(written).steps ?? [];
+      if (parsedSteps.length === 0) {
+        const message = "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected";
+        planLog.warn(`${task.id} ${message}`);
+        await this.store.logEntry(task.id, message);
+        return false;
+      }
     }
 
     await this.finalizeApprovedTask(task, written, settings, {
@@ -1574,6 +1602,10 @@ export class TriageProcessor {
           "triage",
         );
 
+        // FNXC:TaskTiming 2026-08-01-10:00: triage owns the initial planning lane;
+        // first-start wins so a crash between ownership and persistence cannot open a second segment.
+        const planningStart = startPlanningSegment(task);
+        if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
         // Register session so the global pause listener can terminate it
         this.activeSessions.set(task.id, session);
 
@@ -1827,6 +1859,11 @@ export class TriageProcessor {
           Every triage planning exit path, including APPROVE, retry, pause/stuck abort, split/delete, and rate-limit wrapper attempts, records the active session's actual model before disposal so by-model analytics do not collapse triage usage to missing buckets.
           */
           await this.recordTriageSessionTokenUsage(task.id, session, { agentId: triageRunContext.agentId });
+          const livePlanningTask = await this.store.getTask(task.id);
+          if (livePlanningTask) {
+            const planningEnd = finalizePlanningSegment(livePlanningTask);
+            if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+          }
           session.dispose();
         }
       };
@@ -2628,8 +2665,7 @@ export class TriageProcessor {
     the row's reviewLevel from the specified prompt.
     */
 
-    const noCommitsExpectedMatch = written.match(/^\*\*No commits expected:\*\*\s*(true|yes)\b/im);
-    if (noCommitsExpectedMatch) {
+    if (promptDeclaresNoCommitsExpected(written)) {
       taskUpdates.noCommitsExpected = true;
     }
 
@@ -3054,6 +3090,10 @@ export class TriageProcessor {
 
 function parseFileScopeFromPrompt(text: string): string[] {
   return extractEffectiveWriteScopeFromPrompt(text);
+}
+
+function promptDeclaresNoCommitsExpected(text: string): boolean {
+  return /^\*\*No commits expected:\*\*\s*(true|yes)\b/im.test(text);
 }
 
 function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {

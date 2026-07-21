@@ -178,6 +178,8 @@ export const tasks = projectSchema.table("tasks", {
   columnMovedAt: text("column_moved_at"),
   firstExecutionAt: text("first_execution_at"),
   cumulativeActiveMs: bigint("cumulative_active_ms", { mode: "number" }),
+  cumulativePlanningMs: bigint("cumulative_planning_ms", { mode: "number" }),
+  planningStartedAt: text("planning_started_at"),
   /*
   FNXC:PostgresMigrationColumnCoverage 2026-07-14-13:17:
   Keep the task schema aligned with late SQLite lifecycle migrations. JSON lifecycle markers stay jsonb for native backend reads; retired board/question fields remain text so their legacy payloads round-trip byte-for-byte.

@@ -18,8 +18,32 @@ import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
 import { requireAsyncLayer } from "../require-async-layer.js";
+import { randomUUID } from "node:crypto";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
+
+const planningCreateLocks = new Map<string, Promise<void>>();
+
+/**
+ * FNXC:PlanningMode 2026-07-20-15:45:
+ * The stable proposalClaimId is the cross-process authority, while this short-lived lock avoids
+ * duplicate local createTask calls before a same-process retry can observe its finalized linkage.
+ * A process death releases this memory only; retry reconciliation still queries the task mapping.
+ */
+async function acquirePlanningCreateLock(sessionId: string): Promise<() => void> {
+  const previous = planningCreateLocks.get(sessionId);
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  const tail = previous ? previous.then(() => gate) : gate;
+  planningCreateLocks.set(sessionId, tail);
+  await previous;
+  return () => {
+    releaseGate();
+    void tail.finally(() => {
+      if (planningCreateLocks.get(sessionId) === tail) planningCreateLocks.delete(sessionId);
+    });
+  };
+}
 
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
@@ -511,12 +535,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start", async (req, res) => {
     try {
-      const { initialPlan } = req.body;
+      const { initialPlan, workflowId } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
       }
-
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
@@ -538,7 +564,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         rootDir,
         settings.promptOverrides,
         ctx.options?.pluginRunner as SkillPluginRunner,
-        runtime,
+        { ...runtime, workflowId },
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -645,6 +671,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         existingSessionId,
         thinkingLevel,
         clarificationEnabled,
+        workflowId,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -659,6 +686,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("planningModelId must be a string when provided");
       }
 
+
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
 
       if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
         throw badRequest("clarificationEnabled must be a boolean when provided");
@@ -730,7 +761,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             validatedThinkingLevel,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
-            runtime,
+            { ...runtime, workflowId },
           );
         } else {
           await startExistingSession(
@@ -742,7 +773,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
             undefined,
-            runtime,
+            { ...runtime, workflowId },
           );
         }
         res.status(201).json({ sessionId: existingSessionId });
@@ -752,6 +783,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
       const planningOptions = {
         projectId,
+        workflowId,
         ...runtime,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
       };
@@ -1095,6 +1127,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Returns: Created Task
    */
   router.post("/planning/create-task", async (req, res) => {
+    let releaseCreateLock: (() => void) | undefined;
+    let claimedOwnerToken: string | undefined;
+    let claimedSessionId: string | undefined;
     try {
       const { sessionId, summary: summaryInput, branch, baseBranch, branchSelection, workflowId } = req.body as {
         sessionId?: unknown;
@@ -1116,10 +1151,18 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const summaryOverride = parsePlanningSummaryOverride(summaryInput);
 
       const { store: scopedStore } = await getProjectContext(req);
-      const { getSession, getSummary, releaseSession } = await import("../planning.js");
+      const {
+        getSession,
+        getSummary,
+        updatePlanningCreateClaim,
+        getDurablePlanningSession,
+        claimPlanningTaskCreation,
+        finalizePlanningTaskCreation,
+        reconcilePlanningTaskCreation,
+        releasePlanningTaskCreation,
+      } = await import("../planning.js");
 
-      const session = await getSession(sessionId);
-      if (session && !session.validated) throw badRequest("Planning session must be validated before creating tasks");
+      let session = await getSession(sessionId);
       let summary = summaryOverride ?? getSummary(sessionId);
       let initialPlan = session?.initialPlan;
 
@@ -1133,18 +1176,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
-        const persistedInput = JSON.parse(persistedSession.inputPayload) as { validated?: unknown };
-        if (persistedSession.status !== "complete" || persistedInput.validated !== true) {
-          throw badRequest("Planning session must be validated before creating tasks");
-        }
-
-        if (!persistedSession.result) {
+        const persistedResult = persistedSession.result;
+        if (!summaryOverride && !persistedResult) {
           throw badRequest("Planning session result is not available");
         }
 
         if (!summaryOverride) {
           try {
-            const parsedSummary = JSON.parse(persistedSession.result) as {
+            const parsedSummary = JSON.parse(persistedResult as string) as {
               title?: unknown;
               description?: unknown;
               suggestedSize?: unknown;
@@ -1177,6 +1216,70 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("Planning session is not complete");
       }
 
+      releaseCreateLock = await acquirePlanningCreateLock(sessionId);
+      // Re-read after the local single-flight queue: an earlier caller may have finalized while we waited.
+      session = await getSession(sessionId);
+
+      /*
+      FNXC:PlanningMode 2026-07-20-15:45:
+      FN-8442 derives the never-rotated key `planning-session:${sessionId}` at task creation.
+      The task table's partial unique proposalClaimId index, not this process's claim state, is
+      the multi-process and crash-after-insert authority. A session linkage is a durable cache
+      reconciled from that key; a missing linked task fails closed rather than silently forking.
+      */
+      const proposalClaimId = `planning-session:${sessionId}`;
+      const findCreatedTask = async () =>
+        (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+      const returnLinkedTask = async (candidate = session) => {
+        if (!candidate?.createdTaskId) return false;
+        const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
+        if (!linkedTask) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        res.status(200).json({ task: linkedTask, alreadyCreated: true });
+        return true;
+      };
+
+      // A task row is the crash-window authority. Reconcile it before trying to claim.
+      const existingTask = await findCreatedTask();
+      if (existingTask) {
+        await reconcilePlanningTaskCreation(sessionId, existingTask.id);
+        res.status(200).json({ task: existingTask, alreadyCreated: true });
+        return;
+      }
+      session = await getDurablePlanningSession(sessionId) ?? session;
+      if (await returnLinkedTask(session)) return;
+
+      const claimOwnerToken = randomUUID();
+      claimedOwnerToken = claimOwnerToken;
+      claimedSessionId = sessionId;
+      const claimStartedAt = new Date().toISOString();
+      const hasDurableClaimStore = typeof (aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown } | undefined)?.claimPlanningTaskCreation === "function";
+      let claimed = hasDurableClaimStore
+        ? await claimPlanningTaskCreation(sessionId, claimOwnerToken, claimStartedAt)
+        : session
+          ? session.createClaimStatus !== "creating" && session.createClaimStatus !== "created"
+            ? (await updatePlanningCreateClaim(sessionId, { createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined }), session)
+            : undefined
+          // Legacy test/session adapters can provide only the route's persisted row. They do
+          // not model a durable claim API, so retain the pre-CAS behavior for that adapter.
+          : ({} as NonNullable<typeof session>);
+      if (!claimed) {
+        // The failed conditional update means another process owns (or completed) this claim.
+        session = await getDurablePlanningSession(sessionId) ?? session;
+        const recoveredTask = await findCreatedTask();
+        if (recoveredTask) {
+          await reconcilePlanningTaskCreation(sessionId, recoveredTask.id);
+          res.status(200).json({ task: recoveredTask, alreadyCreated: true });
+          return;
+        }
+        if (await returnLinkedTask(session)) return;
+        const startedAt = session?.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
+        const leaseExpired = session?.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
+        if (!leaseExpired || !session?.claimOwnerToken) throw conflict("Planning task creation is already in progress");
+        await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
+        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+        if (!claimed) throw conflict("Planning task creation is already in progress");
+      }
+
       const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
         resolveBranchSelection(branchSelection, branch, baseBranch);
 
@@ -1189,7 +1292,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       */
       /*
       FNXC:PlanningMode 2026-07-20-12:00:
-      FN-8441 hands the validated lean plan to triage as task description plus a plan
+      FN-8441 hands the current lean plan to triage as task description plus a plan
       document. The raw session request remains a separate original-description document.
       */
       const planMd = formatPlanningPlanMd(summary);
@@ -1212,6 +1315,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         Planning Mode creates tasks from the board context, so an active workflow lane must be materialized at create time when the client supplies it.
         */
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        proposalClaimId,
       });
 
       // Update task with suggested size if provided.
@@ -1243,18 +1347,25 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         { taskId: task.id, sessionId },
       );
 
-      // Release any live in-memory planning runtime for this session, but
-      // keep the persisted completed row so planning history can still list
-      // and restore the summary after single-task creation.
-      await runPlanningCreateSideEffect(
-        "Planning create-task session release failed",
-        () => releaseSession(sessionId),
-        { taskId: task.id, sessionId },
-      );
+      // Write the linkage before responding. If this write is interrupted, the next retry
+      // reconciles the unique proposalClaimId task mapping above and never inserts another task.
+      if (hasDurableClaimStore) {
+        await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id);
+      } else if (session) {
+        await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
+      }
 
-      res.status(201).json(task);
+      res.status(201).json({ task, alreadyCreated: false });
     } catch (err: unknown) {
+      // A failed insert may release only this request's owner token. A successful insert whose
+      // finalization failed remains recoverable through proposalClaimId on the next request.
+      if (claimedOwnerToken) {
+        const { releasePlanningTaskCreation } = await import("../planning.js");
+        await releasePlanningTaskCreation(claimedSessionId as string, claimedOwnerToken).catch(() => undefined);
+      }
       rethrowPlanningWorkflowCreateError(err, "Failed to create task", rethrowAsApiError);
+    } finally {
+      releaseCreateLock?.();
     }
   });
 
@@ -1607,7 +1718,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       awaiting-input question; only Validate writes `session.validated`, which authorizes a
       terminal complete event and closes the stream.
       */
-      if (session.summary) {
+      /*
+      FNXC:PlanningMode 2026-07-20-18:05:
+      New and resumed sessions seed `summary` with deterministic fallback copy before the AI
+      turn starts. While `generationPurpose` is set, that value is working state rather than a
+      review-ready plan. Publishing it here moves the client out of loading early and exposes
+      Refine/Validate against the still-active generation. Only catch up a settled summary;
+      the generation path clears its purpose before broadcasting the AI-authored replacement.
+      */
+      if (session.summary && session.generationPurpose === undefined) {
         const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
         const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
         const summaryEventId = lastSummaryEvent?.id

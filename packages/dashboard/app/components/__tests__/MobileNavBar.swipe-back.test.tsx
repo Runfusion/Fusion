@@ -132,8 +132,22 @@ describe("MobileNavBar More sheet navigation history", () => {
     await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(document.querySelector(".mobile-more-sheet-backdrop")!));
   });
 
-  it("consumes the More entry on item action", async () => {
-    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(screen.getByTestId("mobile-more-item-activity")));
+  it("replaces the More entry before opening Import so delayed Back cannot consume it", async () => {
+    const importClose = vi.fn();
+    const props = createDefaultProps();
+    props.onOpenGitHubImport = () => {
+      navigationHistory?.pushNav({ type: "modal", close: importClose });
+    };
+    renderWithHistory(props);
+    await openMore();
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-github"));
+
+    expect(window.history.back).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("mobile-more-item-activity")).toBeNull();
+
+    dispatchPopState(0);
+    expect(importClose).toHaveBeenCalledOnce();
   });
 
   it("consumes the More entry on Escape", async () => {

@@ -111,11 +111,11 @@ function installContextAwareAgent() {
 }
 
 function createStore() {
-  const createTask = vi.fn(async (input: { title: string; description: string }) => ({
-    id: "FN-E2E-001",
-    title: input.title,
-    description: input.description,
-  }));
+  let createdTask: { id: string; title: string; description: string } | undefined;
+  const createTask = vi.fn(async (input: { title: string; description: string }) => {
+    createdTask = { id: "FN-E2E-001", title: input.title, description: input.description };
+    return createdTask;
+  });
   return {
     getSettings: vi.fn().mockResolvedValue({
       autoMerge: false,
@@ -123,8 +123,11 @@ function createStore() {
       ntfyEnabled: false,
     }),
     getRootDir: vi.fn().mockReturnValue("/tmp/planning-e2e"),
-    listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn(async () => { throw new Error("not found"); }),
+    listTasks: vi.fn(async () => createdTask ? [createdTask] : []),
+    getTask: vi.fn(async (id: string) => {
+      if (createdTask?.id === id) return createdTask;
+      throw new Error("not found");
+    }),
     createTask,
     updateTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
@@ -206,24 +209,22 @@ describe("Planning Mode plan creation E2E", () => {
     __setCreateFnAgent(undefined as never);
   });
 
-  it("requires validation before converting the lean running plan into a task", async () => {
+  it("converts the lean running plan into a task without a separate validation step", async () => {
     const start = await post(app, "/api/planning/start", { initialPlan: "Build secure account recovery" });
     expect(start.status).toBe(201);
     expectRunningPlan(start.body);
     const sessionId = start.body.sessionId as string;
 
-    const createBeforeValidation = await post(app, "/api/planning/create-task", { sessionId });
-    expect(createBeforeValidation.status).toBe(400);
-
-    const validate = await post(app, `/api/planning/${sessionId}/validate`, {});
-    expect(validate).toMatchObject({ status: 200, body: { validated: true } });
-
     const created = await post(app, "/api/planning/create-task", { sessionId });
-    expect(created).toMatchObject({ status: 201, body: { id: "FN-E2E-001", title: "Plan: Build secure account recovery" } });
+    expect(created).toMatchObject({ status: 201, body: { task: { id: "FN-E2E-001", title: "Plan: Build secure account recovery" }, alreadyCreated: false } });
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: expect.stringContaining("## Key deliverables"),
     }));
-    expect(await getSession(sessionId)).toBeUndefined();
+    expect((await getSession(sessionId))?.createdTaskId).toBe("FN-E2E-001");
+
+    const retry = await post(app, "/api/planning/create-task", { sessionId });
+    expect(retry).toMatchObject({ status: 200, body: { task: { id: "FN-E2E-001" }, alreadyCreated: true } });
+    expect(store.createTask).toHaveBeenCalledTimes(1);
   });
 
   it("keeps AI-authored options and Other in the input language", async () => {

@@ -15,8 +15,8 @@ import {
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 
-function task(): TaskDetail {
-  return { id: "FN-PARSE", title: "t", steps: [] as TaskStep[] } as unknown as TaskDetail;
+function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
+  return { id: "FN-PARSE", title: "t", steps: [] as TaskStep[], ...overrides } as unknown as TaskDetail;
 }
 
 /** start → parse → end, with optional outcome edges off the parse node. */
@@ -58,9 +58,9 @@ function makeDeps(over: Partial<ParseStepsHandlerDeps> = {}): {
   return { deps, written, audits };
 }
 
-async function runParse(ir: WorkflowIr, deps: ParseStepsHandlerDeps) {
+async function runParse(ir: WorkflowIr, deps: ParseStepsHandlerDeps, taskOverrides: Partial<TaskDetail> = {}) {
   const exec = new WorkflowGraphExecutor({ seams: createNoopLegacySeams(), parseStepsDeps: deps });
-  return exec.run(task(), settingsOn(), ir);
+  return exec.run(task(taskOverrides), settingsOn(), ir);
 }
 
 describe("parse-steps node handler (U12, KTD-12)", () => {
@@ -146,12 +146,41 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
     expect(audits.some((a) => a.reason === "parse-error")).toBe(true);
   });
 
-  it("clean empty parse → no-steps outcome (success), writes empty list", async () => {
+  it("explicit no-commits empty parse → no-steps outcome (success), writes empty list", async () => {
     const { deps, written } = makeDeps({ readArtifact: async () => "no headings here" });
     const ir = parseIr("step-headings", undefined, [
       { from: "parse", to: "end", condition: "outcome:no-steps" },
     ]);
+    ir.nodes.find((node) => node.id === "parse")!.config!.requireStepsUnlessNoCommits = true;
+    const result = await runParse(ir, deps, { noCommitsExpected: true });
+    expect(result.outcome).toBe("success");
+    expect(result.context["node:parse:value"]).toBe("no-steps");
+    expect(written).toEqual([[]]);
+  });
+
+  it("empty implementation plan without no-commits authorization fails before foreach", async () => {
+    const { deps, written, audits } = makeDeps({ readArtifact: async () => "planning draft without executable headings" });
+    const ir = parseIr("step-headings", undefined, [
+      { from: "parse", to: "end", condition: "outcome:missing-implementation-steps" },
+    ]);
+    ir.nodes.find((node) => node.id === "parse")!.config!.requireStepsUnlessNoCommits = true;
+
     const result = await runParse(ir, deps);
+
+    expect(result.outcome).toBe("failure");
+    expect(result.context["node:parse:value"]).toBe("missing-implementation-steps");
+    expect(written).toEqual([[]]);
+    expect(audits).toContainEqual(expect.objectContaining({ reason: "missing-implementation-steps" }));
+  });
+
+  it("preserves custom workflow zero-step behavior when the implementation guard is not enabled", async () => {
+    const { deps, written } = makeDeps({ readArtifact: async () => "no headings here" });
+    const ir = parseIr("step-headings", undefined, [
+      { from: "parse", to: "end", condition: "outcome:no-steps" },
+    ]);
+
+    const result = await runParse(ir, deps);
+
     expect(result.outcome).toBe("success");
     expect(result.context["node:parse:value"]).toBe("no-steps");
     expect(written).toEqual([[]]);

@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import type { TaskStore } from "@fusion/core";
 
 vi.mock("@fusion/engine", () => ({
@@ -23,19 +24,28 @@ import {
   createSessionWithAgent,
   getSession,
   planningStreamManager,
+  setAiSessionStore,
   stopGeneration,
 } from "../planning.js";
 
 const MOCK_TASK_STORE = {
   listTasks: vi.fn(async () => []),
+  getSettings: vi.fn(async () => ({})),
   getTask: vi.fn(async () => {
     throw new Error("not found");
   }),
 } as unknown as TaskStore;
 
 describe("planning generation cancellation", () => {
+  const persistSession = vi.fn(async () => {});
+
   beforeEach(() => {
     __resetPlanningState();
+    persistSession.mockClear();
+    setAiSessionStore(Object.assign(new EventEmitter(), {
+      upsert: persistSession,
+      get: vi.fn(async () => null),
+    }) as any);
   });
 
   it("forwards AbortSignal and disposes the in-flight planning prompt on user stop", async () => {
@@ -69,12 +79,25 @@ describe("planning generation cancellation", () => {
     }
     expect(promptSignal).toBeDefined();
 
+    const activeSession = await getSession(sessionId);
+    activeSession!.summary = {
+      title: "Reviewable plan",
+      description: "A partial plan that remains useful after stopping.",
+      suggestedSize: "M",
+      keyDeliverables: ["Resume refinement"],
+    };
+
     expect(stopGeneration(sessionId)).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(promptSignal?.aborted).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
-    expect((await getSession(sessionId))?.error).toMatch(/stopped by user/i);
+    expect((await getSession(sessionId))?.error).toBeUndefined();
+    expect(persistSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      id: sessionId,
+      status: "awaiting_input",
+      result: expect.stringContaining("Reviewable plan"),
+    }));
 
     resolveHungPrompt?.();
     await new Promise((resolve) => setTimeout(resolve, 0));

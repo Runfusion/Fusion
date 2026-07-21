@@ -562,9 +562,10 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
 
   // ── Zero-step task (R8) ────────────────────────────────────────────────────
 
-  it("zero-step task on stepwise merges without step work (no-steps outcome path)", async () => {
+  it("explicit no-commits zero-step task on stepwise merges without step work", async () => {
     let stepExecuteCalls = 0;
     const task = taskWithSteps(0);
+    task.noCommitsExpected = true;
     const seams: WorkflowLegacySeams = {
       planning: async () => ({ outcome: "success" }),
       execute: async () => ({ outcome: "success" }),
@@ -596,6 +597,38 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
     expect(result.visitedNodeIds.some((id) => id.startsWith("steps#"))).toBe(false);
     // Merge ran (the task merges with no step work).
     expect(result.visitedNodeIds).toContain("merge");
+  });
+
+  it("does not reach foreach or merge when an implementation plan has zero steps", async () => {
+    let mergeCalls = 0;
+    const task = taskWithSteps(0);
+    const executor = new WorkflowGraphExecutor({
+      seams: {
+        planning: async () => ({ outcome: "success" }),
+        execute: async () => ({ outcome: "success" }),
+        review: async () => ({ outcome: "success" }),
+        merge: async () => {
+          mergeCalls++;
+          return { outcome: "success" };
+        },
+        schedule: async () => ({ outcome: "success" }),
+        stepExecute: async () => ({ outcome: "success", value: "step-done" }),
+      },
+      getTaskSteps: () => [],
+      parseStepsDeps: {
+        readArtifact: async () => "prose-only planning draft",
+        writeSteps: async () => {},
+      },
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await executor.run(task, settingsOn(), BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
+
+    expect(result.outcome).toBe("failure");
+    expect(result.context["node:parse:value"]).toBe("missing-implementation-steps");
+    expect(result.visitedNodeIds).not.toContain("steps");
+    expect(result.visitedNodeIds).not.toContain("merge");
+    expect(mergeCalls).toBe(0);
   });
 
   // ── Pre-merge browser-verification optional-group (U6, R-3 run-once) ────────

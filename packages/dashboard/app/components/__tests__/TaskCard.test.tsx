@@ -5824,6 +5824,23 @@ describe("TaskCard", () => {
     expect(timer?.getAttribute("title")).toBe("Execution time 6m");
   });
 
+  it("renders planning-only active duration when execution timing is absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          cumulativeActiveMs: undefined,
+          cumulativePlanningMs: 6 * 60_000,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer?.textContent).toContain("6m");
+  });
+
   it("keeps legacy wall-clock timers after firstExecutionAt migration backfill", () => {
     const { container } = render(
       <TaskCard

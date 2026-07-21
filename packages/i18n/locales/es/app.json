@@ -7955,7 +7955,7 @@
     },
     "tokenTotalsAria": "Totales de tokens de la tarea",
     "tokenUsage": "Uso de tokens",
-    "totalExecutionTime": "Tiempo total de ejecución",
+    "totalExecutionTime": "Tiempo activo total",
     "totalTokens": "Total",
     "updateFailed": "Error al actualizar {{id}}: {{error}}",
     "updateSuccess": "{{id}} actualizado",

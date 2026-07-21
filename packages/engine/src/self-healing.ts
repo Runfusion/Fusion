@@ -31,6 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -296,6 +297,8 @@ export interface SelfHealingOptions {
    * Used to avoid recovering active triage sessions.
    */
   getPlanningTaskIds?: () => Set<string>;
+  /** True only while the executor owns a graph Plan Review session for this task. */
+  hasActivePlanningWorkflowSession?: (taskId: string) => boolean;
   /** Atomically fence planner ownership while advanced triage recovery runs. */
   reserveAdvancedTriageRecovery?: (taskId: string) => (() => void) | undefined;
   /**
@@ -1405,6 +1408,7 @@ export class SelfHealingManager {
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
       { name: "recover-starved-refinement", fn: () => this.recoverStarvedRefinementTriageTasks().then(() => undefined) },
       { name: "orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks().then(() => undefined) },
+       { name: "orphaned-planning-segments", fn: () => this.finalizeOrphanedPlanningSegments().then(() => undefined) },
       { name: "reset-durable-agent-error-state-on-startup", fn: () => this.resetDurableAgentErrorStateOnStartup().then(() => undefined) },
       { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents().then(() => undefined) },
       { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns().then(() => undefined) },
@@ -2710,6 +2714,7 @@ export class SelfHealingManager {
           { name: "resolve-explicit-duplicate-markers", fn: () => this.resolveExplicitDuplicateMarkerTasks() },
           { name: "recover-starved-refinement", fn: () => this.recoverStarvedRefinementTriageTasks() },
           { name: "recover-orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks() },
+           { name: "finalize-orphaned-planning-segments", fn: () => this.finalizeOrphanedPlanningSegments() },
           { name: "recover-ghost-review", fn: () => this.recoverGhostReviewTasks() },
           { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents() },
           { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns() },
@@ -12245,6 +12250,63 @@ export class SelfHealingManager {
    * Recovery clears the status back to `null` so the next triage poll picks
    * them up for a fresh planning attempt.
    */
+  /**
+   * FNXC:TaskTiming 2026-08-01-10:00:
+   * A planning anchor is safe because triage ownership and graph Plan Review are
+   * exclusive. Recovery finalizes only when neither in-process owner is live;
+   * the atomic null-check makes restart and repeated maintenance idempotent.
+   */
+  async finalizeOrphanedPlanningSegments(): Promise<number> {
+    const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
+    const tasks = await this.store.listTasks({});
+    let finalized = 0;
+    for (const task of tasks) {
+      if (!task.planningStartedAt || planningIds.has(task.id) || this.options.hasActivePlanningWorkflowSession?.(task.id)) continue;
+      let applied = false;
+      const endMs = Date.now();
+      if (typeof this.store.updateTaskAtomic === "function") {
+        await this.store.updateTaskAtomic(task.id, (live) => {
+          if (!live.planningStartedAt || planningIds.has(live.id) || this.options.hasActivePlanningWorkflowSession?.(live.id)) return null;
+          const patch = finalizePlanningSegment(live, endMs);
+          applied = patch.planningStartedAt === null;
+          return patch;
+        });
+      } else {
+        const live = await this.store.getTask(task.id);
+        if (live?.planningStartedAt && !planningIds.has(live.id) && !this.options.hasActivePlanningWorkflowSession?.(live.id)) {
+          const patch = finalizePlanningSegment(live, endMs);
+          if (patch.planningStartedAt === null) { await this.store.updateTask(task.id, patch); applied = true; }
+        }
+      }
+      if (applied) {
+        finalized++;
+        // FNXC:TaskTiming 2026-08-01-12:00: this recovery is operator-auditable
+        // without persisting duration prose; the atomically finalized task id
+        // and fixed no-live-owner reason are sufficient forensic evidence.
+        await this.store.recordRunAuditEvent?.({
+          taskId: task.id,
+          agentId: "self-healing",
+          runId: generateSyntheticRunId("orphaned-planning-segment", task.id),
+          domain: "database",
+          mutationType: "task:reconcile-orphaned-planning-segment",
+          target: task.id,
+          metadata: { taskId: task.id, finalizedCount: 1, reason: "no-live-planning-owner" },
+        });
+      }
+    }
+    if (finalized === 0) {
+      await this.store.recordRunAuditEvent?.({
+        agentId: "self-healing",
+        runId: generateSyntheticRunId("orphaned-planning-segment", "global"),
+        domain: "database",
+        mutationType: "task:reconcile-orphaned-planning-segment-no-action",
+        target: "planning-segments",
+        metadata: { finalizedCount: 0, reason: "no-eligible-orphan" },
+      });
+    }
+    return finalized;
+  }
+
   async recoverOrphanedPlanningTasks(): Promise<number> {
     try {
       // Evict stale entries from the triage processor's in-memory set before

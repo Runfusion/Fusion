@@ -721,6 +721,7 @@ export function MainContent({
           onClose={closePlanningView}
           onTaskCreated={handlePlanningTaskCreated}
           onTasksCreated={handlePlanningTasksCreated}
+          onViewTask={openBoardTaskDetail}
           tasks={tasks}
           initialSessions={bgPlanningSessions}
           initialPlan={modalManager.planningInitialPlan ?? undefined}

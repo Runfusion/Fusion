@@ -2078,6 +2078,14 @@ export interface Task {
    *  Incremented whenever the task leaves `in-progress`; never decremented and
    *  never cleared by reopen flows. */
   cumulativeActiveMs?: number;
+  /**
+   * FNXC:TaskTiming 2026-08-01-10:00:
+   * Monotonic active AI planning duration. Unlike column dwell this is only
+   * accrued by a live planning session and is never cleared by reopen.
+   */
+  cumulativePlanningMs?: number;
+  /** Open planning AI segment; finalized exactly once into cumulativePlanningMs. */
+  planningStartedAt?: string;
   /*
   FNXC:TaskTiming 2026-06-26-10:14:
   Per-stage dwell-time instrumentation. `cumulativeActiveMs` only measures `in-progress`,
@@ -4911,6 +4919,10 @@ export interface ArchivedTaskEntry {
   firstExecutionAt?: string;
   /** Accumulated active runtime spent in `in-progress` across attempts. */
   cumulativeActiveMs?: number;
+  /** Accumulated active AI planning duration carried through archive/restore. */
+  cumulativePlanningMs?: number;
+  /** Open planning AI segment carried through archive/restore. */
+  planningStartedAt?: string;
   /** FNXC:TaskTiming 2026-06-26-10:14: per-column cumulative dwell (ms) carried through
    *  archive/restore so per-stage wall-clock survives archival. See Task.columnDwellMs. */
   columnDwellMs?: Record<string, number>;
@@ -5654,10 +5666,35 @@ export interface PlanningQuestion {
 export interface PlanningSummary {
   title: string;
   description: string;
+  /** Concrete product, code, or configuration changes proposed by the model. */
+  proposedChanges?: string[];
+  /** Observable pass/fail conditions for the implementation. */
+  acceptanceCriteria?: string[];
   suggestedSize: "S" | "M" | "L";
   priority?: TaskPriority;
   suggestedDependencies: string[];
   keyDeliverables: string[];
+  /** Model-suggested areas the operator can choose for the next refinement question. */
+  suggestedRefinements?: string[];
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-17:15:
+This pure formatter lives on the dashboard's browser-safe core surface so plan review
+and server persistence share one canonical Markdown representation without widening
+the client bundle to Node-only core modules.
+*/
+export function formatPlanningPlanMd(summary: PlanningSummary): string {
+  const normalizeListItem = (item: string) => item.replace(/\s+/g, " ").trim();
+  const list = (items: string[] | undefined) => items && items.length > 0
+    ? items.map((item) => `- ${normalizeListItem(item)}`).join("\n")
+    : "_None_";
+  const proposedChanges = list(summary.proposedChanges);
+  const acceptanceCriteria = list(summary.acceptanceCriteria);
+  const dependencies = list(summary.suggestedDependencies);
+  const deliverables = list(summary.keyDeliverables);
+
+  return `# ${summary.title}\n\n${summary.description}\n\n## What to change\n${proposedChanges}\n\n## Acceptance criteria\n${acceptanceCriteria}\n\n## Size\n${summary.suggestedSize}\n\n## Suggested dependencies\n${dependencies}\n\n## Key deliverables\n${deliverables}\n`;
 }
 
 /** Response from planning endpoints - either a question or the final summary */
@@ -5675,6 +5712,11 @@ export interface PlanningSession {
   summary?: PlanningSummary;
   /** User explicitly validated the continuously maintained running plan. */
   validated?: boolean;
+  /** FNXC:PlanningMode 2026-07-20-15:45: Durable planning-to-task handoff cache; proposalClaimId is the crash-safe authority. */
+  createdTaskId?: string;
+  createClaimStatus?: "none" | "creating" | "created";
+  claimOwnerToken?: string;
+  claimStartedAt?: string;
   /**
    * Optional per-session auto-merge override for tasks planned in this session.
    * Not separately persisted; durable form is a branch_groups row keyed by session id.

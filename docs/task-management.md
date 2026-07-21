@@ -943,3 +943,8 @@ Use `noCommitsExpected: true` for tasks where the deliverable is a decision/repo
 - You can manually set/clear it in Task Detail via **No commits expected (decision-only task)**.
 - Task cards show a **decision-only** badge when enabled.
 - Finalization still uses the existing no-op review/merge path (`mergeDetails.noOpMerge: true`, `mergeConfirmed: true`); no synthetic merge strategy values are introduced.
+
+
+### Active-time statistics
+
+Task Detail labels this measure **Total active time**. It sums durable planning AI time (`cumulativePlanningMs`, including a live `planningStartedAt` segment) and in-progress execution time (`cumulativeActiveMs`, including a live `executionStartedAt` segment). Column dwell is wall-clock queue time and is intentionally excluded.
