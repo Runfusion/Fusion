@@ -45,10 +45,17 @@ import type { WorkflowWorkItemRow } from "./row-types.js";
  * item from being silently resurrected.
  */
 const TERMINAL_WORKFLOW_WORK_ITEM_STATES: ReadonlySet<string> = new Set([
-  "completed",
+  "succeeded",
   "failed",
   "cancelled",
 ]);
+
+const ACTIVE_TASK_CONTINUATION_STATES: WorkflowWorkItemState[] = [
+  "runnable",
+  "running",
+  "held",
+  "retrying",
+];
 
 /**
  * Normalize a workflow-work-item state string. Unknown values default to
@@ -81,6 +88,12 @@ export function rowToWorkflowWorkItem(row: WorkflowWorkItemRow): WorkflowWorkIte
     leaseExpiresAt: row.leaseExpiresAt,
     lastError: row.lastError,
     blockedReason: row.blockedReason,
+    stableWorkflowRunId: row.stableWorkflowRunId,
+    continuationSequence: row.continuationSequence,
+    waitReason: row.waitReason === "planning" || row.waitReason === "capacity" ? row.waitReason : null,
+    sourceColumn: row.sourceColumn,
+    targetColumn: row.targetColumn,
+    irHash: row.irHash,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -171,6 +184,12 @@ export async function upsertWorkflowWorkItem(
         lastError: input.lastError === undefined ? existing?.lastError ?? null : input.lastError,
         blockedReason:
           input.blockedReason === undefined ? existing?.blockedReason ?? null : input.blockedReason,
+        stableWorkflowRunId: input.stableWorkflowRunId === undefined ? existing?.stableWorkflowRunId ?? null : input.stableWorkflowRunId,
+        continuationSequence: input.continuationSequence === undefined ? existing?.continuationSequence ?? null : input.continuationSequence,
+        waitReason: input.waitReason === undefined ? existing?.waitReason ?? null : input.waitReason,
+        sourceColumn: input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
+        targetColumn: input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
+        irHash: input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       })
@@ -193,6 +212,12 @@ export async function upsertWorkflowWorkItem(
           lastError: input.lastError === undefined ? existing?.lastError ?? null : input.lastError,
           blockedReason:
             input.blockedReason === undefined ? existing?.blockedReason ?? null : input.blockedReason,
+          stableWorkflowRunId: input.stableWorkflowRunId === undefined ? existing?.stableWorkflowRunId ?? null : input.stableWorkflowRunId,
+          continuationSequence: input.continuationSequence === undefined ? existing?.continuationSequence ?? null : input.continuationSequence,
+          waitReason: input.waitReason === undefined ? existing?.waitReason ?? null : input.waitReason,
+          sourceColumn: input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
+          targetColumn: input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
+          irHash: input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
           updatedAt: now,
         },
       });
@@ -220,6 +245,40 @@ export async function upsertWorkflowWorkItem(
     return row;
   };
   return existingTx ? doWork(existingTx) : layer.transactionImmediate(doWork);
+}
+
+/** Atomically retire the current task continuation and persist its successor. */
+export async function replaceActiveTaskWorkflowContinuation(
+  layer: AsyncDataLayer,
+  input: WorkflowWorkItemUpsertInput & { kind: "task" },
+): Promise<WorkflowWorkItem> {
+  return layer.transactionImmediate(async (tx) => {
+    const activeRows = await tx
+      .select()
+      .from(schema.project.workflowWorkItems)
+      .where(
+        and(
+          eq(schema.project.workflowWorkItems.taskId, input.taskId),
+          eq(schema.project.workflowWorkItems.kind, "task"),
+          inArray(schema.project.workflowWorkItems.state, ACTIVE_TASK_CONTINUATION_STATES),
+        ),
+      );
+
+    for (const row of activeRows as WorkflowWorkItemRow[]) {
+      const isSameIdentity =
+        row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind;
+      if (isSameIdentity) continue;
+      await transitionWorkflowWorkItem(
+        layer,
+        row.id,
+        "succeeded",
+        { leaseOwner: null, leaseExpiresAt: null, lastError: null },
+        tx,
+      );
+    }
+
+    return upsertWorkflowWorkItem(layer, input, tx);
+  });
 }
 
 /**

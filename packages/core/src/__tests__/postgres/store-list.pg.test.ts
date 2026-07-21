@@ -37,6 +37,53 @@ pgTest("TaskStore.listTasks facade (PostgreSQL)", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("atomically replaces the sole active task workflow continuation", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "continuation owner", column: "todo" });
+    const first = await store.replaceActiveTaskWorkflowContinuation({
+      runId: `${task.id}:continuation:0`,
+      taskId: task.id,
+      nodeId: "plan-review",
+      kind: "task",
+      state: "runnable",
+      stableWorkflowRunId: `${task.id}:workflow`,
+      continuationSequence: 0,
+      waitReason: "planning",
+      sourceColumn: "todo",
+      targetColumn: "todo",
+      irHash: "ir-v1",
+    });
+    const second = await store.replaceActiveTaskWorkflowContinuation({
+      runId: `${task.id}:continuation:1`,
+      taskId: task.id,
+      nodeId: "parse",
+      kind: "task",
+      state: "held",
+      stableWorkflowRunId: `${task.id}:workflow`,
+      continuationSequence: 1,
+      waitReason: "capacity",
+      sourceColumn: "todo",
+      targetColumn: "in-progress",
+      irHash: "ir-v1",
+    });
+
+    expect((await store.getWorkflowWorkItem(first.id))?.state).toBe("succeeded");
+    expect(second).toMatchObject({
+      state: "held",
+      waitReason: "capacity",
+      sourceColumn: "todo",
+      targetColumn: "in-progress",
+      continuationSequence: 1,
+    });
+    await expect(store.upsertWorkflowWorkItem({
+      runId: `${task.id}:continuation:2`,
+      taskId: task.id,
+      nodeId: "steps",
+      kind: "task",
+      state: "runnable",
+    })).rejects.toThrow();
+  });
+
   it("returns all live tasks sorted by createdAt then numeric id suffix", async () => {
     const store = h.store();
     // Seed with explicit ascending timestamps so ordering is deterministic.

@@ -874,6 +874,12 @@ export const workflowWorkItems = projectSchema.table("workflow_work_items", {
   leaseExpiresAt: text("lease_expires_at"),
   lastError: text("last_error"),
   blockedReason: text("blocked_reason"),
+  stableWorkflowRunId: text("stable_workflow_run_id"),
+  continuationSequence: integer("continuation_sequence"),
+  waitReason: text("wait_reason"),
+  sourceColumn: text("source_column"),
+  targetColumn: text("target_column"),
+  irHash: text("ir_hash"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
@@ -884,6 +890,9 @@ export const workflowWorkItems = projectSchema.table("workflow_work_items", {
   index("idx_workflow_work_items_due").on(t.state, t.retryAfter, t.createdAt),
   index("idx_workflow_work_items_leaseExpiresAt").on(t.leaseExpiresAt),
   index("idx_workflow_work_items_task_run").on(t.taskId, t.runId),
+  uniqueIndex("idx_workflow_work_items_one_active_task_continuation")
+    .on(t.projectId, t.taskId)
+    .where(sql`${t.kind} = 'task' AND ${t.state} IN ('runnable', 'running', 'held', 'retrying')`),
 ]);
 
 export const workflowRunBranches = projectSchema.table("workflow_run_branches", {

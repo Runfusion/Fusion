@@ -1183,6 +1183,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
       void store.clearCompletionHandoffAcceptedMarker(id);
     }
+    if (toColumn === "todo" && moveSource === "user" && (fromIsImplementation || fromColumn === "in-review")) {
+      await store.cancelActiveWorkflowWorkItemsForTask(id, {
+        kinds: ["task"],
+        now: movedAt,
+        lastError: "cancelled-by-user-hard-cancel",
+      });
+    }
     if (toColumn === "done") {
       // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-16:00:
       // Backend mode: clearLinkedAgentTaskIds is a sync SQLite operation; skip

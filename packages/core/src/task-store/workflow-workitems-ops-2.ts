@@ -13,7 +13,7 @@ import {and, eq, inArray} from "drizzle-orm";
 import type {WorkflowWorkItem, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync} from "../task-store/async-workflow-workitems.js";
+import {replaceActiveTaskWorkflowContinuation as replaceActiveTaskWorkflowContinuationAsync, upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync} from "../task-store/async-workflow-workitems.js";
 import type {WorkflowWorkItemRow} from "../task-store/row-types.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 
@@ -40,9 +40,10 @@ export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: Workfl
         .prepare(
           `INSERT INTO workflow_work_items (
              id, runId, taskId, nodeId, kind, state, attempt, retryAfter,
-             leaseOwner, leaseExpiresAt, lastError, blockedReason, createdAt, updatedAt
+             leaseOwner, leaseExpiresAt, lastError, blockedReason, stableWorkflowRunId,
+             continuationSequence, waitReason, sourceColumn, targetColumn, irHash, createdAt, updatedAt
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(runId, taskId, nodeId, kind) DO UPDATE SET
              state = excluded.state,
              attempt = excluded.attempt,
@@ -51,6 +52,12 @@ export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: Workfl
              leaseExpiresAt = excluded.leaseExpiresAt,
              lastError = excluded.lastError,
              blockedReason = excluded.blockedReason,
+             stableWorkflowRunId = excluded.stableWorkflowRunId,
+             continuationSequence = excluded.continuationSequence,
+             waitReason = excluded.waitReason,
+             sourceColumn = excluded.sourceColumn,
+             targetColumn = excluded.targetColumn,
+             irHash = excluded.irHash,
              updatedAt = excluded.updatedAt`,
         )
         .run(
@@ -66,6 +73,12 @@ export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: Workfl
           input.leaseExpiresAt === undefined ? existing?.leaseExpiresAt ?? null : input.leaseExpiresAt,
           input.lastError === undefined ? existing?.lastError ?? null : input.lastError,
           input.blockedReason === undefined ? existing?.blockedReason ?? null : input.blockedReason,
+          input.stableWorkflowRunId === undefined ? existing?.stableWorkflowRunId ?? null : input.stableWorkflowRunId,
+          input.continuationSequence === undefined ? existing?.continuationSequence ?? null : input.continuationSequence,
+          input.waitReason === undefined ? existing?.waitReason ?? null : input.waitReason,
+          input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
+          input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
+          input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
           existing?.createdAt ?? now,
           now,
         );
@@ -83,6 +96,31 @@ export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: Workfl
       return store.rowToWorkflowWorkItem(row);
     });
   }
+
+export async function replaceActiveTaskWorkflowContinuationImpl(
+  store: TaskStore,
+  input: WorkflowWorkItemUpsertInput & { kind: "task" },
+): Promise<WorkflowWorkItem> {
+  if (store.backendMode) {
+    return replaceActiveTaskWorkflowContinuationAsync(store.asyncLayer!, input);
+  }
+
+  // Compatibility path for legacy embedded stores. PostgreSQL is the
+  // authoritative runtime and performs this replacement atomically above.
+  const active = store.db.prepare(
+    `SELECT id, runId, nodeId, kind FROM workflow_work_items
+     WHERE taskId = ? AND kind = 'task' AND state IN ('runnable', 'running', 'held', 'retrying')`,
+  ).all(input.taskId) as Array<{ id: string; runId: string; nodeId: string; kind: string }>;
+  for (const row of active) {
+    if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
+    store.transitionWorkflowWorkItemSync(row.id, "succeeded", {
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: null,
+    });
+  }
+  return upsertWorkflowWorkItemImpl(store, input);
+}
 
 export async function transitionWorkflowWorkItemImpl(store: TaskStore, id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: DbTransaction,): Promise<WorkflowWorkItem> {
     if (store.backendMode) {
@@ -166,4 +204,3 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
       return store.rowToWorkflowWorkItem(row);
     });
   }
-

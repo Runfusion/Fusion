@@ -74,6 +74,7 @@ import {
   TASK_DECLARED_SYMBOLS_VERSION,
   PLANNING_ACTIVE_TIMING_VERSION,
   SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+  WORKFLOW_TASK_CONTINUATIONS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -1580,6 +1581,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_DECLARED_SYMBOLS_VERSION,
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+      WORKFLOW_TASK_CONTINUATIONS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1636,6 +1638,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_DECLARED_SYMBOLS_VERSION,
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+      WORKFLOW_TASK_CONTINUATIONS_VERSION,
     ]);
   });
 
@@ -1825,6 +1828,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_DECLARED_SYMBOLS_VERSION,
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+      WORKFLOW_TASK_CONTINUATIONS_VERSION,
     ]);
   });
 
@@ -1895,6 +1899,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_DECLARED_SYMBOLS_VERSION,
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+      WORKFLOW_TASK_CONTINUATIONS_VERSION,
     ]);
   });
 
@@ -1965,6 +1970,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_DECLARED_SYMBOLS_VERSION,
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+      WORKFLOW_TASK_CONTINUATIONS_VERSION,
     ]);
   });
 });

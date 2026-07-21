@@ -46,7 +46,6 @@ export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetail
  */
 export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
   "builtin:brainstorming",
-  "builtin:coding-ideas",
 ]);
 
 
