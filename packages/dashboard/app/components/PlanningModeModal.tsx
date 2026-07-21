@@ -2804,7 +2804,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 </div>
                 <div className="planning-history-scroll">
                   {historyPanelEntries.length > 0 ? (
-                    <ConversationHistory entries={historyPanelEntries} defaultShowThinking />
+                    // FNXC:PlanningHistory 2026-07-20-23:24: FN-8449 keeps history thinking collapsed so operators can scan Q&A first; the existing toggle remains available to expand it, matching the FN-7974 chat default.
+                    <ConversationHistory entries={historyPanelEntries} />
                   ) : (
                     <div className="planning-history-empty">
                       <History size={24} />

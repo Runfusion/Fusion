@@ -110,7 +110,7 @@ describe("PlanningModeModal sequential flow", () => {
     expect(mockConnectPlanningStream).not.toHaveBeenCalled();
   });
 
-  it("opens question, answer, and expanded AI reasoning history beside Sessions", async () => {
+  it("opens question, answer, and collapsed AI reasoning history beside Sessions", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
       status: "awaiting_input",
@@ -138,8 +138,14 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
     expect(screen.getByText("Which outcome matters most?")).toBeInTheDocument();
     expect(screen.getByText("Secure defaults")).toBeInTheDocument();
-    expect(screen.getByText("I updated the plan to prioritize secure defaults.")).toBeInTheDocument();
+
+    const thinkingToggle = screen.getByRole("button", { name: "Show AI thinking" });
+    expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("I updated the plan to prioritize secure defaults.")).toBeNull();
+
+    fireEvent.click(thinkingToggle);
     expect(screen.getByRole("button", { name: "Hide AI thinking" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("I updated the plan to prioritize secure defaults.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
     expect(screen.queryByRole("region", { name: "Question and answer history" })).toBeNull();
