@@ -187,6 +187,11 @@ import {
   formatExternalIntegrationEvidenceDiagnostic,
 } from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
+import {
+  parseRequiredArtifactMissingValue,
+  requiredArtifactMissingValue,
+  workflowEntryArtifacts,
+} from "./required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
@@ -1150,6 +1155,8 @@ export interface WorkflowStepOutcome {
   timedOut?: boolean;
   /** True when no structured or prose verdict could be inferred. */
   malformed?: boolean;
+  /** Machine-readable graph failure used for deterministic recovery routing. */
+  failureValue?: string;
 }
 
 /**
@@ -4734,6 +4741,14 @@ export class TaskExecutor {
     if (info.status !== "advisory_failure" && info.status !== "failed") return false;
 
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
+    const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
+    if (missingArtifactKeys) {
+      await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
+        source: "workflow-step",
+        nodeId: info.nodeId,
+      });
+      return true;
+    }
     const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
     if (isPlanReview) {
       /*
@@ -4880,6 +4895,72 @@ export class TaskExecutor {
       `Pre-merge optional workflow step "${info.stepName}" requested revision`,
     );
     return true;
+  }
+
+  private async recoverMissingRequiredArtifacts(
+    task: Task,
+    artifactKeys: string[],
+    source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
+  ): Promise<void> {
+    const decision = computeRecoveryDecision({
+      recoveryRetryCount: task.recoveryRetryCount,
+      nextRecoveryAt: task.nextRecoveryAt,
+    });
+    const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+    const context = this.getRunContextFor(task.id);
+    const action = decision.shouldRetry ? "replan" : "park-failed";
+
+    await this.store.recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "executor",
+      runId: context?.runId ?? generateSyntheticRunId("required-artifact-missing", task.id),
+      domain: "database",
+      mutationType: "task:required-artifact-missing",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        artifactKeys,
+        owner: "planning",
+        source: source.source,
+        action,
+        attempt,
+        maxAttempts: MAX_RECOVERY_RETRIES,
+        ...(source.nodeId ? { nodeId: source.nodeId } : {}),
+      },
+    });
+
+    if (!decision.shouldRetry) {
+      const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+      await this.store.logEntry(task.id, error, undefined, context);
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }, context);
+      return;
+    }
+
+    const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
+    await this.store.logEntry(
+      task.id,
+      `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
+      `Missing artifact keys: ${artifactKeys.join(", ")}`,
+      context,
+    );
+    this.workflowLifecycleMovesInFlight.add(task.id);
+    try {
+      await moveTaskToReplanColumn(this.store, { id: task.id, column: task.column }, replanColumn);
+    } finally {
+      this.workflowLifecycleMovesInFlight.delete(task.id);
+    }
+    await this.store.updateTask(task.id, {
+      status: "needs-replan",
+      error: null,
+      recoveryRetryCount: decision.nextState.recoveryRetryCount,
+      nextRecoveryAt: decision.nextState.nextRecoveryAt,
+      graphResumeRetryCount: 0,
+    }, context);
   }
 
   /**
@@ -5503,6 +5584,18 @@ export class TaskExecutor {
         columnAgentIr = await resolveWorkflowIrForTask(this.store, task.id);
       } catch {
         columnAgentIr = undefined;
+      }
+      if (columnAgentIr) {
+        const missingEntryArtifacts: string[] = [];
+        for (const artifact of workflowEntryArtifacts(columnAgentIr)) {
+          const content = await this.readTaskArtifact(task.id, artifact.key);
+          if (typeof content !== "string" || !content.trim()) missingEntryArtifacts.push(artifact.key);
+        }
+        if (missingEntryArtifacts.length > 0) {
+          const liveTask = await this.store.getTask(task.id).catch(() => task);
+          await this.recoverMissingRequiredArtifacts(liveTask, missingEntryArtifacts, { source: "graph-entry" });
+          return;
+        }
       }
       const resolveBindingForNode = (nodeId: string): WorkflowColumnAgent | undefined =>
         columnAgentIr ? resolveColumnAgentBinding(columnAgentIr, nodeId) : undefined;
@@ -8615,7 +8708,7 @@ export class TaskExecutor {
     */
     return {
       outcome: outcome.success || !blocking || malformed ? "success" : "failure",
-      value: verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
+      value: (outcome as WorkflowStepOutcome).failureValue ?? verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
       ...(Object.keys(contextPatch).length > 0 ? { contextPatch } : {}),
     };
   }
@@ -16328,11 +16421,11 @@ ${scopeGuard}
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
 
-    if (isPlanReviewStep && !planReviewSpecText.trim()) {
-      const diagnostic = "PROMPT.md could not be loaded; Plan Review cannot approve an unavailable plan.";
+    if (isReviewTypeWorkflowStep && !workflowReviewSpecText.trim()) {
+      const diagnostic = `PROMPT.md could not be loaded; ${workflowStep.name} cannot approve without the authoritative task contract.`;
       await this.store.logEntry(
         task.id,
-        `[pre-merge] Plan Review refused to run without PROMPT.md: ${diagnostic}`,
+        `[pre-merge] ${workflowStep.name} refused to run without PROMPT.md: ${diagnostic}`,
       );
       return {
         success: false,
@@ -16340,6 +16433,7 @@ ${scopeGuard}
         output: `REVISE: ${diagnostic}`,
         verdict: "REVISE",
         notes: diagnostic,
+        failureValue: requiredArtifactMissingValue(["PROMPT.md"]),
       };
     }
 
@@ -16403,8 +16497,7 @@ ${scopeGuard}
      * state and loop back to triage after the planner already approved the spec.
      */
     const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
-      ? workflowReviewSpecText
-        ? `
+      ? `
 
 Approved Task Contract:
 - PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
@@ -16415,12 +16508,6 @@ Approved Task Contract:
 --- BEGIN APPROVED PROMPT.md ---
 ${workflowReviewSpecText}
 --- END APPROVED PROMPT.md ---`
-        : `
-
-Approved Task Contract Unavailable:
-- PROMPT.md could not be loaded for this review. The Task Description is historical input only and is not a substitute contract.
-- Do not infer, reinstate, approve, or reject requirements from the Task Description.
-- Return REVISE with the single reason that the approved contract could not be loaded so the workflow can retry with canonical scope.`
       : "";
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:

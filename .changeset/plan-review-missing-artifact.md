@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Prevent Plan Review from approving missing plans and persist planner output through task storage.
+summary: Recover missing workflow plans before review instead of approving or stranding tasks.
 category: fix
-dev: Triage now uses fn_task_prompt_write; Plan Review fails closed before starting a reviewer without PROMPT.md.
+dev: Verifies prompt persistence, gates planning release and workflow entry, and retries the planning owner with audit events.

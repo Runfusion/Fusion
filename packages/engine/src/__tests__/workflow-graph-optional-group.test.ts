@@ -317,6 +317,31 @@ describe("WorkflowGraphExecutor optional-group", () => {
     ]));
   });
 
+  it("preserves a typed missing-artifact failure through the optional-group remediation seam", async () => {
+    const requestFix = vi.fn(async () => true);
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        gate: async (node) => node.id === "review"
+          ? {
+              outcome: "failure",
+              value: "required-artifact-missing:PROMPT.md",
+              contextPatch: { output: "PROMPT.md could not be loaded" },
+            }
+          : { outcome: "success" },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(taskWith(["group"]), settingsOn(), reviseGroupIr({ gateMode: "gate" }));
+
+    expect(requestFix).toHaveBeenCalledWith("FN-OG", expect.objectContaining({
+      stepName: "Code Review",
+      status: "failed",
+      failureValue: "required-artifact-missing:PROMPT.md",
+    }));
+    expect(result.context["node:group:fixScheduled"]).toBe(true);
+  });
+
   it("threads optional-group maxRevisions into the pre-merge fix seam", async () => {
     const requestFix = vi.fn(async () => true);
     const executor = new WorkflowGraphExecutor({

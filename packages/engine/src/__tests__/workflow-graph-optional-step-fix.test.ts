@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 
 import { TaskExecutor } from "../executor.js";
+import { MAX_RECOVERY_RETRIES } from "../recovery-policy.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function task(overrides: Partial<Task> = {}): Task {
@@ -44,6 +45,65 @@ function revisionLog(stepName: string, key: string, attempt: number) {
 describe("TaskExecutor pre-merge optional-step fix seam", () => {
   beforeEach(() => {
     resetExecutorMocks();
+  });
+
+  it("requeues the planning owner for a missing required artifact without consuming review revision budget", async () => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-progress", recoveryRetryCount: 0, postReviewFixCount: 0 });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 0 });
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      stepName: "Plan Review",
+      feedback: "PROMPT.md could not be loaded",
+      phase: "pre-merge",
+      status: "failed",
+      failureValue: "required-artifact-missing:PROMPT.md",
+      nodeId: "plan-review",
+    });
+
+    expect(scheduled).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+    expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
+      status: "needs-replan",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    }), undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: 1 }), undefined);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:required-artifact-missing",
+      metadata: expect.objectContaining({ artifactKeys: ["PROMPT.md"], action: "replan", attempt: 1 }),
+    }));
+  });
+
+  it("parks visibly when missing-artifact recovery is exhausted", async () => {
+    const store = createMockStore();
+    const liveTask = task({ recoveryRetryCount: MAX_RECOVERY_RETRIES });
+    store.getTask.mockResolvedValue(liveTask);
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      stepName: "Code Review",
+      feedback: "PROMPT.md could not be loaded",
+      phase: "pre-merge",
+      status: "failed",
+      failureValue: "required-artifact-missing:PROMPT.md",
+      nodeId: "code-review",
+    });
+
+    expect(scheduled).toBe(true);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED"),
+    }), undefined);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:required-artifact-missing",
+      metadata: expect.objectContaining({ action: "park-failed" }),
+    }));
   });
 
   it("sends Code Review, Browser Verification, and gate-promoted pre-merge revisions back for remediation", async () => {

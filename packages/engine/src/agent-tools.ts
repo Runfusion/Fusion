@@ -1704,6 +1704,10 @@ export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runC
     execute: async (_id: string, params: Static<typeof taskPromptWriteParams>) => {
       try {
         await store.updateTask(taskId, { prompt: params.content }, runContext);
+        const persisted = await store.getTask(taskId);
+        if (persisted?.prompt !== params.content) {
+          throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
+        }
         return {
           content: [{ type: "text" as const, text: `Updated PROMPT.md for ${taskId}.` }],
           details: {},

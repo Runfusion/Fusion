@@ -4,6 +4,7 @@ import {
   createChatTaskDocumentTools,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
+  createTaskPromptWriteTool,
 } from "../agent-tools.js";
 
 vi.mock("@fusion/core", async (importOriginal) => {
@@ -151,6 +152,35 @@ describe("task_document_write tool", () => {
 
     expect(getText(result)).toContain("ERROR: Failed to save document");
     expect(getText(result)).toContain("archived");
+  });
+});
+
+describe("task_prompt_write tool", () => {
+  it("reports success only after the authoritative store reads back the exact prompt", async () => {
+    const updateTask = vi.fn().mockResolvedValue({});
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+      content: "# Verified plan",
+    });
+
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, undefined);
+    expect(getTask).toHaveBeenCalledWith(TASK_ID);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("fails closed when the authoritative prompt read-back is missing or different", async () => {
+    const updateTask = vi.fn().mockResolvedValue({});
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "" });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+      content: "# Plan that must persist",
+    });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
   });
 });
 

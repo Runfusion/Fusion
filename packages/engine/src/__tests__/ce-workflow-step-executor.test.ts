@@ -943,16 +943,19 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       const cap = captureSession();
       vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(undefined);
 
-      await (executor as any).executeWorkflowStep(
+      const result = await (executor as any).executeWorkflowStep(
         baseStepTask({ description: "Original request: ship SIX kinds including roadmap-item." }),
         makeStep({ name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" }),
         "/tmp/wt",
         {},
       );
 
-      expect(cap.last?.systemPrompt).toContain("Approved Task Contract Unavailable");
-      expect(cap.last?.systemPrompt).toContain("Task Description is historical input only and is not a substitute contract");
-      expect(cap.last?.systemPrompt).toContain("Return REVISE with the single reason that the approved contract could not be loaded");
+      expect(cap.all).toHaveLength(0);
+      expect(result).toMatchObject({
+        success: false,
+        verdict: "REVISE",
+        failureValue: "required-artifact-missing:PROMPT.md",
+      });
     });
 
     it("fails Plan Review closed before creating a reviewer when PROMPT.md is unavailable", async () => {
@@ -973,12 +976,38 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
         success: false,
         revisionRequested: true,
         verdict: "REVISE",
+        failureValue: "required-artifact-missing:PROMPT.md",
         notes: expect.stringContaining("PROMPT.md could not be loaded"),
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
         expect.stringContaining("Plan Review refused to run without PROMPT.md"),
       );
+    });
+
+    it.each([
+      ["Code Review", "code-review"],
+      ["Browser Verification", "browser-verification"],
+    ])("fails %s closed before creating a reviewer when PROMPT.md is unavailable", async (name, optionalGroupId) => {
+      const store = createMockStore();
+      const { executor } = makeExecutor(store);
+      const cap = captureSession();
+      vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue(undefined);
+
+      const result = await (executor as any).executeWorkflowStep(
+        baseStepTask(),
+        makeStep({ name, optionalGroupId, gateMode: "gate" }),
+        "/tmp/wt",
+        {},
+      );
+
+      expect(cap.all).toHaveLength(0);
+      expect(result).toMatchObject({
+        success: false,
+        revisionRequested: true,
+        verdict: "REVISE",
+        failureValue: "required-artifact-missing:PROMPT.md",
+      });
     });
 
     it.each([

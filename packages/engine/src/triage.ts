@@ -2506,6 +2506,62 @@ export class TriageProcessor {
     }
   }
 
+  private async recoverMissingPromptBeforeRelease(task: Task): Promise<boolean> {
+    const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+    // Legacy/minimal stores may not expose prompt enrichment. Production TaskStore
+    // always does; only enforce the read-back when the authoritative field exists.
+    if (!live || !Object.prototype.hasOwnProperty.call(live, "prompt")) return false;
+    if (typeof live.prompt === "string" && live.prompt.trim()) return false;
+
+    const decision = computeRecoveryDecision({
+      recoveryRetryCount: live.recoveryRetryCount ?? task.recoveryRetryCount,
+      nextRecoveryAt: live.nextRecoveryAt ?? task.nextRecoveryAt,
+    });
+    const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+    const auditor = createRunAuditor(this.store, {
+      taskId: task.id,
+      agentId: task.assignedAgentId ?? "triage",
+      runId: generateSyntheticRunId("required-artifact-missing", task.id),
+      phase: "triage",
+      source: "triage",
+    });
+    await auditor.database({
+      type: "task:required-artifact-missing",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        artifactKeys: ["PROMPT.md"],
+        owner: "planning",
+        source: "planning-release",
+        action: decision.shouldRetry ? "replan" : "park-failed",
+        attempt,
+        maxAttempts: MAX_RECOVERY_RETRIES,
+      },
+    });
+
+    if (decision.shouldRetry) {
+      const message = `PROMPT.md disappeared before planning release — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
+      await this.store.logEntry(task.id, message);
+      await this.updatePlanningStateIfStillCurrent(task, {
+        status: this.restoreStatusAfterInterruptedTriageWork(task),
+        error: null,
+        recoveryRetryCount: decision.nextState.recoveryRetryCount,
+        nextRecoveryAt: decision.nextState.nextRecoveryAt,
+      });
+      return true;
+    }
+
+    const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: PROMPT.md remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+    await this.store.logEntry(task.id, error);
+    await this.updatePlanningStateIfStillCurrent(task, {
+      status: "failed",
+      error,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    });
+    return true;
+  }
+
   private async finalizeApprovedTaskBody(
     task: Task,
     writtenInput: string,
@@ -3025,6 +3081,8 @@ export class TriageProcessor {
     A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
     */
     // Apply title while the live row is still planning; a post-release patch can race execution.
+    if (await this.recoverMissingPromptBeforeRelease(task)) return;
+
     if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }
