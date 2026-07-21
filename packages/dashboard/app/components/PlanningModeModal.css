@@ -1113,20 +1113,6 @@ margins so paragraphs and lists do not create unintended gaps.
   gap: var(--space-sm);
 }
 
-.planning-refine-focus {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.planning-refine-focus legend {
-  margin-bottom: var(--space-sm);
-  font-weight: 500;
-}
-
 .planning-confirm-answer {
   display: flex;
   flex-direction: column;
@@ -1210,9 +1196,9 @@ margins so paragraphs and lists do not create unintended gaps.
 
 /*
 FNXC:PlanningMode 2026-07-20-17:00:
-The review checkpoint renders the same canonical Markdown that Validate persists as
-plan.md. Keep the document and refinement controls inside the sole scroll owner while
-the sibling action row remains reachable at the bottom of bounded desktop and mobile panes.
+The review checkpoint renders the same canonical Markdown that Proceed persists as
+plan.md. Keep the document inside the sole scroll owner while the sibling action row and
+its refinement menu remain reachable at the bottom of bounded desktop and mobile panes.
 */
 .planning-plan-scroll {
   align-items: center;
@@ -1224,8 +1210,7 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
   gap: 0;
 }
 
-.planning-plan-document,
-.planning-plan-scroll > .planning-refine-focus {
+.planning-plan-document {
   width: min(100%, calc(var(--space-2xl) * 24));
 }
 
@@ -1258,19 +1243,6 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
 .planning-plan-markdown h2 {
   margin-top: var(--space-xl);
   font-size: var(--font-size-base);
-}
-
-.planning-plan-scroll > .planning-refine-focus {
-  padding: var(--space-xl);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--border) 75%, transparent);
-}
-
-.planning-plan-scroll > .planning-refine-focus legend {
-  padding-inline: var(--space-xs);
-  font-size: var(--font-size-sm);
-  text-wrap: balance;
 }
 
 .planning-summary-qa-disclosure {
@@ -1468,6 +1440,7 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
 }
 
 .planning-plan-actions {
+  position: relative;
   justify-content: flex-end;
   gap: var(--space-md);
   padding: var(--space-lg) var(--space-xl);
@@ -1476,6 +1449,118 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
 
 .planning-plan-actions .btn {
   min-width: calc(var(--space-2xl) * 4);
+}
+
+.planning-refine-menu {
+  position: absolute;
+  right: var(--space-xl);
+  bottom: calc(100% + var(--space-sm));
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  width: min(calc(var(--space-2xl) * 14), calc(100vw - var(--space-2xl)));
+  max-height: min(70dvh, calc(var(--space-2xl) * 16));
+  padding: var(--space-xl);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.planning-refine-menu-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-refine-menu-header h4,
+.planning-refine-menu-header p {
+  margin: 0;
+}
+
+.planning-refine-menu-header h4 {
+  font-size: var(--font-size-base);
+  text-wrap: balance;
+}
+
+.planning-refine-menu-header p,
+.planning-refine-menu-custom > span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-wrap: pretty;
+}
+
+.planning-refine-menu-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.planning-refine-menu-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: calc(var(--space-2xl) + var(--space-md));
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--border) 80%, transparent);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.planning-refine-menu-option:hover {
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
+}
+
+.planning-refine-menu-option:active {
+  transform: scale(0.96);
+}
+
+.planning-refine-menu-option:has(input:checked) {
+  background: color-mix(in srgb, var(--todo) 12%, var(--surface));
+  box-shadow: 0 0 0 var(--btn-border-width) var(--todo);
+}
+
+.planning-refine-menu-option input {
+  flex-shrink: 0;
+  accent-color: var(--todo);
+}
+
+.planning-refine-menu-option span {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.planning-refine-menu-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-refine-menu-custom textarea {
+  min-height: calc(var(--space-2xl) * 2);
+  resize: vertical;
+}
+
+.planning-refine-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.planning-refine-menu-actions .btn {
+  min-width: 0;
 }
 
 .planning-summary-actions-right {
@@ -1491,10 +1576,6 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
     padding: var(--space-xl);
   }
 
-  .planning-plan-scroll > .planning-refine-focus {
-    padding: var(--space-lg);
-  }
-
   .planning-plan-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1506,6 +1587,18 @@ the sibling action row remains reachable at the bottom of bounded desktop and mo
     width: 100%;
     min-width: 0;
     min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  .planning-refine-menu {
+    right: var(--space-lg);
+    left: var(--space-lg);
+    width: auto;
+    max-height: min(65dvh, calc(var(--space-2xl) * 14));
+    padding: var(--space-lg);
+  }
+
+  .planning-refine-menu-options {
+    grid-template-columns: 1fr;
   }
 }
 

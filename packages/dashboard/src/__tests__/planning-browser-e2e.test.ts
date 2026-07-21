@@ -78,7 +78,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     await server.pluginContainer.close();
   }, 10_000);
 
-  it("keeps the adaptive question and edit-answer loop working", async () => {
+  it("starts an AI plan session and asks a focused question only after Refine", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("console", (event) => console.log(`[planning-browser-e2e] ${event.text?.() ?? ""}`));
     page.on("pageerror", (event) => console.error(`[planning-browser-e2e] ${event.message ?? ""}`));
@@ -86,19 +86,17 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
 
     await page.getByLabel("What do you want to build?").fill("Make Planning Mode adaptive");
     await page.getByRole("button", { name: "Start Planning" }).click();
-    await expectVisible(page.getByText("Which user outcome matters most?"));
+    await expectVisible(page.getByRole("heading", { name: "Adaptive planning workflow" }));
+    await expectVisible(page.getByRole("button", { name: "Proceed with plan" }));
+    expect(await page.getByText("Who should receive this first?").isVisible()).toBe(false);
 
-    await page.getByLabel("Speed").check();
-    await page.getByRole("button", { name: "Next question" }).click();
+    await page.getByRole("button", { name: "Refine" }).click();
+    await page.getByLabel("Security boundaries").check();
+    await page.getByRole("button", { name: "Ask next question" }).click();
     await expectVisible(page.getByText("Who should receive this first?"));
-    await expectVisible(page.getByText("Which user outcome matters most?"));
-    expect(await page.getByRole("button", { name: "Create Single Task" }).isVisible()).toBe(false);
-
-    await page.getByRole("button", { name: /Edit answer for Which user outcome matters most/ }).click();
-    await expectVisible(page.getByText("Which user outcome matters most?"));
-    await page.getByLabel("Depth").check();
-    await page.getByRole("button", { name: "Next question" }).click();
-    await expectVisible(page.getByText("Who should receive this first?"));
+    await page.getByLabel("Operators").check();
+    await page.getByRole("button", { name: "Continue to plan" }).click();
+    await expectVisible(page.getByRole("button", { name: "Proceed with plan" }));
     await page.close();
   }, 30_000);
 
@@ -107,7 +105,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       const page = await browser.newPage({ viewport });
       await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review`);
       await expectVisible(page.getByRole("heading", { name: "Adaptive planning workflow" }));
-      await expectVisible(page.getByRole("button", { name: "Validate" }));
+      await expectVisible(page.getByRole("button", { name: "Proceed with plan" }));
 
       const layout = await page.evaluate(() => {
         const review = document.querySelector<HTMLElement>("[data-testid='planning-plan-review']")!;
@@ -140,11 +138,15 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
         markdownRendered: true,
       });
       if (viewport.width > 1024) {
-        await page.getByLabel("Security boundaries").check();
         await page.getByRole("button", { name: "Refine" }).click();
+        await expectVisible(page.getByRole("dialog", { name: "Choose areas to refine" }));
+        await page.getByLabel("Security boundaries").check();
+        await page.getByLabel("Observability").check();
+        await page.getByLabel("Or describe another focus").fill("Migration sequencing");
+        await page.getByRole("button", { name: "Ask next question" }).click();
         await expectVisible(page.getByText("Who should receive this first?"));
       } else {
-        await page.getByRole("button", { name: "Validate" }).click();
+        await page.getByRole("button", { name: "Proceed with plan" }).click();
         for (let attempt = 0; attempt < 20 && await page.evaluate(() => document.body.dataset.createdTask) !== "FN-BROWSER"; attempt += 1) {
           await page.waitForTimeout(50);
         }

@@ -559,10 +559,43 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const isSessionListMode = showSessionList || (isCompactInterview && !mobileShowDetail);
   // FNXC:PlanningModeMobile 2026-07-20-10:30: Empty mobile state opens the composer because no saved destination exists; once sessions exist, every compact detail surface gets this single Back-to-list escape.
   const canReturnToSessionList = isCompactInterview && mobileShowDetail && planningSessions.length > 0;
-  const [refineFocus, setRefineFocus] = useState("");
-  const [customRefineFocus, setCustomRefineFocus] = useState<string | null>(null);
+  const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
+  const [selectedRefineFocuses, setSelectedRefineFocuses] = useState<string[]>([]);
+  const [customRefineFocus, setCustomRefineFocus] = useState("");
+  const refineMenuRef = useRef<HTMLDivElement>(null);
+  const refineTriggerRef = useRef<HTMLButtonElement>(null);
   const { addToast } = useToast();
   const { pushNav } = useNavigationHistoryContext();
+
+  const combinedRefineFocus = useMemo(
+    () => [...selectedRefineFocuses, customRefineFocus.trim()].filter(Boolean).join(", "),
+    [customRefineFocus, selectedRefineFocuses],
+  );
+
+  useEffect(() => {
+    if (!isRefineMenuOpen) return;
+    refineMenuRef.current?.focus();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!refineMenuRef.current?.contains(target) && !refineTriggerRef.current?.contains(target)) {
+        setIsRefineMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopImmediatePropagation();
+      setIsRefineMenuOpen(false);
+      refineTriggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isRefineMenuOpen]);
 
   /*
   FNXC:Planning 2026-06-23-02:00:
@@ -2235,19 +2268,35 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   may finalize during loading or recoverable error states; the server cancels an active turn safely.
   */
   const handleRefineFromPlan = useCallback(async () => {
-    if (view.type !== "plan_review") return;
+    if (view.type !== "plan_review" || !combinedRefineFocus) return;
     setError(null);
     setGenerationActivity("question");
+    setIsRefineMenuOpen(false);
     setView({ type: "loading" });
     try {
-      await respondToPlanning(view.session.sessionId, { refine: true, ...(refineFocus.trim() ? { focus: refineFocus.trim() } : {}) }, projectId);
-      setRefineFocus("");
-      setCustomRefineFocus(null);
+      const response = await respondToPlanning(view.session.sessionId, { refine: true, focus: combinedRefineFocus }, projectId);
+      const responseQuestion = "type" in response ? response.data : response.currentQuestion;
+      const responseSummary = "type" in response ? null : response.summary;
+      const nextSummary = responseSummary ? normalizePlanningSummary(responseSummary) : view.summary;
+      runningSummaryRef.current = nextSummary;
+      setRunningSummary(nextSummary);
+      if (responseQuestion) {
+        setView({
+          type: "question",
+          session: {
+            sessionId: view.session.sessionId,
+            currentQuestion: normalizeQuestionOptions(responseQuestion),
+            summary: nextSummary,
+          },
+        });
+      }
+      setSelectedRefineFocuses([]);
+      setCustomRefineFocus("");
     } catch (err) {
       setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to refine plan"));
       setView({ type: "plan_review", session: view.session, summary: view.summary });
     }
-  }, [projectId, refineFocus, t, view]);
+  }, [combinedRefineFocus, projectId, t, view]);
 
   const handleValidatePlan = useCallback(async () => {
     if (view.type !== "plan_review" || validateCreateInFlightRef.current) return;
@@ -2887,65 +2936,83 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     testId="planning-plan-markdown"
                   />
                 </article>
-                <fieldset className="planning-refine-focus" data-testid="planning-refine-focus">
-                  <legend>{t("planning.refineFocus", "Focus the next question")}</legend>
-                  <div className="planning-radio-group" role="radiogroup">
-                    {(view.summary.suggestedRefinements ?? []).map((focus) => (
-                      <label key={focus} className="planning-option planning-option--radio">
-                        <input
-                          type="radio"
-                          name="planning-refine-focus"
-                          value={focus}
-                          checked={customRefineFocus === null && refineFocus === focus}
-                          onChange={() => {
-                            setCustomRefineFocus(null);
-                            setRefineFocus(focus);
-                          }}
-                        />
-                        <span className="planning-option-label">{focus}</span>
-                      </label>
-                    ))}
-                    <label className="planning-option planning-option--radio">
-                      <input
-                        type="radio"
-                        name="planning-refine-focus"
-                        value={PLANNING_OTHER_OPTION_ID}
-                        checked={customRefineFocus !== null}
-                        onChange={() => {
-                          setCustomRefineFocus("");
-                          setRefineFocus("");
-                        }}
-                      />
-                      <span className="planning-option-label">{t("planning.writeOwnFocus", "Write your own focus")}</span>
-                    </label>
-                    {customRefineFocus !== null && (
-                      <input
-                        className="input"
-                        autoFocus
-                        value={customRefineFocus}
-                        onChange={(event) => {
-                          setCustomRefineFocus(event.target.value);
-                          setRefineFocus(event.target.value);
-                        }}
-                        placeholder={t("planning.refineFocusPlaceholder", "Describe what the next question should focus on")}
-                      />
-                    )}
-                  </div>
-                </fieldset>
               </div>
               <div
                 className="planning-actions planning-summary-actions planning-plan-actions"
                 data-testid="planning-plan-actions"
               >
+                {isRefineMenuOpen && (
+                  <div
+                    id="planning-refine-menu"
+                    ref={refineMenuRef}
+                    className="planning-refine-menu"
+                    data-testid="planning-refine-menu"
+                    role="dialog"
+                    aria-label={t("planning.chooseRefinementAreas", "Choose areas to refine")}
+                    tabIndex={-1}
+                  >
+                    <div className="planning-refine-menu-header">
+                      <h4>{t("planning.refineQuestion", "What should the next question focus on?")}</h4>
+                      <p>{t("planning.refineQuestionHint", "Choose one or more areas, or describe your own.")}</p>
+                    </div>
+                    <div className="planning-refine-menu-options">
+                      {(view.summary.suggestedRefinements ?? []).map((focus) => (
+                        <label key={focus} className="planning-refine-menu-option">
+                          <input
+                            type="checkbox"
+                            checked={selectedRefineFocuses.includes(focus)}
+                            onChange={() => setSelectedRefineFocuses((previous) => previous.includes(focus)
+                              ? previous.filter((item) => item !== focus)
+                              : [...previous, focus])}
+                          />
+                          <span>{focus}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <label className="planning-refine-menu-custom">
+                      <span>{t("planning.otherRefineFocus", "Or describe another focus")}</span>
+                      <textarea
+                        className="input"
+                        value={customRefineFocus}
+                        onChange={(event) => setCustomRefineFocus(event.target.value)}
+                        placeholder={t("planning.refineFocusPlaceholder", "Describe what the next question should focus on")}
+                        rows={2}
+                      />
+                    </label>
+                    <div className="planning-refine-menu-actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          setIsRefineMenuOpen(false);
+                          setSelectedRefineFocuses([]);
+                          setCustomRefineFocus("");
+                          refineTriggerRef.current?.focus();
+                        }}
+                      >
+                        {t("common.cancel", "Cancel")}
+                      </button>
+                      <button type="button" className="btn btn-primary" disabled={!combinedRefineFocus} onClick={() => void handleRefineFromPlan()}>
+                        {t("planning.askNextQuestion", "Ask next question")}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <button
+                  ref={refineTriggerRef}
                   type="button"
                   className="btn"
-                  disabled={refineFocus.trim().length === 0}
-                  onClick={() => void handleRefineFromPlan()}
+                  aria-expanded={isRefineMenuOpen}
+                  aria-controls={isRefineMenuOpen ? "planning-refine-menu" : undefined}
+                  onClick={() => {
+                    setSelectedRefineFocuses([]);
+                    setCustomRefineFocus("");
+                    setIsRefineMenuOpen((open) => !open);
+                  }}
                 >
                   {t("planning.refine", "Refine")}
                 </button>
-                <button type="button" className="btn btn-primary" onClick={() => void handleValidatePlan()}>{t("planning.validatePlan", "Validate")}</button>
+                <button type="button" className="btn btn-primary" onClick={() => void handleValidatePlan()}>{t("planning.proceedWithPlan", "Proceed with plan")}</button>
               </div>
             </div>
           )}

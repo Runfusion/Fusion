@@ -53,14 +53,10 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.getByText("Change the authentication API")).toBeInTheDocument();
     expect(screen.getByText("Acceptance criteria")).toBeInTheDocument();
     expect(screen.getByText("Refresh preserves generation")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Security boundaries" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Rollout strategy" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Failure recovery" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Accessibility" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Observability" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Write your own focus" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Refine" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Validate" })).toBeInTheDocument();
+    expect(screen.queryByTestId("planning-refine-menu")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Security boundaries" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Refine" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeInTheDocument();
     const scrollRegion = screen.getByTestId("planning-plan-scroll");
     const actionBar = screen.getByTestId("planning-plan-actions");
@@ -69,14 +65,31 @@ describe("PlanningModeModal sequential flow", () => {
     expect(document.querySelector(".planning-running-plan")).toBeNull();
     expect(document.querySelector(".planning-answered-history")).toBeNull();
   });
-  it("sends a model-suggested focus when Refine requests the next question", async () => {
+  it("opens a multi-select refinement menu and sends every selected or custom focus", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "awaiting_input", currentQuestion: null, result: JSON.stringify(summaryWithRefinements), inputPayload: "{}" });
-    mockRespondToPlanning.mockResolvedValue({}); renderSession({});
-    fireEvent.click(await screen.findByRole("radio", { name: "Security boundaries" }));
-    expect(screen.getByRole("button", { name: "Refine" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Refine" }));
-    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith("session-1", { refine: true, focus: "Security boundaries" }, "project-1"));
-    expect(screen.getByText("Generating next question…")).toBeInTheDocument();
+    mockRespondToPlanning.mockResolvedValue({
+      sessionId: "session-1",
+      currentQuestion: {
+        id: "q-refine",
+        type: "single_select",
+        question: "Which migration risk should come first?",
+        options: [
+          { id: "data", label: "Data integrity" },
+          { id: "rollout", label: "Rollout safety" },
+        ],
+      },
+      summary: summaryWithRefinements,
+    });
+    renderSession({});
+    fireEvent.click(await screen.findByRole("button", { name: "Refine" }));
+    expect(screen.getByRole("dialog", { name: "Choose areas to refine" })).toBeInTheDocument();
+    expect(screen.getByText("What should the next question focus on?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Security boundaries" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Observability" }));
+    fireEvent.change(screen.getByLabelText("Or describe another focus"), { target: { value: "Migration sequencing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask next question" }));
+    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith("session-1", { refine: true, focus: "Security boundaries, Observability, Migration sequencing" }, "project-1"));
+    expect(await screen.findByText("Which migration risk should come first?")).toBeInTheDocument();
   });
   it("restores the updating-plan progress state after refresh", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "generating", currentQuestion: null, result: JSON.stringify(summaryWithRefinements), inputPayload: JSON.stringify({ generationPurpose: "plan_update" }) });
@@ -110,18 +123,23 @@ describe("PlanningModeModal sequential flow", () => {
     renderSession({});
     expect(await screen.findByText("What to change")).toBeInTheDocument();
     expect(screen.getByText("Acceptance criteria")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Security boundaries" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Observability" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Write your own focus" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Security boundaries" })).toBeNull();
     const actionBar = screen.getByTestId("planning-plan-actions");
     expect(screen.getByTestId("planning-plan-scroll")).not.toContainElement(actionBar);
     expect(actionBar).toContainElement(screen.getByRole("button", { name: "Refine" }));
-    expect(actionBar).toContainElement(screen.getByRole("button", { name: "Validate" }));
+    expect(actionBar).toContainElement(screen.getByRole("button", { name: "Proceed with plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refine" }));
+    expect(screen.getByRole("dialog", { name: "Choose areas to refine" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Security boundaries" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Observability" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Choose areas to refine" })).toBeNull();
+    expect(screen.getByTestId("planning-plan-review")).toBeInTheDocument();
   });
   it("restores a validated unlinked session to create-only retry", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "complete", currentQuestion: null, result: JSON.stringify(mockSummary), inputPayload: JSON.stringify({ validated: true }) });
     renderSession({});
     expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Validate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Proceed with plan" })).toBeNull();
   });
 });

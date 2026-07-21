@@ -10,7 +10,20 @@ import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 const summary = {
   title: "Adaptive planning workflow",
   description: "An evolving **operator-ready** plan assembled from the interview answers.",
-  proposedChanges: ["Render the canonical plan as Markdown", "Keep review actions reachable while the plan scrolls"],
+  proposedChanges: [
+    "Render the canonical plan as Markdown",
+    "Keep review actions reachable while the plan scrolls",
+    "Generate the initial plan in a real AI session",
+    "Open refinement areas only from the Refine action",
+    "Allow multiple suggested refinement areas",
+    "Accept an operator-authored refinement focus",
+    "Ask one focused question after refinement",
+    "Return to plan review after each answer",
+    "Preserve the plan document while refinement is open",
+    "Keep the refinement menu usable on narrow screens",
+    "Expose a clear Proceed with plan action",
+    "Persist the reviewed Markdown as the task plan",
+  ],
   acceptanceCriteria: ["Markdown structure is visible", "Mobile actions remain at the bottom of the planning pane"],
   suggestedSize: "M",
   priority: "normal",
@@ -51,7 +64,6 @@ const questions = [
   },
 ];
 
-let answerCount = 0;
 const streams = new Set<MockEventSource>();
 
 class MockEventSource {
@@ -87,23 +99,31 @@ function emitTurn(questionIndex: number): void {
   }, 20);
 }
 
+function emitSummary(): void {
+  setTimeout(() => {
+    streams.forEach((stream) => stream.emit("summary", summary));
+  }, 20);
+}
+
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (input, init = {}) => {
   const url = String(input);
   const method = init.method ?? "GET";
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (url.includes("/planning/start-streaming") && method === "POST") {
-    answerCount = 0;
-    emitTurn(0);
+    emitSummary();
     return json({ sessionId: "planning-browser-e2e" });
   }
   if (url.includes("/planning/respond") && method === "POST") {
-    answerCount += 1;
-    emitTurn(answerCount);
-    return json({ sessionId: "planning-browser-e2e", currentQuestion: questions[answerCount], summary });
+    const body = typeof init.body === "string" ? JSON.parse(init.body) as { responses?: { refine?: boolean } } : {};
+    if (body.responses?.refine) {
+      emitTurn(1);
+      return json({ sessionId: "planning-browser-e2e", currentQuestion: questions[1], summary });
+    }
+    emitSummary();
+    return json({ sessionId: "planning-browser-e2e", currentQuestion: null, summary });
   }
   if (url.includes("/planning/planning-browser-e2e/back") && method === "POST") {
-    answerCount = 0;
     emitTurn(0);
     return json({ currentQuestion: questions[0], summary, history: [] });
   }

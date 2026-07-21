@@ -143,6 +143,7 @@ describe("reactive Planning Mode question contract", () => {
       expect(prompt).toMatch(/plan in Markdown/i);
     }
     expect(prompts.at(-1)).toMatch(/without asking another question/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/Proceed with plan serializes the plan as plan\.md/i);
   });
 
   it("repairs malformed select options and appends one localized Other option", () => {
