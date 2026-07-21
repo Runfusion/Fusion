@@ -1922,7 +1922,11 @@ export class Scheduler {
           schedulerLog.log(`Task ${task.id} no longer in "todo" (column=${freshTask?.column ?? "N/A"}) — skipping dispatch`);
           continue;
         }
-        if (freshTask.paused) {
+        /*
+        FNXC:UserPausedDispatch 2026-07-21-21:30:
+        The final fresh-read dispatch gate must honor both pause representations because an operator can set userPaused after the scheduler's initial queue snapshot but before worktree allocation.
+        */
+        if (freshTask.paused || freshTask.userPaused) {
           schedulerLog.log(`Task ${task.id} is paused — skipping dispatch`);
           continue;
         }
