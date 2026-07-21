@@ -186,6 +186,7 @@ export function formatTrackingComment(
 
 export class GitHubTrackingCommentService {
   private readonly store: TaskStore;
+  private readonly inProgressCommentClaims = new Set<string>();
   private readonly onTaskMoved = (event: TaskMovedEvent): void => {
     void this.handleTaskMoved(event);
   };
@@ -248,25 +249,46 @@ export class GitHubTrackingCommentService {
       return;
     }
 
+    if (event.to === "in-progress") {
+      if (this.inProgressCommentClaims.has(event.task.id)) {
+        return;
+      }
+      this.inProgressCommentClaims.add(event.task.id);
+    }
+
     /*
      * FNXC:GitHubTrackingComments 2026-07-16-12:40:
-     * A closed tracked issue must link its landing commit when one exists. The task:moved snapshot
-     * can predate mergeDetails persistence on human PR, no-op, and recovery done paths, so re-read
-     * the authoritative row before building the Done comment. Fall back to the snapshot when the
-     * read fails so the comment is never dropped.
+     * A closed tracked issue must link its landing commit when one exists, and in-progress comments
+     * must honor the durable one-per-task marker. Re-read the authoritative row before either
+     * transition; fall back to the event snapshot when the read fails so the comment is not dropped.
      */
-    const taskForComment = event.to === "done"
-      ? await this.store.getTask(event.task.id).catch(() => null) ?? event.task
-      : event.task;
+    const authoritativeTask = await this.store.getTask(event.task.id).catch(() => null);
+    const taskForComment = authoritativeTask ?? event.task;
+    if (
+      event.to === "in-progress"
+      && (
+        taskForComment.githubTracking?.inProgressCommentedAt
+        || taskForComment.log?.some((entry) => (
+          entry.action === "Posted GitHub tracking comment"
+          && entry.outcome?.endsWith("(in-progress)")
+        ))
+      )
+    ) {
+      return;
+    }
     const body = event.to === "done"
       ? formatTrackingComment(taskForComment, event.to, { owner, repo })
       : formatTrackingComment(taskForComment, event.to);
 
+    let commentPosted = false;
     try {
       const projectSettings = await this.store.getSettings() as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
       const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
       if (!resolution.ok) {
+        if (event.to === "in-progress") {
+          this.inProgressCommentClaims.delete(event.task.id);
+        }
         await this.safeLogDeletedTaskEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
         return;
       }
@@ -275,12 +297,33 @@ export class GitHubTrackingCommentService {
         ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
         : new GitHubClient({ forceMode: "gh-cli" });
       await client.commentOnIssue(owner, repo, number, body);
+      commentPosted = true;
+      if (event.to === "in-progress") {
+        try {
+          await this.store.updateTask(event.task.id, {
+            githubTracking: { inProgressCommentedAt: new Date().toISOString() },
+          });
+        } catch (markerError) {
+          await this.safeLogDeletedTaskEntry(
+            event.task.id,
+            "Posted GitHub tracking comment",
+            `${owner}/${repo}#${number} (${event.to})`,
+          );
+          console.warn(
+            `[github-tracking-comments] Posted in-progress comment for ${event.task.id}, but failed to persist its marker: ${markerError instanceof Error ? markerError.message : String(markerError)}`,
+          );
+          return;
+        }
+      }
       await this.safeLogDeletedTaskEntry(
         event.task.id,
         "Posted GitHub tracking comment",
         `${owner}/${repo}#${number} (${event.to})`,
       );
     } catch (err) {
+      if (event.to === "in-progress" && !commentPosted) {
+        this.inProgressCommentClaims.delete(event.task.id);
+      }
       const message = err instanceof Error ? err.message : String(err);
       await this.safeLogDeletedTaskEntry(
         event.task.id,
