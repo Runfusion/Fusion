@@ -2036,13 +2036,16 @@ async function mergeAndReview(input: {
     }));
 
     let head = await git(["rev-parse", "HEAD"], mergeRoot);
-    if (head === tipSha) return { squashSha: null, priorReasons }; // empty merge — nothing landed
+    const emptyMerge = head === tipSha;
+    if (emptyMerge && priorReasons.length === 0) return { squashSha: null, priorReasons }; // empty initial merge — nothing landed
 
     // Guarantee the squash's task metadata (task-id subject prefix + board
     // association trailers) even if the agent omitted it — this amends HEAD, so
     // re-read the sha afterwards.
-    await ensureCommitTaskMetadata(mergeRoot, taskId, includeTaskId, trailers);
-    head = await git(["rev-parse", "HEAD"], mergeRoot);
+    if (!emptyMerge) {
+      await ensureCommitTaskMetadata(mergeRoot, taskId, includeTaskId, trailers);
+      head = await git(["rev-parse", "HEAD"], mergeRoot);
+    }
 
     await setStatus("reviewing");
     const diffStat = await git(["diff", "--stat", `${tipSha}..${head}`], mergeRoot);
@@ -2060,23 +2063,28 @@ async function mergeAndReview(input: {
 
     if (verdict.verdict === "approve") {
       await log(`AI merge review (pass ${attempt + 1}): approved squash ${head}`);
-      return { squashSha: head, priorReasons };
+      return { squashSha: emptyMerge ? null : head, priorReasons };
     }
 
+    /*
+    FNXC:MergeReviewBlockers 2026-07-21-21:30:
+    Every rejected blocker remains part of the corrective contract until a reviewer approves the complete result. Review an empty corrective rebuild instead of treating it as an unreviewed no-op, and accumulate newly discovered blockers so a later pass cannot regress an earlier concern.
+    */
+    const unresolvedReasons = [...new Set([...priorReasons, ...verdict.reasons])];
     const budgetExhausted = attempt >= maxPasses;
     if (budgetExhausted) {
       if (verdict.severity === "blocking") {
-        await audit.git({ type: "merge:ai-review-blocked", target: integrationBranch, metadata: { taskId, attempt, reasons: verdict.reasons } });
-        await log(`AI merge BLOCKED after ${attempt} corrective pass(es) — unresolved correctness concern: ${verdict.reasons.join("; ")}`);
-        throw new AiMergeBlockedError(taskId, verdict.reasons);
+        await audit.git({ type: "merge:ai-review-blocked", target: integrationBranch, metadata: { taskId, attempt, reasons: unresolvedReasons } });
+        await log(`AI merge BLOCKED after ${attempt} corrective pass(es) — unresolved correctness concern: ${unresolvedReasons.join("; ")}`);
+        throw new AiMergeBlockedError(taskId, unresolvedReasons);
       }
       // Advisory: land the squash with the concern logged.
-      await audit.git({ type: "merge:ai-review-landed-with-concerns", target: integrationBranch, metadata: { taskId, attempt, reasons: verdict.reasons, squashSha: head } });
-      await log(`AI merge: landing with unresolved advisory concern(s): ${verdict.reasons.join("; ")}`);
-      return { squashSha: head, priorReasons };
+      await audit.git({ type: "merge:ai-review-landed-with-concerns", target: integrationBranch, metadata: { taskId, attempt, reasons: unresolvedReasons, squashSha: head } });
+      await log(`AI merge: landing with unresolved advisory concern(s): ${unresolvedReasons.join("; ")}`);
+      return { squashSha: emptyMerge ? null : head, priorReasons: unresolvedReasons };
     }
 
-    priorReasons = verdict.reasons;
+    priorReasons = unresolvedReasons;
     await log(`AI merge review (pass ${attempt + 1}): rejected (${verdict.severity}) — ${verdict.reasons.join("; ")}`);
   }
 }

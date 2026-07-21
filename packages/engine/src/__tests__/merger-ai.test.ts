@@ -295,6 +295,45 @@ describe("runAiMerge", () => {
     expect(reviewAgent.mock.calls[0]?.[1]).toContain("complete resulting tree");
   });
 
+  it("reviews an empty corrective rebuild before accepting it as a no-op", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blocker = "the merged tree still bypasses authorization";
+    const { store } = makeStore(dir);
+    let mergeCount = 0;
+    const mergeAgent = vi.fn(async (cwd: string) => {
+      mergeCount++;
+      if (mergeCount === 1) await realMergeAgent("fusion/fn-1")(cwd, "");
+      // The corrective pass deliberately leaves the clean-room tree at the tip.
+    });
+    const reviewAgent = vi.fn()
+      .mockResolvedValueOnce(`${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(reviewAgent).toHaveBeenCalledTimes(2);
+    expect(reviewAgent.mock.calls[1]?.[1]).toContain(blocker);
+  });
+
+  it("keeps earlier blockers when later reviews discover different failures", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blockerX = "authorization is bypassed";
+    const blockerY = "audit metadata is missing";
+    const { store } = makeStore(dir, {}, { merger: { mode: "ai", maxReviewPasses: 2 } });
+    const reviewAgent = vi.fn()
+      .mockResolvedValueOnce(`${blockerX}\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce(`${blockerY}\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent,
+    });
+
+    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerX);
+    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerY);
+  });
+
   it("merges a clean branch, advances main, and finalizes the task", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store, emitted } = makeStore(dir);
