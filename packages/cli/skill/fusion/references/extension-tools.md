@@ -305,6 +305,16 @@ Assign a workflow definition to a task by workflow ID.
 | `workflow_id` | string | ✓ | The workflow definition ID to select (e.g. 'WF-003', or a 'builtin:*' id). Use fn_workflow_list to discover available IDs. |
 | `task_id` | string | — | Task to assign the workflow to. Defaults to the current task. |
 
+### fn_workflow_step_resume
+
+Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires a mandatory reason and step ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Task ID (e.g. FN-001) |
+| `stepId` | string | ✓ | Workflow step ID to resume (e.g. 'code-review', 'plan-review') |
+| `reason` | string | ✓ | Mandatory justification for resuming the step (audit-logged) |
+
 ## GitHub Tools
 
 ### fn_task_import_github

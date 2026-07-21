@@ -413,6 +413,24 @@ async function bootSchemaBackendOnce(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
+  try {
+    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+  } catch (error) {
+    if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
+    log.warn(
+      `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
+        `encoding by an earlier version and never completed a boot (issue #2286). ` +
+        `Re-initializing it as UTF-8 and retrying once.`,
+    );
+    rmSync(error.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+  }
+}
+
+async function bootSchemaBackendOnce(
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax">,
+  bypassProjectIsolation = false,
+): Promise<SchemaBackendBootResult> {
   const env = options.env ?? process.env;
   const backend = options.backend ?? resolveBackend(env);
   const embeddedRequested = options.embeddedPgRequested ?? isEmbeddedPgRequested(env);

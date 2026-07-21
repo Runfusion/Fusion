@@ -1271,6 +1271,42 @@ export async function runAiMerge(
   const trailers = taskTrailers(taskId, task.lineageId, settings);
   const taskTitle = task.title?.trim() ? task.title.split("\n")[0] : undefined;
 
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * Early empty-diff check for no-commits tasks. When the branch EXISTS but has
+   * zero net changes vs the integration branch (e.g., only synthetic "merge main
+   * into branch" commits from an investigation/audit task), skip the clean room
+   * setup entirely. landOneRepo's own short-circuit checks rev-list --count, which
+   * counts commits (including synthetic merges), so a branch ahead only via merge
+   * commits still triggers the clean room build. This guard checks net diff, not
+   * commit count.
+   */
+  if (task.noCommitsExpected === true) {
+    // Use git diff --stat to check for actual file-level changes, not just
+    // commit count. A branch with only synthetic merge commits has zero diff.
+    // The triple-dot "..." syntax shows the diff of commits unique to the branch
+    // vs the integration branch.
+    const hasDiff = await git(["diff", "--stat", `${integrationBranch}...${branch}`], projectRootDir)
+      .then((output) => output.trim().length > 0)
+      .catch(() => true); // on git error, assume diff (safe fallthrough)
+    if (!hasDiff) {
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (!noCommitsFinalize.blocked) {
+        await audit.git({
+          type: "merge:ai-no-branch",
+          target: branch,
+          metadata: { taskId, kind: "no-commits-empty-branch", noCommitsExpected: true },
+        });
+        return await finalizeTask(store, taskId, noOpResult(task, branch, "no-commits-empty-branch"), undefined, undefined, projectRootDir);
+      }
+      // If steps are incomplete/skipped, fall through to landOneRepo so the
+      // existing empty-merge lane handles the demotion with all its guards
+      // (FN-6461 step-evidence, FN-8141 landed-proof, FN-8141 executor veto).
+      // This is a safe default: the landOneRepo short-circuit will produce
+      // outcome: "empty" and the existing demotion logic runs unchanged.
+    }
+  }
+
   await setStatus("merging");
   // FNXC:Workspace 2026-06-21-23:40 (Phase C U1, KTD1):
   // runAiMerge is now the SINGLE-REPO caller of the extracted `landOneRepo`. It

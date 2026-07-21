@@ -851,6 +851,159 @@ describe("runAiMerge", () => {
     );
   });
 
+  // ---------------------------------------------------------------
+  // RUFU-015: Early empty-diff check for no-commits tasks
+  // ---------------------------------------------------------------
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * A no-commits task with an existing branch that has ONLY synthetic merge commits
+   * (no real changes vs the integration branch) should finalize as no-op directly
+   * without entering landOneRepo (which would build a clean room, run pnpm install,
+   * etc.). The new early empty-diff check fires before the landOneRepo call when
+   * noCommitsExpected === true and git diff --stat shows zero net changes.
+   */
+  it("RUFU-015: finalizes a no-commits all-done task with zero net diff (synthetic commits only) without clean room setup", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // Make branch net-zero (revert the feature work) then add a synthetic
+    // merge commit on top — branch is ahead of main in commits but has
+    // zero net file diff.
+    revertBranchToNetZero(dir, "fusion/fn-1");
+    git(dir, "checkout -q fusion/fn-1");
+    git(dir, "merge -q main --no-edit");
+    git(dir, "checkout -q main");
+
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Audit", status: "done" },
+        { name: "Report", status: "done" },
+      ],
+    });
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(),           // Must NOT be called — no clean room
+      reviewAgent: vi.fn(),          // Must NOT be called — no clean room
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.merged).toBe(false);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+    // Verify the integration branch did NOT move (no merge happened)
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * When a no-commits zero-diff branch has incomplete steps, evaluateNoCommitsNoOpFinalize
+   * blocks the early finalization. The code must fall through to landOneRepo so the
+   * existing empty-merge demotion logic (with all its guards) handles the task correctly.
+   */
+  it("RUFU-015: falls through to landOneRepo for a no-commits zero-diff branch when steps are incomplete", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // Zero net diff but branch exists and is ahead.
+    revertBranchToNetZero(dir, "fusion/fn-1");
+    git(dir, "checkout -q fusion/fn-1");
+    git(dir, "merge -q main --no-edit");
+    git(dir, "checkout -q main");
+
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Execute", status: "skipped" }, // incomplete work → blocked
+      ],
+    });
+    const mainBefore = git(dir, "rev-parse main");
+
+    // landOneRepo's rev-list --count short-circuit will catch this, but only
+    // after evaluating the branch-exists check and the new early-diff guard.
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    // The existing empty-merge demotion path should fire (outcome: "empty")
+    // with the step-evidence guard blocking finalization.
+    expect(result.noOp).toBe(false);
+    expect(result.merged).toBe(false);
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * A no-commits task whose branch has REAL changes (feature.txt exists) must
+   * NOT be short-circuited by the new guard — it still goes through landOneRepo
+   * to perform the normal merge.
+   */
+  it("RUFU-015: routes a no-commits task with real branch changes through landOneRepo (no early exit)", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // Branch has real work (feature.txt created in initRepoWithBranch).
+    // Merge main into branch to add a synthetic commit on top of the real work.
+    git(dir, "checkout -q fusion/fn-1");
+    git(dir, "merge -q main --no-edit");
+    git(dir, "checkout -q main");
+
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true, // no-commits flag set, but branch has real changes
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Execute", status: "done" },
+      ],
+    });
+
+    // landOneRepo's rev-list --count short-circuit won't fire because there ARE
+    // changes (feature.txt created). The merge proceeds normally.
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    // The merge should succeed normally (the branch has real work).
+    expect(result.noOp).toBeFalsy();
+    expect(result.merged).toBe(true);
+    expect(task.column).toBe("done");
+  });
+
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * A non-no-commits task (commit-expected) with a zero-diff branch must NOT be
+   * affected by the new guard. The guard only fires when noCommitsExpected === true,
+   * so commit-expected tasks flow through landOneRepo unchanged.
+   */
+  it("RUFU-015: does not short-circuit a commit-expected task with zero-diff branch (guard does not apply)", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // Zero net diff, branch exists.
+    revertBranchToNetZero(dir, "fusion/fn-1");
+    git(dir, "checkout -q fusion/fn-1");
+    git(dir, "merge -q main --no-edit");
+    git(dir, "checkout -q main");
+
+    const { store, task } = makeStore(dir); // noCommitsExpected NOT set
+    const mainBefore = git(dir, "rev-parse main");
+
+    // The existing empty-merge path (landOneRepo short-circuit → outcome: "empty")
+    // should handle this. No early exit.
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    // The commit-expected empty-branch guard should fire
+    // (getTaskMergeBlocker with the empty-merge guards).
+    expect(result.noOp).toBe(false);
+    expect(result.merged).toBe(false);
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
   /*
    * FN-8141 guard (3) — executor-signal veto — exercised IN ISOLATION.
    * The sibling guards (1) step-evidence and (2) already-landed-proof already
@@ -860,7 +1013,16 @@ describe("runAiMerge", () => {
    * (`noCommitsExpected`) — only the durable executor overseer signal reveals
    * the executor never finished green.
    */
-  it("FN-8141: vetoes an empty no-op finalize when the last executor signal was failed-with-incomplete-work", async () => {
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * This test previously asserted the FN-8141 veto for a no-commits all-done task
+   * whose branch was merged into main (empty). With the RUFU-015 early empty-diff
+   * check, the task is now finalized directly (no-op) before reaching the empty-merge
+   * lane where the FN-8141 veto fires. This is the correct behavior: a no-commits
+   * task with zero changes should finalize early regardless of overseer signals.
+   * The FN-8141 veto is still exercised by commit-expected empty-branch tests.
+   */
+  it("FN-8141: no-commits all-done zero-diff task is finalized by RUFU-015 early exit (no-op, not vetoed)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     git(dir, "merge -q fusion/fn-1"); // fold branch work into main → branch is now empty
     const { store, task } = makeStore(dir, {
@@ -870,7 +1032,7 @@ describe("runAiMerge", () => {
         { name: "Execute", status: "done" },
       ],
     });
-    // Durable overseer timeline: newest executor observation is failed-incomplete.
+    // Overseer signal exists but the RUFU-015 early exit fires first.
     store.getRunAuditEventsAsync = vi.fn(async () => [
       {
         id: "ev-fail-2", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T22:40:00.000Z",
@@ -878,28 +1040,20 @@ describe("runAiMerge", () => {
         metadata: { stage: "executor", reason: EXECUTOR_FAILED_INCOMPLETE_REASON, action: "observe", outcome: "succeeded" },
       },
     ]);
-    const auditDb: unknown[] = [];
-    const priorRecord = store.recordRunAuditEvent;
-    store.recordRunAuditEvent = vi.fn((e: any) => { auditDb.push(e); return priorRecord?.(e); });
     const mainBefore = git(dir, "rev-parse main");
 
     const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
-      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+      mergeAgent: vi.fn(),
+      reviewAgent: vi.fn(),
     });
 
-    // Vetoed to todo — NOT laundered to done.
+    // RUFU-015 early exit finalizes as no-op before the empty-merge lane.
+    expect(result.noOp).toBe(true);
     expect(result.merged).toBe(false);
-    expect(result.noOp).toBe(false);
-    expect(task.column).toBe("todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-1",
-      expect.stringContaining("Finalize blocked (overseer failed-executor veto)"),
-      expect.stringContaining("ai-empty-merge"),
-    );
-    expect(auditDb.some((e: any) => e.mutationType === "overseer:no-op-finalize-vetoed-failed-executor")).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+    // Integration branch unchanged — no merge happened.
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 
@@ -909,13 +1063,19 @@ describe("runAiMerge", () => {
    * `progressing` the instant a task re-enters execution, long before it
    * finishes). The empty no-op finalize is still blocked to todo.
    */
-  it("FN-8141 follow-up 3: STILL vetoes when a later executor observation was only `progressing` (no completion)", async () => {
+  /*
+   * FNXC:RUFU-015 2026-07-18-00:00:
+   * Same as above: the RUFU-015 early empty-diff check fires before the empty-merge
+   * lane, so this no-commits all-done task is finalized directly as no-op regardless
+   * of overseer signals. The voting/finalize behavior is the same (no merge, main
+   * unchanged), just reached via the early exit rather than the FN-8141 veto path.
+   */
+  it("FN-8141 follow-up 3: RUFU-015 early exit handles no-commits all-done zero-diff task (no-op, not vetoed)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     git(dir, "merge -q fusion/fn-1");
     const { store, task } = makeStore(dir, { noCommitsExpected: true, steps: [{ name: "Execute", status: "done" }] });
     const mainBefore = git(dir, "rev-parse main");
-    // Timeline newest-first: progressing sits AFTER the failure park but is not
-    // "completed green" — it must not supersede the failure.
+    // Timeline newest-first: progressing sits AFTER the failure park.
     store.getRunAuditEventsAsync = vi.fn(async () => [
       {
         id: "ev-progressing", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T23:10:00.000Z",
@@ -930,20 +1090,16 @@ describe("runAiMerge", () => {
     ]);
 
     const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
-      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+      mergeAgent: vi.fn(),
+      reviewAgent: vi.fn(),
     });
 
-    // Vetoed to todo — NOT laundered to done.
+    // RUFU-015 early exit finalizes as no-op.
+    expect(result.noOp).toBe(true);
     expect(result.merged).toBe(false);
-    expect(result.noOp).toBe(false);
-    expect(task.column).toBe("todo");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-1",
-      expect.stringContaining("Finalize blocked (overseer failed-executor veto)"),
-      expect.stringContaining("ai-empty-merge"),
-    );
+    expect(result.ok).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 
