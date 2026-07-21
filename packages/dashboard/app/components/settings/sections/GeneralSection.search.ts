@@ -203,18 +203,32 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
       "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language.",
     keywords: ["locale", "localization"],
   },
-  /*
-  FNXC:ReportPipeline 2026-07-18-14:45:
-  FN-8326 surfaces reportRoadmapDedup as a SettingsToggleRow in GeneralSection; index it so operators can find roadmap-dedup before filing.
-  */
+  /* FNXC:ReportPipeline 2026-07-18-20:45: FR-30 replaces the removed local roadmap toggle with all project-level public-roadmap controls, so search reaches the visible controls and their current defaults. */
   {
     sectionId: "general",
-    key: "reportRoadmapDedup",
-    labelKey: "settings.general.reportRoadmapDedup",
-    labelFallback: "Check roadmap before filing reports",
-    helpKey: "settings.general.reportRoadmapDedupHelp",
-    helpFallback:
-      "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
+    key: "reportRoadmapDedupeEnabled",
+    labelKey: "settings.general.reportRoadmapDedupeEnabled",
+    labelFallback: "Deduplicate reports against public roadmap",
+    helpKey: "settings.general.reportRoadmapDedupeEnabledHelp",
+    helpFallback: "Match open, labeled roadmap issues before filing. Default: on.",
     keywords: ["roadmap", "dedup", "report", "duplicate"],
+  },
+  {
+    sectionId: "general",
+    key: "reportRoadmapLabel",
+    labelKey: "settings.general.reportRoadmapLabel",
+    labelFallback: "Public roadmap label",
+    helpKey: "settings.general.reportRoadmapLabelHelp",
+    helpFallback: "Open GitHub Issues with this label are considered roadmap items. Default: roadmap.",
+    keywords: ["roadmap", "label", "report", "duplicate"],
+  },
+  {
+    sectionId: "general",
+    key: "reportRoadmapRepo",
+    labelKey: "settings.general.reportRoadmapRepo",
+    labelFallback: "Public roadmap repository (optional)",
+    helpKey: "settings.general.reportRoadmapRepoHelp",
+    helpFallback: "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset.",
+    keywords: ["roadmap", "repository", "repo", "tracking"],
   },
 ];

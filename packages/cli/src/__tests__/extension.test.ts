@@ -193,6 +193,19 @@ pgTest("fn pi extension tool copy guardrails", () => {
     expect(guidelines).toMatch(/idle.*already-paused/i);
     expect(guidelines).not.toMatch(/idle, 'error', or already-paused/i);
   });
+
+  it("keeps pi agent stop/start bridges task-pause non-cascading (FN-8362)", () => {
+    const api = createMockApi();
+    registerExtension(api);
+
+    const stop = requireTool(api, "fn_agent_stop") as unknown as ToolMeta;
+    const start = requireTool(api, "fn_agent_start") as unknown as ToolMeta;
+
+    // The bridge exposes an agent-state transition only; it intentionally has
+    // no task pause/resume behavior even when the agent has an assignment.
+    expect(stop.description).toMatch(/without changing assigned task pause state/i);
+    expect(start.description).toMatch(/without changing assigned task pause state/i);
+  });
 });
 
 // Audited in FN-3189: this exhaustive suite is expensive (~62s) and stale
@@ -2768,6 +2781,33 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
       expect(result.content[0].text).toContain(existing.id);
     });
 
+    it("fn_task_browse_github_issues marks sourceIssue-only imports as imported", async () => {
+      await h.store().createTask({
+        title: "Imported issue",
+        description: "Edited description without source URL",
+        sourceIssue: {
+          provider: "github",
+          repository: "Acme/Demo",
+          externalIssueId: "10",
+          issueNumber: 10,
+          url: "https://github.com/other/repo/issues/99",
+        },
+      });
+      const tool = api.tools.get("fn_task_browse_github_issues")!;
+      vi.mocked(runGhJsonAsync).mockResolvedValueOnce([{
+        number: 10,
+        title: "Investigate latency",
+        body: null,
+        html_url: "https://github.com/acme/demo/issues/10",
+        labels: [],
+      }] as never);
+
+      const result = await tool.execute("gh-3a", { owner: "acme", repo: "demo" }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.content[0].text).toContain("✓ Imported");
+      expect(result.details.issues[0]).toMatchObject({ number: 10, imported: true });
+    });
+
     it("fn_task_browse_github_issues lists issues via gh api", async () => {
       const tool = api.tools.get("fn_task_browse_github_issues")!;
       vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
@@ -3057,8 +3097,8 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     /*
-    FNXC:CliTests 2026-07-04-13:50:
-    FN-7530 split the sibling "executes with @fusion/core resolved through the built dist barrel" case (formerly directly below this test) into packages/cli/src/__tests__/extension-dist-barrel.test.ts. That test's own in-test dist-barrel recompilation (vi.resetModules + vi.importActual of the built @fusion/core dist barrel) is CPU-bound and timeout-prone under 4-shard CI contention (FN-6483/FN-6705/FN-6795/FN-6839/FN-7447 same signature); isolating it kept the ~68 stable tests in this file on the default lane while only the isolated file carries its own quarantine entry. This test covers the identical truncation invariant against the source-aliased @fusion/core.
+    FNXC:CliTests 2026-07-18-20:45:
+    FN-8381 deleted the fourth-quarantine built-dist-barrel companion because its full re-mocked module graph was CPU-bound and exceeded the default hook timeout under shard load. Retain this source-aliased test as the focused fn_task_list formatting, dependency, column, count, and truncation invariant; the deleted test's marginal full-barrel substitution signal did not justify timeout, retry, or worker-budget appeasement.
     */
     it("bounds large column-filtered listings as a single plain-text block", async () => {
       const store = createStore();

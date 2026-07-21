@@ -72,14 +72,14 @@ const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
 
 /*
 FNXC:GitLabEnablement 2026-07-04-00:00:
-FN-7535: the five global GitLab keys must be diffed against the SCOPED global
+FN-7535: the global GitLab and public-roadmap fallback keys must be diffed against the SCOPED global
 initial only — never the merged, project-effective `initialValues` — because
 SettingsModal already edits these keys through a dedicated `globalGitlabSettings`
 state seeded from `scoped.global` (FN-7453). Falling back to merged initialValues
 when the scoped global object lacks the key (e.g. the operator has never saved a
 global value before) let a project override's effective value silently stand in
 for "no change", so a genuine global edit that happened to match the merged value
-was dropped from the global patch. These keys never fall back to `initialValues`.
+was dropped from the global patch. These scoped-only keys never fall back to `initialValues`.
 */
 const GLOBAL_GITLAB_SCOPED_ONLY_KEYS = new Set<string>([
   "gitlabEnabled",
@@ -87,6 +87,9 @@ const GLOBAL_GITLAB_SCOPED_ONLY_KEYS = new Set<string>([
   "gitlabApiBaseUrl",
   "gitlabAuthToken",
   "gitlabAuthTokenType",
+  "reportRoadmapDedupeEnabled",
+  "reportRoadmapLabel",
+  "reportRoadmapRepo",
 ]);
 
 type RemoteAccessProvider = "tailscale" | "cloudflare";
@@ -137,6 +140,9 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "gitlabApiBaseUrl",
     "gitlabAuthToken",
     "gitlabAuthTokenType",
+    "reportRoadmapDedupeEnabled",
+    "reportRoadmapLabel",
+    "reportRoadmapRepo",
   ]),
   "global-general": new Set([
     "language",
@@ -149,6 +155,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "fnBinaryCheckEnabled",
     "updateCheckEnabled",
     "updateCheckFrequency",
+    "updateChannel",
     "autoReloadOnVersionChange",
   ]),
   /*
@@ -502,10 +509,10 @@ export function splitSettingsSave({
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
     if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
     // Mirror of the global branch's dual-scope gate: while the global source-control
-    // section is active these six keys are the GLOBAL fallbacks, so they must not
+    // section is active these source-control keys are the GLOBAL fallbacks, so they must not
     // also be written as project overrides. See the FNXC note in the global branch.
     if (key === "githubTrackingDefaultRepo" && activeSection === "source-control-global") continue;
-    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "source-control-global") continue;
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType" || key === "reportRoadmapDedupeEnabled" || key === "reportRoadmapLabel" || key === "reportRoadmapRepo") && activeSection === "source-control-global") continue;
     if (key === "mcpServers" && scopedMcpValues) continue;
     if (key === "mcpServers" && activeSection === "global-mcp") continue;
     if (!isProjectSettingsKey(key)) continue;

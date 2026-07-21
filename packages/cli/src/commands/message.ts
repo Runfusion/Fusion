@@ -1,4 +1,4 @@
-import { MessageStore } from "@fusion/core";
+import { DASHBOARD_USER_ID, MessageStore } from "@fusion/core";
 import type { ParticipantType } from "@fusion/core";
 import { resolveAgentStoreBase } from "../project-context.js";
 
@@ -23,16 +23,22 @@ export async function createMessageStore(projectName?: string): Promise<{ store:
 export const CLI_USER_ID = "cli";
 
 /**
- * List inbox messages.
+ * List inbox messages for the CLI or dashboard operator mailbox.
+ *
+ * FNXC:CliChatReplyRouting 2026-07-20-12:00:
+ * Fusion deliberately keeps CLI (`cli`) and dashboard (`dashboard`) user
+ * mailboxes distinct. Default to CLI mail for backwards compatibility, while
+ * allowing automation to inspect the dashboard mailbox where legacy replies
+ * may have landed.
  */
-export async function runMessageInbox(projectName?: string): Promise<void> {
+export async function runMessageInbox(projectName?: string, ownerId = CLI_USER_ID): Promise<void> {
   const { store, db } = await createMessageStore(projectName);
   try {
-    const mailbox = await store.getMailbox(CLI_USER_ID, "user");
-    const messages = await store.getInbox(CLI_USER_ID, "user", { limit: 20 });
+    const mailbox = await store.getMailbox(ownerId, "user");
+    const messages = await store.getInbox(ownerId, "user", { limit: 20 });
 
     console.log();
-    console.log(`  📬 Inbox (${mailbox.unreadCount} unread)`);
+    console.log(`  📬 ${ownerId === DASHBOARD_USER_ID ? "Dashboard Inbox" : "Inbox"} (${mailbox.unreadCount} unread)`);
     console.log();
 
     if (messages.length === 0) {

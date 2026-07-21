@@ -224,6 +224,40 @@ describe("useDocuments", () => {
     });
   });
 
+  it("clears project A workspace files immediately when switching to project B", async () => {
+    let resolveProjectBFileRequest: ((response: Response) => void) | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("projectId=project-b")) {
+        if (url.includes("/files/markdown-list")) {
+          return new Promise<Response>((resolve) => {
+            resolveProjectBFileRequest = resolve;
+          });
+        }
+        return new Promise<Response>(() => {});
+      }
+      return mockFetchResponse(true, url.includes("/files/markdown-list")
+        ? { files: mockProjectFiles }
+        : mockDocuments);
+    });
+
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useDocuments({ projectId }),
+      { initialProps: { projectId: "project-a" } },
+    );
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await waitFor(() => expect(result.current.projectFiles).toEqual(mockProjectFiles));
+
+    rerender({ projectId: "project-b" });
+
+    await waitFor(() => expect(result.current.projectFiles).toEqual([]));
+    await act(async () => {
+      resolveProjectBFileRequest?.(await mockFetchResponse(true, { files: [] }));
+    });
+  });
+
   it("cancels in-flight request on unmount", async () => {
     const abortMock = vi.fn();
     const originalAbortController = globalThis.AbortController;

@@ -50,6 +50,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.24.0
+        version: 0.24.0(zod@4.3.6)
       '@earendil-works/pi-ai':
         specifier: 0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
@@ -333,7 +336,7 @@ importers:
         specifier: ^5.1.0
         version: 5.2.1
       html2canvas:
-        specifier: 1.4.1
+        specifier: ^1.4.1
         version: 1.4.1
       i18next:
         specifier: ^26.3.1

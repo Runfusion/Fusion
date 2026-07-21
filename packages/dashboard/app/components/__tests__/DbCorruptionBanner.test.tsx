@@ -16,11 +16,14 @@ describe("DbCorruptionBanner", () => {
     );
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Database corruption detected")).toBeInTheDocument();
+    expect(screen.getByText("Database health check failed")).toBeInTheDocument();
     expect(screen.getByText(/Last checked:/)).toBeInTheDocument();
     expect(screen.getByText("bad row")).toBeInTheDocument();
     expect(screen.getByText("bad index")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "docs/storage.md" })).toHaveAttribute("href", "docs/storage.md");
+    expect(screen.getByText(/PostgreSQL health check reported a failure/)).toBeInTheDocument();
+    expect(screen.getByText("database logs")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "docs/storage.md" })).toHaveAttribute("href", "/docs/storage.md");
+    expect(screen.queryByText(/\[object Object\]|\{\{link\}\}/)).not.toBeInTheDocument();
   });
 
   it("calls onRefresh when the button is clicked", () => {

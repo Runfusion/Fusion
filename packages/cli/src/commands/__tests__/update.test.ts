@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-const { execAsyncMock, existsSyncMock, readFileSyncMock, getCachedUpdateStatusMock } = vi.hoisted(() => ({
+const { execAsyncMock, existsSyncMock, readFileSyncMock, getCachedUpdateStatusMock, getConfiguredUpdateChannelMock, persistUpdateChannelMock } = vi.hoisted(() => ({
   execAsyncMock: vi.fn<(...args: unknown[]) => Promise<{ stdout: string; stderr: string }>>(),
   existsSyncMock: vi.fn<(path: string) => boolean>(),
   readFileSyncMock: vi.fn<(path: string, encoding: BufferEncoding) => string>(),
@@ -8,7 +8,10 @@ const { execAsyncMock, existsSyncMock, readFileSyncMock, getCachedUpdateStatusMo
     updateAvailable: boolean;
     latestVersion: string;
     currentVersion: string;
+    channel?: "stable" | "beta";
   } | null>(),
+  getConfiguredUpdateChannelMock: vi.fn<() => Promise<"stable" | "beta">>(),
+  persistUpdateChannelMock: vi.fn<(channel: "stable" | "beta") => Promise<void>>(),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -25,7 +28,15 @@ vi.mock("node:fs", () => ({
 
 vi.mock("../../update-cache.js", () => ({
   getCachedUpdateStatus: getCachedUpdateStatusMock,
+  getConfiguredUpdateChannel: getConfiguredUpdateChannelMock,
+  persistUpdateChannel: persistUpdateChannelMock,
 }));
+
+// FNXC:UpdateChannels 2026-07-19-13:45: update.ts uses the REAL shared semver/
+// channel helpers, but importing the @fusion/core barrel would drag core's
+// git-binary through this file's node:child_process mock. Substitute the
+// barrel with the actual app-version source module (the only part used here).
+vi.mock("@fusion/core", async () => await vi.importActual("../../../../core/src/app-version.js"));
 
 import { runUpdate } from "../update.js";
 
@@ -41,6 +52,8 @@ describe("runUpdate", () => {
     existsSyncMock.mockImplementation((path: string) => path.endsWith("package.json"));
     readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.2.3" }));
     getCachedUpdateStatusMock.mockReturnValue(null);
+    getConfiguredUpdateChannelMock.mockResolvedValue("stable");
+    persistUpdateChannelMock.mockResolvedValue(undefined);
 
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -70,7 +83,8 @@ describe("runUpdate", () => {
 
     await runUpdate();
 
-    expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@latest", expect.objectContaining({ timeout: 300_000 }));
+    // FNXC:UpdateChannels 2026-07-19-13:45: installs pin the exact resolved version, never a bare dist-tag.
+    expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.2.4", expect.objectContaining({ timeout: 300_000 }));
     expect(logSpy).toHaveBeenCalledWith("Update complete.");
   });
 
@@ -102,6 +116,7 @@ describe("runUpdate", () => {
       latestVersion: "1.2.3",
       updateAvailable: false,
       updated: false,
+      channel: "stable",
     });
   });
 
@@ -124,7 +139,7 @@ describe("runUpdate", () => {
     await runUpdate({ check: true });
 
     expect(logSpy).toHaveBeenCalledWith("Warning: npm registry unreachable, using cached update metadata.");
-    expect(logSpy).toHaveBeenCalledWith("Latest version: 1.2.5");
+    expect(logSpy).toHaveBeenCalledWith("Latest stable version: 1.2.5");
     expect(process.exitCode).toBe(1);
   });
 
@@ -137,7 +152,7 @@ describe("runUpdate", () => {
     await runUpdate();
 
     expect(execAsyncMock).toHaveBeenCalledTimes(2);
-    expect((execAsyncMock.mock.calls[1] ?? [""])[0]).toContain("npm install --force -g @runfusion/fusion@latest");
+    expect((execAsyncMock.mock.calls[1] ?? [""])[0]).toContain("npm install --force -g @runfusion/fusion@1.2.4");
     expect(errorSpy).toHaveBeenCalledWith("Detected legacy runfusion.ai bin symlinks; retrying update with --force.");
     expect(logSpy).toHaveBeenCalledWith("Update complete.");
   });
@@ -151,7 +166,7 @@ describe("runUpdate", () => {
     await runUpdate({ global: false });
 
     expect(execAsyncMock).toHaveBeenCalledTimes(2);
-    expect((execAsyncMock.mock.calls[1] ?? [""])[0]).toContain("npm install --force @runfusion/fusion@latest");
+    expect((execAsyncMock.mock.calls[1] ?? [""])[0]).toContain("npm install --force @runfusion/fusion@1.2.4");
     expect((execAsyncMock.mock.calls[1] ?? [""])[0]).not.toContain(" -g ");
   });
 
@@ -198,7 +213,7 @@ describe("runUpdate", () => {
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "npm install -g @runfusion/fusion@latest",
+      "npm install -g @runfusion/fusion@1.2.4",
     );
     expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("npm install --force");
     expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
@@ -220,7 +235,7 @@ describe("runUpdate", () => {
     expect(execAsyncMock).toHaveBeenCalledTimes(2);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/timed out after 5 minutes.*terminal/i));
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "npm install --force -g @runfusion/fusion@latest",
+      "npm install --force -g @runfusion/fusion@1.2.4",
     );
     expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("deprecated");
   });
@@ -315,5 +330,107 @@ describe("runUpdate", () => {
     readFileSyncMock.mockReturnValueOnce(JSON.stringify({ name: "@runfusion/fusion", version: "1.2.3" }));
     await runUpdate({ check: true });
     expect(process.exitCode).toBe(1);
+  });
+
+  /*
+  FNXC:UpdateChannels 2026-07-19-13:45:
+  Channel behavior of `fn update`: --channel persists the track, beta resolves
+  semver-max(latest, beta), stable never sees betas, installs pin the exact
+  version, and --force is the only downgrade path (beta → stable).
+  */
+  describe("release channels", () => {
+    it("rejects an invalid --channel value", async () => {
+      await expect(runUpdate({ channel: "nightly" })).rejects.toThrow("process.exit:1");
+      expect(errorSpy).toHaveBeenCalledWith("Error: invalid --channel 'nightly'. Valid channels: stable, beta.");
+      expect(persistUpdateChannelMock).not.toHaveBeenCalled();
+    });
+
+    it("persists an explicit --channel choice and uses it for resolution", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.1" } }) }));
+      execAsyncMock.mockResolvedValue({ stdout: "ok", stderr: "" });
+
+      await runUpdate({ channel: "beta" });
+
+      expect(persistUpdateChannelMock).toHaveBeenCalledWith("beta");
+      expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.3.0-beta.1", expect.any(Object));
+    });
+
+    it("beta channel from settings offers the beta dist-tag", async () => {
+      getConfiguredUpdateChannelMock.mockResolvedValue("beta");
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.2" } }) }));
+
+      await runUpdate({ check: true, json: true });
+
+      const parsed = JSON.parse(logSpy.mock.calls[0]?.[0] as string) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ latestVersion: "1.3.0-beta.2", updateAvailable: true, channel: "beta" });
+      expect(process.exitCode).toBe(1);
+    });
+
+    it("stable channel never offers the beta dist-tag", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.2" } }) }));
+
+      await runUpdate({ check: true, json: true });
+
+      const parsed = JSON.parse(logSpy.mock.calls[0]?.[0] as string) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ latestVersion: "1.2.3", updateAvailable: false, channel: "stable" });
+      expect(process.exitCode).toBe(0);
+    });
+
+    it("beta channel offers a promoted stable that overtakes the running beta", async () => {
+      getConfiguredUpdateChannelMock.mockResolvedValue("beta");
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.3.0-beta.2" }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.3.0", beta: "1.3.0-beta.2" } }) }));
+      execAsyncMock.mockResolvedValue({ stdout: "ok", stderr: "" });
+
+      await runUpdate();
+
+      expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.3.0", expect.any(Object));
+    });
+
+    it("switching beta → stable does not downgrade without --force", async () => {
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.3.0-beta.2" }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.2" } }) }));
+
+      await runUpdate({ channel: "stable" });
+
+      expect(execAsyncMock).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith("Already up to date.");
+    });
+
+    it("--force installs the stable target below the running beta (explicit downgrade)", async () => {
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.3.0-beta.2" }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.2" } }) }));
+      execAsyncMock.mockResolvedValue({ stdout: "ok", stderr: "" });
+
+      await runUpdate({ channel: "stable", force: true });
+
+      expect(execAsyncMock).toHaveBeenCalledWith("npm install -g @runfusion/fusion@1.2.3", expect.any(Object));
+    });
+
+    it("refuses to shell out with a non-semver registry version (injection hardening)", async () => {
+      // Only a poisoned dist-tag can produce this; --force is the one path
+      // that installs a target that isn't strictly newer.
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: "1.2.3" }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.4; rm -rf ~" } }) }));
+
+      await expect(runUpdate({ force: true })).rejects.toThrow("process.exit:1");
+
+      expect(execAsyncMock).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("is not a valid version string"));
+    });
+
+    it("ignores cached fallback metadata written for a different channel", async () => {
+      getConfiguredUpdateChannelMock.mockResolvedValue("beta");
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+      getCachedUpdateStatusMock.mockReturnValue({
+        updateAvailable: true,
+        currentVersion: "1.2.3",
+        latestVersion: "1.2.5",
+        channel: "stable",
+      });
+
+      await expect(runUpdate({ check: true })).rejects.toThrow("process.exit:1");
+      expect(errorSpy).toHaveBeenCalledWith("Error checking for updates: network down");
+    });
   });
 });

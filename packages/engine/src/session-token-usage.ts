@@ -13,6 +13,10 @@ interface SessionBaseline {
   cacheWrite: number;
 }
 
+/*
+ * FNXC:TokenAnalytics 2026-07-17-14:00:
+ * Reuse/resume-capable callers must capture a per-session task-start snapshot when binding a session so lifetime counters from prior tasks cannot bleed into the new task. Fresh-per-task callers intentionally retain the zero-baseline default below: their first accumulation must credit the full new-session counter.
+ */
 // Per-session cumulative-token baselines so repeated calls only persist deltas.
 // The session object is keyed weakly so disposed sessions get garbage-collected.
 const sessionBaselines = new WeakMap<AgentSession, SessionBaseline>();
@@ -71,6 +75,22 @@ function readSessionStats(session: AgentSession): SessionStatsLike | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Capture the current cumulative stats as the baseline for a newly bound task. */
+export function captureSessionTokenBaseline(session: AgentSession): void {
+  const tokens = readSessionStats(session)?.tokens;
+  sessionBaselines.set(session, {
+    input: tokens?.input ?? 0,
+    output: tokens?.output ?? 0,
+    cached: tokens?.cacheRead ?? 0,
+    cacheWrite: tokens?.cacheWrite ?? 0,
+  });
+}
+
+/** Clear a completed task's baseline before this session is bound again. */
+export function resetSessionTokenBaseline(session: AgentSession): void {
+  sessionBaselines.delete(session);
 }
 
 /**

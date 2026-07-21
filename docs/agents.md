@@ -26,15 +26,18 @@ Use `fn chat` to message an agent from your terminal.
 ### Synopsis
 
 ```bash
-fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
+fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--reply-timeout-ms <n>] [--conversation-id <id>]
 ```
 
 ### Behavior
 
-- `fn chat <agent-id>` opens an interactive REPL.
-- Each message is stored as a `user-to-agent` MessageStore message from `cli` with `metadata.wakeRecipient=true`.
-- Agent replies are polled from your inbox and printed as they arrive.
-- Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, so skills such as `ce-debug` are available in chat when the contributing plugin is enabled for the requesting project. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
+- `fn chat <agent-id>` opens an interactive mailbox-conversation REPL.
+- Each message is stored as a `user-to-agent` MessageStore message from `cli` with `metadata.wakeRecipient=true`, `metadata.kind="cli-chat"`, and a durable `metadata.conversationId`.
+- CLI chat is MessageStore mail plus polling, not a token-streaming SSE session. Replies are printed only when they carry the active conversation ID or reply to a known thread message.
+- On a direct-message reply, agents must pass `reply_to_message_id` and either set `to_id` to the exact `[from: type:id]` value reported by `fn_read_messages` (including `cli`) or omit it to use the safe parent-sender default. Parent-derived routing is allowed only when the parent was addressed to the replying agent; an explicit `to_id` remains available for intentional forwarding.
+- The default conversation ID is `cli-chat:cli:<agent-id>`; use `--conversation-id <id>` to name or share a different mailbox thread.
+- One-shot replies have a deadline independent of `--poll-ms`; polling sleeps are capped at the remaining deadline. The interactive REPL maintains one pending deadline per outbound message, reports and clears an unanswered request, then continues to receive later replies.
+- Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, forwarding both requested skill names and resolved plugin body directories so skills such as `ce-debug` are available in chat when the contributing plugin is enabled for the requesting project. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
 - Agent-acting session lanes share the same skill-injection contract as executor sessions: executor, merger, triage, reviewer, heartbeat, step-session, dashboard chat/room responders, CLI agent execution, planning, mission interview, milestone/slice interview, agent-onboarding interview, workflow design, memory dreams/insight extraction, and scheduled cron automation all request agent/fallback skills plus enabled plugin-contributed skills when a plugin runner is available. Utility-only lanes that only summarize/extract/generate JSON (title/PR summaries, memory compaction, subtask breakdown, text refinement, agent generation, PR metadata generation, evaluator/research synthesis, and similar one-shot helpers) intentionally stay exempt to avoid loading skills where no agent-style tool loop can use them.
 - In dashboard model-loop chat (main chat, QuickChat, and room responders), typing `/skill:{name}` requests that skill for the current AI session and strips the slash token from the prompt sent to the model. Slash and catalog-style names such as `/skill:review/pr`, `/skill:review/pr/SKILL.md`, and `source::skills/review/pr/SKILL.md` resolve to the matching discovered bare skill token across chat and agent session lanes. The requested skill is still subject to the normal enabled/disabled execution-skill filters; CLI-agent-backed PTY chat keeps raw terminal input semantics and does not interpret this command.
 - Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write`, `fn_task_document_read`, and `fn_task_logs_read`; because neither lane has an ambient task, each tool requires an explicit `task_id`. `fn_task_logs_read` pages the persisted full agent log for failure analysis.
@@ -61,7 +64,9 @@ For the user-facing gallery and notification UX, see [Artifacts View](./dashboar
 
 - `--once` send one message and exit after first reply (or timeout)
 - `--non-interactive` read full stdin to EOF as message body
-- `--poll-ms <n>` override poll interval in milliseconds (default `1000`, or `FUSION_CHAT_POLL_MS`)
+- `--poll-ms <n>` override poll interval in milliseconds (default `1000`, or `FUSION_CHAT_POLL_MS`); sleeps never extend past the nearest reply deadline
+- `--reply-timeout-ms <n>` set the per-reply deadline in milliseconds (default `60000`, or `FUSION_CHAT_REPLY_TIMEOUT_MS`)
+- `--conversation-id <id>` override the default named mailbox conversation ID
 
 ### Examples
 
@@ -921,6 +926,12 @@ Messaging is available in dashboard mailbox UI and CLI. In dashboard Mailbox →
 
 Agent-backed dashboard chat sessions (including plugin-runtime agents such as Hermes/OpenClaw/Paperclip) also expose mailbox tools (`fn_send_message`, `fn_read_messages`) when a `MessageStore` is wired for that project. Model-only chats without an attached agent do not expose these tools.
 
+### Dashboard Chat workspace tools
+
+Dashboard Chat, Chat Room responders, and task-detail Planner Chat run at the interactive project checkout with coding workspace tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. Use them for user-directed file changes and shell investigation. When a durable agent is bound, its permanent-agent permission policy still governs file writes/deletes and command execution; unbound model Chat has no durable-principal policy gate. Chat must keep the checkout branch sticky: inspect Git freely, but do not use `git checkout` or `git switch` unless the operator explicitly requests it.
+
+Task-detail Planner Chat is included because it is a `task-planner:<taskId>` ChatManager session. This does not change the readonly planning/mission interview lanes or WhatsApp plugin chat. Chat verification remains limited to its existing allowlisted profiles rather than accepting arbitrary shell commands.
+
 ```bash
 fn message inbox
 fn message outbox
@@ -999,7 +1010,9 @@ When the bound task is `executor-class` or `blocked`, the default procedure dire
 
 The manager-facing reports health block in that prompt is populated from `AgentStore.getAgentsByReportsTo(agent.id)`. Engine code must call that store method with its `AgentStore` instance binding intact because some implementations resolve direct reports through `this.listAgents()`. If the section disappears unexpectedly, look for logs like `Failed to load reports ... Cannot read properties of undefined (reading 'listAgents')`, which indicate an unbound method call regressed.
 
-Direct-report staleness in this reports-health block uses each report's effective heartbeat interval (after `heartbeatMultiplier` is applied once), with threshold `max(effectiveHeartbeatIntervalMs × 1.5, 10 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
+Direct-report staleness in this reports-health block uses each report's effective heartbeat interval (after `heartbeatMultiplier` is applied once), with threshold `max(effectiveHeartbeatIntervalMs × 1.5, 10 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports. A `running` report is separately marked **stuck** after `2 × heartbeatTimeoutMs`; that is a heartbeat-run work-budget signal, not proof that its assigned task is dead.
+
+When Reports Health says **stuck**, preserve useful work first: check task-log and step freshness, the active heartbeat run, and worktree/session liveness. Do not stop or reassign an agent with live progress; ask for status if needed. Reassign only after confirming both no live session and no forward progress. The monitor, scheduler, and self-healing reattach/reconciliation paths continue to repair genuine orphaned runs.
 
 This behavior is inherited by new non-ephemeral agents because agent creation seeds a per-agent `HEARTBEAT.md` file from the built-in default. If an agent sets `heartbeatProcedurePath`, that markdown file fully replaces the built-in default at runtime for task-scoped heartbeats. No-task heartbeats always fall back to the ambient built-in procedure so the prompt never references task-only tools.
 
@@ -1041,8 +1054,8 @@ Mailbox replies use `message.metadata.replyTo.messageId` as the stable reply lin
 
 - `fn_read_messages` includes each message ID in its human-readable output so agents can target a specific message.
 - When a message has `metadata.replyTo.messageId`, `fn_read_messages` now includes one-level reply-parent context inline (and in structured tool details) so heartbeat/mailbox runs can understand what the message is replying to without expanding full threads.
-- `fn_send_message` supports `reply_to_message_id`; when provided, the sent message is stored with `metadata.replyTo.messageId`.
-- Heartbeat prompts explicitly instruct agents to include `reply_to_message_id` when replying.
+- `fn_send_message` supports `reply_to_message_id`; when provided, the sent message is stored with `metadata.replyTo.messageId`. If that parent was addressed to the sending agent, the tool safely defaults its recipient to the parent's sender; foreign, missing, or misaddressed parents cannot supply a recipient.
+- Heartbeat prompts explicitly instruct agents to include `reply_to_message_id` and the exact sender ID when replying.
 
 The dashboard mailbox UI also uses the same metadata contract when users click **Reply**, so user and agent replies share one threading model.
 

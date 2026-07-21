@@ -2,8 +2,14 @@ import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render } from "ink-testing-library";
 import { I18nextProvider } from "react-i18next";
-import { DashboardApp } from "../app.js";
+import { DashboardApp, stripLeadingDetailedTimestamp } from "../app.js";
 import { initCliI18n } from "../../../i18n/index.js";
+
+const copyToClipboardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../utils.js", () => ({
+  copyToClipboard: copyToClipboardMock,
+}));
 import { DashboardTUI } from "../controller.js";
 import { createInitialState } from "../state.js";
 import type { ProjectItem, TaskItem, AgentItem, AgentDetailItem, ModelItem, SettingsValues, TaskDetailData } from "../state.js";
@@ -168,6 +174,7 @@ function setTerminalSize(instance: { stdout: unknown }, columns: number, rows: n
 
 afterEach(() => {
   vi.useRealTimers();
+  copyToClipboardMock.mockReset();
 });
 
 // 10s bound: ink schedules frames on timer ticks and has flaked past 3s under
@@ -1189,7 +1196,7 @@ describe("LogsPanel narrow formatting", () => {
     wideRender.unmount();
   });
 
-  it("preserves full timestamp formatting in wide terminals", async () => {
+  it("uses compact timestamp formatting in wide terminals", async () => {
     const controller = newController();
     controller.setSystemInfo(makeSystemInfo());
     controller.setActiveSection("logs");
@@ -1203,7 +1210,87 @@ describe("LogsPanel narrow formatting", () => {
     const frame = rendered.lastFrame() ?? "";
 
     expect(frame).toContain("wide timestamp");
-    expect(frame).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    expect(frame).toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(frame).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
     rendered.unmount();
+  });
+
+  it("strips embedded detailed timestamps from wide and narrow log rows", async () => {
+    for (const columns of [60, 120]) {
+      const controller = newController();
+      controller.setSystemInfo(makeSystemInfo());
+      controller.setActiveSection("logs");
+      controller.log("2026-07-20 09:20:38.221 PDT checkpoint starting", "startup-factory");
+      controller.setSelectedLogIndex(0);
+
+      const rendered = render(renderDashboardAppNode(controller));
+      setTerminalSize(rendered, columns, 24);
+      rendered.rerender(renderDashboardAppNode(controller));
+      await flushFrames();
+      const frame = rendered.lastFrame() ?? "";
+
+      expect(frame).toContain("checkpoint starting");
+      expect(frame).toContain(columns < 80 ? "[start…]" : "[startup-facto");
+      expect(frame).toMatch(/[✓⚠✗]/);
+      expect(frame).not.toContain("2026-07-20");
+      expect(frame).not.toContain("PDT");
+      expect(frame).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+      rendered.unmount();
+    }
+  });
+
+  it("keeps raw embedded timestamp text in expanded logs with compact capture time", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setActiveSection("logs");
+    controller.log("2026-07-20 09:20:38.221 PDT checkpoint starting", "startup-factory");
+    controller.setSelectedLogIndex(0);
+
+    const rendered = render(renderDashboardAppNode(controller));
+    setTerminalSize(rendered, 120, 24);
+    rendered.rerender(renderDashboardAppNode(controller));
+    rendered.stdin.write("\r");
+    await waitForFrameContains(rendered.lastFrame, "2026-07-20 09:20:38.221 PDT checkpoint starting");
+    const frame = rendered.lastFrame() ?? "";
+    const timeLine = frame.split("\n").find((line) => line.includes("Time:")) ?? "";
+
+    expect(timeLine).toMatch(/Time:\s+\d{2}:\d{2}:\d{2}/);
+    expect(timeLine).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    expect(frame).toContain("2026-07-20 09:20:38.221 PDT checkpoint starting");
+    rendered.unmount();
+  });
+
+  it("copies compact time and stripped list message for timestamped entries", async () => {
+    copyToClipboardMock.mockResolvedValue(true);
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setActiveSection("logs");
+    controller.log("2026-07-20 09:20:38.221 PDT checkpoint starting", "startup-factory");
+    controller.setSelectedLogIndex(0);
+
+    const rendered = render(renderDashboardAppNode(controller));
+    rendered.stdin.write("c");
+    await vi.waitFor(() => {
+      expect(copyToClipboardMock).toHaveBeenCalledTimes(1);
+    });
+
+    const copied = copyToClipboardMock.mock.calls[0][0] as string;
+    expect(copied).toMatch(/^\d{2}:\d{2}:\d{2} INFO \[startup-factory\] checkpoint starting$/);
+    expect(copied).not.toContain("2026-07-20");
+    expect(copied).not.toContain("PDT");
+    expect(copied).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    rendered.unmount();
+  });
+});
+
+describe("stripLeadingDetailedTimestamp", () => {
+  it.each([
+    ["clean message", "clean message"],
+    ["2026-07-20 09:20:38.221 PDT checkpoint starting", "checkpoint starting"],
+    ["2026-07-20 09:20:38 UTC checkpoint starting", "checkpoint starting"],
+    ["checkpoint starting", "checkpoint starting"],
+    ["", ""],
+  ])("returns %j for %j", (message, expected) => {
+    expect(stripLeadingDetailedTimestamp(message)).toBe(expected);
   });
 });

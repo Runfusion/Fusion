@@ -253,6 +253,7 @@ export function rowToTask(row: TaskRow): Task {
     // materialized" are different states (mirrors main's SQLite-path fix).
     enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return Array.isArray(e) ? e : undefined; })(),
     modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
+    declaredSymbols: (() => { const v = fromJson<string[]>(row.declaredSymbols); return v && v.length > 0 ? v : undefined; })(),
     missionId: row.missionId || undefined,
     sliceId: row.sliceId || undefined,
     assignedAgentId: row.assignedAgentId || undefined,
@@ -378,6 +379,7 @@ export function archiveEntryToTask(
     branchContext: entry.branchContext,
     autoMerge: entry.autoMerge,
     modifiedFiles: slim ? undefined : entry.modifiedFiles,
+    declaredSymbols: entry.declaredSymbols,
     missionId: entry.missionId,
     sliceId: entry.sliceId,
     assigneeUserId: entry.assigneeUserId,

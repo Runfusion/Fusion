@@ -102,16 +102,10 @@ const quarantinedCliTests: string[] = [
   FNXC:CliTests 2026-07-18-07:30:
   FN-8271 rescued the shard-4 cascade after removing unrelated PostgreSQL template-copy and persistent-seeding work from extension-dist-barrel's built-dist hook. All fourteen affected CLI files return to the default lane with their matching quarantine-ledger rows removed; retain normal worker budgets and timeout defaults rather than reintroducing appeasement.
 
-  FNXC:CliTests 2026-07-18-15:20:
-  Full-suite shard 4 after FN-8271 (runs 29648812375 / 29648952207) re-observed mcp-lock-retry and task-lock-retry 5s timeouts under package-lane shard load without product-bug evidence. Quarantine on sight in lockstep with scripts/lib/test-quarantine.json — do not raise testTimeout or fake-timer budgets.
 
-  FNXC:CliTests 2026-07-18-15:20:
-  Full-suite shard 4 on tip after #2322 (run 29662476909): bundle-output failed building desktop assets (ENOENT vendor-reactflow CSS) and extension-dist-barrel beforeAll timed out at 10s under package-lane load without product-bug evidence. Quarantine on sight — do not raise hookTimeout or soften build assertions.
+  FNXC:CliTests 2026-07-18-20:45:
+  FN-8381 deletes extension-dist-barrel after its fourth quarantine cycle. Timing isolated the full core dist-barrel and re-mocked extension module graph as a 4–5.5s CPU-bound beforeAll while temp setup and cache seeding were negligible; shard contention pushed the same hook beyond Vitest's default 10s in run 29662476909. The source-side extension test retains the fn_task_list formatting/truncation invariant, while this test's marginal full-barrel substitution signal is not worth another load-sensitive rescue. Keep it out of both this exclusion and scripts/lib/test-quarantine.json; do not replace deletion with timeout, retry, or worker-budget appeasement.
   */
-  "src/commands/__tests__/mcp-lock-retry.test.ts",
-  "src/commands/__tests__/task-lock-retry.test.ts",
-  "src/__tests__/bundle-output.test.ts",
-  "src/__tests__/extension-dist-barrel.test.ts",
 ];
 
 /*

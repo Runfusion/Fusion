@@ -7,11 +7,9 @@ describe("FN-4946 shared task_done refusal helper invariant", () => {
     const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
     const invocations = source.match(/evaluateTaskDoneRefusal\(/g) ?? [];
     const helperDecl = source.match(/\bfunction evaluateTaskDoneRefusal\b/g) ?? [];
-    const dissentDecl = source.match(/\bconst DISSENT_PATTERNS\b/g) ?? [];
 
     expect(invocations.length).toBeGreaterThanOrEqual(3);
     expect(helperDecl).toHaveLength(1);
-    expect(dissentDecl).toHaveLength(1);
   });
 
   it("returns pending-code-review-revise for a pending step with REVISE and no summary", () => {

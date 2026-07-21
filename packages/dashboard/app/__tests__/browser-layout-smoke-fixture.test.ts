@@ -12,6 +12,24 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("pr-checks__details-link");
   });
 
+  it("includes Task Detail inline icon fixtures for all optional-control variants", () => {
+    const html = createSmokeHtml();
+    expect(html).toContain('data-smoke="task-detail-inline-row-fixtures"');
+    for (const variant of ["full", "without-github", "without-oversight", "without-optionals"]) {
+      expect(html).toContain(`data-smoke="task-detail-inline-row-${variant}"`);
+    }
+    for (const testId of [
+      "detail-inline-attach",
+      "detail-inline-github-toggle",
+      "detail-oversight-menu-trigger",
+      "detail-priority-trigger",
+      "detail-execution-mode-toggle",
+    ]) {
+      expect(html).toContain(`data-testid="${testId}"`);
+    }
+    expect(html).toContain('<span class="provider-icon"><svg width="16" height="16"');
+  });
+
   it("includes localized Quick Add Save fixtures for Board and List composers", () => {
     const html = createSmokeHtml();
     expect(html).toContain('data-smoke="quick-add-save-fixtures"');

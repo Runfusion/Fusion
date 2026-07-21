@@ -18,7 +18,6 @@ import {
   isUnplannedSeedPrompt,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
-  flagTriageDuplicate,
   resolveAgentPrompt,
   builtinSeamPrompt,
   renderTriagePolicyPlaceholders,
@@ -48,6 +47,7 @@ import {
   deriveFallbackTaskTitle,
   detectContentLanguage,
   localeDisplayName,
+  parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -216,6 +216,8 @@ export class TriageProcessor {
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
   private processing = new Set<string>();
+  /** Synchronous ownership fence shared with advanced-triage self-healing. */
+  private advancedRecoveryReservations = new Set<string>();
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
   private processingSince = new Map<string, number>();
   private wasGlobalPaused = false;
@@ -648,6 +650,16 @@ export class TriageProcessor {
    * still completing Plan Review → todo after a stuck-kill of the main session.
    */
   getProcessingTaskIds(): Set<string> {
+    const ids = this.getPlanningTaskIds();
+    for (const taskId of this.advancedRecoveryReservations) ids.add(taskId);
+    return ids;
+  }
+
+  /**
+   * Return tasks owned by actual planner work, excluding recovery reservations.
+   * Recovery uses this narrower view when revalidating its own reserved task.
+   */
+  getPlanningTaskIds(): Set<string> {
     const ids = new Set(this.processing);
     for (const taskId of this.finalizing) ids.add(taskId);
     for (const taskId of this.activeSubagentSessions.keys()) {
@@ -655,6 +667,23 @@ export class TriageProcessor {
       if (sessions && sessions.size > 0) ids.add(taskId);
     }
     return ids;
+  }
+
+  /**
+   * Reserve a task for advanced-state recovery unless planning already owns it.
+   * The check-and-add is synchronous, as is specifyTask's reciprocal guard, so
+   * neither side can slip between ownership inspection and acquisition.
+   */
+  tryReserveAdvancedRecovery(taskId: string): (() => void) | undefined {
+    if (
+      this.advancedRecoveryReservations.has(taskId)
+      || this.processing.has(taskId)
+      || this.hasLivePlanningWork(taskId)
+    ) {
+      return undefined;
+    }
+    this.advancedRecoveryReservations.add(taskId);
+    return () => this.advancedRecoveryReservations.delete(taskId);
   }
 
   /** True when this processor still owns live work for `taskId` (main, subagent, or finalize). */
@@ -1043,7 +1072,9 @@ export class TriageProcessor {
       }
 
       const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+        (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+          && !this.advancedRecoveryReservations.has(t.id)
+          && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
           // Skip failed specifications until the user explicitly retries them.
@@ -1198,7 +1229,11 @@ export class TriageProcessor {
     `processing` was cleared by a stuck-kill eviction race. Concurrent claim is
     what leaves `status:"planning"` on a todo card after Plan Review APPROVE.
     */
-    if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
+    if (
+      this.advancedRecoveryReservations.has(task.id)
+      || this.processing.has(task.id)
+      || this.hasLivePlanningWork(task.id)
+    ) return;
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 
@@ -1325,7 +1360,7 @@ export class TriageProcessor {
           // Agent delegation tools — discover and delegate work to other agents.
           ...(this.options.agentStore ? [
             createListAgentsTool(this.options.agentStore),
-            createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir }),
+            createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgent?.id }),
             createTaskAssignTool(this.options.agentStore, this.store),
           ] : []),
         ];
@@ -1633,6 +1668,10 @@ export class TriageProcessor {
             );
           }
 
+          const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+          const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
+            ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
+            : [null, null];
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -1640,6 +1679,10 @@ export class TriageProcessor {
             attachmentContents,
             existingPrompt,
             feedback,
+            {
+              plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
+              originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+            },
           );
           await promptWithFallback(
             session,
@@ -2272,7 +2315,7 @@ export class TriageProcessor {
    */
   private async updatePlanningStateIfStillCurrent(
     task: Task,
-    patch: Parameters<TaskStore["updateTask"]>[1],
+    patch: Parameters<TaskStore["updateTask"]>[1] | ((live: Task) => Parameters<TaskStore["updateTask"]>[1]),
   ): Promise<boolean> {
     if (typeof this.store.updateTaskAtomic !== "function") {
       // Compatibility adapters used by older embedded hosts do not expose the
@@ -2281,7 +2324,7 @@ export class TriageProcessor {
       if (!isTaskStillInPlanningStage(liveTask)) {
         return false;
       }
-      await this.store.updateTask(task.id, patch);
+      await this.store.updateTask(task.id, typeof patch === "function" ? patch(liveTask) : patch);
       return true;
     }
 
@@ -2301,9 +2344,24 @@ export class TriageProcessor {
         return null;
       }
       persisted = true;
-      return patch;
+      return typeof patch === "function" ? patch(liveTask) : patch;
     });
     return persisted;
+  }
+
+  /**
+   * FNXC:Triage 2026-07-30-15:00:
+   * FN-8361 requires filesystem recovery writes to keep the planning predicate and
+   * mutation in one task-lock acquisition; row-only atomic patches cannot protect PROMPT.md.
+   */
+  private async runIfStillPlanningUnderTaskLock(task: Task, operation: () => Promise<void>): Promise<boolean> {
+    const store = this.store as TaskStore;
+    if (typeof store.withTaskLock !== "function" || typeof store.readTaskForMove !== "function") return false;
+    return store.withTaskLock(task.id, async () => {
+      if (!isTaskStillInPlanningStage(await store.readTaskForMove(task.id))) return false;
+      await operation();
+      return true;
+    });
   }
 
   private restoreStatusAfterInterruptedTriageWork(task: Task): Task["status"] | null {
@@ -2444,42 +2502,79 @@ export class TriageProcessor {
       */
       if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
         if (canClearInactiveMarker) {
-          await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
-          await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          })) return;
+          await this.updatePlanningStateIfStillCurrent(task, { paused: false, pausedReason: null, status: null });
         }
         return;
       }
 
       const resolution = settings.triageDuplicateResolution ?? "prompt";
+      /*
+      FNXC:DuplicateIntake 2026-07-20-12:00:
+      FN-8440 requires a Keep decision to survive marker re-ingestion during replan. The
+      acknowledgement is scoped to this canonical id, so a marker targeting a different active
+      task still receives its own prompt; user and unrelated pauses remain untouched.
+      */
+      const keepAcknowledged = fusionCore.isTriageDuplicateKeepAcknowledged(task.sourceMetadata, canonicalId);
+      if (resolution === "prompt" && keepAcknowledged) {
+        if (canClearInactiveMarker) {
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          })) return;
+          await this.updatePlanningStateIfStillCurrent(task, {
+            paused: false,
+            pausedReason: null,
+            status: null,
+            sourceMetadataPatch: { nearDuplicateDismissed: true },
+          });
+        }
+        return;
+      }
       if (resolution === "delete") {
+        const deleteTaskIf = (this.store as unknown as { deleteTaskIf?: TaskStore["deleteTaskIf"] }).deleteTaskIf;
+        if (typeof deleteTaskIf !== "function") return;
+        const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
+          removeLineageReferences: true,
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
+        });
+        if (!result.deleted) return;
         await this.store.recordActivity({
           type: "task:auto-archived-duplicate", taskId: task.id, taskTitle: task.title ?? "",
           details: `Duplicate of ${canonicalId} — closed`, metadata: { canonicalTaskId: canonicalId, source: "explicit-marker" },
         });
-        await this.store.deleteTask(task.id, {
-          removeLineageReferences: true,
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
-        });
         return;
       }
       if (resolution === "prompt") {
-        await flagTriageDuplicate(this.store, task.id, canonicalId);
-        await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });
+        const applied = await this.updatePlanningStateIfStillCurrent(task, {
+          paused: true,
+          pausedReason: "duplicate-decision-required",
+          status: null,
+          sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false },
+        });
+        if (!applied) return;
+        await this.store.logEntry(task.id, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+        await this.store.recordActivity({ type: "task:auto-archived-duplicate", taskId: task.id, details: "Flagged (not deleted) as triage-marker duplicate", metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" } });
         return;
       }
-      await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
-      await this.store.updateTask(task.id, {
+      if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+        await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      })) return;
+      if (!await this.updatePlanningStateIfStillCurrent(task, {
         paused: false,
         pausedReason: null,
         status: null,
         sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: true },
-      });
+      })) return;
       return;
     }
 
     const parsedDeps = await this.store.parseDependenciesFromPrompt(task.id);
 
-    const taskUpdates: Record<string, any> = { status: null, error: null };
+    // Keep status in its planning state until the guarded release move; clearing it here
+    // would make the finalizer's own later writes fail the planning-stage predicate.
+    const taskUpdates: Record<string, any> = { error: null };
 
     if (parsedDeps.length > 0) {
       taskUpdates.dependencies = parsedDeps;
@@ -2550,18 +2645,27 @@ export class TriageProcessor {
 
     if (!options.preservePromptContent) {
       /*
-      FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
-      After the planner writes PROMPT.md, inject the operator's original description near
-      the top (verbatim) so Mission/Steps rewrites never hide the source request. Runs
-      before Frontend UX injection. Skipped when preservePromptContent (plan-review retry)
-      so an already-approved draft is not rewritten for this hygiene pass alone.
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 keeps the operator request separate from plan.md. Finalization must inject
+      original-description when present; a plan-shaped description falls back to its body.
       */
-      let nextPrompt = applyOriginalDescription(written, task.description ?? "");
+      const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+      const originalDescriptionDocument = typeof getTaskDocument === "function"
+        ? await getTaskDocument.call(this.store, task.id, "original-description").catch(() => null)
+        : null;
+      const storedOriginalDescription = typeof originalDescriptionDocument?.content === "string"
+        ? originalDescriptionDocument.content.trim()
+        : "";
+      const parsedDescriptionPlan = parsePlanningPlanMd(task.description ?? "");
+      const originalDescription = storedOriginalDescription || parsedDescriptionPlan?.description || task.description || "";
+      let nextPrompt = applyOriginalDescription(written, originalDescription);
       nextPrompt = applyFrontendUxCriteria(nextPrompt, parsedFileScope);
       if (nextPrompt !== written) {
         const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
         try {
-          await writeFile(promptPath, nextPrompt, "utf-8");
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await writeFile(promptPath, nextPrompt, "utf-8");
+          })) return;
           written = nextPrompt;
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2604,7 +2708,12 @@ export class TriageProcessor {
     const promptDeclaredTitle = extractPromptDeclaredTitle(written, task.id);
     const shouldApplyPromptDeclaredTitle = shouldReplaceTaskTitleFromPrompt(task, promptDeclaredTitle);
 
-    await this.store.updateTask(task.id, taskUpdates);
+    /*
+    FNXC:Triage 2026-07-30-15:00:
+    FN-8361 treats every delayed-finalization mutation as a live planning-stage
+    transition. A normal scheduler advance skips and terminates this recovery body.
+    */
+    if (!await this.updatePlanningStateIfStillCurrent(task, taskUpdates)) return;
 
     try {
       const preflightDecision = await Promise.race([
@@ -2711,7 +2820,7 @@ export class TriageProcessor {
 
           // FN-5152: when the candidate is older (or tie-canonical), flag for user confirmation.
           if (isStrictlyOlderOrTieCanonical(canonicalTask)) {
-            await this.store.updateTask(task.id, {
+            if (!await this.updatePlanningStateIfStillCurrent(task, {
               sourceMetadataPatch: {
                 nearDuplicateOf: canonical.id,
                 nearDuplicateScore: canonical.score,
@@ -2719,7 +2828,7 @@ export class TriageProcessor {
                 intentSignature: taskIntentSignature,
                 ...(parsedFileScope.length > 0 ? { fileScope: parsedFileScope } : {}),
               },
-            });
+            })) return;
             await this.store.logEntry(
               task.id,
               `Flagged as near-duplicate of ${canonical.id} (awaiting user decision)`,
@@ -2766,7 +2875,7 @@ export class TriageProcessor {
     */
     if (latestTransitionTask?.paused === true || latestTransitionTask?.userPaused === true) {
       const restoreStatus = options.isReplan ? "needs-replan" : null;
-      await this.store.updateTask(task.id, { status: restoreStatus });
+      if (!await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus })) return;
       await this.store.logEntry(
         task.id,
         "Specification approved but task is paused — leaving in triage, will resume on unpause",
@@ -2843,7 +2952,7 @@ export class TriageProcessor {
         if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
           approvalUpdates.title = promptDeclaredTitle;
         }
-        await this.store.updateTask(task.id, approvalUpdates);
+        if (!await this.updatePlanningStateIfStillCurrent(task, approvalUpdates)) return;
         await this.store.logEntry(
           task.id,
           options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
@@ -2877,8 +2986,16 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-10:35:
     A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
     */
+    // Apply title while the live row is still planning; a post-release patch can race execution.
+    if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
+      if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
+    }
+
     if (task.column !== "todo") {
-      await this.store.moveTask(task.id, "todo");
+      const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
+      if (typeof moveTaskIf !== "function") return;
+      const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
+      if (!release.moved) return;
     }
 
     /*
@@ -2918,10 +3035,6 @@ export class TriageProcessor {
         // Minimal test stores often omit getTask; still clear the mid-handoff planning stamp.
         await this.store.updateTask(task.id, { status: null, error: null });
       }
-    }
-
-    if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-      await this.store.updateTask(task.id, { title: promptDeclaredTitle });
     }
 
     if (options.recoveryLogAction) {
@@ -3091,8 +3204,14 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
+  planningContext?: { plan?: string; originalDescription?: string },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
+  const planDocument = planningContext?.plan?.trim();
+  const descriptionIsPlan = Boolean(parsePlanningPlanMd(task.description ?? ""));
+  const planInput = planDocument || (descriptionIsPlan ? task.description : undefined);
+  const originalDescription = planningContext?.originalDescription?.trim()
+    || (!descriptionIsPlan ? task.description : parsePlanningPlanMd(task.description ?? "")?.description || task.description);
   const isRevision = Boolean(existingPrompt && hasFeedback);
   const isFreshRespecification = Boolean(!existingPrompt && hasFeedback);
 
@@ -3304,12 +3423,17 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
 ## Task
 - **ID:** ${task.id}
 - **Title:** ${task.title || "(none)"}
-- **Description:** ${task.description}
+- **Description (current user context):** ${task.description}
+${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as the primary specification input. Expand it into the full executor-ready PROMPT.md; plan.md is not PROMPT.md.\n\n\`\`\`markdown\n${planInput}\n\`\`\`\n` : ""}
+## Original Request
+\`\`\`text
+${originalDescription}
+\`\`\`
 ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : ""}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

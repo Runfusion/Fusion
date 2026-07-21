@@ -68,7 +68,6 @@ const FN_3548_COORDINATION_TOOLS = [
   "fn_artifact_register",
   "fn_artifact_list",
   "fn_artifact_view",
-  "fn_delegate_task",
   "fn_list_agents",
   "fn_agent_show",
   "fn_agent_org_chart",
@@ -96,7 +95,7 @@ describe("permanent-agent-gating", () => {
 
   it("classifies shared fn tools by behavior", () => {
     expect(classifyPermanentAgentToolCall("fn_task_create").category).toBe("task_agent_mutation");
-    expect(classifyPermanentAgentToolCall("fn_delegate_task").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_delegate_task").category).toBe("task_agent_mutation");
     expect(classifyPermanentAgentToolCall("fn_update_agent_config").category).toBe("task_agent_mutation");
     expect(classifyPermanentAgentToolCall("fn_task_import_github").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_task_import_github_issue").category).toBe("none");

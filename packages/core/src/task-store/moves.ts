@@ -35,6 +35,7 @@ import {getTaskMergeBlocker} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {disposeTaskBeforeMove} from "../task-move-disposer.js";
+import {resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
 
 /*
 FNXC:PostgresCutover 2026-07-05-19:50:
@@ -143,6 +144,38 @@ export async function moveTaskImpl(store: TaskStore, id: string, toColumn: Colum
     const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
     return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }));
   }
+
+export interface MoveTaskIfResult {
+  task: Task;
+  moved: boolean;
+}
+
+/**
+ * FNXC:RuntimeTaskOrchestrationAsync 2026-07-29-12:00:
+ * FN-8361 recovery releases must read, predicate, and transition under one task
+ * lock because updateTaskAtomic cannot express a column move. `{ task, moved }`
+ * is the authoritative applied/skip signal; never nest public moveTask here.
+ */
+export async function moveTaskIfImpl(
+  store: TaskStore,
+  id: string,
+  toColumn: ColumnId,
+  predicate: (live: Task) => boolean | Promise<boolean>,
+  options?: MoveTaskOptions,
+): Promise<MoveTaskIfResult> {
+  const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
+  return store.withTaskLock(id, async () => {
+    const live = await store.readTaskForMove(id);
+    if (!await predicate(live) || live.column === toColumn) {
+      return { task: live, moved: false };
+    }
+    const task = await store.moveTaskInternal(id, toColumn, options, {
+      fromHandoff: false,
+      movePolicyPreflight,
+    }, live);
+    return { task, moved: true };
+  });
+}
 
 export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:20:
@@ -1103,6 +1136,28 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
 
     await store.writeTaskJsonFile(dir, task);
+
+    /*
+    FNXC:MissionSymbolAdmission 2026-07-19-22:04:
+    FN-8306 makes the central lifecycle transition the primary symbol-lock
+    release authority. A durable lock belongs only to active implementation;
+    handoff to review, cancellation/requeue, and terminal moves therefore release
+    the task's declared symbols here. Active implementation is the workflow's
+    countsTowardWip trait, not the legacy `in-progress` id: custom WIP columns
+    must retain and renew locks between internal WIP transitions, then release
+    them only when leaving WIP. PostgreSQL owns durable locks; SQLite has no
+    symbol-lock table and remains on coarse scheduling behavior.
+    */
+    const lifecycleWorkflowIr = workflowIr ?? await resolveTaskWorkflowIrForMove(store, id);
+    const fromIsImplementation = resolveTransitionColumnFacts(lifecycleWorkflowIr, fromColumn).flags.countsTowardWip === true;
+    const toIsImplementation = resolveTransitionColumnFacts(lifecycleWorkflowIr, toColumn).flags.countsTowardWip === true;
+    if (store.backendMode && fromIsImplementation && !toIsImplementation) {
+      const symbols = resolveTaskSymbolsForTask(task);
+      if (symbols.resolvable) {
+        await store.releaseSymbolLocks(symbols.symbols, id);
+      }
+    }
+
     if (fromColumn === "in-review" && toColumn === "todo" && moveSource === "user") {
       const handoffAccepted = await store.getCompletionHandoffAcceptedMarker(id);
       const mergeRequest = await store.getMergeRequestRecordAsync(id);

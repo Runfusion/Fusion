@@ -37,7 +37,11 @@ import {
   type UpdateCheckResponse,
 } from "../../../api/legacy";
 import { subscribeSse } from "../../../sse-bus";
+import type { ReportActionType } from "@fusion/core";
 import type { ToastType } from "../../../hooks/useToast";
+import { ReportActionMenu } from "../../ReportActionMenu";
+import { ReportModal } from "../../ReportModal";
+import { resolveReportContextRefs } from "../../../utils/reportContextRefs";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
 import "./SystemControlsArea.css";
 
@@ -73,37 +77,10 @@ const BACK_ONLINE_RELOAD_DELAY_MS = 3000;
 // respawn, unsupervised restart that stopped) doesn't leave the panel polling
 // forever with every control disabled.
 const RESTART_WAIT_TIMEOUT_MS = 90_000;
-export const BUG_URL_MAX_ENCODED = 8000;
-const BUG_URL_TRUNCATION_MARKER = "\n…(truncated)";
-const BUG_URL_BODY_QUERY_PREFIX = "?body=";
-const GITHUB_NEW_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
 
 function isNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
-}
-
-function buildBugReportIssueUrl(body: string): string {
-  const prefix = `${GITHUB_NEW_ISSUE_URL}${BUG_URL_BODY_QUERY_PREFIX}`;
-  const toUrl = (candidate: string) => `${prefix}${encodeURIComponent(candidate)}`;
-  const fullUrl = toUrl(body);
-  if (fullUrl.length <= BUG_URL_MAX_ENCODED) return fullUrl;
-
-  const encodedBudget = BUG_URL_MAX_ENCODED - prefix.length;
-  const codePoints = Array.from(body);
-  let low = 0;
-  let high = codePoints.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    const candidate = `${codePoints.slice(0, mid).join("")}${BUG_URL_TRUNCATION_MARKER}`;
-    if (encodeURIComponent(candidate).length <= encodedBudget) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  return toUrl(`${codePoints.slice(0, low).join("")}${BUG_URL_TRUNCATION_MARKER}`);
 }
 
 type RestartPhase = null | "waiting" | "back" | "timeout";
@@ -128,6 +105,8 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   const [info, setInfo] = useState<SystemInfoResponse | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [reportAction, setReportAction] = useState<ReportActionType | null>(null);
+  const reportContextRefs = typeof window === "undefined" ? undefined : resolveReportContextRefs(window.location);
 
   const [job, setJob] = useState<SystemRebuildJobSnapshot | null>(null);
   const [jobLines, setJobLines] = useState<SystemRebuildJobLine[]>([]);
@@ -524,62 +503,11 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   );
 
   /*
-  FNXC:SystemPanel 2026-07-12-15:30:
-  Requirement change (FN-7883): the bug-report flow previously offered only the
-  last 5 error log lines behind confirmation. That gave maintainers too little
-  context for a first triage pass. Now doReportBug reuses the exact same
-  buildDiagnostics() bundle that "Copy diagnostics" produces (health,
-  runtime/system info, recent logs) and asks a single confirmation question
-  covering that whole bundle.
-
-  FNXC:SystemPanel 2026-07-12-18:41:
-  Requirement change (FN-7890): truncation is budgeted against the full URL that
-  GitHub receives: base issue URL + ?body= + encodeURIComponent(body). FN-7883's
-  diagnostics JSON includes quotes, braces, and newlines that expand during
-  percent-encoding, so the old raw body-length cap could still emit a request
-  URL too long for GitHub. The confirm gate, fenceSafe neutralization, and body
-  sections remain unchanged while the final window.open URL is kept under the
-  encoded ceiling.
+  FNXC:SystemPanel 2026-07-19-14:00:
+  FN-8406 consolidates Command Center reporting here. This card opens the
+  guided ReportActionMenu and ReportModal; Copy diagnostics remains a separate
+  control instead of embedding local system data in a window.open GitHub URL.
   */
-  const doReportBug = useCallback(
-    () =>
-      runAction("report-bug", async () => {
-        const health = await fetchDashboardHealth().catch(() => null);
-        const fenceSafe = (text: string) => text.replace(/`/g, "'");
-        const includeDiagnostics = window.confirm(
-          t(
-            "systemControls.reportBugConfirm",
-            "Include diagnostic info and recent logs (health, runtime info, recent server logs) in the GitHub issue? They will be sent to github.com — review after the issue opens.",
-          ),
-        );
-        const diagnostics = includeDiagnostics ? await buildDiagnostics() : null;
-        const body = [
-          "### What happened",
-          "",
-          "<!-- Describe the bug -->",
-          "",
-          "### Environment",
-          `- Fusion version: ${health?.version ?? "unknown"}`,
-          `- Platform: ${info?.platform ?? "unknown"} (${info?.arch ?? "?"}), Node ${info?.nodeVersion ?? "?"}`,
-          `- Uptime: ${info?.uptimeSeconds ?? "?"}s, supervised: ${info?.supervised ?? false}`,
-          "",
-          ...(diagnostics
-            ? [
-                "### Diagnostics",
-                "<details><summary>Diagnostics</summary>",
-                "",
-                "```json",
-                fenceSafe(JSON.stringify(diagnostics, null, 2)),
-                "```",
-                "",
-                "</details>",
-              ]
-            : []),
-        ].join("\n");
-        window.open(buildBugReportIssueUrl(body), "_blank", "noopener");
-      }),
-    [buildDiagnostics, info, runAction, t],
-  );
 
   // ── Control definitions ───────────────────────────────────────────────────
   const restartDisabledNote = info && !info.restartSupported
@@ -757,16 +685,6 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         run: () => void doCopyDiagnostics(),
         testId: "cc-syscontrol-diagnostics",
       },
-      {
-        key: "report-bug",
-        icon: Bug,
-        title: t("systemControls.reportBug", "Report a bug"),
-        description: t("systemControls.reportBugDesc", "Open a prefilled GitHub issue with environment details."),
-        cta: t("systemControls.reportBugCta", "Report"),
-        disabled: false,
-        run: () => void doReportBug(),
-        testId: "cc-syscontrol-report-bug",
-      },
     ],
     [
       beginFnLinkLocal,
@@ -778,7 +696,6 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
       doCopyDiagnostics,
       doEngineRestart,
       doReloadPlugins,
-      doReportBug,
       doRestart,
       info,
       showFnLinkLocal,
@@ -898,7 +815,16 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
               </button>
             </div>
           ))}
+          <div className="card cc-syscontrol-card" data-testid="cc-syscontrol-report-bug">
+            <div className="cc-syscontrol-head">
+              <Bug size={18} className="cc-syscontrol-icon" aria-hidden />
+              <span className="cc-syscontrol-title">{t("systemControls.reportBug", "Report")}</span>
+            </div>
+            <p className="cc-syscontrol-desc">{t("systemControls.reportBugDesc", "Report a bug, send feedback, share an idea, or get help through a guided prompt.")}</p>
+            <div className="cc-syscontrol-cta"><ReportActionMenu onSelect={setReportAction} /></div>
+          </div>
         </div>
+        {reportAction ? <ReportModal actionType={reportAction} contextRefs={reportContextRefs} onClose={() => setReportAction(null)} /> : null}
       </div>
 
       {job ? (

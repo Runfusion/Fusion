@@ -341,4 +341,12 @@ describe("planning interview formatter Other answers", () => {
     );
     expect(formatInterviewQA([{ question: confirmQuestion, response }])).toContain("Comment: Need product input");
   });
+
+  it("reasserts the infinite, high-impact next-question contract with every answer", () => {
+    const prompt = formatResponseForAgent(singleSelectQuestion, { strategy: "discovery" });
+
+    expect(prompt).toContain("exactly one new, high-impact question");
+    expect(prompt).toContain("does not repeat a prior question");
+    expect(prompt).toContain("only the user can validate it");
+  });
 });

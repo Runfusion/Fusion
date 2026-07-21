@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { TaskDocumentWithTask } from "@fusion/core";
 import { fetchAllDocuments, fetchProjectMarkdownFiles, type MarkdownFileEntry } from "../api";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useProjectContextGuard } from "./useProjectContextGuard";
 
 export interface UseDocumentsResult {
   /** List of all documents across tasks */
@@ -49,12 +50,19 @@ export function useDocuments(options?: {
   const initialLoadCompleteRef = useRef(documents.length > 0);
   // Debounce timer for search
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+  FNXC:ProjectScoping 2026-07-15-20:10:
+  Documents and workspace-file responses must match the project captured when
+  the request started; the shared guard rejects a late old-project payload.
+  */
+  const { capture } = useProjectContextGuard(projectId, "useDocuments");
 
   /**
    * Fetch documents from the server.
    * Background updates (refresh, search) do NOT set loading=true.
    */
   const refresh = useCallback(async () => {
+    const context = capture();
     // Cancel any in-flight requests
     if (abortRef.current) {
       abortRef.current.abort();
@@ -84,7 +92,7 @@ export function useDocuments(options?: {
       projectFileFetchPromise,
     ]);
 
-    if (requestController.signal.aborted) {
+    if (requestController.signal.aborted || context.isStale()) {
       return;
     }
 
@@ -119,9 +127,15 @@ export function useDocuments(options?: {
     if (isInitial) {
       setLoading(false);
     }
-  }, [cacheKey, includeProjectFiles, projectId, searchQuery]);
+  }, [cacheKey, capture, includeProjectFiles, projectId, searchQuery]);
 
   useEffect(() => {
+    /*
+    FNXC:ProjectScoping 2026-07-16-00:00:
+    Workspace markdown files are project-scoped alongside task documents. Clear
+    them during a switch so project A paths cannot render while B loads.
+    */
+    setProjectFiles([]);
     if (!cacheKey) {
       initialLoadCompleteRef.current = false;
       setDocuments([]);

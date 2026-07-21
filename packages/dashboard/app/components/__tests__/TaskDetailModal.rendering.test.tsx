@@ -9,6 +9,8 @@ regex. The now-universal Oversight overflow trigger's aria-label is
 "Oversight actions", which also matches `/actions/i` and made every such
 query ambiguous once the trigger stopped being a mobile-only affordance.
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 
@@ -1409,6 +1411,37 @@ describe("TaskDetailModal", () => {
       expect(fast).toHaveClass("btn", "btn-icon", "btn-sm", "btn-primary");
       expect(fast).toHaveAttribute("title", "Execution mode: fast");
       expect(fast).not.toHaveTextContent("Fast");
+    });
+
+    it("keeps every inline action icon-only with the production size-prop contracts", () => {
+      const source = readFileSync(resolve(__dirname, "../TaskDetailModal.tsx"), "utf8");
+      const rowStart = source.indexOf('data-testid="detail-meta-inline-controls"');
+      const rowEnd = source.indexOf('className="detail-hidden-file-input"', rowStart);
+      const row = source.slice(rowStart, rowEnd);
+
+      // FNXC:TaskDetailModalResponsive 2026-07-19-12:00: The row stays ordered
+      // attach → GitHub → Oversight → priority → Fast; CSS owns icon parity.
+      expect(row).toMatch(/<Paperclip size=\{12\}[^>]*aria-hidden="true"/);
+      expect(row).toMatch(/<ProviderIcon provider="github" size="sm"/);
+      expect(row).toMatch(/<PriorityIcon size=\{14\}[^>]*aria-hidden="true"/);
+      expect(row).toMatch(/<Zap size=\{14\}[^>]*aria-hidden="true"/);
+      expect(row).toMatch(/overseerTriggerOn \? <Eye aria-hidden="true"\s*\/> : <EyeOff aria-hidden="true"\s*\/>/);
+      expect(row).not.toMatch(/<(?:Eye|EyeOff)\s+[^>]*\bsize=/);
+      expect(row.indexOf("detail-inline-attach")).toBeLessThan(row.indexOf("detail-inline-github-toggle"));
+      expect(row.indexOf("detail-inline-github-toggle")).toBeLessThan(row.indexOf("detail-oversight-menu-trigger"));
+      expect(row.indexOf("detail-oversight-menu-trigger")).toBeLessThan(row.indexOf("detail-priority-trigger"));
+      expect(row.indexOf("detail-priority-trigger")).toBeLessThan(row.indexOf("detail-execution-mode-toggle"));
+      // FNXC:QuickAddActionRow 2026-07-20-12:00: Every test-id affordance must
+      // also carry its FN-8287 sizing class, including optional GitHub and
+      // Oversight surfaces, so mounted tablet controls share one compact box.
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-inline-attach"/);
+      expect(row).toMatch(/className=\{`btn btn-icon btn-sm detail-inline-github-toggle/);
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-oversight-menu-trigger"/);
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-priority-trigger"/);
+      expect(row).toMatch(/className=\{`btn btn-icon btn-sm detail-execution-mode-toggle/);
+      for (const label of ["aria-label", "title"]) {
+        expect(row.match(new RegExp(label, "g"))?.length).toBeGreaterThanOrEqual(5);
+      }
     });
 
     it("removes bespoke toolbar SVG sizing rules", () => {

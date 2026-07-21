@@ -1,5 +1,6 @@
 import {
   DEFAULT_TASK_PRIORITY,
+  formatPlanningPlanMd,
   MessageStore,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
@@ -789,6 +790,32 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     }
   });
 
+  /*
+  FNXC:PlanningMode 2026-07-19-12:00:
+  Rename is intentionally a lock-free, verbatim user action. The planning helper first checks the
+  persisted session type so this planning-scoped endpoint cannot mutate another AI-session surface.
+  */
+  router.patch("/planning/:sessionId/title", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const title = req.body?.title;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      if (typeof title !== "string") throw badRequest("title is required and must be a string");
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) throw badRequest("title must not be empty");
+      if (trimmedTitle.length > 60) throw badRequest("title must be 60 characters or less");
+
+      const { updatePlanningSessionTitle } = await import("../planning.js");
+      if (!(await updatePlanningSessionTitle(sessionId, trimmedTitle))) {
+        throw notFound(`Planning session ${sessionId} not found`);
+      }
+      res.json({ sessionId, title: trimmedTitle });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to rename planning session");
+    }
+  });
+
   /**
    * POST /api/planning/:sessionId/summarize-draft-title
    * Generate (or regenerate) the sidebar title for a draft session from its
@@ -1144,10 +1171,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           // Keep fallback value below
         }
 
-        if (!initialPlan) {
-          initialPlan = persistedSession.title;
-        }
-
       }
 
       if (!summary) {
@@ -1164,10 +1187,21 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       column resolution. Omitting `column` lets the store resolve intake for the
       selected-or-default workflow (byte-identical "triage" for builtin:coding).
       */
+      /*
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 hands the validated lean plan to triage as task description plus a plan
+      document. The raw session request remains a separate original-description document.
+      */
+      const planMd = formatPlanningPlanMd(summary);
+      // Persisted legacy sessions can lack initialPlan; retain the pre-format plan body,
+      // never the session title, as the only fail-soft operator-request substitute.
+      const originalRequest = typeof initialPlan === "string" && initialPlan.trim()
+        ? initialPlan.trim()
+        : summary.description.trim();
       // Create the task
       const task = await scopedStore.createTask({
         title: summary.title,
-        description: summary.description,
+        description: planMd,
         dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
         source: { sourceType: "api" },
@@ -1185,6 +1219,19 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         await runPlanningCreateSideEffect(
           "Planning create-task size update failed",
           () => scopedStore.updateTask(task.id, { size: summary.suggestedSize }),
+          { taskId: task.id, sessionId },
+        );
+      }
+
+      await runPlanningCreateSideEffect(
+        "Planning create-task plan document write failed",
+        () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } }),
+        { taskId: task.id, sessionId },
+      );
+      if (originalRequest) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task original description document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }),
           { taskId: task.id, sessionId },
         );
       }
@@ -1396,6 +1443,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const tempIdToTaskId = new Map<string, string>();
 
       for (const item of mergedSubtasks) {
+        const itemDescription = typeof item.description === "string" ? item.description.trim() : item.title.trim();
+        const planMd = formatPlanningPlanMd({
+          title: item.title.trim(),
+          description: itemDescription,
+          suggestedSize: item.suggestedSize ?? session.summary.suggestedSize,
+          suggestedDependencies: item.dependsOn ?? [],
+          keyDeliverables: [itemDescription],
+        });
         const { workingBranch: taskBranch } = resolveEntryPointBranchAssignment({
           assignmentMode: branchMode,
           resolvedBranch,
@@ -1411,7 +1466,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         */
         const task = await scopedStore.createTask({
           title: item.title.trim(),
-          description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
+          description: planMd,
           dependencies: undefined,
           priority: isTaskPriority(item.priority) ? item.priority : DEFAULT_TASK_PRIORITY,
           source: { sourceType: "api", sourceMetadata: { planningSessionId } },
@@ -1427,6 +1482,26 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
         tempIdToTaskId.set(item.id, task.id);
         createdTasks.push(task);
+
+        await runPlanningCreateSideEffect(
+          "Planning create-tasks plan document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId, source: "planning-mode" } }),
+          { taskId: task.id, planningSessionId },
+        );
+        /*
+        FNXC:PlanningMode 2026-07-20-16:00:
+        Every breakdown child needs an original-description document. When a legacy
+        planning session lacks initialPlan, use that child’s pre-serialization brief
+        rather than silently omitting the request or substituting a session title.
+        */
+        const originalRequest = session.initialPlan.trim() || itemDescription;
+        if (originalRequest) {
+          await runPlanningCreateSideEffect(
+            "Planning create-tasks original description document write failed",
+            () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId, source: "planning-mode-initial-plan" } }),
+            { taskId: task.id, planningSessionId },
+          );
+        }
 
         if (item.suggestedSize === "S" || item.suggestedSize === "M" || item.suggestedSize === "L") {
           await runPlanningCreateSideEffect(
@@ -1525,6 +1600,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
       }
 
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A running summary is persisted after every interview turn, so it is catch-up state rather
+      than completion evidence. Reconnect must refresh that plan and continue into the current
+      awaiting-input question; only Validate writes `session.validated`, which authorizes a
+      terminal complete event and closes the stream.
+      */
       if (session.summary) {
         const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
         const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
@@ -1541,16 +1623,18 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
         }
 
-        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
-        const completeEventId = lastCompleteEvent?.id
-          ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
+        if (session.validated) {
+          const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+          const completeEventId = lastCompleteEvent?.id
+            ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
 
-        if (lastEventId === undefined || completeEventId > lastEventId) {
-          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          if (lastEventId === undefined || completeEventId > lastEventId) {
+            writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          }
+
+          res.end();
+          return;
         }
-
-        res.end();
-        return;
       }
 
       // First-connect catch-up should replay buffered thinking chunks so the

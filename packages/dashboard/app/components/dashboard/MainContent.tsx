@@ -448,6 +448,16 @@ export function MainContent({
               .then((task) => popOutTaskDetail(task))
               .catch(() => addToast?.("Failed to open task", "error"));
           }}
+          /*
+          FNXC:MailboxRelatedWork 2026-07-20-09:30:
+          FN-8428 planning-clarification messages must resume the exact session and make the
+          Planning surface visible. Opening only the modal-manager state would leave the mailbox
+          selected, hiding the session the operator needs to answer.
+          */
+          onOpenPlanningSession={(sessionId) => {
+            modalManager.openPlanningWithSession(sessionId);
+            handleChangeTaskView("planning");
+          }}
           onUnreadCountChange={setMailboxUnreadCount}
           onOpenNativeStructure={onOpenNativeStructure}
           nativeStructureCandidates={nativeStructureCandidates}

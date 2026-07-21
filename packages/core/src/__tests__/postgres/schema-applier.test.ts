@@ -73,8 +73,9 @@ import {
   MISSION_TASK_PREFIX_VERSION,
 
   TASK_VERIFICATION_REQUEST_VERSION,
+  TASK_DECLARED_SYMBOLS_VERSION,
 } from "../../postgres/schema-applier.js";
-import { rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
+import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
 
 const PG_ADMIN_URL =
@@ -205,17 +206,17 @@ describe("schema-applier: immutable migration identities", () => {
   });
 
   /*
-  FNXC:MissionTaskPrefix 2026-07-19-12:55:
-  0028 is the mission task-prefix migration after main claimed 0026/0027.
+  FNXC:MissionTaskPrefix 2026-07-20-12:00:
+  0029 is the mission task-prefix migration after main claimed 0026/0027/0028.
   */
-  it("registers mission task prefix at migration version 0028", () => {
-    expect(MISSION_TASK_PREFIX_VERSION).toBe("0028");
+  it("registers mission task prefix at migration version 0029", () => {
+    expect(MISSION_TASK_PREFIX_VERSION).toBe("0029");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(MISSION_TASK_PREFIX_VERSION));
     const applierSource = readFileSync(
       fileURLToPath(new URL("../../postgres/schema-applier.ts", import.meta.url)),
       "utf8",
     );
-    expect(applierSource).toContain("0028_mission_task_prefix.sql");
+    expect(applierSource).toContain("0029_mission_task_prefix.sql");
     expect(applierSource).toContain("MISSION_TASK_PREFIX_VERSION");
     expect(applierSource).toMatch(/applied\.includes\(\s*MISSION_TASK_PREFIX_VERSION\s*\)/);
   });
@@ -827,6 +828,37 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   failure mode, where a pre-fix binary re-ran the Ideas evacuation against a shared DB and
   the audit trail showed an unidentifiable writer).
   */
+  /*
+  FNXC:SymbolLock 2026-07-31-10:00:
+  Existing databases recorded through 0027 must receive the durable declaration
+  column before scheduler admission can resolve task-owned symbol keys.
+  */
+  it("upgrades an existing DB missing declared_symbols (0028)", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0028';
+      ALTER TABLE project.tasks DROP COLUMN declared_symbols;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT data_type, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'declared_symbols'
+    `)) as unknown as Array<{
+      data_type: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>;
+    expect(columns).toHaveLength(1);
+    expect(columns[0]).toMatchObject({ data_type: "jsonb", is_nullable: "NO" });
+    expect(columns[0].column_default).toContain("[]");
+    expect(await getAppliedMigrations(ctx.db)).toContain(TASK_DECLARED_SYMBOLS_VERSION);
+  });
+
   it("refuses to open a database migrated by a newer binary (stale-binary guard)", () => {
     const future = String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0");
     expect(() => assertBinaryNotOlderThanDatabase([SCHEMA_BASELINE_VERSION, future]))
@@ -848,7 +880,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect(() => assertBinaryNotOlderThanDatabase(["9"])).not.toThrow();
     expect(() => assertBinaryNotOlderThanDatabase(["0009"])).not.toThrow();
     // A genuinely newer version still throws regardless of padding.
-    expect(() => assertBinaryNotOlderThanDatabase(["0028"])).toThrow(StaleBinarySchemaError);
+    expect(() => assertBinaryNotOlderThanDatabase([String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0")])).toThrow(StaleBinarySchemaError);
   });
 
 
@@ -908,16 +940,16 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
 
   /*
   FNXC:MissionTaskPrefix 2026-07-19-12:53:
-  A target that already recorded 0000–0027 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930 / #2334).
+  A target that already recorded 0000–0028 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930 / #2334).
 
   FNXC:MissionTaskPrefix 2026-07-19-13:05:
-  Delete bookkeeping version 0028 (not 0026) so missionTaskPrefixAlreadyApplied is false and applySchemaBaseline re-runs 0028_mission_task_prefix.sql. 0026 is bigint counters; leaving 0028 recorded would skip the migration and leave the dropped column missing (greptile P1 on #2347).
+  Delete bookkeeping version 0029 so missionTaskPrefixAlreadyApplied is false and applySchemaBaseline re-runs 0029_mission_task_prefix.sql. Leaving 0029 recorded would skip the migration and leave the dropped column missing (greptile P1 on #2347).
   */
-  it("upgrades a pre-0028 database with missions.task_prefix", async () => {
+  it("upgrades a pre-0029 database with missions.task_prefix", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0028';
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0029';
       ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
     `));
 
@@ -1115,6 +1147,182 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
         AND project_id = 'registered-project'
         AND status = 'complete'
     `)).resolves.toHaveLength(1);
+  });
+
+  it("merges dual partitions fallback-wins with NULL-correct catalog unique rules", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql`
+      CREATE TABLE project.fn8419_null_unique_probe (project_id text NOT NULL, tag text, payload text NOT NULL);
+      CREATE UNIQUE INDEX fn8419_null_unique_probe_uq ON project.fn8419_null_unique_probe (project_id, tag);
+      INSERT INTO project.config(project_id, updated_at, settings)
+      VALUES ('local-fallback', 'fallback-time', '{"winner":"fallback"}'), ('registered-project', 'scaffold-time', '{"winner":"scaffold"}');
+      INSERT INTO project.fn8419_null_unique_probe(project_id, tag, payload)
+      VALUES ('local-fallback', 'same', 'fallback-wins'), ('registered-project', 'same', 'scaffold'), ('registered-project', NULL, 'must-survive');
+    `);
+
+    await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project")).resolves.toBe(true);
+    await expect(ctx.db.execute(sql`
+      SELECT project_id, tag, payload FROM project.fn8419_null_unique_probe ORDER BY tag NULLS FIRST
+    `)).resolves.toEqual([
+      { project_id: "registered-project", tag: null, payload: "must-survive" },
+      { project_id: "registered-project", tag: "same", payload: "fallback-wins" },
+    ]);
+    await expect(ctx.db.execute(sql`
+      SELECT settings FROM project.config WHERE project_id = 'registered-project'
+    `)).resolves.toEqual([{ settings: { winner: "fallback" } }]);
+    await expect(ctx.db.execute(sql`
+      SELECT count(*)::int AS count FROM project.config WHERE project_id = 'local-fallback'
+    `)).resolves.toEqual([{ count: 0 }]);
+  });
+
+  it("retains an inbound non-project dependent for each separate FK constraint", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql`
+      CREATE TABLE public.fn8419_external_dependents (
+        first_parent text,
+        second_parent text,
+        CONSTRAINT fn8419_first_parent_fk FOREIGN KEY (first_parent)
+          REFERENCES project.config(project_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        CONSTRAINT fn8419_second_parent_fk FOREIGN KEY (second_parent)
+          REFERENCES project.config(project_id) ON DELETE CASCADE ON UPDATE CASCADE
+      );
+      INSERT INTO project.config(project_id, updated_at, settings)
+      VALUES ('local-fallback', 'fallback-time', '{"winner":"fallback"}'), ('registered-project', 'scaffold-time', '{"winner":"scaffold"}');
+      INSERT INTO public.fn8419_external_dependents(first_parent, second_parent)
+      VALUES ('registered-project', NULL);
+    `);
+
+    await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project"))
+      .rejects.toMatchObject({
+        name: "ProjectPartitionRekeyError",
+        reason: "unreplaced-fk-dependent",
+      } satisfies Partial<ProjectPartitionRekeyError>);
+    await expect(ctx.db.execute(sql`
+      SELECT first_parent, second_parent FROM public.fn8419_external_dependents
+    `)).resolves.toEqual([{ first_parent: "registered-project", second_parent: null }]);
+    await expect(ctx.db.execute(sql`
+      SELECT project_id FROM project.config ORDER BY project_id
+    `)).resolves.toEqual([{ project_id: "local-fallback" }, { project_id: "registered-project" }]);
+  });
+
+  it("refuses deferred UPDATE SET NULL and SET DEFAULT partition mutations", async () => {
+    for (const [name, action] of [["set_null", "SET NULL"], ["set_default", "SET DEFAULT"]] as const) {
+      ctx = await setupFreshDb();
+      await applySchemaBaseline(ctx.db);
+      await ctx.db.execute(sql.raw(`
+        CREATE TABLE public.fn8419_${name}_dependent (
+          parent_id text DEFAULT 'local-fallback' REFERENCES project.config(project_id)
+            ON UPDATE ${action} DEFERRABLE INITIALLY DEFERRED
+        );
+        INSERT INTO project.config(project_id, updated_at, settings)
+        VALUES ('local-fallback', 'fallback-time', '{"winner":"fallback"}');
+        INSERT INTO public.fn8419_${name}_dependent(parent_id) VALUES ('local-fallback');
+      `));
+
+      await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project"))
+        .rejects.toMatchObject({
+          name: "ProjectPartitionRekeyError",
+          reason: "unsafe-fk-update-graph",
+        } satisfies Partial<ProjectPartitionRekeyError>);
+      await expect(ctx.db.execute(sql.raw(`SELECT parent_id FROM public.fn8419_${name}_dependent`)))
+        .resolves.toEqual([{ parent_id: "local-fallback" }]);
+      await teardownDb(ctx);
+      ctx = null;
+    }
+  });
+
+  it("allows a conflict-deletable registered child to be replaced before its parent", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql.raw(`
+      CREATE TABLE project.fn8419_replace_parent (project_id text PRIMARY KEY, payload text NOT NULL);
+      CREATE TABLE project.fn8419_replace_child (
+        project_id text PRIMARY KEY,
+        parent_id text NOT NULL REFERENCES project.fn8419_replace_parent(project_id)
+          ON DELETE RESTRICT ON UPDATE CASCADE,
+        payload text NOT NULL
+      );
+      INSERT INTO project.fn8419_replace_parent VALUES
+        ('local-fallback', 'fallback-parent'), ('registered-project', 'scaffold-parent');
+      INSERT INTO project.fn8419_replace_child VALUES
+        ('local-fallback', 'local-fallback', 'fallback-child'),
+        ('registered-project', 'registered-project', 'scaffold-child');
+    `));
+
+    await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project")).resolves.toBe(true);
+    await expect(ctx.db.execute(sql`SELECT project_id, parent_id, payload FROM project.fn8419_replace_child`))
+      .resolves.toEqual([{ project_id: "registered-project", parent_id: "registered-project", payload: "fallback-child" }]);
+  });
+
+  it("retains unreplaced registered dependents for every delete action", async () => {
+    for (const [name, deleteAction, childDefinition] of [
+      ["restrict", "RESTRICT", "parent_id text NOT NULL"],
+      ["cascade", "CASCADE", "parent_id text NOT NULL"],
+      ["set_null", "SET NULL", "parent_id text"],
+      ["set_default", "SET DEFAULT", "parent_id text NOT NULL DEFAULT 'registered-project'"],
+    ] as const) {
+      ctx = await setupFreshDb();
+      await applySchemaBaseline(ctx.db);
+      await ctx.db.execute(sql.raw(`
+        CREATE TABLE project.fn8419_delete_${name}_parent (project_id text PRIMARY KEY, payload text NOT NULL);
+        CREATE TABLE project.fn8419_delete_${name}_child (
+          project_id text PRIMARY KEY,
+          ${childDefinition} REFERENCES project.fn8419_delete_${name}_parent(project_id)
+            ON DELETE ${deleteAction} ON UPDATE CASCADE,
+          payload text NOT NULL
+        );
+        INSERT INTO project.fn8419_delete_${name}_parent VALUES
+          ('local-fallback', 'fallback'), ('registered-project', 'scaffold');
+        INSERT INTO project.fn8419_delete_${name}_child(project_id, parent_id, payload)
+          VALUES ('registered-project', 'registered-project', 'must-survive');
+      `));
+
+      await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project"))
+        .rejects.toMatchObject({ name: "ProjectPartitionRekeyError", reason: "unreplaced-fk-dependent" } satisfies Partial<ProjectPartitionRekeyError>);
+      await expect(ctx.db.execute(sql.raw(`SELECT project_id, parent_id, payload FROM project.fn8419_delete_${name}_child`)))
+        .resolves.toEqual([{ project_id: "registered-project", parent_id: "registered-project", payload: "must-survive" }]);
+      await expect(ctx.db.execute(sql.raw(`SELECT project_id FROM project.fn8419_delete_${name}_parent ORDER BY project_id`)))
+        .resolves.toEqual([{ project_id: "local-fallback" }, { project_id: "registered-project" }]);
+      await teardownDb(ctx);
+      ctx = null;
+    }
+  });
+
+  it("rejects unsafe fallback update FK graphs but permits deferred and cascade controls", async () => {
+    for (const [name, updateClause, expected] of [
+      ["unsafe", "ON UPDATE NO ACTION", "unsafe-fk-update-graph"],
+      ["deferred", "ON UPDATE NO ACTION DEFERRABLE INITIALLY DEFERRED", undefined],
+      ["cascade", "ON UPDATE CASCADE", undefined],
+    ] as const) {
+      ctx = await setupFreshDb();
+      await applySchemaBaseline(ctx.db);
+      await ctx.db.execute(sql.raw(`
+        CREATE TABLE project.fn8419_update_${name}_parent (
+          project_id text NOT NULL, id text NOT NULL, PRIMARY KEY(project_id, id)
+        );
+        CREATE TABLE project.fn8419_update_${name}_child (
+          project_id text NOT NULL, parent_id text NOT NULL,
+          PRIMARY KEY(project_id, parent_id),
+          FOREIGN KEY(project_id, parent_id) REFERENCES project.fn8419_update_${name}_parent(project_id, id) ${updateClause}
+        );
+        INSERT INTO project.fn8419_update_${name}_parent VALUES ('local-fallback', 'parent');
+        INSERT INTO project.fn8419_update_${name}_child VALUES ('local-fallback', 'parent');
+      `));
+      const rekey = rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project");
+      if (expected) {
+        await expect(rekey).rejects.toMatchObject({ name: "ProjectPartitionRekeyError", reason: expected } satisfies Partial<ProjectPartitionRekeyError>);
+        await expect(ctx.db.execute(sql.raw(`SELECT project_id FROM project.fn8419_update_${name}_child`)))
+          .resolves.toEqual([{ project_id: "local-fallback" }]);
+      } else {
+        await expect(rekey).resolves.toBe(true);
+        await expect(ctx.db.execute(sql.raw(`SELECT project_id FROM project.fn8419_update_${name}_child`)))
+          .resolves.toEqual([{ project_id: "registered-project" }]);
+      }
+      await teardownDb(ctx);
+      ctx = null;
+    }
   });
 
   it("quarantines ownerless rows when complete and failed migrations name different projects", async () => {
@@ -1409,6 +1617,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      TASK_DECLARED_SYMBOLS_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1463,6 +1672,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      TASK_DECLARED_SYMBOLS_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1650,6 +1860,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      TASK_DECLARED_SYMBOLS_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1718,6 +1929,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      TASK_DECLARED_SYMBOLS_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1786,6 +1998,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SYMBOL_LOCKS_SCHEMA_VERSION,
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+      TASK_DECLARED_SYMBOLS_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });

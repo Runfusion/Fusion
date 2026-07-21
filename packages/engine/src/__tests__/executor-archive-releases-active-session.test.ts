@@ -165,3 +165,54 @@ describe("archiving a task releases its active-session registry entries (FN-7717
     ).not.toThrow();
   });
 });
+
+describe("workflow graph column boundaries do not abort their own run", () => {
+  it.each(["triage", "in-review"] as const)(
+    "keeps the graph runner alive across in-progress → %s",
+    async (to) => {
+      const { executor, store } = makeExecutor();
+      const task = { id: `TASK-GRAPH-${to}`, column: to } as any;
+      const abortSpy = vi
+        .spyOn(executor as any, "awaitAbortInFlightTaskWork")
+        .mockResolvedValue(undefined);
+      (store as any).moveTask = vi.fn(async (_taskId: string, column: string) => {
+        store.emit("task:moved", {
+          task: { ...task, column },
+          from: "in-progress",
+          to: column,
+          source: "engine",
+        });
+      });
+
+      (executor as any).graphRouting.add(task.id);
+      try {
+        await (executor as any).buildColumnBoundaryHooks(task).moveTask(to, {
+          fromColumn: "in-progress",
+          nodeId: to === "triage" ? "plan-replan" : "review",
+        });
+        await Promise.resolve();
+
+        expect(abortSpy).not.toHaveBeenCalled();
+      } finally {
+        (executor as any).graphRouting.delete(task.id);
+      }
+    },
+  );
+
+  it("still aborts an external engine move away from in-progress", async () => {
+    const { executor, store } = makeExecutor();
+    const abortSpy = vi
+      .spyOn(executor as any, "awaitAbortInFlightTaskWork")
+      .mockResolvedValue(undefined);
+
+    store.emit("task:moved", {
+      task: { id: "TASK-EXTERNAL", column: "todo" },
+      from: "in-progress",
+      to: "todo",
+      source: "engine",
+    });
+    await Promise.resolve();
+
+    expect(abortSpy).toHaveBeenCalledOnce();
+  });
+});

@@ -7,6 +7,9 @@
  */
 import { execFileSync } from "node:child_process";
 
+const BOUNDED_GIT_DIFF_TIMEOUT_MS = 5_000;
+const BOUNDED_GIT_DIFF_MAX_BUFFER = 10 * 1024 * 1024;
+
 
 export function parseFailingFilesFromOutput(output: string): string[] {
   const paths = new Set<string>();
@@ -86,6 +89,11 @@ export function quoteArg(value: string): string {
  * quoting on Windows cmd.exe, and parse NUL-delimited paths so whitespace/
  * newlines in filenames are preserved. Empty array on git errors (unknown).
  *
+ * FNXC:EngineAsyncInvariant 2026-07-29-00:00:
+ * This data-dependent git diff remains short plumbing only with an explicit
+ * wall-clock timeout and bounded output. Do not remove either bound or add an
+ * unbounded synchronous shellout on the engine's shared event loop.
+ *
  * @internal Exported for testing only.
  */
 export function getBranchChangedFiles(rootDir: string, baseBranch: string, branch: string): string[] {
@@ -94,7 +102,13 @@ export function getBranchChangedFiles(rootDir: string, baseBranch: string, branc
     const output = execFileSync(
       "git",
       ["diff", "--name-only", "-z", `${baseBranch}...${headRef}`],
-      { cwd: rootDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd: rootDir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: BOUNDED_GIT_DIFF_TIMEOUT_MS,
+        maxBuffer: BOUNDED_GIT_DIFF_MAX_BUFFER,
+      },
     );
     return String(output).split("\0").map((f) => f.trim()).filter(Boolean);
   } catch {

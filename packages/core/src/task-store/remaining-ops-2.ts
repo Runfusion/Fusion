@@ -21,7 +21,7 @@ import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workf
 import "../builtin-traits.js";
 import {validateBranchGroupBranchName} from "../branch-assignment.js";
 import {toJson} from "../db.js";
-import {findSameAgentDuplicates} from "../duplicate-intake.js";
+import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
@@ -61,7 +61,7 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
-      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
@@ -208,51 +208,9 @@ export async function writeConfigImpl(store: TaskStore, config: BoardConfig, opt
   }
 
 export async function _maybeAutoArchiveSameAgentDuplicateBackendImpl(store: TaskStore, task: Task, input: TaskCreateInput,): Promise<void> {
-    const sourceAgentId = task.sourceAgentId ?? null;
-    const sourceParentTaskId = task.sourceParentTaskId ?? null;
-    if (!sourceAgentId && !sourceParentTaskId) return;
-
-    try {
-      const nowMs = Date.now();
-      const recent = (await store.listTasks({ slim: true, includeArchived: false })).filter((candidate) => {
-        if (candidate.id === task.id) return false;
-        const createdMs = Date.parse(candidate.createdAt);
-        if (Number.isNaN(createdMs)) return false;
-        if (createdMs < nowMs - 24 * 60 * 60 * 1000) return false;
-        const agentMatch = sourceAgentId != null && candidate.sourceAgentId === sourceAgentId;
-        const parentMatch = sourceParentTaskId != null && candidate.sourceParentTaskId === sourceParentTaskId;
-        return agentMatch || parentMatch;
-      });
-
-      const matches = findSameAgentDuplicates(
-        {
-          title: input.title ?? task.title,
-          description: input.description,
-          sourceParentTaskId,
-        },
-        recent.map((candidate) => ({
-          id: candidate.id,
-          title: candidate.title ?? "",
-          description: candidate.description,
-          column: candidate.column,
-          createdAt: Date.parse(candidate.createdAt),
-          sourceAgentId: candidate.sourceAgentId ?? null,
-          sourceParentTaskId: candidate.sourceParentTaskId ?? null,
-          tombstoned: false,
-        })),
-      );
-
-      for (const match of matches) {
-        try {
-          await store.deleteTask(match.id, { removeLineageReferences: true });
-        } catch {
-          // Best-effort dedup cleanup.
-        }
-      }
-    } catch {
-      // Best-effort; never fail task creation on dedup check.
-    }
-  }
+  // Keep the production backend as wiring only: policy lives in the shared resolver.
+  return resolveSameAgentDuplicateIntake(store, task, input);
+}
 
 export async function updateBranchGroupImpl(store: TaskStore, id: string, patch: BranchGroupUpdate): Promise<BranchGroup> {
     if (store.backendMode) {

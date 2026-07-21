@@ -19,7 +19,10 @@ import { describe, expect, it } from "vitest";
  * - packages/engine/src/sandbox/bubblewrap-backend.ts :: BubblewrapBackend.runBwrapSpawn — concrete bubblewrap spawn path uses setTimeout(options.timeoutMs) and options.maxBuffer.
  * - packages/engine/src/sandbox/sandbox-exec-backend.ts :: SandboxExecBackend.run — macOS isolating backend uses async exec with timeout, maxBuffer, and signal.
  *
- * Explicit exclusions: git-only execSync in merger.ts, self-healing.ts, already-merged-detector.ts, integration-branch.ts, worktree-prune.ts, and executor.ts git merge-base ancestry checks. The guard slices only registry function bodies instead of asserting over whole files.
+ * Explicit exclusions: audited short git plumbing is enforced call-site-by-call-site
+ * by engine-no-blocking-shellout.test.ts (including review-checkout.ts and bounded
+ * data-dependent git diffs). This focused registry slices only user-command
+ * function bodies instead of asserting over whole files.
  */
 
 type GuardEntry = {

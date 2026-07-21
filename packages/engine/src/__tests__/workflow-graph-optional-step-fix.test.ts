@@ -178,6 +178,44 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
   });
 
+  it("does not hard-cancel the graph that performs its own Plan Review replan move", async () => {
+    const store = createMockStore();
+    const liveTask = task({ postReviewFixCount: 0, column: "in-progress", status: null });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const abortSpy = vi
+      .spyOn(executor as any, "awaitAbortInFlightTaskWork")
+      .mockResolvedValue(undefined);
+    store.moveTask.mockImplementation(async (_taskId: string, column: string) => {
+      await (store as any)._triggerAsync("task:moved", {
+        task: { ...liveTask, column },
+        from: "in-progress",
+        to: column,
+        source: "engine",
+      });
+      return { ...liveTask, column };
+    });
+
+    (executor as any).graphRouting.add(liveTask.id);
+    try {
+      await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+        stepName: "Plan Review",
+        feedback: "PROMPT.md needs a revision",
+        phase: "pre-merge" as const,
+        status: "failed" as const,
+        verdict: "REVISE",
+        nodeId: "plan-review",
+      });
+
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+      expect(abortSpy).not.toHaveBeenCalled();
+      expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
+    } finally {
+      (executor as any).graphRouting.delete(liveTask.id);
+    }
+  });
+
   it("honors Plan Review workflow-setting caps before automatic replan", async () => {
     const zeroStore = createMockStore();
     const zeroTask = task({ postReviewFixCount: 0, column: "in-progress" });

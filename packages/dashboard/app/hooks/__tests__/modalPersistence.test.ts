@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   STORED_PLANNING_KEY,
+  STORED_PLANNING_ACTIVE_SESSION_KEY,
   STORED_SUBTASK_KEY,
   STORED_MISSION_KEY,
   savePlanningDescription,
   getPlanningDescription,
   clearPlanningDescription,
+  savePlanningActiveSession,
+  getPlanningActiveSession,
+  clearPlanningActiveSession,
   saveSubtaskDescription,
   getSubtaskDescription,
   clearSubtaskDescription,
@@ -23,6 +27,10 @@ describe("modalPersistence", () => {
   describe("Storage keys are exported", () => {
     it("exports planning key", () => {
       expect(STORED_PLANNING_KEY).toBe("kb-planning-last-description");
+    });
+
+    it("exports planning active-session key", () => {
+      expect(STORED_PLANNING_ACTIVE_SESSION_KEY).toBe("kb-planning-active-session");
     });
 
     it("exports subtask key", () => {
@@ -74,6 +82,16 @@ describe("modalPersistence", () => {
       savePlanningDescription("First");
       savePlanningDescription("Second");
       expect(getPlanningDescription()).toBe("Second");
+    });
+  });
+
+  describe("Planning active-session persistence", () => {
+    it("saves, reads, and clears an active session per project", () => {
+      savePlanningActiveSession("planning-123", "proj-123");
+      expect(getPlanningActiveSession("proj-123")).toBe("planning-123");
+      expect(getPlanningActiveSession("proj-other")).toBe("");
+      clearPlanningActiveSession("proj-123");
+      expect(getPlanningActiveSession("proj-123")).toBe("");
     });
   });
 

@@ -71,6 +71,7 @@ describe("update-check", () => {
       latestVersion: "0.8.3",
       updateAvailable: false,
       lastChecked: expect.any(Number),
+      channel: "stable",
     });
   });
 
@@ -190,7 +191,9 @@ describe("update-check", () => {
 
     const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
 
-    expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@latest", {
+    // FNXC:UpdateChannels 2026-07-19-13:40: installs pin the exact resolved
+    // version so a beta-channel install can never silently land on `latest`.
+    expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@2.0.0", {
       timeout: 300_000,
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -210,8 +213,8 @@ describe("update-check", () => {
     const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
 
     expect(execFake).toHaveBeenCalledTimes(2);
-    expect(execFake).toHaveBeenNthCalledWith(1, "npm install -g @runfusion/fusion@latest", expect.any(Object));
-    expect(execFake).toHaveBeenNthCalledWith(2, "npm install --force -g @runfusion/fusion@latest", expect.any(Object));
+    expect(execFake).toHaveBeenNthCalledWith(1, "npm install -g @runfusion/fusion@2.0.0", expect.any(Object));
+    expect(execFake).toHaveBeenNthCalledWith(2, "npm install --force -g @runfusion/fusion@2.0.0", expect.any(Object));
     expect(result).toEqual({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true });
   });
 
@@ -244,7 +247,7 @@ describe("update-check", () => {
       updated: false,
       error: expect.stringMatching(/timed out after 5 minutes.*terminal/i),
     });
-    expect(result.error).toContain("npm install -g @runfusion/fusion@latest");
+    expect(result.error).toContain("npm install -g @runfusion/fusion@2.0.0");
     expect(result.error).not.toContain("npm install --force");
     expect(result.error).not.toContain("deprecated");
   });
@@ -261,7 +264,7 @@ describe("update-check", () => {
 
     expect(execFake).toHaveBeenCalledTimes(2);
     expect(result.error).toMatch(/timed out after 5 minutes.*terminal/i);
-    expect(result.error).toContain("npm install --force -g @runfusion/fusion@latest");
+    expect(result.error).toContain("npm install --force -g @runfusion/fusion@2.0.0");
     expect(result.error).not.toContain("deprecated");
   });
 
@@ -407,6 +410,7 @@ describe("update-check", () => {
         latestVersion: null,
         updateAvailable: false,
         lastChecked: expect.any(Number),
+        channel: "stable",
       });
 
       // force=true (used by /update-check/refresh) overrides manual.
@@ -461,5 +465,143 @@ describe("update-check", () => {
     const cachedRaw = await readFile(join(fusionDir, "update-check.json"), "utf-8");
 
     expect(JSON.parse(cachedRaw)).toEqual(result);
+  });
+
+  /*
+  FNXC:UpdateChannels 2026-07-19-13:40:
+  Channel behavior invariants across all update surfaces:
+  - stable NEVER sees the beta dist-tag;
+  - beta resolves semver-max(latest, beta) so a promoted stable overtakes a beta;
+  - prerelease ordering is real semver (0.73.0-beta.2 < -beta.3 < 0.73.0);
+  - a cache written for another channel is never served.
+  */
+  describe("release channels", () => {
+    const stubTags = (tags: Record<string, string>) => {
+      const fetchSpy = vi.fn().mockResolvedValue({ json: async () => ({ "dist-tags": tags }) });
+      vi.stubGlobal("fetch", fetchSpy);
+      return fetchSpy;
+    };
+
+    it("stable channel ignores the beta dist-tag entirely", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.2" });
+
+      const result = await performUpdateCheck(fusionDir, "0.72.0", { channel: "stable", force: true });
+
+      expect(result.latestVersion).toBe("0.72.0");
+      expect(result.updateAvailable).toBe(false);
+      expect(result.channel).toBe("stable");
+    });
+
+    it("beta channel offers the beta when it is ahead of latest", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.2" });
+
+      const result = await performUpdateCheck(fusionDir, "0.72.0", { channel: "beta", force: true });
+
+      expect(result.latestVersion).toBe("0.73.0-beta.2");
+      expect(result.updateAvailable).toBe(true);
+      expect(result.channel).toBe("beta");
+    });
+
+    it("beta channel offers a promoted stable once it overtakes the beta", async () => {
+      stubTags({ latest: "0.73.0", beta: "0.73.0-beta.4" });
+
+      const result = await performUpdateCheck(fusionDir, "0.73.0-beta.4", { channel: "beta", force: true });
+
+      expect(result.latestVersion).toBe("0.73.0");
+      expect(result.updateAvailable).toBe(true);
+    });
+
+    it("orders prerelease identifiers numerically (beta.2 < beta.10)", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.10" });
+
+      const result = await performUpdateCheck(fusionDir, "0.73.0-beta.2", { channel: "beta", force: true });
+
+      expect(result.latestVersion).toBe("0.73.0-beta.10");
+      expect(result.updateAvailable).toBe(true);
+    });
+
+    it("does not offer a stable release below the running beta (no downgrade)", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.1" });
+
+      const result = await performUpdateCheck(fusionDir, "0.73.0-beta.1", { channel: "beta", force: true });
+
+      expect(result.latestVersion).toBe("0.73.0-beta.1");
+      expect(result.updateAvailable).toBe(false);
+    });
+
+    it("stable channel does not report a running beta as updatable to an older stable", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.1" });
+
+      const result = await performUpdateCheck(fusionDir, "0.73.0-beta.1", { channel: "stable", force: true });
+
+      expect(result.latestVersion).toBe("0.72.0");
+      expect(result.updateAvailable).toBe(false);
+    });
+
+    it("ignores a fresh cache written for a different channel", async () => {
+      const cached: UpdateCheckResult = {
+        currentVersion: "0.72.0",
+        latestVersion: "0.72.0",
+        updateAvailable: false,
+        lastChecked: Date.now(),
+        channel: "stable",
+      };
+      await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(cached), "utf-8");
+
+      const fetchSpy = stubTags({ latest: "0.72.0", beta: "0.73.0-beta.1" });
+      const result = await performUpdateCheck(fusionDir, "0.72.0", { channel: "beta" });
+
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(result.latestVersion).toBe("0.73.0-beta.1");
+      expect(result.updateAvailable).toBe(true);
+    });
+
+    it("treats a channel-less legacy cache as stable", async () => {
+      const cached: UpdateCheckResult = {
+        currentVersion: "0.72.0",
+        latestVersion: "0.72.1",
+        updateAvailable: true,
+        lastChecked: Date.now(),
+      };
+      await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(cached), "utf-8");
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const result = await performUpdateCheck(fusionDir, "0.72.0", { channel: "stable" });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result).toEqual(cached);
+    });
+
+    it("pins the beta version in the install command", async () => {
+      const execFake = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+      await performUpdateInstall("0.72.0", "0.73.0-beta.2", { exec: execFake, fusionDir });
+
+      expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@0.73.0-beta.2", expect.any(Object));
+    });
+
+    // FNXC:UpdateChannels 2026-07-19-16:20: the exec path is only reachable
+    // with a strict-semver-shaped target — no null fallback to @latest (which
+    // would cross release tracks) and no registry-poisoned shell input.
+    it("refuses to install when no target version resolved (no @latest fallback)", async () => {
+      const execFake = vi.fn();
+
+      const result = await performUpdateInstall("0.72.0", null, { exec: execFake, fusionDir });
+
+      expect(execFake).not.toHaveBeenCalled();
+      expect(result.updated).toBe(false);
+      expect(result.error).toContain("No valid update target version");
+    });
+
+    it("refuses to install a non-semver registry value (shell-injection hardening)", async () => {
+      const execFake = vi.fn();
+
+      const result = await performUpdateInstall("0.72.0", "1.2.3; rm -rf ~", { exec: execFake, fusionDir });
+
+      expect(execFake).not.toHaveBeenCalled();
+      expect(result.updated).toBe(false);
+      expect(result.error).toContain("No valid update target version");
+    });
   });
 });

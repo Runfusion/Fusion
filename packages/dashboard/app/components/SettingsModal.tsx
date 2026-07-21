@@ -491,7 +491,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   Import auto-translation lives in Project General beside the other import-scoped GitHub settings, but operators look for it by what it DOES ("translate", "language", "auto translate issues"), not by the section it happens to live in.
   FNXC:SettingsSearch 2026-07-15-19:10: the per-setting index now matches these controls on their own label and help text, so the terms that merely restate the copy are no longer load-bearing. The list is kept for the genuine vocabulary gaps — "localize", "localization", "foreign language issues" — which appear nowhere in the copy, and because unmigrated siblings in this section still rely on section-level keywords.
   */
-  { id: "general", label: "General · Project", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"], searchableKeys: ["settings.general.autoTranslateImportedIssues", "settings.general.autoTranslateImportedIssuesHelp", "settings.general.translationTargetLanguage", "settings.general.translationTargetLanguageHelp", "settings.general.followDashboardLanguage"] },
+  { id: "general", label: "General · Project", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization", "report", "report bug", "send feedback", "share idea", "get help"], searchableKeys: ["settings.general.autoTranslateImportedIssues", "settings.general.autoTranslateImportedIssuesHelp", "settings.general.translationTargetLanguage", "settings.general.translationTargetLanguageHelp", "settings.general.followDashboardLanguage"] },
   { id: "commands", label: "Commands & Scripts", labelKey: "settings.nav.commands", scope: "project", searchableText: ["test command", "build command", "verification command", "workflow scripts", "commands"] },
   { id: "worktrees", label: "Worktrees", labelKey: "settings.nav.worktrees", scope: "project", searchableText: ["worktree directory", "copy files", "recycle worktrees", "branch naming", "sibling branch rename"] },
   { id: "merge", label: "Merge", labelKey: "settings.nav.merge", scope: "project", searchableText: ["auto merge", "AI merge", "merge strategy", "plan approval", "direct merge", "integration branch", "push after merge"] },
@@ -811,7 +811,7 @@ type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 
 /** Local form state extends Settings with a worktreeInitCommand override and lets tokenCap carry null (delete semantic). */
 type SettingsFormState = Settings & { worktreeInitCommand?: string; tokenCap?: number | null };
-type GlobalGitlabSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType">;
+type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo">;
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -1129,10 +1129,22 @@ export function SettingsModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
   const workflowLaneSaverRef = useRef<SectionSaveHandler | null>(null);
+  /*
+  FNXC:SettingsAutoSave 2026-08-03-01:00:
+  Workflow lane edits live outside the shared Settings form. Track their revision
+  alongside form dirtiness so Option 1 auto-save and every close path flush them
+  too; a completion only clears the revision it actually persisted.
+  */
+  const workflowLaneRevisionRef = useRef(0);
+  const [workflowLanesDirty, setWorkflowLanesDirty] = useState(false);
+  const markWorkflowLanesDirty = useCallback(() => {
+    workflowLaneRevisionRef.current += 1;
+    setWorkflowLanesDirty(true);
+  }, []);
   const registerWorkflowLaneSaver = useCallback((saver: SectionSaveHandler | null) => {
     /*
     FNXC:ProjectModelsWorkflowLanes 2026-07-14-09:07:
-    Project Models workflow lane edits are workflow setting-values, not normal project settings. Keep the latest saver registered across section unmounts so the primary Settings Save still flushes project-scoped workflow overrides when operators navigate away before saving.
+    Project Models workflow lane edits are workflow setting-values, not normal project settings. Keep the latest saver registered across section unmounts so auto-save and close flushing retain project-scoped workflow overrides after navigation.
     */
     if (saver) {
       workflowLaneSaverRef.current = saver;
@@ -1202,13 +1214,23 @@ export function SettingsModal({
   const [loading, setLoading] = useState(true);
   // Guards the Save action against double-submit (rapid clicks / Enter) while the
   // parallel global+project writes are in flight.
-  const [isSaving, setIsSaving] = useState(false);
+  const [, setIsSaving] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoSaveReady, setAutoSaveReady] = useState(false);
+  const autoSaveActivationSnapshotRef = useRef<string | null>(null);
+  const persistInFlightRef = useRef(false);
+  const trailingPersistRef = useRef(false);
+  const lastPersistSucceededRef = useRef(true);
+  const persistSettingsRef = useRef<(() => Promise<boolean>) | null>(null);
+  const latestAutoSaveStateRef = useRef({ dirty: false, changed: false });
+  const requestSectionChangeRef = useRef<((sectionId: SectionId) => void) | null>(null);
   // Track initial values to detect explicit clears for null-as-delete semantics
   const [initialValues, setInitialValues] = useState<Settings | null>(null);
   // Track scoped settings for inheritance detection (fetched alongside merged settings)
   // This stores the raw { global, project } structure from the API
   const [scopedSettings, setScopedSettings] = useState<{ global: GlobalSettings; project: Partial<Settings> } | null>(null);
-  const [globalGitlabSettings, setGlobalGitlabSettings] = useState<GlobalGitlabSettings | null>(null);
+  const [globalGitlabSettings, setGlobalGitlabSettings] = useState<GlobalSourceControlSettings | null>(null);
   // Track initial scoped values for null-as-delete semantics on project overrides
   const [initialScopedValues, setInitialScopedValues] = useState<{ global: GlobalSettings; project: Partial<Settings> } | null>(null);
   const mcpFormForScope = useCallback((scope: McpSettingsScope): Settings => ({
@@ -1339,6 +1361,7 @@ export function SettingsModal({
   const [overlapPathPickerIndex, setOverlapPathPickerIndex] = useState<number | null>(null);
   const [worktreesDirPickerOpen, setWorktreesDirPickerOpen] = useState(false);
   const [worktreeCopyFilePickerIndex, setWorktreeCopyFilePickerIndex] = useState<number | null>(null);
+
   /*
   FNXC:SettingsReset 2026-07-04-00:20:
   Reset Settings confirmation dialog state (FN-7506). `resetInFlight` guards both
@@ -1447,7 +1470,14 @@ export function SettingsModal({
     // Claims the upcoming section change so the scroll-to-top below yields to the
     // jump; otherwise the row we just scrolled to would be scrolled away from.
     settingsJumpPendingRef.current = true;
-    setActiveSection(sectionId);
+    /*
+    FNXC:SettingsAutoSave 2026-08-03-00:00:
+    Search navigation is an operator-initiated section change too. Route it
+    through the same flush path as sidebar/mobile navigation so a pending edit
+    to raw global GitLab fields cannot be re-scoped as a project save after the
+    search changes activeSection.
+    */
+    requestSectionChangeRef.current?.(sectionId as SectionId);
     setHighlightedSettingKey(key);
   }, []);
 
@@ -1768,6 +1798,9 @@ export function SettingsModal({
           gitlabApiBaseUrl: scoped.global.gitlabApiBaseUrl,
           gitlabAuthToken: scoped.global.gitlabAuthToken,
           gitlabAuthTokenType: scoped.global.gitlabAuthTokenType,
+          reportRoadmapDedupeEnabled: scoped.global.reportRoadmapDedupeEnabled,
+          reportRoadmapLabel: scoped.global.reportRoadmapLabel,
+          reportRoadmapRepo: scoped.global.reportRoadmapRepo,
         });
         setInitialScopedValues({
           ...scoped,
@@ -2985,21 +3018,6 @@ export function SettingsModal({
     }
   }, [favoriteModels, favoriteProviders]);
 
-  // Modal-only: Escape dismisses the dialog. Embedded view is navigated away via the left sidebar, not Escape.
-  // FNXC:SettingsReset 2026-07-04-00:30: Skipped while the Reset Settings confirmation dialog is
-  // open so Escape closes only that dialog (its own listener below), not the whole Settings modal.
-  useEffect(() => {
-    if (!escapeEnabled) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !resetDialogOpen) onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose, escapeEnabled, resetDialogOpen]);
-
-  // Modal-only: backdrop click dismisses. Embedded view has no overlay backdrop.
-  const modalOverlayDismissProps = useOverlayDismiss(onClose);
-  const overlayDismissProps = overlayDismissEnabled ? modalOverlayDismissProps : {};
 
   /**
    * Lane status types:
@@ -3398,38 +3416,66 @@ export function SettingsModal({
     });
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (isSaving) return;
-    if (prefixError || presetDraft) return;
+  /*
+  FNXC:SettingsAutoSave 2026-08-02-12:00:
+  FN-8395 implements issue #2343 Option 1: form-backed Settings persist through
+  this debounced single-flight path, never a Save button or dirty-leave prompt.
+  Each request works from a captured render snapshot and advances only matching
+  baselines, so an older response cannot erase a newer edit.
+  */
+  const persistSettings = useCallback(async (): Promise<boolean> => {
+    if (persistInFlightRef.current) {
+      trailingPersistRef.current = true;
+      return false;
+    }
+    if (prefixError || presetDraft) {
+      lastPersistSucceededRef.current = false;
+      return false;
+    }
 
-    const limits = form.researchSettings?.limits;
+    const formSnapshot = form;
+    const scopedSettingsSnapshot = scopedSettings;
+    const initialValuesSnapshot = initialValues;
+    const initialScopedValuesSnapshot = initialScopedValues;
+    const globalMaxConcurrentSnapshot = globalMaxConcurrent;
+    const activeSectionSnapshot = activeSection;
+    const globalGitlabSettingsSnapshot = globalGitlabSettings;
+    const workflowLaneRevisionSnapshot = workflowLaneRevisionRef.current;
+    const limits = formSnapshot.researchSettings?.limits;
     if (limits?.maxConcurrentRuns !== undefined && (!Number.isFinite(limits.maxConcurrentRuns) || limits.maxConcurrentRuns < 1)) {
       setResearchLimitError("Research max concurrent runs must be at least 1.");
-      return;
+      lastPersistSucceededRef.current = false;
+      return false;
     }
     if (limits?.maxSourcesPerRun !== undefined && (!Number.isFinite(limits.maxSourcesPerRun) || limits.maxSourcesPerRun < 1)) {
       setResearchLimitError("Research max sources per run must be at least 1.");
-      return;
+      lastPersistSucceededRef.current = false;
+      return false;
     }
     if (limits?.maxDurationMs !== undefined && (!Number.isFinite(limits.maxDurationMs) || limits.maxDurationMs < 1000)) {
       setResearchLimitError("Research max duration must be at least 1000 ms.");
-      return;
+      lastPersistSucceededRef.current = false;
+      return false;
     }
     if (limits?.requestTimeoutMs !== undefined && (!Number.isFinite(limits.requestTimeoutMs) || limits.requestTimeoutMs < 1000)) {
       setResearchLimitError("Research request timeout must be at least 1000 ms.");
-      return;
+      lastPersistSucceededRef.current = false;
+      return false;
     }
     setResearchLimitError(null);
 
-    const shortcutValidationError = describeShortcutValidation(form.dashboardKeyboardShortcuts ?? {});
+    const shortcutValidationError = describeShortcutValidation(formSnapshot.dashboardKeyboardShortcuts ?? {});
     if (shortcutValidationError) {
       addToast(shortcutValidationError, "error");
-      return;
+      lastPersistSucceededRef.current = false;
+      return false;
     }
 
+    persistInFlightRef.current = true;
     setIsSaving(true);
+    setAutoSaveStatus("saving");
     try {
-      const normalizedWorktreeCopyFiles = normalizeWorktreeCopyFilesForSave(form.worktreeCopyFiles);
+      const normalizedWorktreeCopyFiles = normalizeWorktreeCopyFilesForSave(formSnapshot.worktreeCopyFiles);
       /*
       FNXC:WindowsTerminalStartup 2026-07-04-06:30:
       Worktrunk status is now only auto-probed once the integration is enabled, so a
@@ -3440,43 +3486,43 @@ export function SettingsModal({
       that fresh result instead.
       */
       let worktrunkVerifiedForSave = worktrunkInstallVerified;
-      if (form.worktrunk?.enabled === true && !worktrunkVerifiedForSave) {
+      if (formSnapshot.worktrunk?.enabled === true && !worktrunkVerifiedForSave) {
         const freshWorktrunkStatus = await worktrunkInstall.refresh();
         worktrunkVerifiedForSave = freshWorktrunkStatus.status === "installed";
       }
       /*
       FNXC:GitLabEnablement 2026-07-02-00:00:
-      The global source-control section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
+      The global source-control section must edit raw global GitLab settings, not the merged project-effective formSnapshot. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
 
       FNXC:SourceControl 2026-07-15-20:30:
       Section id moved with the controls (was "global-general"). This must name whichever section renders the global GitLab rows: a stale id here would send the merged, project-effective values to the global patch — the exact overwrite the scoped-state indirection exists to prevent.
       */
-      const gitlabFormForSave = activeSection === "source-control-global" && globalGitlabSettings ? globalGitlabSettings : form;
+      const gitlabFormForSave = activeSectionSnapshot === "source-control-global" && globalGitlabSettingsSnapshot ? globalGitlabSettingsSnapshot : formSnapshot;
       const payload = {
-        ...form,
-        worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
-        worktreesDir: form.worktreesDir?.trim() || undefined,
+        ...formSnapshot,
+        worktreeInitCommand: formSnapshot.worktreeInitCommand?.trim() || undefined,
+        worktreesDir: formSnapshot.worktreesDir?.trim() || undefined,
         worktrunk: {
-          enabled: worktrunkVerifiedForSave && form.worktrunk?.enabled === true,
-          binaryPath: form.worktrunk?.binaryPath?.trim() || undefined,
-          onFailure: form.worktrunk?.onFailure ?? "fail",
+          enabled: worktrunkVerifiedForSave && formSnapshot.worktrunk?.enabled === true,
+          binaryPath: formSnapshot.worktrunk?.binaryPath?.trim() || undefined,
+          onFailure: formSnapshot.worktrunk?.onFailure ?? "fail",
         },
-        maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(form),
-        executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryCount, 2),
-        executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryBackoffMs, 2000),
-        executorToolFailureThreshold: Math.max(1, Math.floor(Number(form.executorToolFailureThreshold ?? 3) || 3)),
-        executorModelEscalationEnabled: form.executorModelEscalationEnabled === true,
-        executorEscalationProvider: form.executorEscalationProvider?.trim() || undefined,
-        executorEscalationModelId: form.executorEscalationModelId?.trim() || undefined,
-        executorEscalationNodeId: form.executorEscalationNodeId?.trim() || undefined,
-        taskPrefix: form.taskPrefix?.trim() || undefined,
-        githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
+        maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(formSnapshot),
+        executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(formSnapshot.executorToolFailureRetryCount, 2),
+        executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(formSnapshot.executorToolFailureRetryBackoffMs, 2000),
+        executorToolFailureThreshold: Math.max(1, Math.floor(Number(formSnapshot.executorToolFailureThreshold ?? 3) || 3)),
+        executorModelEscalationEnabled: formSnapshot.executorModelEscalationEnabled === true,
+        executorEscalationProvider: formSnapshot.executorEscalationProvider?.trim() || undefined,
+        executorEscalationModelId: formSnapshot.executorEscalationModelId?.trim() || undefined,
+        executorEscalationNodeId: formSnapshot.executorEscalationNodeId?.trim() || undefined,
+        taskPrefix: formSnapshot.taskPrefix?.trim() || undefined,
+        githubTrackingDefaultRepo: formSnapshot.githubTrackingDefaultRepo?.trim() || undefined,
         /*
         FNXC:DashboardShortcuts 2026-07-04-00:00:
         FN-7553 normalizes every declared shortcut action (derived from resolveDashboardKeyboardShortcuts' key set) on save, not just quickChat/terminal, so newly-added actions get the same trim/normalize-before-persist treatment.
         */
         dashboardKeyboardShortcuts: Object.fromEntries(
-          (Object.entries(resolveDashboardKeyboardShortcuts(form.dashboardKeyboardShortcuts)) as [DashboardShortcutAction, string][])
+          (Object.entries(resolveDashboardKeyboardShortcuts(formSnapshot.dashboardKeyboardShortcuts)) as [DashboardShortcutAction, string][])
             .map(([action, shortcut]) => [action, normalizeKeyboardShortcut(shortcut).normalized]),
         ) as DashboardKeyboardShortcutMap,
         gitlabEnabled: gitlabFormForSave.gitlabEnabled,
@@ -3484,23 +3530,26 @@ export function SettingsModal({
         gitlabApiBaseUrl: gitlabFormForSave.gitlabApiBaseUrl?.trim() || undefined,
         gitlabAuthToken: gitlabFormForSave.gitlabAuthToken?.trim() || undefined,
         gitlabAuthTokenType: gitlabFormForSave.gitlabAuthTokenType ?? "personal",
-        githubAuthToken: form.githubAuthToken?.trim() || undefined,
-        prTitlePromptInstructions: form.prTitlePromptInstructions?.trim() || undefined,
-        prDescriptionPromptInstructions: form.prDescriptionPromptInstructions?.trim() || undefined,
+        reportRoadmapDedupeEnabled: gitlabFormForSave.reportRoadmapDedupeEnabled,
+        reportRoadmapLabel: gitlabFormForSave.reportRoadmapLabel?.trim() || undefined,
+        reportRoadmapRepo: gitlabFormForSave.reportRoadmapRepo?.trim() || undefined,
+        githubAuthToken: formSnapshot.githubAuthToken?.trim() || undefined,
+        prTitlePromptInstructions: formSnapshot.prTitlePromptInstructions?.trim() || undefined,
+        prDescriptionPromptInstructions: formSnapshot.prDescriptionPromptInstructions?.trim() || undefined,
         /*
         FNXC:MergeSettings 2026-07-04-09:18:
         Push target text is meaningful only when direct post-merge pushing is enabled. Hiding the input must not keep submitting a stale remote/branch from the form state; clearing it lets project settings fall back to the default origin target when the toggle is disabled.
         */
-        pushRemote: form.pushAfterMerge ? form.pushRemote?.trim() || undefined : undefined,
-        overlapIgnorePaths: (form.overlapIgnorePaths ?? []).map((path) => path.trim()).filter((path) => path.length > 0),
-        worktreeCopyFiles: normalizedWorktreeCopyFiles.length > 0 || initialScopedValues?.project?.worktreeCopyFiles !== undefined
+        pushRemote: formSnapshot.pushAfterMerge ? formSnapshot.pushRemote?.trim() || undefined : undefined,
+        overlapIgnorePaths: (formSnapshot.overlapIgnorePaths ?? []).map((path) => path.trim()).filter((path) => path.length > 0),
+        worktreeCopyFiles: normalizedWorktreeCopyFiles.length > 0 || initialScopedValuesSnapshot?.project?.worktreeCopyFiles !== undefined
           ? normalizedWorktreeCopyFiles
           : undefined,
-        experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
+        experimentalFeatures: normalizeExperimentalFeaturesForSave(formSnapshot.experimentalFeatures),
       };
 
       // FNXC:SourceControl 2026-07-15-20:30: Both GitLab URL-cache refreshes follow their editing sections ("general"/"global-general" before the move).
-      if (activeSection === "source-control") {
+      if (activeSectionSnapshot === "source-control") {
         resolveGitlabConfig({
           project: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3508,7 +3557,7 @@ export function SettingsModal({
           },
         });
       }
-      if (activeSection === "source-control-global") {
+      if (activeSectionSnapshot === "source-control-global") {
         resolveGitlabConfig({
           global: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3524,12 +3573,12 @@ export function SettingsModal({
       // isolation; see settings/save-split.ts.
       const { globalPatch, projectPatch } = splitSettingsSave({
         payload,
-        initialValues,
-        initialScopedValues,
-        activeSection,
-        scopedMcpValues: scopedSettings ? {
-          global: resolveScopedMcpSettings("global", scopedSettings),
-          project: resolveScopedMcpSettings("project", scopedSettings),
+        initialValues: initialValuesSnapshot,
+        initialScopedValues: initialScopedValuesSnapshot,
+        activeSection: activeSectionSnapshot,
+        scopedMcpValues: scopedSettingsSnapshot ? {
+          global: resolveScopedMcpSettings("global", scopedSettingsSnapshot),
+          project: resolveScopedMcpSettings("project", scopedSettingsSnapshot),
         } : undefined,
       });
 
@@ -3540,22 +3589,207 @@ export function SettingsModal({
       await Promise.all([
         Object.keys(globalPatch).length > 0 ? updateGlobalSettings(globalPatch) : Promise.resolve(),
         Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch, projectId) : Promise.resolve(),
-        globalMaxConcurrent !== initialGlobalMaxConcurrentRef.current
-          ? updateGlobalConcurrency({ globalMaxConcurrent: globalMaxConcurrent ?? 4 })
+        globalMaxConcurrentSnapshot !== initialGlobalMaxConcurrentRef.current
+          ? updateGlobalConcurrency({ globalMaxConcurrent: globalMaxConcurrentSnapshot ?? 4 })
           : Promise.resolve(),
       ]);
 
       await workflowLaneSaverRef.current?.();
 
-      addToast(t("settings.general.settingsSaved", "Settings saved"), "success");
-      onClose();
+      // Only clear workflow-lane dirtiness when no newer lane edit arrived.
+      if (workflowLaneRevisionRef.current === workflowLaneRevisionSnapshot) {
+        setWorkflowLanesDirty(false);
+      }
+
+      // Quiet state feedback avoids a toast for each debounced edit.
+      setAutoSaveStatus("saved");
+      /*
+      FNXC:SettingsAutoSave 2026-08-02-20:50:
+      A completed request may describe an older form snapshot. Advance only the
+      keys that request actually wrote so a response can never bless unrelated,
+      newer edits as already persisted.
+      */
+      setInitialValues((current) => current ? { ...current, ...globalPatch } : current);
+      setInitialScopedValues((current) => {
+        if (!current) return current;
+        const mergePatch = (base: Record<string, unknown>, patch: Record<string, unknown>) => Object.fromEntries(
+          Object.entries({ ...base, ...patch }).map(([key, value]) => [key, value === null ? undefined : value]),
+        );
+        return {
+          global: mergePatch(current.global as Record<string, unknown>, globalPatch as Record<string, unknown>) as GlobalSettings,
+          project: mergePatch(current.project, projectPatch as Record<string, unknown>) as Partial<Settings>,
+        };
+      });
+      if (globalMaxConcurrentSnapshot !== initialGlobalMaxConcurrentRef.current) {
+        initialGlobalMaxConcurrentRef.current = globalMaxConcurrentSnapshot;
+      }
+      /*
+      FNXC:SettingsAutoSave 2026-08-02-21:45:
+      A successful snapshot becomes the next autosave comparison point. If the
+      user edited while this request was in flight, the live snapshot differs
+      and the effect queues exactly one trailing write.
+      */
+      autoSaveActivationSnapshotRef.current = JSON.stringify({
+        form: formSnapshot,
+        scopedSettings: scopedSettingsSnapshot,
+        globalGitlabSettings: globalGitlabSettingsSnapshot,
+        globalMaxConcurrent: globalMaxConcurrentSnapshot,
+      });
+      lastPersistSucceededRef.current = true;
+      return true;
     } catch (err) {
-      if (err instanceof WorkflowLaneFlushRejection) return;
+      lastPersistSucceededRef.current = false;
+      if (err instanceof WorkflowLaneFlushRejection) return false;
+      setAutoSaveStatus("error");
       addToast(getErrorMessage(err), "error");
+      return false;
     } finally {
+      persistInFlightRef.current = false;
       setIsSaving(false);
+      if (trailingPersistRef.current) {
+        trailingPersistRef.current = false;
+        void persistSettingsRef.current?.();
+      }
     }
-  }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, scopedSettings, onClose, addToast, projectId, activeSection, isSaving, t]);
+  }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, scopedSettings, addToast, projectId, activeSection, t]);
+
+  persistSettingsRef.current = persistSettings;
+  const settingsDirty = useMemo(() => {
+    const dirtyPayload = activeSection === "source-control-global" && globalGitlabSettings
+      ? { ...form, ...globalGitlabSettings }
+      : form;
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: dirtyPayload,
+      initialValues,
+      initialScopedValues,
+      activeSection,
+      scopedMcpValues: scopedSettings ? {
+        global: resolveScopedMcpSettings("global", scopedSettings),
+        project: resolveScopedMcpSettings("project", scopedSettings),
+      } : undefined,
+    });
+    return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0
+      || globalMaxConcurrent !== initialGlobalMaxConcurrentRef.current
+      || workflowLanesDirty;
+  }, [form, globalGitlabSettings, globalMaxConcurrent, initialScopedValues, initialValues, scopedSettings, activeSection, workflowLanesDirty]);
+
+  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings, globalMaxConcurrent, workflowLaneRevision: workflowLaneRevisionRef.current }), [form, globalGitlabSettings, globalMaxConcurrent, scopedSettings, workflowLanesDirty]);
+  const hasAutoSaveChange = autoSaveActivationSnapshotRef.current !== null
+    && autoSaveActivationSnapshotRef.current !== autoSaveSnapshot;
+  latestAutoSaveStateRef.current = { dirty: settingsDirty, changed: hasAutoSaveChange };
+
+  useEffect(() => {
+    /*
+    FNXC:SettingsAutoSave 2026-08-02-21:35:
+    Some legacy form values are normalized differently from their raw scoped
+    settings. Snapshot the hydrated form before enabling autosave so opening
+    Settings cannot write those untouched defaults; later user edits change the
+    snapshot and are persisted through the normal dirty split.
+    */
+    if (!loading && autoSaveActivationSnapshotRef.current === null) {
+      autoSaveActivationSnapshotRef.current = autoSaveSnapshot;
+      setAutoSaveReady(true);
+    }
+  }, [autoSaveSnapshot, loading]);
+
+  useEffect(() => {
+    if (loading || !autoSaveReady || !hasAutoSaveChange || !settingsDirty || prefixError || presetDraft) return;
+    if (persistInFlightRef.current) {
+      trailingPersistRef.current = true;
+      return;
+    }
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      void persistSettingsRef.current?.();
+    }, 500);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, globalMaxConcurrent, workflowLanesDirty, activeSection]);
+
+  const requestClose = useCallback(async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    /*
+    FNXC:SettingsAutoSave 2026-08-02-20:50:
+    Close is never a discard path. If a request is already running, queue its
+    latest trailing snapshot and wait for that queue to drain before the modal
+    unmounts; otherwise flush the current dirty snapshot synchronously.
+    */
+    if (persistInFlightRef.current) {
+      trailingPersistRef.current = true;
+    } else if (settingsDirty && hasAutoSaveChange) {
+      await persistSettingsRef.current?.();
+    }
+    while (persistInFlightRef.current || trailingPersistRef.current) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    }
+    // A failed/validation-blocked flush must leave Settings open for correction.
+    if (!lastPersistSucceededRef.current) return;
+    onClose();
+  }, [onClose, settingsDirty, hasAutoSaveChange]);
+
+  const requestSectionChange = useCallback(async (sectionId: SectionId) => {
+    if (sectionId === activeSection) return;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if ((settingsDirty && hasAutoSaveChange) || persistInFlightRef.current) {
+      if (persistInFlightRef.current) {
+        trailingPersistRef.current = true;
+        while (persistInFlightRef.current || trailingPersistRef.current) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
+      } else {
+        const persisted = await persistSettingsRef.current?.();
+        if (!persisted) return;
+      }
+      // Do not re-scope a failed raw-global edit after navigating away from it.
+      if (!lastPersistSucceededRef.current) return;
+    }
+    setActiveSection(sectionId);
+  }, [activeSection, settingsDirty, hasAutoSaveChange]);
+
+  requestSectionChangeRef.current = (sectionId) => { void requestSectionChange(sectionId); };
+
+  useEffect(() => () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    /*
+    FNXC:SettingsAutoSave 2026-08-03-22:15:
+    Parent-driven unmount is also a dismissal path. Retain a dirty snapshot's
+    flush even when a debounce timer is not present at cleanup, rather than
+    treating the timer itself as the source of durability.
+    */
+    if (!persistInFlightRef.current && latestAutoSaveStateRef.current.dirty && latestAutoSaveStateRef.current.changed) {
+      // The ref always points at the latest render snapshot, even during unmount.
+      void persistSettingsRef.current?.();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!escapeEnabled) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !resetDialogOpen) void requestClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [escapeEnabled, requestClose, resetDialogOpen]);
+
+  const modalOverlayDismissProps = useOverlayDismiss(() => { void requestClose(); });
+  /*
+  FNXC:SettingsAutoSave 2026-08-02-21:45:
+  Backdrop dismissal remains preference-gated, but every enabled modal path
+  shares requestClose so its latest dirty snapshot is flushed before unmount.
+  */
+  const overlayDismissProps = !isEmbedded && overlayDismissEnabled ? modalOverlayDismissProps : {};
+
 
   /*
   FNXC:SettingsReset 2026-07-04-00:25:
@@ -3859,12 +4093,15 @@ export function SettingsModal({
             form={form}
             setForm={setForm}
             globalSettings={globalGitlabSettings}
-            onGlobalGitlabSettingsChange={(patch) => setGlobalGitlabSettings((current) => ({
+            onGlobalSourceControlSettingsChange={(patch) => setGlobalGitlabSettings((current) => ({
               gitlabEnabled: current?.gitlabEnabled,
               gitlabInstanceUrl: current?.gitlabInstanceUrl,
               gitlabApiBaseUrl: current?.gitlabApiBaseUrl,
               gitlabAuthToken: current?.gitlabAuthToken,
               gitlabAuthTokenType: current?.gitlabAuthTokenType,
+              reportRoadmapDedupeEnabled: current?.reportRoadmapDedupeEnabled,
+              reportRoadmapLabel: current?.reportRoadmapLabel,
+              reportRoadmapRepo: current?.reportRoadmapRepo,
               ...patch,
             }))}
             globalTrackingRepoOptions={globalTrackingRepoOptions}
@@ -3937,6 +4174,7 @@ export function SettingsModal({
             addToast={addToast}
             onOpenWorkflowSettings={onOpenWorkflowSettings}
             registerWorkflowLaneSaver={registerWorkflowLaneSaver}
+            onWorkflowLanesChange={markWorkflowLanesDirty}
             models={{
               modelLanes: MODEL_LANES,
               getLaneStatus,
@@ -4305,7 +4543,7 @@ export function SettingsModal({
             </a>
           </div>
           {!isEmbedded && (
-            <button className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
+            <button className="modal-close" onClick={() => void requestClose()} aria-label={t("actions.close", "Close")}>
               &times;
             </button>
           )}
@@ -4320,7 +4558,7 @@ export function SettingsModal({
           {isEmbedded && viewportMode === "mobile" && (
             <button
               className="modal-close settings-embedded-mobile-close"
-              onClick={onClose}
+              onClick={() => void requestClose()}
               aria-label={t("actions.close", "Close")}
             >
               &times;
@@ -4349,7 +4587,7 @@ export function SettingsModal({
                         aria-label={t("settings.mobileNav.label", "Settings Section")}
                         className="select touch-target"
                         value={activeSection}
-                        onChange={(event) => setActiveSection(event.target.value as SectionId)}
+                        onChange={(event) => void requestSectionChange(event.target.value as SectionId)}
                       >
                         {/*
                         FNXC:SettingsNavigation 2026-07-16-14:00:
@@ -4516,7 +4754,7 @@ export function SettingsModal({
                     <button
                       key={section.id}
                       className={`settings-nav-item${activeSection === section.id ? " active" : ""}`}
-                      onClick={() => setActiveSection(section.id)}
+                      onClick={() => void requestSectionChange(section.id)}
                       title={
                         section.scope === "global"
                           ? t("settings.nav.tooltip.global", "Shared across all projects")
@@ -4678,8 +4916,8 @@ export function SettingsModal({
             (only Cancel is), so this button renders in both automatically (FN-7506
             Surface Enumeration: modal + embedded).
 
-            FNXC:SettingsReset 2026-07-12-00:00:
-            The mobile Settings footer needs the compact Reset label to preserve horizontal space alongside Help, version, Import, Export, Cancel, and Save. Desktop and tablet keep the full Reset Settings wording while the existing destructive confirmation dialog remains unchanged.
+            FNXC:SettingsReset 2026-08-02-21:45:
+            The mobile Settings footer needs the compact Reset label to preserve horizontal space alongside Help, version, Import, Export, and Close. Desktop and tablet keep the full Reset Settings wording while the existing destructive confirmation dialog remains unchanged.
             */}
             <button
               type="button"
@@ -4694,17 +4932,18 @@ export function SettingsModal({
                 : t("settings.reset.button", "Reset Settings")}
             </button>
           </div>
-          <div className="modal-actions-right">
-            {/* FNXC:Settings 2026-06-22-00:00: Cancel/close is a dialog affordance; the embedded main view is left via the sidebar, so it shows only Save. */}
-            {!isEmbedded && (
-              <button className="btn btn-sm" onClick={onClose}>
-                {t("settings.actions.cancel", "Cancel")}
+          {!isEmbedded && (
+            <div className="modal-actions-right">
+              <span className="settings-autosave-status" role="status">
+                {autoSaveStatus === "saving" ? t("settings.general.saving", "Saving…")
+                  : autoSaveStatus === "saved" ? t("settings.general.saved", "Saved")
+                    : autoSaveStatus === "error" ? t("settings.general.saveFailed", "Could not save") : null}
+              </span>
+              <button className="btn btn-sm" onClick={() => void requestClose()} disabled={loading}>
+                {t("settings.actions.close", "Close")}
               </button>
-            )}
-            <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={loading || isSaving}>
-              {t("settings.actions.save", "Save")}
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       </div>
 

@@ -118,11 +118,18 @@ async function cleanupTriageFixtureRoot(rootDir: string | undefined): Promise<vo
 }
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
+  let store: Partial<TaskStore>;
+  store = {
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     moveTask: vi.fn(),
+    moveTaskIf: vi.fn(async (id, toColumn) => {
+      const task = await store.moveTask?.(id, toColumn);
+      return { task: task as Task, moved: true };
+    }),
+    withTaskLock: vi.fn(async (_id, callback) => callback()),
+    readTaskForMove: vi.fn(async (id) => (await store.getTask?.(id)) ?? ({ id, column: "triage", status: "planning" } as Task)),
     updateTask: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
@@ -155,7 +162,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     on: vi.fn(),
     emit: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  return store as TaskStore;
 }
 
 const mockTaskDetail: TaskDetail = {
@@ -220,6 +228,23 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("## Original Description");
     expect(prompt).toContain("verbatim");
     expect(prompt).toContain("Test task description");
+  });
+
+  it("expands stored plan.md while preserving original request and edited description context", () => {
+    const prompt = buildSpecificationPrompt(
+      { ...baseTask, description: "Operator edited context" },
+      ".fusion/tasks/FN-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { plan: "# Validated plan\n\nPlan detail\n\n## Size\nM\n\n## Suggested dependencies\n_None_\n\n## Key deliverables\n- Deliver it\n", originalDescription: "Raw operator request" },
+    );
+    expect(prompt).toContain("## Planning Mode plan.md");
+    expect(prompt).toContain("Plan detail");
+    expect(prompt).toContain("Operator edited context");
+    expect(prompt).toContain("Raw operator request");
+    expect(prompt).toContain("never use plan.md");
   });
 
   describe("task-definition input language setting", () => {
@@ -1528,6 +1553,20 @@ describe("TriageProcessor", () => {
     expect(processor).toBeInstanceOf(TriageProcessor);
   });
 
+  it("uses a synchronous reservation to keep planning and advanced recovery mutually exclusive", async () => {
+    const task = createTriageTask({ id: "FN-RECOVERY-RESERVED" });
+    const release = processor.tryReserveAdvancedRecovery(task.id);
+    expect(release).toBeTypeOf("function");
+    expect(processor.getProcessingTaskIds()).toContain(task.id);
+    expect(processor.getPlanningTaskIds()).not.toContain(task.id);
+
+    await processor.specifyTask(task);
+    expect(store.getTask).not.toHaveBeenCalled();
+
+    release?.();
+    expect(processor.getProcessingTaskIds()).not.toContain(task.id);
+  });
+
   /*
   FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
   finalizeApprovedTask must inject ## Original Description with the task description
@@ -1720,6 +1759,33 @@ Planner rewrote mission without the raw request.
 
       expect(specifySpy).toHaveBeenCalledTimes(1);
       expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-200" }));
+    });
+
+    it("does not repeatedly dispatch a triage row that already has executor advancement evidence", async () => {
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-ADVANCED", worktree: "/tmp/fusion-fn-advanced" }),
+        createTriageTask({ id: "FN-UNPLANNED" }),
+      ];
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).toHaveBeenCalledOnce();
+      expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-UNPLANNED" }));
     });
 
     /*
@@ -2805,11 +2871,9 @@ describe("specified triage recovery", () => {
 
     expect(recovered).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
-      status: null,
       error: null,
       dependencies: ["FN-1247"],
       size: "M",
-      reviewLevel: 2,
       noCommitsExpected: true,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");

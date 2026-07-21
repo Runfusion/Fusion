@@ -38,10 +38,12 @@ SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
 Per-migration identities above stay fixed; only this latest-version marker moves.
 
 FNXC:MissionTaskPrefix 2026-07-19-12:55:
-Advances to 0028 for the mission task-prefix override after main claimed 0026/0027.
+Advances to 0029 for the mission task-prefix override after main claimed 0026/0027/0028.
 Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0028";
+export const SCHEMA_BASELINE_VERSION = "0029";
+/** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
+export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -180,8 +182,8 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
   }
 }
 
-/** FNXC:MissionTaskPrefix 2026-07-19-12:55: upgraded projects need the optional mission prefix before mission reads and triage task creation use it. Identity 0028 after main claimed 0026/0027. */
-export const MISSION_TASK_PREFIX_VERSION = "0028";
+/** FNXC:MissionTaskPrefix 2026-07-20-12:00: upgraded projects need the optional mission prefix before mission reads and triage task creation use it. Identity 0029 after main claimed 0026/0027/0028. */
+export const MISSION_TASK_PREFIX_VERSION = "0029";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -317,8 +319,9 @@ const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH = join(
   MIGRATIONS_DIR,
   "0027_workflow_ir_pin_and_legacy_adoption.sql",
 );
-/** FNXC:MissionTaskPrefix 2026-07-19-12:55: renumbered 0026→0028 after main claimed 0026/0027. */
-const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0028_mission_task_prefix.sql");
+const TASK_DECLARED_SYMBOLS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0028_task_declared_symbols.sql");
+/** FNXC:MissionTaskPrefix 2026-07-20-12:00: renumbered 0028→0029 after main claimed 0028. */
+const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0029_mission_task_prefix.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -843,9 +846,16 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    if (!applied.includes(TASK_DECLARED_SYMBOLS_VERSION)) {
+      const migrationSql = await readFile(TASK_DECLARED_SYMBOLS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_DECLARED_SYMBOLS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     /*
-    FNXC:MissionTaskPrefix 2026-07-19-12:55:
-    Apply missions.task_prefix independently so databases that already recorded 0027 gain the optional mission namespace before AsyncMissionStore reads or triage uses it (PR #1930 / #2334). Renumbered to 0028 after main claimed 0026/0027.
+    FNXC:MissionTaskPrefix 2026-07-20-12:00:
+    Apply missions.task_prefix independently so databases that already recorded 0028 gain the optional mission namespace before AsyncMissionStore reads or triage uses it (PR #1930 / #2334). Renumbered to 0029 after main claimed 0028.
     */
     if (!missionTaskPrefixAlreadyApplied) {
       const migrationSql = await readFile(MISSION_TASK_PREFIX_MIGRATION_PATH, "utf8");

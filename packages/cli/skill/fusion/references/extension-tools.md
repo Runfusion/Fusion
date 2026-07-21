@@ -556,7 +556,7 @@ Show full details for a single goal by ID.
 
 ### fn_agent_stop
 
-Stop a running agent — pauses its execution. Transitions the agent from running/active to paused state.
+Stop a running agent — pauses its execution without changing assigned task pause state. Transitions the agent from running/active to paused state.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -564,7 +564,7 @@ Stop a running agent — pauses its execution. Transitions the agent from runnin
 
 ### fn_agent_start
 
-Start a stopped agent — resumes its execution. Transitions the agent from paused to active state.
+Start a stopped agent — resumes its execution without changing assigned task pause state. Transitions the agent from paused to active state.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

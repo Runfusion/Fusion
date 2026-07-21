@@ -12,10 +12,12 @@ import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/re
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 
 import { GeneralSection } from "../GeneralSection";
+import { SETTINGS_SECTIONS } from "../../../SettingsModal";
 import type { SettingsFormState } from "../context";
 import { fetchWorkflows } from "../../../../api";
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
   useTranslation: () => ({
     t: (_key: string, fallback?: string) => fallback ?? _key,
   }),
@@ -69,7 +71,21 @@ function GeneralHost({ initialForm, onSetForm }: {
   );
 }
 
-describe("GeneralSection - AI-undo task workflow picker", () => {
+describe("GeneralSection - project controls", () => {
+  it("renders the report menu and opens its guided modal", async () => {
+    render(<GeneralHost initialForm={{}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Report bug" }));
+
+    expect(await screen.findByRole("dialog", { name: "bug report" })).toBeInTheDocument();
+  });
+
+  it("advertises report actions through General settings search metadata", () => {
+    const general = SETTINGS_SECTIONS.find((section) => section.id === "general");
+    expect(general?.searchableText).toEqual(expect.arrayContaining(["report", "report bug", "send feedback", "share idea", "get help"]));
+  });
+
   it("shows builtin:review-heavy as the effective default when unset", async () => {
     render(<GeneralHost initialForm={{}} />);
 

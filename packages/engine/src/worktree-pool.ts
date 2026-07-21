@@ -1,6 +1,7 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { ColumnId, SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
@@ -40,6 +41,7 @@ export {
 } from "./worktrunk-installer.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ── Worktrunk binary lazy resolver ─────────────────────────────────────────────
 // Memoizes per (homedir, settings.binaryPath) so the resolution+install flow
@@ -382,6 +384,68 @@ export function isInsideWorktreesDir(
   settings?: Pick<Settings, "worktreesDir">,
 ): boolean {
   return isInsideConfiguredWorktreesDir(rootDir, settings, worktreePath);
+}
+
+export type ReclaimableWorktreePlacement =
+  | { kind: "ready"; path: string; relocated: boolean }
+  | { kind: "deferred-live"; path: string };
+
+export interface RelocateReclaimableWorktreeInput {
+  rootDir: string;
+  sourcePath: string;
+  targetPath: string;
+  taskId: string;
+  settings?: Pick<Settings, "worktreeNaming" | "worktreesDir" | "worktrunk">;
+  isPathActive: (path: string) => boolean | Promise<boolean>;
+}
+
+/**
+ * Put a preserved, registered native checkout under the configured worktree
+ * root. Worktrunk-assigned paths remain backend-owned. The exact source path
+ * must be idle before it can move; callers treat a live result as deferred
+ * recovery rather than invalidating a running process cwd.
+ */
+export async function relocateReclaimableWorktreeIntoRoot(
+  input: RelocateReclaimableWorktreeInput,
+): Promise<ReclaimableWorktreePlacement> {
+  const { rootDir, sourcePath, targetPath, taskId, settings, isPathActive } = input;
+  if (settings?.worktrunk?.enabled === true) {
+    return { kind: "ready", path: sourcePath, relocated: false };
+  }
+  if (isInsideWorktreesDir(rootDir, sourcePath, settings)) {
+    return { kind: "ready", path: sourcePath, relocated: false };
+  }
+  if (await isPathActive(sourcePath)) {
+    return { kind: "deferred-live", path: sourcePath };
+  }
+  if (!isInsideWorktreesDir(rootDir, targetPath, settings)) {
+    throw new Error(
+      `Refusing to relocate ${taskId} worktree to path outside configured worktrees directory: ${targetPath}`,
+    );
+  }
+
+  let resolvedTargetPath = targetPath;
+  if (existsSync(resolvedTargetPath) && settings?.worktreeNaming !== "task-id") {
+    const taskSuffix = taskId.toLowerCase();
+    const candidates = [
+      `${targetPath}-${taskSuffix}`,
+      ...Array.from({ length: 5 }, (_, index) => `${targetPath}-${taskSuffix}-${index + 2}`),
+    ];
+    const available = candidates.find((candidate) => !existsSync(candidate));
+    if (!available) {
+      throw new Error(`No available relocation target for ${taskId} worktree near ${targetPath}`);
+    }
+    resolvedTargetPath = available;
+  }
+
+  await mkdir(dirname(resolvedTargetPath), { recursive: true });
+  await execFileAsync("git", ["worktree", "move", sourcePath, resolvedTargetPath], {
+    cwd: rootDir,
+    timeout: 120_000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  return { kind: "ready", path: resolvedTargetPath, relocated: true };
 }
 
 /**

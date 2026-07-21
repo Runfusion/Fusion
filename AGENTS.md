@@ -108,6 +108,8 @@ pnpm release --yes
 
 Only `@runfusion/fusion` is published; `@fusion/*` packages are bundled into it.
 
+Dashboard API routes use domain registrars under `packages/dashboard/src/routes/`; `createApiRoutes` is orchestrator-only and registrar mount order is a tested contract. See `packages/dashboard/src/routes/README.md`; `check:routes-modular` and mount-order tests enforce it.
+
 #### Importing across `@fusion/*` packages
 
 `@fusion/*` imports must be statically analyzable. Anti-pattern:
@@ -199,7 +201,7 @@ When you need a Fusion temp artifact, target the known prefix directly and list 
 
 #### Never use `execSync` for user-configured commands
 
-Run user-configured commands (test/build/workflow scripts) via async `exec` with timeout. `execSync` is only acceptable for short deterministic git plumbing.
+Run user-configured commands (test/build/workflow scripts) via async `exec` with timeout. `execSync` is only acceptable for short deterministic git plumbing. `packages/engine/src/__tests__/engine-no-blocking-shellout.test.ts` enforces the engine-wide call-site allowlist for all synchronous shellout primitives.
 
 #### Move-Task contract
 

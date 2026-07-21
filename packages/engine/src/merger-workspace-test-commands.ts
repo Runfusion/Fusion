@@ -8,6 +8,9 @@ import { basename, dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 import { mergerLog } from "./logger.js";
 
+const BOUNDED_GIT_DIFF_TIMEOUT_MS = 5_000;
+const BOUNDED_GIT_DIFF_MAX_BUFFER = 10 * 1024 * 1024;
+
 /** Shell-safe single-argument quoting for command composition. */
 function quoteArg(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -173,6 +176,10 @@ export function packageNamesForFiles(rootDir: string, files: string[]): string[]
  * Returns null when scoping cannot be determined (missing git context, no
  * workspace file, root-only changes, etc.) — callers fall back to `pnpm test`.
  *
+ * FNXC:EngineAsyncInvariant 2026-07-29-00:00:
+ * The branch diff is data-dependent, so its synchronous git-plumbing call is
+ * allowed only with an explicit wall-clock timeout and bounded captured output.
+ *
  * @internal Exported for testing only.
  */
 export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string, branch: string): string | null {
@@ -196,7 +203,13 @@ export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string,
   try {
     changedFilesOutput = execSync(
       `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
+      {
+        cwd: rootDir,
+        stdio: "pipe",
+        encoding: "utf-8",
+        timeout: BOUNDED_GIT_DIFF_TIMEOUT_MS,
+        maxBuffer: BOUNDED_GIT_DIFF_MAX_BUFFER,
+      },
     ).toString();
   } catch {
     return null;
@@ -259,6 +272,10 @@ const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
  * files and test paths come from `git diff`, so every shell argument is quoted
  * via `quoteArg`.
  *
+ * FNXC:EngineAsyncInvariant 2026-07-29-00:00:
+ * The branch diff is data-dependent, so its synchronous git-plumbing call is
+ * allowed only with an explicit wall-clock timeout and bounded captured output.
+ *
  * @internal Exported for testing only.
  */
 export function deriveFileScopedPnpmTestCommand(
@@ -283,7 +300,13 @@ export function deriveFileScopedPnpmTestCommand(
   try {
     changedFilesOutput = execSync(
       `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
+      {
+        cwd: rootDir,
+        stdio: "pipe",
+        encoding: "utf-8",
+        timeout: BOUNDED_GIT_DIFF_TIMEOUT_MS,
+        maxBuffer: BOUNDED_GIT_DIFF_MAX_BUFFER,
+      },
     ).toString();
   } catch {
     return null;

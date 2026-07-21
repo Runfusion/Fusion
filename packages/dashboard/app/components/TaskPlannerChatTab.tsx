@@ -740,19 +740,23 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       ),
     );
 
-    // Optimistic truncation: drop the edited message and everything after it immediately,
-    // matching the server's index-based truncation semantics (not just a timestamp filter).
-    setMessages((current) => current.slice(0, targetIndex));
-
     try {
       await editChatMessage(resolvedSessionId, messageId, trimmed, projectId);
+      // Keep the edited row mounted until PATCH success so failure leaves its correction editable.
+      setMessages((current) => current.slice(0, targetIndex));
     } catch (err) {
       const message = getErrorMessage(err) || t("taskDetail.plannerChat.editFailed", "Failed to edit planner chat message");
       setError(message);
       addToastRef.current(message, "error");
       // Restore truthful state from the server rather than trusting the optimistic truncation.
       void refreshMessagesForSession(resolvedSessionId, () => true);
-      return;
+      /*
+       * FNXC:TaskDetailPlannerChat 2026-07-19-00:00:
+       * Preserve an edited correction after a Planner Chat PATCH failure: StandardChatMessageItem
+       * interprets rejection as failed save and retains its editor, while this surface still owns
+       * the error toast and truthful transcript refresh.
+       */
+      throw err;
     }
 
     await sendMessageContent(trimmed);

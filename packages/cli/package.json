@@ -63,6 +63,7 @@
     "test:pre-release": "pnpm test:slow-cli && pnpm test:build-exe"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "0.24.0",
     "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
     "claude-code-cli-acp": "0.1.1",

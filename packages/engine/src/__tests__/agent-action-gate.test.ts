@@ -535,12 +535,15 @@ describe("agent-action-gate", () => {
     "fn_task_import_gitlab_group_issues",
     "fn_task_import_gitlab_merge_requests",
   ] as const)("governs task creation/import tool %s as task_agent_mutation", (toolName) => {
-    for (const args of [{}, undefined]) {
-      expect(evaluateAgentActionGate({ agentId: "a1", toolName, args, permissionPolicy: approvalPolicy })).toMatchObject({
+    const args = toolName === "fn_task_create" || toolName === "fn_delegate_task"
+      ? { mission_lineage: { mission_id: "M-1", slice_id: "SL-1", feature_id: "F-1" } }
+      : {};
+    for (const argsValue of [args, args]) {
+      expect(evaluateAgentActionGate({ agentId: "a1", toolName, args: argsValue, permissionPolicy: approvalPolicy })).toMatchObject({
         category: "task_agent_mutation",
         disposition: "require-approval",
       });
-      expect(evaluateAgentActionGate({ agentId: "a1", toolName, args, permissionPolicy: lockedDownPolicy })).toMatchObject({
+      expect(evaluateAgentActionGate({ agentId: "a1", toolName, args: argsValue, permissionPolicy: lockedDownPolicy })).toMatchObject({
         category: "task_agent_mutation",
         disposition: "block",
       });

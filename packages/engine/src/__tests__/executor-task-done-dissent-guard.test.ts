@@ -44,7 +44,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
   return { store, doneTool };
 }
 
-describe("FN-4851 dissent guard", () => {
+describe("fn_task_done summary prose", () => {
   beforeEach(() => {
     resetExecutorMocks();
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
@@ -57,31 +57,46 @@ describe("FN-4851 dissent guard", () => {
     });
   });
 
-  it("refuses summary that directly claims incompletion", async () => {
+  it("accepts completion when the summary documents future work as not implemented in this task", async () => {
     const { store, doneTool } = await setup();
+    store.moveTask.mockClear();
+
+    const result = await doneTool.execute("id", {
+      summary: "KB-015 complete: Implemented semantic design tokens and migrated all components. All verification passes. Note: User steering comments requested migration to a shadcn-svelte pattern — this is documented as a future direction in project memory and task docs, not implemented in this task per the DO NOT redo completed steps instruction.",
+    });
+
+    expect(result.details.refusalClass).toBeUndefined();
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4851", "todo", { preserveProgress: true });
+  });
+
+  it("accepts a completion call even when its summary claims incompletion", async () => {
+    const { store, doneTool } = await setup();
+    store.moveTask.mockClear();
 
     const result = await doneTool.execute("id", { summary: "Task is not complete. I'm blocked from safely finishing this." });
 
-    expect(result.details.refusalClass).toBe("summary-claims-incomplete");
-    expect(result.content[0].text).toContain("fn_task_done refused (summary-claims-incomplete)");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4851", "todo", { preserveProgress: true });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4851", expect.objectContaining({ taskDoneRetryCount: 1 }));
+    expect(result.details.refusalClass).toBeUndefined();
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4851", "todo", { preserveProgress: true });
   });
 
-  it("refuses 'To unblock' summary", async () => {
+  it("accepts a completion call whose summary contains 'To unblock'", async () => {
     const { doneTool } = await setup();
 
     const result = await doneTool.execute("id", { summary: "To unblock, sync/land FN-4789 before I can finish." });
 
-    expect(result.details.refusalClass).toBe("summary-claims-incomplete");
+    expect(result.details.refusalClass).toBeUndefined();
+    expect(result.content[0].text).toContain("Task marked complete");
   });
 
-  it("refuses summary that says it needs another FN task", async () => {
+  it("accepts a completion call whose summary says it needs another FN task", async () => {
     const { doneTool } = await setup();
 
     const result = await doneTool.execute("id", { summary: "This needs FN-1234 before completion." });
 
-    expect(result.details.refusalClass).toBe("summary-claims-incomplete");
+    expect(result.details.refusalClass).toBeUndefined();
+    expect(result.content[0].text).toContain("Task marked complete");
   });
 
   it("allows bare 'incomplete' without first-person/task context", async () => {

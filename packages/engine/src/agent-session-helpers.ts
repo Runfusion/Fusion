@@ -702,6 +702,11 @@ export async function createResolvedAgentSession(
     ? runtimeOptionsRaw.skills
     : skillNamesFromSelection;
 
+  /*
+  FNXC:ChatSkills 2026-07-20-10:30:
+  createResolvedAgentSession must preserve additionalSkillPaths into runtime.createSession.
+  Plugin skill names alone never deliver bodies; chat, step, and cron lanes require both halves of the #2017 contract (FN-8443 / #2364).
+  */
   const runtimeOptions: AgentRuntimeOptions = {
     ...runtimeOptionsRaw,
     ...(mergedSkillNames.length > 0 ? { skills: mergedSkillNames } : {}),
@@ -800,6 +805,11 @@ export async function createResolvedAgentSession(
 
   const noModelResolved = !mockProviderActive && !testModeActive && (!runtimeOptions.defaultProvider || !runtimeOptions.defaultModelId);
   const runtimeBuiltInFallbackModel = noModelResolved ? resolved.runtime.describeModel(result.session) : undefined;
+  const fusionToolBridgeError = (result.session as { fusionToolBridgeError?: { reasonCode?: unknown } }).fusionToolBridgeError;
+  const fusionToolBridgeReasonCode = fusionToolBridgeError?.reasonCode === "mcp-schema-server-missing"
+    || fusionToolBridgeError?.reasonCode === "bridge-start-failed"
+    ? fusionToolBridgeError.reasonCode
+    : undefined;
   if (noModelResolved) {
     /*
     FNXC:ModelResolution 2026-07-10-00:00:
@@ -823,6 +833,21 @@ export async function createResolvedAgentSession(
         mockProviderActive,
         testModeActive,
         ...(noModelResolved ? { noModelResolved: true, runtimeBuiltInFallbackModel } : {}),
+        /*
+        FNXC:FusionToolBridgeDiagnostics 2026-07-20-08:00:
+        Plugin bridge failures are session-visible, but they also need one durable
+        engine signal. Record only fixed reason codes and requested counts here;
+        tool schemas, paths, error prose, and credentials must never enter run-audit.
+        */
+        ...(fusionToolBridgeReasonCode
+          ? {
+              fusionToolBridgeFailed: true,
+              fusionToolBridgeReasonCode,
+              expectedToolCount: Array.isArray(effectiveRuntimeOptionsWithModel.customTools)
+                ? effectiveRuntimeOptionsWithModel.customTools.length
+                : 0,
+            }
+          : {}),
         ...(effectiveRuntimeHint ? { runtimeHint: effectiveRuntimeHint } : {}),
         ...(autoGrokRuntimeHint ? { reason: "grok-cli-no-visible-key" } : {}),
         ...(autoOmpRuntimeHint ? { reason: "omp-cli-runtime" } : {}),

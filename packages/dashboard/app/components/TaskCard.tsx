@@ -274,6 +274,35 @@ function isAgentCreatedTask(task: Task): boolean {
   return task.sourceType === "agent_heartbeat" || task.sourceType === "automation" || Boolean(getSourceAgentName(task));
 }
 
+function getNormalizedAgentIdentity(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * FNXC:TaskCardAgentBadges 2026-07-20-00:00:
+ * FN-8423 requires TaskCard to retain assigned ownership but suppress redundant
+ * created-by provenance only for the same agent identity. IDs are authoritative:
+ * distinct present IDs stay distinct even when their display names collide; names
+ * are a case-insensitive fallback only when either identity has no usable ID.
+ */
+function isSameAgentIdentity(
+  assignedAgentId: string | undefined,
+  sourceAgentId: string | undefined,
+  assignedAgentName: string | null | undefined,
+  sourceAgentName: string | undefined,
+): boolean {
+  const normalizedAssignedId = getNormalizedAgentIdentity(assignedAgentId);
+  const normalizedSourceId = getNormalizedAgentIdentity(sourceAgentId);
+
+  if (normalizedAssignedId && normalizedSourceId) {
+    return normalizedAssignedId === normalizedSourceId;
+  }
+
+  const normalizedAssignedName = getNormalizedAgentIdentity(assignedAgentName)?.toLocaleLowerCase();
+  const normalizedSourceName = getNormalizedAgentIdentity(sourceAgentName)?.toLocaleLowerCase();
+  return Boolean(normalizedAssignedName && normalizedSourceName && normalizedAssignedName === normalizedSourceName);
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Issue 1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
@@ -1405,6 +1434,15 @@ function TaskCardComponent({
   const resolvedAssignedAgentName = assignedAgentNameFromMap ?? assignedAgentNameFromCache ?? agentName;
   const assignedAgentBadgeLabel = resolvedAssignedAgentName ?? task.assignedAgentId ?? "";
   const isAgentNameLoading = Boolean(task.assignedAgentId && !resolvedAssignedAgentName);
+  const shouldShowCreatedAgentBadge = isAgentCreated && !(
+    task.assignedAgentId
+    && isSameAgentIdentity(
+      task.assignedAgentId,
+      task.sourceAgentId,
+      resolvedAssignedAgentName,
+      sourceAgentName,
+    )
+  );
   const taskProviders = useMemo(() => {
     const providers: string[] = [];
     if (task.modelProvider) providers.push(task.modelProvider);
@@ -3742,7 +3780,7 @@ function TaskCardComponent({
         )}
         </>
       )}
-      {isAgentCreated && (
+      {shouldShowCreatedAgentBadge && (
         <div className="card-agent-badge-row" data-testid="card-agent-badge-row">
           {/**
            * FNXC:TaskCardLayout 2026-07-10-00:00:

@@ -20,6 +20,10 @@ export interface DevServerProcessManagerOptions {
   stopTimeoutMs?: number;
   probeDelayMs?: number;
   probeTimeoutMs?: number;
+  /** Test seam for lifecycle assertions without a shell child process. */
+  spawn?: typeof superviseSpawn;
+  /** Test seam for proving stop dispatches the process-tree signal without killing an OS process. */
+  killManagedProcess?: (child: ChildProcess, signal: NodeJS.Signals) => void;
 }
 
 interface UrlDetectedEventPayload {
@@ -90,6 +94,8 @@ export class DevServerProcessManager extends EventEmitter {
   private readonly stopTimeoutMs: number;
   private readonly probeDelayMs: number;
   private readonly probeTimeoutMs: number;
+  private readonly spawn: typeof superviseSpawn;
+  private readonly kill: (child: ChildProcess, signal: NodeJS.Signals) => void;
 
   constructor(
     private readonly store: DevServerStore,
@@ -99,6 +105,14 @@ export class DevServerProcessManager extends EventEmitter {
     this.stopTimeoutMs = options?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
     this.probeDelayMs = options?.probeDelayMs ?? DEFAULT_PROBE_DELAY_MS;
     this.probeTimeoutMs = options?.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    /*
+    FNXC:DevServerProcessTests 2026-07-19-18:45:
+    FN-8394 rescues lifecycle coverage from a second load-sensitive quarantine.
+    Inject only spawn and process-tree signaling so unit tests retain start/stop,
+    output, URL, fallback-timer, and restart invariants without real shell children.
+    */
+    this.spawn = options?.spawn ?? superviseSpawn;
+    this.kill = options?.killManagedProcess ?? killManagedProcess;
   }
 
   async start(
@@ -139,7 +153,7 @@ export class DevServerProcessManager extends EventEmitter {
       detectedPort: undefined,
     });
 
-    const supervised = superviseSpawn(safeCommand, [], {
+    const supervised = this.spawn(safeCommand, [], {
       cwd: safeCwd,
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -212,12 +226,12 @@ export class DevServerProcessManager extends EventEmitter {
     const pid = child.pid;
 
     if (typeof pid === "number") {
-      killManagedProcess(child, "SIGTERM");
+      this.kill(child, "SIGTERM");
     }
 
     const killTimer = setTimeout(() => {
       if (this.childProcess === child && this.isRunning()) {
-        killManagedProcess(child, "SIGKILL");
+        this.kill(child, "SIGKILL");
       }
     }, this.stopTimeoutMs);
 
@@ -259,7 +273,7 @@ export class DevServerProcessManager extends EventEmitter {
     this.clearTimers();
 
     if (this.childProcess && typeof this.childProcess.pid === "number") {
-      killManagedProcess(this.childProcess, "SIGTERM");
+      this.kill(this.childProcess, "SIGTERM");
       this.childProcess.removeAllListeners();
       this.childProcess.stdout?.removeAllListeners();
       this.childProcess.stderr?.removeAllListeners();

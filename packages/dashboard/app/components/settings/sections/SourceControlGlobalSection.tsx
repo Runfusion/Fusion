@@ -2,15 +2,16 @@ import type { GlobalSettings } from "@fusion/core";
 import { useTranslation } from "react-i18next";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 
-type GlobalGitlabSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType">;
+type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo">;
 
 export interface SourceControlGlobalSectionProps extends SectionBaseProps {
-    globalSettings: GlobalGitlabSettings | null;
-    onGlobalGitlabSettingsChange: (patch: Partial<GlobalGitlabSettings>) => void;
+    globalSettings: GlobalSourceControlSettings | null;
+    onGlobalSourceControlSettingsChange: (patch: Partial<GlobalSourceControlSettings>) => void;
     globalTrackingRepoOptions: TrackingRepoOption[];
     globalTrackingRepoLoading: boolean;
     globalTrackingRepoError: string | null;
@@ -19,21 +20,22 @@ export interface SourceControlGlobalSectionProps extends SectionBaseProps {
 /*
 FNXC:SourceControl 2026-07-15-20:30:
 The global GitLab fallbacks and the global default tracking repo moved out of "General · Global" into their own section, adjacent to "Source Control · Project" under the Integrations nav group. They are integrations with GitHub/GitLab, not general app preferences, and pairing the two scopes is what lets an operator see a global fallback and its project override without hunting across unrelated sections.
-NOTE for future edits: `splitSettingsSave` (save-split.ts) gates these six dual-scope keys on the ACTIVE SECTION ID — they route to the global patch only while this section is open, and to the project patch everywhere else. That guard names `source-control-global` literally. Renaming this section id without updating save-split.ts would silently write these global fallbacks into project settings.
+NOTE for future edits: `splitSettingsSave` (save-split.ts) gates these nine dual-scope keys on the ACTIVE SECTION ID — they route to the global patch only while this section is open, and to the project patch everywhere else. That guard names `source-control-global` literally. Renaming this section id without updating save-split.ts would silently write these global fallbacks into project settings.
 
 FNXC:SettingsScope 2026-07-15-20:30:
-No scope badge on any row here: all six keys (`gitlabEnabled`, `gitlabInstanceUrl`, `gitlabApiBaseUrl`, `gitlabAuthTokenType`, `gitlabAuthToken`, `githubTrackingDefaultRepo`) are declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so no badge can state their scope honestly. The section name ("Source Control · Global") carries it, as does each label's "Global …" prefix.
+No scope badge on any row here: all nine keys (`gitlabEnabled`, `gitlabInstanceUrl`, `gitlabApiBaseUrl`, `gitlabAuthTokenType`, `gitlabAuthToken`, `githubTrackingDefaultRepo`, `reportRoadmapDedupeEnabled`, `reportRoadmapLabel`, `reportRoadmapRepo`) are declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so no badge can state their scope honestly. The section name ("Source Control · Global") carries it, as does each label's "Global …" prefix.
 
 FNXC:SettingsStyling 2026-07-15-20:30:
 Plain label+control+help rows use the shared primitives; `gitlabAuthToken` uses the primitive's `type: "password"` (defaulting `autocomplete="off"`). The tracking-repo select and the disclosure chrome stay bespoke — they are custom widgets, not label+control+help rows.
 */
-export function SourceControlGlobalSection({ form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: SourceControlGlobalSectionProps) {
+export function SourceControlGlobalSection({ form, setForm, globalSettings, onGlobalSourceControlSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: SourceControlGlobalSectionProps) {
     const { t } = useTranslation("app");
     /*
     FNXC:GitLabEnablement 2026-07-04-00:00:
     The GitLab rows read from the SCOPED global values (`globalSettings`), not the merged `form`, so a project override never renders as the global fallback's value. `form` is only the fallback while the scoped fetch is in flight.
     */
-    const globalGitlab = globalSettings ?? form;
+    const globalSourceControl = globalSettings ?? form;
+    const globalGitlab = globalSourceControl;
     return (<>
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance beside the label — operator requirement: no inline description paragraphs in Settings. The bespoke TrackingRepoSelect widget is no obstacle: the tip belongs to the label line, not the control. */}
       <div className="form-group">
@@ -43,6 +45,35 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
         </div>
         <TrackingRepoSelect id="globalGithubTrackingDefaultRepo" ariaLabel="Global default tracking repo" value={form.githubTrackingDefaultRepo ?? ""} options={globalTrackingRepoOptions} loading={globalTrackingRepoLoading} error={globalTrackingRepoError ?? undefined} placeholder={t("settings.globalGeneral.ownerRepo", "owner/repo")} onChange={(nextValue) => setForm((f) => ({ ...f, githubTrackingDefaultRepo: nextValue || undefined }))}/>
       </div>
+      {/* FNXC:ReportPipeline 2026-07-18-20:45: FR-30 exposes global fallback values beside the global tracking repository so operators can configure a machine-wide public-roadmap policy without creating a project override. */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "reportRoadmapDedupeEnabled",
+          label: t("settings.globalGeneral.reportRoadmapDedupeEnabled", "Global public-roadmap deduplication"),
+          help: t("settings.globalGeneral.reportRoadmapDedupeEnabledHelp", "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled)."),
+        }}
+        value={globalSourceControl.reportRoadmapDedupeEnabled ?? true}
+        onChange={(value) => onGlobalSourceControlSettingsChange({ reportRoadmapDedupeEnabled: value ?? undefined })}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "reportRoadmapLabel",
+          label: t("settings.globalGeneral.reportRoadmapLabel", "Global public roadmap label"),
+          help: t("settings.globalGeneral.reportRoadmapLabelHelp", "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap)."),
+        }}
+        value={globalSourceControl.reportRoadmapLabel ?? ""}
+        onChange={(value) => onGlobalSourceControlSettingsChange({ reportRoadmapLabel: value || undefined })}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "reportRoadmapRepo",
+          label: t("settings.globalGeneral.reportRoadmapRepo", "Global public roadmap repository (optional)"),
+          help: t("settings.globalGeneral.reportRoadmapRepoHelp", "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset."),
+          placeholder: "owner/repository",
+        }}
+        value={globalSourceControl.reportRoadmapRepo ?? ""}
+        onChange={(value) => onGlobalSourceControlSettingsChange({ reportRoadmapRepo: value || undefined })}
+      />
       {/*
         FNXC:GitLabEnablement 2026-07-02-00:00:
         FN-7453 adds a global GitLab enable fallback that can disable outbound GitLab HTTP API operations without deleting saved self-managed URL or token settings. Projects can override the enabled state when they need GitLab active while the global fallback is off.
@@ -51,7 +82,7 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
         <summary>
           <span className="settings-gitlab-disclosure__title">{t("settings.globalGeneral.gitLabConfiguration", "GitLab Configuration")}</span>
           <label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="globalGitlabEnabled" onClick={(event) => event.stopPropagation()}>
-            <input id="globalGitlabEnabled" type="checkbox" checked={globalGitlab.gitlabEnabled !== false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabEnabled: e.target.checked })}/>
+            <input id="globalGitlabEnabled" type="checkbox" checked={globalGitlab.gitlabEnabled !== false} onChange={(e) => onGlobalSourceControlSettingsChange({ gitlabEnabled: e.target.checked })}/>
             {t("settings.globalGeneral.enableGitLabIntegration", "Enable GitLab integration")}
           </label>
           {/*
@@ -74,7 +105,7 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
               disabled: globalGitlab.gitlabEnabled === false,
             }}
             value={globalGitlab.gitlabInstanceUrl ?? ""}
-            onChange={(v) => onGlobalGitlabSettingsChange({ gitlabInstanceUrl: v || undefined })}
+            onChange={(v) => onGlobalSourceControlSettingsChange({ gitlabInstanceUrl: v || undefined })}
           />
           <SettingsTextRow
             descriptor={{
@@ -86,7 +117,7 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
               disabled: globalGitlab.gitlabEnabled === false,
             }}
             value={globalGitlab.gitlabApiBaseUrl ?? ""}
-            onChange={(v) => onGlobalGitlabSettingsChange({ gitlabApiBaseUrl: v || undefined })}
+            onChange={(v) => onGlobalSourceControlSettingsChange({ gitlabApiBaseUrl: v || undefined })}
           />
           <SettingsSelectRow
             descriptor={{
@@ -101,7 +132,7 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
               ],
             }}
             value={globalGitlab.gitlabAuthTokenType ?? "personal"}
-            onChange={(v) => onGlobalGitlabSettingsChange({ gitlabAuthTokenType: v as "personal" | "project" | "group" })}
+            onChange={(v) => onGlobalSourceControlSettingsChange({ gitlabAuthTokenType: v as "personal" | "project" | "group" })}
           />
           <SettingsTextRow
             descriptor={{
@@ -112,7 +143,7 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
               disabled: globalGitlab.gitlabEnabled === false,
             }}
             value={globalGitlab.gitlabAuthToken ?? ""}
-            onChange={(v) => onGlobalGitlabSettingsChange({ gitlabAuthToken: v || undefined })}
+            onChange={(v) => onGlobalSourceControlSettingsChange({ gitlabAuthToken: v || undefined })}
           />
         </div>
       </details>

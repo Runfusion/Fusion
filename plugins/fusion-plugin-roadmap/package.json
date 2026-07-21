@@ -15,6 +15,11 @@
       "source": "./src/server/index.ts",
       "import": "./dist/server/index.js"
     },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.tsx",
+      "source": "./src/dashboard-view.tsx",
+      "import": "./dist/dashboard-view.js"
+    },
     "./roadmap-suggestions": {
       "types": "./src/roadmap-suggestions.d.ts",
       "source": "./src/roadmap-suggestions.ts",

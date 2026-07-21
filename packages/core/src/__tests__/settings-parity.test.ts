@@ -169,13 +169,27 @@ describe("settings key parity", () => {
   it("defaults in-app reports to draft review and keeps mode settings project-scoped", () => {
     expect(DEFAULT_PROJECT_SETTINGS.reportMode).toBe("draft-review");
     expect(DEFAULT_PROJECT_SETTINGS.reportModeByAction).toBeUndefined();
-    expect(DEFAULT_PROJECT_SETTINGS.reportRoadmapDedup).toBe(false);
+    expect(DEFAULT_PROJECT_SETTINGS.reportTarget).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.reportTargetByAction).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.reportDiscussionCategory).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.reportRoadmapDedupeEnabled).toBe(true);
+    expect(DEFAULT_PROJECT_SETTINGS.reportRoadmapLabel).toBe("roadmap");
     expect(isProjectSettingsKey("reportMode")).toBe(true);
     expect(isProjectSettingsKey("reportModeByAction")).toBe(true);
-    expect(isProjectSettingsKey("reportRoadmapDedup")).toBe(true);
+    expect(isProjectSettingsKey("reportTarget")).toBe(true);
+    expect(isProjectSettingsKey("reportTargetByAction")).toBe(true);
+    expect(isProjectSettingsKey("reportDiscussionCategory")).toBe(true);
+    expect(isProjectSettingsKey("reportRoadmapDedupeEnabled")).toBe(true);
+    expect(isProjectSettingsKey("reportRoadmapLabel")).toBe(true);
+    expect(isProjectSettingsKey("reportRoadmapRepo")).toBe(true);
     expect(isGlobalSettingsKey("reportMode")).toBe(false);
     expect(isGlobalSettingsKey("reportModeByAction")).toBe(false);
-    expect(isGlobalSettingsKey("reportRoadmapDedup")).toBe(false);
+    expect(isGlobalSettingsKey("reportTarget")).toBe(false);
+    expect(isGlobalSettingsKey("reportTargetByAction")).toBe(false);
+    expect(isGlobalSettingsKey("reportDiscussionCategory")).toBe(false);
+    expect(isGlobalSettingsKey("reportRoadmapDedupeEnabled")).toBe(true);
+    expect(isGlobalSettingsKey("reportRoadmapLabel")).toBe(true);
+    expect(isGlobalSettingsKey("reportRoadmapRepo")).toBe(true);
   });
 
   it("defaults autoClaimCandidatesInPrompt to 5 and keeps it project-scoped", () => {
@@ -531,6 +545,9 @@ describe("settings key parity", () => {
       "mergeRequestContractShadowEnabled",
       "taskTokenBudget",
       "githubTrackingDefaultRepo",
+      "reportRoadmapDedupeEnabled",
+      "reportRoadmapLabel",
+      "reportRoadmapRepo",
       "gitlabEnabled",
       "gitlabInstanceUrl",
       "gitlabApiBaseUrl",

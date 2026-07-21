@@ -222,6 +222,7 @@ export const tasks = projectSchema.table("tasks", {
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),
   modifiedFiles: jsonb("modified_files").default([]),
+  declaredSymbols: jsonb("declared_symbols").notNull().default([]),
   missionId: text("mission_id"),
   sliceId: text("slice_id"),
   scopeOverride: integer("scope_override"),

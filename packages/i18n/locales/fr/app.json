@@ -1306,6 +1306,7 @@
     "relativeTimeMinutes_one": "",
     "relativeTimeMinutes_other": "",
     "removeAttachment": "Supprimer {{name}}",
+    "recent": "Récent",
     "rename": "",
     "renameConversationAria": "",
     "renameConversationBody": "",
@@ -1602,19 +1603,6 @@
         "confirmTitle": "Importer le bundle d'organisation ?",
         "confirmMessage": "Cela applique la configuration prévisualisée à ce projet.",
         "confirmApply": "Importer le bundle"
-      },
-      "versions": {
-        "title": "Versions de configuration",
-        "description": "Restaurez n'importe quelle version de configuration de projet enregistrée.",
-        "loading": "Chargement des versions…",
-        "empty": "Aucune version de configuration pour l'instant.",
-        "loadError": "Impossible de charger les versions de configuration",
-        "rollback": "Revenir en arrière",
-        "rollingBack": "Retour en cours…",
-        "rollbackError": "Impossible de revenir en arrière sur la configuration",
-        "confirmTitle": "Revenir à une configuration antérieure ?",
-        "confirmMessage": "Restaurer cette version ? Le retour est enregistré comme une nouvelle version.",
-        "confirmRollback": "Revenir en arrière"
       }
     },
     "ecosystem": {
@@ -2009,12 +1997,12 @@
     "title": "Tableau de bord du projet"
   },
   "dbBanner": {
-    "body": "La vérification d'intégrité SQLite en arrière-plan de Fusion a signalé une corruption. Veuillez examiner les objets défaillants ci-dessous avant de continuer les opérations critiques.",
-    "instructions": "Sauvegardez le projet, essayez {{cmd}} si la base de données s'ouvre toujours correctement, et restaurez à partir d'une sauvegarde connue bonne si la corruption persiste. Consultez {{link}} pour la disposition du stockage et les conseils de récupération.",
+    "body": "La vérification de l'état de PostgreSQL par Fusion a signalé un échec. Examinez les détails avant de poursuivre les opérations critiques.",
+    "instructions": "Sauvegardez le projet, consultez les <cmd>journaux de la base de données</cmd> ainsi que la connectivité et les autorisations PostgreSQL, puis actualisez l'état. Consultez <docsLink>docs/storage.md</docsLink> pour les conseils de stockage et de récupération.",
     "lastChecked": "Dernier contrôle : {{checkedAtLabel}}",
     "refreshHealth": "Actualiser la santé",
     "refreshing": "Actualisation…",
-    "title": "Corruption de base de données détectée",
+    "title": "Échec de la vérification de l'état de la base de données",
     "whatToDo": "Que faire :"
   },
   "deepLink": {
@@ -4687,7 +4675,12 @@
     "usingDefault": "Modèle par défaut",
     "whatToBuild": "Que voulez-vous construire ?",
     "whatToBuildPlaceholder": "ex : Construire un système d'authentification avec connexion, inscription et réinitialisation du mot de passe…",
-    "agentClarification": ""
+    "agentClarification": "",
+    "nextQuestion": "Question suivante",
+    "answeredQuestions": "Questions répondues",
+    "runningPlan": "Plan en cours",
+    "renameSession": "Renommer la session",
+    "editAnswer": "Modifier la réponse pour {{question}}"
   },
   "plugins": {
     "addItem": "Ajouter un élément",
@@ -5946,10 +5939,32 @@
       "ephemeralAgentTaskCreationPolicyDeny": "Refuser",
       "reportModeHelp": "Comment les rapports in-app (bug, feedback, idée, aide) sont déposés. Par défaut : draft-review (l'opérateur revoit un brouillon avant dépôt).",
       "reportModeByActionHelp": "Surcharge optionnelle par action du mode de rapport du projet (bug, feedback, idée ou aide). Aucune valeur par défaut — les actions non définies héritent de reportMode.",
+      "reportRoadmapRepo": "Public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "GitHub owner/repository containing public roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "reviewArtifacts": "Artefacts de revue",
       "reviewArtifactsHint": "Contrôle si les futures tâches éligibles génèrent des livrables de revue. Les rapports utilisateur et la capture d'activité restent séparés. Par défaut : désactivé.",
+      "reportRoadmapDedupeEnabled": "Deduplicate reports against public roadmap",
+      "reportRoadmapDedupeEnabledHelp": "Match open, labeled roadmap issues before filing. Default: on.",
+      "reportRoadmapLabel": "Public roadmap label",
+      "reportRoadmapLabelHelp": "Open GitHub Issues with this label are considered roadmap items. Default: roadmap.",
       "reportRoadmapDedup": "Vérifier la feuille de route avant d’envoyer les rapports",
-      "reportRoadmapDedupHelp": "Lorsqu’elle est activée, les fonctionnalités correspondantes sont affichées en ligne au lieu de créer un autre problème ou une autre discussion GitHub. Par défaut : désactivé."
+      "reportRoadmapDedupHelp": "Lorsqu’elle est activée, les fonctionnalités correspondantes de la feuille de route sont affichées directement au lieu de créer une autre Issue ou Discussion GitHub. Par défaut : désactivé.",
+      "reportTarget": "Cible de rapport par défaut",
+      "reportTargetHelp": "Cible facultative Issue ou Discussion. Si elle n’est pas définie, les retours et l’aide utilisent les Discussions, tandis que les bugs et idées utilisent les Issues.",
+      "reportTargetInherit": "Conserver la cible par défaut de l’action",
+      "reportTargetIssue": "Issue GitHub",
+      "reportTargetDiscussion": "Discussion GitHub",
+      "reportTargetOverride": {
+        "bug": "Remplacement de cible pour les bugs",
+        "feedback": "Remplacement de cible pour les retours",
+        "idea": "Remplacement de cible pour les idées",
+        "help": "Remplacement de cible pour l’aide"
+      },
+      "reportDiscussionCategory": "Catégorie de discussion",
+      "reportDiscussionCategoryHelp": "Obligatoire pour envoyer vers les Discussions GitHub. Les catégories sont chargées depuis le dépôt configuré.",
+      "reportDiscussionCategorySelect": "Sélectionnez une catégorie de discussion",
+      "reportDiscussionCategoryUnavailable": "Les catégories de discussion ne sont pas disponibles pour le dépôt configuré.",
+      "reportDiscussionCategoryEmpty": "Aucune catégorie de discussion n’est disponible pour le dépôt configuré."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5964,6 +5979,12 @@
       "frequency": "",
       "general": "",
       "globalDefaultTrackingRepo": "",
+      "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",
+      "reportRoadmapDedupeEnabledHelp": "Fallback for projects that do not set a public-roadmap deduplication preference. No default — unset (projects default to enabled).",
+      "reportRoadmapLabel": "Global public roadmap label",
+      "reportRoadmapLabelHelp": "Fallback label for open public-roadmap issues when a project does not set one. No default — unset (projects default to roadmap).",
+      "reportRoadmapRepo": "Global public roadmap repository (optional)",
+      "reportRoadmapRepoHelp": "Fallback GitHub owner/repository for public-roadmap issues. When unset, uses the tracking repository. No default — unset.",
       "leaveBothThinkingTogglesOffToKeepThe": "",
       "manualOnlyNeverAutoCheck": "",
       "onStartupOncePerServerLaunch": "",
@@ -6315,7 +6336,8 @@
         "project": "Spécifique à ce projet"
       },
       "globalMcp": "MCP Servers · Global",
-      "mcp": "MCP Servers · Project"
+      "mcp": "MCP Servers · Project",
+      "configVersions": "Versions de configuration"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6821,6 +6843,19 @@
       "embeddedConnectionCap": "Plafond de connexions PostgreSQL embarqué",
       "embeddedConnectionCapError": "Saisissez une valeur entre 32 et 2 000.",
       "advanced": "Paramètres de base de données avancés"
+    },
+    "configVersions": {
+      "title": "Versions de configuration",
+      "description": "Restaurez n'importe quelle version de configuration de projet enregistrée.",
+      "loading": "Chargement des versions…",
+      "empty": "Aucune version de configuration pour l'instant.",
+      "loadError": "Impossible de charger les versions de configuration",
+      "rollback": "Revenir en arrière",
+      "rollingBack": "Retour en cours…",
+      "rollbackError": "Impossible de revenir en arrière sur la configuration",
+      "confirmTitle": "Revenir à une configuration antérieure ?",
+      "confirmMessage": "Restaurer cette version ? Le retour est enregistré comme une nouvelle version.",
+      "confirmRollback": "Revenir en arrière"
     }
   },
   "setup": {
@@ -9141,6 +9176,13 @@
     "roadmapMatch": {
       "title": "Déjà sur la feuille de route",
       "message": "Ce signalement correspond à une fonctionnalité déjà planifiée."
-    }
+    },
+    "roadmapDuplicate": {
+      "title": "Already on the roadmap — add your data point?"
+    },
+    "targetLabel": "Cible de dépôt",
+    "targetInherit": "Utiliser la cible configurée pour l’action",
+    "targetIssue": "Issue GitHub",
+    "targetDiscussion": "Discussion GitHub"
   }
 }
