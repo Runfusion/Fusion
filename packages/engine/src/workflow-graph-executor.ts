@@ -1165,12 +1165,32 @@ export class WorkflowGraphExecutor {
                 break;
               }
             } catch (err) {
+              if (err instanceof WorkflowGraphSuspended) throw err;
               this.deps.logTaskEntry?.(
                 `[post-merge] traversal error: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           }
           if (aggregate.outcome === "failure") break;
+          // A deliberately minimal merge workflow may route success straight
+          // to end with no post-merge work node to enter the complete column.
+          // Preserve end's handler-free terminal semantics while still entering
+          // its authored column after merge proof.
+          if (postMergeEntryNodeIds.length === 0) {
+            const terminalEdge = [...outgoingMap.entries()].flatMap(([from, outgoing]) => {
+              const fromNode = nodeMap.get(from);
+              if (!fromNode || !isMergeRegionKind(fromNode.kind)) return [];
+              return outgoing.filter((candidate) => {
+                const terminal = nodeMap.get(candidate.to);
+                return terminal?.kind === "end" && (!candidate.condition || candidate.condition === "success");
+              });
+            })[0];
+            const terminalNode = terminalEdge ? nodeMap.get(terminalEdge.to) : undefined;
+            if (terminalNode) {
+              const boundary = await this.deps.columnBoundary?.onNodeEntry(terminalNode);
+              if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+            }
+          }
           continue;
         }
         const child = await walk(edge.to);

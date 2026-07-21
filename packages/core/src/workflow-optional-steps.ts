@@ -16,7 +16,9 @@ export interface ResolvedWorkflowOptionalStep {
 
 /** Resolve one optional group's effective state consistently across runtime and
  * readiness gates. An explicit list (including `[]`) is authoritative; only a
- * missing list falls back to the workflow-authored default. */
+ * missing list falls back to the workflow-authored default.
+ * FNXC:WorkflowOptionalSteps 2026-07-21-11:51: Persisted explicit selections,
+ * including an empty list, must override workflow defaults across all gates. */
 export function isWorkflowOptionalGroupEnabled(
   enabledWorkflowSteps: readonly string[] | undefined,
   groupId: string,

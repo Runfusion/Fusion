@@ -330,7 +330,7 @@ The migration is additive: new work-item columns are nullable, existing rows rem
 - **Goal:** Prove the original symptom and all lane boundaries through production orchestration.
 - **Requirements:** R1-R20; F1-F7; AE1-AE10
 - **Dependencies:** U3-U6
-- **Files:** `packages/engine/src/__tests__/benchmark-six-column-workflow.test.ts`, `packages/engine/src/__tests__/builtin-workflows-lifecycle.test.ts`, `packages/engine/src/__tests__/workflow-work-scheduler.test.ts`, `packages/dashboard/app/components/__tests__/board-quickcreate-workflow-lane-visibility.test.tsx`, `docs/workflow-editor.md`, `.changeset/truthful-resumable-workflows.md` (new)
+- **Files:** `packages/engine/src/__tests__/benchmark-six-column-workflow.test.ts`, `packages/engine/src/__tests__/builtin-workflows-lifecycle.test.ts`, `packages/engine/src/__tests__/workflow-work-scheduler.test.ts`, `packages/dashboard/app/components/__tests__/board-quickcreate-workflow-lane-visibility.test.tsx`, `docs/workflow-editor.md`, `.changeset/truthful-workflow-lifecycle.md` (new)
 - **Approach:** Delete the benchmark's fake scheduler boundary wrapper and drive real triage/graph/scheduler/executor seams with deterministic fakes. Assert task column at every handler start, persisted continuation transitions, session uniqueness, and restart recovery. Update operator docs with the five-column preset and authoring rules. Add a minor `@runfusion/fusion` changeset because a supported preset becomes newly selectable and workflow runtime behavior changes.
 - **Test scenarios:** full happy path; both review rework loops; capacity wait; optional-step matrix; restart windows; manual merge; invalid topology; default workflow non-regression.
 - **Verification:** all scenario assertions pass without real waits/network calls; the required changeset passes strict format validation.
@@ -374,4 +374,3 @@ Do not run `pnpm test:full` or `pnpm verify:workspace` for this task unless a ge
 - Scoped tests, strict changeset validation, lint, `pnpm verify:fast`, and `pnpm test:gate` pass.
 - The diff contains no abandoned continuation fields, duplicate Plan Review gate, synthetic scheduler wrapper, dead helper, stale copy, or experimental code from rejected approaches.
 - No release or publish command has been run.
-

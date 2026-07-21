@@ -107,19 +107,21 @@ export async function replaceActiveTaskWorkflowContinuationImpl(
 
   // Compatibility path for legacy embedded stores. PostgreSQL is the
   // authoritative runtime and performs this replacement atomically above.
-  const active = store.db.prepare(
-    `SELECT id, runId, nodeId, kind FROM workflow_work_items
-     WHERE taskId = ? AND kind = 'task' AND state IN ('runnable', 'running', 'held', 'retrying')`,
-  ).all(input.taskId) as Array<{ id: string; runId: string; nodeId: string; kind: string }>;
-  for (const row of active) {
-    if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
-    store.transitionWorkflowWorkItemSync(row.id, "succeeded", {
-      leaseOwner: null,
-      leaseExpiresAt: null,
-      lastError: null,
-    });
-  }
-  return upsertWorkflowWorkItemImpl(store, input);
+  return store.db.transactionImmediate(() => {
+    const active = store.db.prepare(
+      `SELECT id, runId, nodeId, kind FROM workflow_work_items
+       WHERE taskId = ? AND kind = 'task' AND state IN ('runnable', 'running', 'held', 'retrying')`,
+    ).all(input.taskId) as Array<{ id: string; runId: string; nodeId: string; kind: string }>;
+    for (const row of active) {
+      if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
+      store.transitionWorkflowWorkItemSync(row.id, "succeeded", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: null,
+      });
+    }
+    return upsertWorkflowWorkItemImpl(store, input);
+  });
 }
 
 export async function transitionWorkflowWorkItemImpl(store: TaskStore, id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: DbTransaction,): Promise<WorkflowWorkItem> {

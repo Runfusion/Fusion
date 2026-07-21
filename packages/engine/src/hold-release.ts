@@ -168,22 +168,24 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   */
   const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
   if (preReleaseReview) {
-    const continuations = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
-    const active = continuations.filter((item) =>
-      ["held", "runnable", "running", "retrying"].includes(item.state),
+    // Compatibility for tasks planned before durable continuations existed and
+    // for narrow store adapters that expose only the legacy review result.
+    const legacyPassed = task.workflowStepResults?.some(
+      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
     );
-    // Readiness is represented by the graph's durable boundary continuation,
-    // not by a special-case review result. Optional groups that are disabled
-    // are still traversed and therefore reach the same capacity boundary.
-    const readyAtCapacityBoundary = active.some(
-      (item) => item.waitReason === "capacity" && item.sourceColumn === task.column,
-    );
-    if (!readyAtCapacityBoundary) {
-      // Compatibility for tasks planned before durable continuations existed.
-      const legacyPassed = task.workflowStepResults?.some(
-        (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
+    if (!legacyPassed) {
+      if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
+      const continuations = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
+      const active = continuations.filter((item) =>
+        ["held", "runnable", "running", "retrying"].includes(item.state),
       );
-      if (!legacyPassed) return true;
+      // Readiness is represented by the graph's durable boundary continuation,
+      // not by a special-case review result. Optional groups that are disabled
+      // are still traversed and therefore reach the same capacity boundary.
+      const readyAtCapacityBoundary = active.some(
+        (item) => item.waitReason === "capacity" && item.sourceColumn === task.column,
+      );
+      if (!readyAtCapacityBoundary) return true;
     }
   }
   // Still-live triage/executor statuses (kept, not triage-plan-review-owned):

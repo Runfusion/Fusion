@@ -5659,7 +5659,7 @@ export class TaskExecutor {
         const workItems = await this.store.listWorkflowWorkItemsForTask?.(task.id, { kinds: ["task"] }) ?? [];
         for (let index = workItems.length - 1; index >= 0; index -= 1) {
           const candidate = workItems[index];
-          if (["held", "runnable", "running"].includes(candidate.state)) {
+          if (["held", "runnable", "running", "retrying"].includes(candidate.state)) {
             continuation = candidate;
             break;
           }
