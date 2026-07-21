@@ -855,6 +855,26 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect(await getAppliedMigrations(ctx.db)).toContain(TASK_DECLARED_SYMBOLS_VERSION);
   });
 
+  it("upgrades a pre-0031 database with missions.task_prefix", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0031';
+      ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'missions'
+        AND column_name = 'task_prefix'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns).toEqual([{ column_name: "task_prefix" }]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(MISSION_TASK_PREFIX_VERSION);
+  });
+
   it("refuses to open a database migrated by a newer binary (stale-binary guard)", () => {
     const future = String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0");
     expect(() => assertBinaryNotOlderThanDatabase([SCHEMA_BASELINE_VERSION, future]))
