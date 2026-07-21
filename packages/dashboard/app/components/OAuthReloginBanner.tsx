@@ -7,6 +7,7 @@ import "./OAuthReloginBanner.css";
 
 const DISMISS_STORAGE_KEY = "fusion:oauth-relogin-dismissed";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
+const GITHUB_COPILOT_PROVIDER_ID = "github-copilot";
 const ANTHROPIC_FALLBACK_PROVIDER_IDS = new Set(["anthropic-api-key"]);
 
 type ExpiredBannerProvider = { id: string; name: string };
@@ -90,14 +91,21 @@ export function OAuthReloginBanner({
       if (providerId) {
         setExpiredProviders((current) => current.filter((provider) => provider.id !== providerId));
         setDismissedProviderIds((currentDismissed) => {
+          /*
+          FNXC:ProviderAuth 2026-07-20-12:00:
+          FN-8446 — Polling a healthy status must never prune a browser's
+          dismissal preference. GitHub Copilot remains dismissed permanently
+          because its short-lived session can repeatedly trigger successful-login
+          events; other providers re-arm after an explicit successful re-login.
+          */
+          if (providerId === GITHUB_COPILOT_PROVIDER_ID) {
+            return currentDismissed;
+          }
+
           if (!currentDismissed.has(providerId)) {
             return currentDismissed;
           }
 
-          /*
-          FNXC:ProviderAuth 2026-07-20-12:00:
-          FN-8446 — A manual dismissal must survive an expired→refreshed→expired flicker from short-lived OAuth tokens such as GitHub Copilot. Re-arm only this provider after its successful re-login event; polling a healthy status must never prune its browser preference.
-          */
           const nextDismissed = new Set(currentDismissed);
           nextDismissed.delete(providerId);
           persistDismissedProviderIds(nextDismissed);

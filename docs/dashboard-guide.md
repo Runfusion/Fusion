@@ -897,7 +897,7 @@ Branch names are dynamic from merge/audit payloads; the banner is not hardcoded 
 
 The global OAuth re-login banner clears a provider row immediately after that provider successfully re-authenticates (from Settings → Authentication or Model Onboarding), instead of waiting for the next `GET /auth/status` poll interval.
 
-Dismissing the banner suppresses each currently shown provider until that provider successfully re-authenticates. A silent refresh or temporary non-expired `/auth/status` response does not clear the dismissal, preventing short-lived GitHub Copilot tokens from repeatedly re-showing a manually dismissed banner; a successful re-login re-arms that provider for a future true expiry.
+Dismissing the banner suppresses each currently shown provider. GitHub Copilot stays dismissed permanently for that browser profile because its short-lived sessions can repeatedly emit successful-login events; clearing browser storage restores the banner. Other providers re-arm after a successful re-login. A silent refresh or temporary non-expired `/auth/status` response never clears a dismissal.
 
 For OAuth credentials, the same `/auth/status` poll also attempts an automatic refresh when the stored credential has a refresh token and the access token is expired or within the refresh buffer. Anthropic banner state is keyed to `anthropic-subscription` (including legacy Anthropic OAuth rows), not Claude CLI state. When that refresh succeeds, the banner clears for the provider without manual re-login and without waiting for a separate model request.
 

@@ -195,7 +195,7 @@ describe("OAuthReloginBanner", () => {
     expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("openai-codex");
   });
 
-  it("re-arms a dismissed provider after its successful OAuth re-login", async () => {
+  it("keeps GitHub Copilot dismissed after a successful OAuth re-login", async () => {
     mockFetchAuthStatus
       .mockResolvedValueOnce({
         providers: [{ id: "github-copilot", name: "GitHub Copilot", type: "oauth", authenticated: false, expired: true }],
@@ -218,11 +218,42 @@ describe("OAuthReloginBanner", () => {
       window.dispatchEvent(new CustomEvent(OAUTH_RELOGIN_SUCCESS_EVENT, { detail: { providerId: "github-copilot" } }));
       await flushPromises();
     });
-    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).not.toContain("github-copilot");
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).toContain("github-copilot");
 
     firstRender.unmount();
     render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("GitHub Copilot");
+    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("re-arms other dismissed providers after a successful OAuth re-login", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: true, expired: false }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      });
+
+    const firstRender = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
+    fireEvent.click(screen.getByLabelText("Dismiss OAuth re-login banner"));
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(OAUTH_RELOGIN_SUCCESS_EVENT, { detail: { providerId: "openai-codex" } }));
+      await flushPromises();
+    });
+    expect(window.localStorage.getItem("fusion:oauth-relogin-dismissed")).not.toContain("openai-codex");
+
+    firstRender.unmount();
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
   });
 
   it("does not clear dismissed providers for an OAuth success event without a provider id", async () => {
