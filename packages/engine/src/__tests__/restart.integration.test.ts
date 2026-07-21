@@ -1022,6 +1022,44 @@ describe("In-progress task resume after restart", () => {
     }));
   });
 
+  it("recoverCompletedTask() legally re-homes a completed triage zombie before review handoff", async () => {
+    const store = createMockStore();
+    const task = makeTask("FN-TRIAGE-ZOMBIE", "triage", {
+      worktree: "/tmp/wt/FN-TRIAGE-ZOMBIE",
+      steps: makeSteps("done"),
+      enabledWorkflowSteps: ["plan-review", "code-review"],
+      workflowIrPinNodeId: "merge",
+      workflowStepResults: [
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "passed" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "passed" },
+      ],
+    });
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-TRIAGE-ZOMBIE", "triage", {
+      worktree: task.worktree,
+      steps: makeSteps("done"),
+      enabledWorkflowSteps: task.enabledWorkflowSteps,
+      workflowIrPinNodeId: "merge",
+      workflowStepResults: task.workflowStepResults,
+    }));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
+
+    const recovered = await executor.recoverCompletedTask(task);
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenNthCalledWith(
+      1,
+      task.id,
+      "todo",
+      expect.objectContaining({ recoveryRehome: true, preserveProgress: true, preserveWorktree: true }),
+    );
+    expect(store.moveTask).toHaveBeenNthCalledWith(2, task.id, "in-progress");
+    expect(store.handoffToReview).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      evidence: expect.objectContaining({ reason: "completed-task-recovered" }),
+    }));
+  });
+
   /*
   FNXC:EngineTests 2026-07-19-18:55 (U10b):
   "Enabled steps are ABSENT" is the condition under test, so it must be stated rather than

@@ -2033,13 +2033,15 @@ export class ChatManager {
       pluginRunner: this.pluginRunner,
       runtimeHint: extractRuntimeHint(input.responder.runtimeConfig),
       /*
-      FNXC:ChatSkills 2026-06-16-19:13:
-      Chat-room responder sessions must request the responder agent skills plus enabled plugin skills so chat-only agent replies can use skills such as ce-debug just like heartbeat/executor lanes.
+      FNXC:ChatSkills 2026-07-20-10:30:
+      Chat-room responder sessions must request responder and enabled plugin skill names plus forward additionalSkillPaths from buildSessionSkillContextSync.
+      The pi loader cannot discover plugin SKILL.md bodies from names alone, so preserve both #2017 contract halves (FN-8443 / #2364).
 
       FNXC:ChatSkills 2026-06-17-18:16:
       Room responders share the chat slash-command contract: `/skill:{name}` is removed from the prompt text and merged into heartbeat skill selection without changing persisted room-message text.
       */
       ...(mergedRoomSkillSelection ? { skillSelection: mergedRoomSkillSelection } : {}),
+      ...(roomSkillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: roomSkillContext.additionalSkillPaths } : {}),
       cwd: this.rootDir,
       systemPrompt,
       tools: CHAT_CODING_TOOLS,
@@ -2704,10 +2706,12 @@ export class ChatManager {
         ...(agentRuntimeHint ? { runtimeHint: agentRuntimeHint } : {}),
         pluginRunner: this.pluginRunner,
         /*
-        FNXC:ChatSkills 2026-06-16-19:13:
-        Regular chat and QuickChat must request bound-agent skills plus enabled plugin skills so dashboard chat loads capabilities such as ce-debug instead of creating skill-less sessions.
+        FNXC:ChatSkills 2026-07-20-10:30:
+        Regular chat and QuickChat must request bound-agent and enabled plugin skill names plus forward additionalSkillPaths from buildSessionSkillContextSync.
+        The pi loader cannot discover plugin SKILL.md bodies from names alone, so preserve both #2017 contract halves (FN-8443 / #2364).
         */
         ...(mergedChatSkillSelection ? { skillSelection: mergedChatSkillSelection } : {}),
+        ...(chatSkillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: chatSkillContext.additionalSkillPaths } : {}),
         // FNXC:McpConfig 2026-06-25-22:36: Dashboard chat/QuickChat reuses the scoped task store when available to resolve trusted MCP servers at session creation without persisting materialized secrets.
         ...(this.taskStore ? { mcpServers: (await resolveMcpServersForStore(this.taskStore, { agentId: agent?.id })).servers } : {}),
         ...sessionOptions,

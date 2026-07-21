@@ -1510,17 +1510,22 @@ export function useChat(
         return;
       }
 
-      // Optimistic truncation: drop the edited message and everything after it immediately.
-      setMessages(previousMessages.slice(0, targetIndex));
-
       try {
         await editChatMessage(sessionId, messageId, trimmed, projectId);
+        // Keep the editor's message mounted until the PATCH succeeds so a rejected save retains its correction.
+        setMessages(previousMessages.slice(0, targetIndex));
       } catch (error) {
         console.error("[useChat] Failed to edit message:", error);
         addToast?.("Failed to edit message", "error");
         // Restore truthful state from the server rather than trusting the optimistic truncation.
         await loadMessages(sessionId);
-        return;
+        /*
+         * FNXC:ChatMessageEdit 2026-07-19-00:00:
+         * The inline editor closes only when its async handler fulfills. Rethrow a failed PATCH
+         * after recovery so Direct Chat keeps the user's correction available instead of treating
+         * a toast-only failure as a successful save.
+         */
+        throw error;
       }
 
       const cacheKey = getChatMessagesCacheKey(projectId, sessionId);

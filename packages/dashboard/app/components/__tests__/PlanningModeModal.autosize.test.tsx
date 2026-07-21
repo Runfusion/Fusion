@@ -187,14 +187,7 @@ describe("PlanningModeModal autosize", () => {
     });
   });
 
-  it("keeps SummaryView collapsed and expanded autosize caps distinct", async () => {
-    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
-      configurable: true,
-      get() {
-        return 900;
-      },
-    });
-
+  it("does not expose the removed final review for an unvalidated completed session", async () => {
     mockFetchAiSession.mockResolvedValueOnce({
       id: "session-complete-1",
       type: "planning",
@@ -228,20 +221,7 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
-    /*
-    FNXC:PlanningSummaryDescription 2026-07-15-23:15:
-    FN-8031 shows Markdown preview first, so autosize only applies after the Plain toggle reveals the textarea. Measure caps there rather than against a hidden textarea.
-    */
-    await screen.findByText("Recovered summary description from persisted session");
-    fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
-    const description = await screen.findByDisplayValue("Recovered summary description from persisted session") as HTMLTextAreaElement;
-    await waitFor(() => {
-      expect(description.style.height).toBe("640px");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
-    await waitFor(() => {
-      expect(description.style.height).toBe("800px");
-    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("This plan is still being prepared");
+    expect(screen.queryByTestId("planning-description-markdown-toggle")).toBeNull();
   });
 });

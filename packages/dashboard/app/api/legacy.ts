@@ -668,6 +668,8 @@ export interface PlanningSession {
   summary: PlanningSummary | null;
 }
 
+/** The response endpoint may synchronously return a generated next question before SSE delivers it. */
+export type PlanningResponse = PlanningSession | { type: "question"; data: PlanningQuestion };
 
 /** SSE event types for planning session streaming */
 export type PlanningStreamEvent =
@@ -766,7 +768,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { clarificationEnabled?: boolean },
+  planningOptions?: { clarificationEnabled?: boolean; workflowId?: string | null },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -777,6 +779,7 @@ export function startPlanningStreaming(
       planningModelId: modelOverride?.planningModelId,
       thinkingLevel: modelOverride?.thinkingLevel,
       clarificationEnabled: planningOptions?.clarificationEnabled,
+      ...(planningOptions?.workflowId ? { workflowId: planningOptions.workflowId } : {}),
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });
@@ -800,8 +803,8 @@ export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-): Promise<PlanningSession> {
-  return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
+): Promise<PlanningResponse> {
+  return api<PlanningResponse>(withProjectId("/planning/respond", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });
@@ -926,7 +929,7 @@ export function createTaskFromPlanning(
     workflowId?: string | null;
   },
 ): Promise<Task> {
-  return api<Task>(withProjectId("/planning/create-task", projectId), {
+  return api<{ task: Task; alreadyCreated: boolean }>(withProjectId("/planning/create-task", projectId), {
     method: "POST",
     body: JSON.stringify({
       ...(summary ? { sessionId, summary } : { sessionId }),
@@ -935,7 +938,7 @@ export function createTaskFromPlanning(
       ...(options?.branchSelection ? { branchSelection: options.branchSelection } : {}),
       ...(options?.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
     }),
-  });
+  }).then((response) => response.task);
 }
 
 /** Start subtask breakdown from a completed planning session */

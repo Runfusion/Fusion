@@ -130,8 +130,11 @@ describe("report routes", () => {
 
       setUploadFile({ buffer: Buffer.from("not an image"), mimetype: "image/png" });
       await expect(invoke(route, {})).rejects.toThrow("PNG or JPEG");
-      setUploadFile({ buffer: Buffer.alloc(MAX_SCREENSHOT_BYTES + 1, 0x89), mimetype: "image/png" });
-      await expect(invoke(route, {})).rejects.toThrow("PNG or JPEG");
+      // FNXC:ReportPipeline 2026-07-20-09:35: Size validation must follow a valid image signature so this test cannot pass by failing the earlier magic-byte guard.
+      const oversizedPng = Buffer.alloc(MAX_SCREENSHOT_BYTES + 1);
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(oversizedPng);
+      setUploadFile({ buffer: oversizedPng, mimetype: "image/png" });
+      await expect(invoke(route, {})).rejects.toThrow();
 
       setUploadFile({ buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), mimetype: "text/plain" });
       const result = await invoke(route, {});
@@ -217,6 +220,34 @@ describe("report routes", () => {
     const { handlers } = setup();
     const response = await invoke(handlers.get("/report/file")!, { actionType: "feedback", report: { userPrompt: "Dashboard report controls", context: {} } });
     expect(response.body).toMatchObject({ kind: "filed", destination: "issue" });
+  });
+
+  /*
+   * FNXC:ReportPipeline 2026-07-19-20:45:
+   * The file endpoint receives an editable draft and must re-scrub trace text
+   * before the shared egress pipeline sees it; malformed traces fail closed.
+   */
+  // FNXC:ReportPipeline 2026-07-19-20:45: The file route must preserve this regression as a passing assertion: untrusted edited traces are re-scrubbed before egress.
+  it("bounds activity trace input and re-scrubs an edited file trace before egress", async () => {
+    vi.mocked(runReportPipeline).mockResolvedValue({ kind: "filed" } as never);
+    const { handlers } = setup();
+    const malicious = "private-project /Users/alice/private-project ghp_abcdefghijk1234567890 sk-abcdefghijklmnopqrstuvwxyz";
+
+    await invoke(handlers.get("/report/file")!, {
+      actionType: "bug",
+      activityTrace: [malicious],
+      report: { userPrompt: "Report capture regression", context: { activityTrace: [malicious] } },
+    });
+    const [input, _deps, options] = vi.mocked(runReportPipeline).mock.calls.at(-1)!;
+    expect(input.activityTrace?.[0]).not.toMatch(/private-project|\/Users\/alice|ghp_|sk-/);
+    expect((options?.report as { context: { activityTrace: string[] } }).context.activityTrace[0]).not.toMatch(/private-project|\/Users\/alice|ghp_|sk-/);
+
+    await expect(invoke(handlers.get("/report/draft")!, {
+      actionType: "bug", userPrompt: "Report capture regression", activityTrace: Array.from({ length: 21 }, () => "trace"),
+    })).rejects.toThrow("Activity trace is invalid");
+    await expect(invoke(handlers.get("/report/draft")!, {
+      actionType: "bug", userPrompt: "Report capture regression", activityTrace: ["valid", 12],
+    })).rejects.toThrow("Activity trace is invalid");
   });
 
   describe("Help self-check", () => {

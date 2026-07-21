@@ -91,6 +91,7 @@ export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from ".
 export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
 export * from "./frontend-ux-policy.js";
 export * from "./original-description-policy.js";
+export * from "./planning-plan-md.js";
 export * from "./file-scope-classification.js";
 export {
   WAKE_DELTA_ASSIGNED_TASKS_CAP,
@@ -732,6 +733,7 @@ export {
   archiveAsSameAgentDuplicate,
   flagSameAgentDuplicate,
   flagTriageDuplicate,
+  isTriageDuplicateKeepAcknowledged,
   type SameAgentDuplicateInput,
   type SameAgentDuplicateCandidate,
   type SameAgentDuplicateMatch,

@@ -31,6 +31,23 @@ describe("GitHub Discussions GraphQL transport", () => {
       .rejects.toThrow("Resource not accessible by personal access token");
   });
 
+  it("creates a discussion through the forced token GraphQL transport", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { repository: { id: "R_1", discussionCategories: { nodes: [{ id: "DC_1" }] } } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { createDiscussion: { discussion: { id: "D_1", number: 42, url: "https://github.com/Runfusion/Fusion/discussions/42" } } },
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const discussion = await new GitHubClient({ token: "test", forceMode: "token" })
+      .createDiscussion("Runfusion", "Fusion", "Title", "Body", "DC_1");
+
+    expect(discussion).toEqual({ id: "D_1", number: 42, htmlUrl: "https://github.com/Runfusion/Fusion/discussions/42" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url) === "https://api.github.com/graphql")).toBe(true);
+  });
 
   it("maps disabled Discussions errors from search to a typed signal", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({

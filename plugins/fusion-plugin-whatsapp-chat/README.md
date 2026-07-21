@@ -6,12 +6,13 @@ No Meta Cloud app, webhook URL, verify token, or Graph API credentials are requi
 
 ## Setup
 
-1. Enable/install the plugin in Plugin Manager.
-2. Configure `allowedSenders` (empty means **nobody is allowed**).
-3. Choose `pairingMode`:
-   - `qr` (default): fetch QR from `/api/plugins/fusion-plugin-whatsapp-chat/qr` and scan in WhatsApp.
-   - `code`: set `pairingPhoneNumber` (E.164 digits without `+`) and request code via `/pair-code`.
-4. Confirm `/status` reports `connected`.
+1. Enable/install the plugin, then open **Settings → Plugins → Fusion Plugins → WhatsApp Chat**.
+2. Use the pairing panel at the top of the plugin settings. It shows live connection status and, in QR mode, a QR code to scan from WhatsApp **Linked devices**.
+3. Configure `allowedSenders` (empty means **nobody is allowed**).
+4. Choose `pairingMode`:
+   - `qr` (default): scan the in-settings QR code in WhatsApp.
+   - `code`: set `pairingPhoneNumber` (E.164 digits without `+`) and use **Request pairing code** in the settings panel.
+5. Wait for the panel to report `connected`. Use **Logout / re-pair** to start a fresh pairing session; if a QR is still pending, refresh or wait for a new one.
 
 ## Settings
 
@@ -42,9 +43,9 @@ No Meta Cloud app, webhook URL, verify token, or Graph API credentials are requi
 
 ## Troubleshooting
 
-- Stuck `awaiting-qr`: fetch a fresh QR and scan promptly.
-- `loggedOut`: call `/logout` (or wait for clear) and re-pair.
-- Pair code not generated: ensure `pairingPhoneNumber` is E.164 digits without `+`.
+- Stuck `awaiting-qr`: use **Refresh status** in the plugin settings panel and scan the newly displayed QR promptly.
+- Need to re-pair: use **Logout / re-pair** in plugin settings; it starts a fresh QR or code pairing session.
+- Pair code not generated: ensure `pairingPhoneNumber` is E.164 digits without `+`, then use **Request pairing code** in the settings panel.
 - No replies: check `allowedSenders`; empty list blocks all inbound messages by design.
 
 ## Compliance warning

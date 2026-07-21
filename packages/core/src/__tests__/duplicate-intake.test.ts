@@ -257,4 +257,20 @@ describe("flagTriageDuplicate", () => {
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ source: "triage-marker-flagged", canonicalTaskId: "FN-1" }) }));
     expect(store.deleteTask).toBeUndefined();
   });
+
+  it("preserves a same-canonical Keep acknowledgement when re-flagged", async () => {
+    const { flagTriageDuplicate } = await import("../duplicate-intake.js");
+    const store = {
+      getTask: vi.fn().mockResolvedValue({ sourceMetadata: { nearDuplicateOf: "fn-1", nearDuplicateDismissed: true } }),
+      logEntry: vi.fn(),
+      recordActivity: vi.fn(),
+      updateTask: vi.fn(),
+    } as any;
+
+    await flagTriageDuplicate(store, "FN-2", "FN-1");
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-2", {
+      sourceMetadataPatch: expect.objectContaining({ nearDuplicateDismissed: true, nearDuplicateOf: "FN-1" }),
+    });
+  });
 });

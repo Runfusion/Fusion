@@ -107,7 +107,7 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 2. For each message, classify it: informational, question, request, or escalation.
 3. Take one concrete action per actionable message:
    - If the message requires a response, use fn_send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - When replying, include 'reply_to_message_id' and set 'to_id' to the exact [from: type:id] ID from fn_read_messages (including cli). Omit 'to_id' only to use the safe reply-to-parent default for a message addressed to you.
    - If the message is informational, acknowledge it by logging with fn_task_log.
    - If the message requests net-new work, first check whether an open task already covers it; idle/no-task heartbeats may create only with approved Feature → Slice → Milestone → Mission lineage.
    - If ownership is clear and an agent is available, delegate only approved mission-linked work using fn_delegate_task.
@@ -123,7 +123,7 @@ Example flow:
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
-- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked, and use the exact sender ID reported by fn_read_messages (including cli).
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 
@@ -209,7 +209,7 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 1. If fn_read_messages is available, use it to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
    - If the message requires a response and fn_send_message is available, use fn_send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - When replying, include 'reply_to_message_id' and set 'to_id' to the exact [from: type:id] ID from fn_read_messages (including cli). Omit 'to_id' only to use the safe reply-to-parent default for a message addressed to you.
    - If the message is informational, acknowledge it and respond via fn_send_message when appropriate.
    - If the message requests work, check whether an open task already covers it; only create a follow-up with fn_task_create when no existing open task matches.
    - If the request has a clear owner and fn_delegate_task is available, delegate it directly.
@@ -221,7 +221,7 @@ Example flow:
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
-- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked, and use the exact sender ID reported by fn_read_messages (including cli).
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 

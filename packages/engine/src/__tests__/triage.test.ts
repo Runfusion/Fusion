@@ -230,6 +230,23 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("Test task description");
   });
 
+  it("expands stored plan.md while preserving original request and edited description context", () => {
+    const prompt = buildSpecificationPrompt(
+      { ...baseTask, description: "Operator edited context" },
+      ".fusion/tasks/FN-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { plan: "# Validated plan\n\nPlan detail\n\n## Size\nM\n\n## Suggested dependencies\n_None_\n\n## Key deliverables\n- Deliver it\n", originalDescription: "Raw operator request" },
+    );
+    expect(prompt).toContain("## Planning Mode plan.md");
+    expect(prompt).toContain("Plan detail");
+    expect(prompt).toContain("Operator edited context");
+    expect(prompt).toContain("Raw operator request");
+    expect(prompt).toContain("never use plan.md");
+  });
+
   describe("task-definition input language setting", () => {
     const languageSettings: Settings = {
       maxConcurrent: 2,
@@ -2394,8 +2411,8 @@ describe("requirePlanApproval setting", () => {
    * awaiting-approval a second time; the fix must move straight to todo instead.
    */
   describe("FN-7569: plan approval fingerprint idempotency", () => {
-    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n";
-    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n";
+    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n\n## Steps\n\n### Step 1: Implement\n\nDo the thing.\n";
+    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n\n## Steps\n\n### Step 1: Implement differently\n\nDo the changed thing.\n";
 
     /*
     FNXC:PlanApproval 2026-07-15-14:05:
@@ -2868,6 +2885,81 @@ describe("specified triage recovery", () => {
     );
   });
 
+  it("does not recover a prose-only partial planning draft into execution", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Refinement: unfinished plan\n\nOperator request.\n\n## Original Description\n\nOperator request.\n",
+    );
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      title: "Refinement: unfinished plan",
+      description: "Operator request.",
+      column: "triage",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected",
+    );
+  });
+
+  it("recovers a structured implementation plan without a no-commits marker", async () => {
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      "# Task: FN-001 - Implement change\n\n**Size:** M\n\n## Steps\n\n### Step 1: Implement\n\nMake the change.\n",
+    );
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue([{ name: "Implement", status: "pending" }]),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Implement change",
+      column: "triage",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
   /*
   FNXC:TriageStuckKill 2026-07-18-22:30:
   Null status alone is not proof of an approved plan (Greptile P1). Only recover null-status
@@ -3148,6 +3240,12 @@ Forbidden paths / non-goals:
 - Do not edit Atlas files: \`AtlasNotes.xcodeproj/**\`, \`Tests/AtlasNotesMobileUITests/**\`, \`Packages/MobileApp/**\`.
 - Evidence only: \`.fusion/fusion.db\`, \`.fusion/tasks/*/task.json\`, \`Packages/*/Package.resolved\`.
 - Conditional only: \`.changeset/*.md\`.
+
+## Steps
+
+### Step 1: Fix poisoned scope
+
+Apply the scoped implementation changes.
 `,
     );
 
@@ -3209,7 +3307,7 @@ Forbidden paths / non-goals:
   it("updates malformed metadata title from prompt heading when task ID matches", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement onboarding flow\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -3248,7 +3346,7 @@ Forbidden paths / non-goals:
   it("does not overwrite title when heading task ID does not match", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement change\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -3298,7 +3396,7 @@ Forbidden paths / non-goals:
   it("preserves imported GitHub issue titles during planning recovery", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement issue fix\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -4512,7 +4610,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-review", status: "reviewing", worktree: "/tmp/FN-7977-MODEL", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+        planningStartedAt: expect.any(String),
+      });
     });
 
     it("keeps advanced worktree and steps after deterministic validation recovery", async () => {
@@ -4542,7 +4643,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-progress", status: "executing", worktree: "/tmp/FN-7977-VALIDATION", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+        planningStartedAt: expect.any(String),
+      });
     });
 
     it("escalates to error state when triage retries are exhausted via specifyTask", async () => {

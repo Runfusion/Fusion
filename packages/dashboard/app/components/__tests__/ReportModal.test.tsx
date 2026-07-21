@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReportModal } from "../ReportModal";
@@ -27,6 +28,11 @@ describe("ReportModal", () => {
     captureScreenshot.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
   });
 
+  /*
+   * FNXC:ReportPipeline 2026-07-20-09:35:
+   * Opt-in capture must visibly enter its pending preview container before the
+   * retained artifact reference can unlock filing.
+   */
   it("uploads an opted-in screenshot and sends its reference only after retention confirmation", async () => {
     reportAttachment.mockResolvedValueOnce({ artifactId: "123e4567-e89b-42d3-a456-426614174000" });
     reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
@@ -34,6 +40,8 @@ describe("ReportModal", () => {
 
     fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Store a screenshot locally" }));
+    expect(screen.getByText("Capturing and storing locally…")).toBeInTheDocument();
+    expect(document.querySelector(".report-modal__screenshot-preview")).toBeInTheDocument();
     const confirmation = await screen.findByRole("checkbox", { name: /I confirm Fusion may retain/ });
     fireEvent.click(confirmation);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -46,6 +54,44 @@ describe("ReportModal", () => {
     await waitFor(() => expect(reportFile).toHaveBeenCalledWith(expect.objectContaining({
       screenshotArtifactId: "123e4567-e89b-42d3-a456-426614174000",
     })));
+  });
+
+  /*
+   * FNXC:ReportPipeline 2026-07-19-20:45:
+   * Capture failure must return the modal to an accessible retryable prompt;
+   * opt-out removes the only attachment-specific affordances without shells.
+   */
+  it("returns a failed screenshot capture to an accessible retryable prompt without empty controls", async () => {
+    captureScreenshot.mockRejectedValueOnce(new Error("Screen capture was denied"));
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Store a screenshot locally" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Screen capture was denied");
+    expect(screen.getByRole("checkbox", { name: "Store a screenshot locally" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByText("Capturing and storing locally…")).not.toBeInTheDocument();
+    for (const button of screen.getAllByRole("button")) expect(button.textContent?.trim() || button.getAttribute("aria-label")?.trim()).toBeTruthy();
+  });
+
+  it("keeps screenshot references out of both requests when reporters do not opt in", async () => {
+    vi.mocked(capture.getRecentActivity).mockReturnValue(["local trace"]);
+    reportDraft.mockResolvedValueOnce({ kind: "draft-ready", report: { userPrompt: "It crashes", body: "## Summary\nIt crashes", context: {} } });
+    reportFile.mockResolvedValueOnce({ kind: "filed", url: "https://example.test/1" });
+    render(<ReportModal actionType="bug" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("What went wrong?"), { target: { value: "It crashes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(reportDraft).toHaveBeenCalledWith(expect.objectContaining({ activityTrace: ["local trace"], screenshotArtifactId: undefined })));
+    fireEvent.click(await screen.findByRole("button", { name: "File report" }));
+    await waitFor(() => expect(reportFile).toHaveBeenCalledWith(expect.objectContaining({ screenshotArtifactId: undefined })));
+  });
+
+  it("retains the canonical mobile rule because modal DOM is breakpoint-independent", () => {
+    const css = readFileSync("app/components/ReportModal.css", "utf8");
+    expect(css).toMatch(/@media \(max-width: 768px\)/);
+    expect(css).toMatch(/\.report-modal \{ inline-size: 100%;/);
   });
 
   it("clears a pending capture when the reporter opts out", async () => {

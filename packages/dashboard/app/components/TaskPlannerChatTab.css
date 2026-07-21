@@ -218,9 +218,19 @@ The Planner Chat streaming Stop button must occupy the same width footprint as t
   resize: vertical;
 }
 
+/*
+FNXC:TaskDetailPlannerChat 2026-07-20-12:00:
+FN-8421 extends the existing desktop/mobile composer parity to tablet, which
+inherits these base rules. Send and streaming Stop share this class, so pin
+its border-box block size and clear button padding to the textarea's compact
+height rather than relying on the global button minimum.
+*/
 .task-planner-chat-send {
   flex: 0 0 auto;
+  block-size: calc(var(--space-2xl) + var(--space-sm));
   min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  box-sizing: border-box;
+  padding: 0;
   /* FN-7634: floor both the Send and Stop button variants (both carry this class) at the same width so the streaming swap never narrows or widens the control. */
   min-inline-size: var(--chat-input-control-size);
 }

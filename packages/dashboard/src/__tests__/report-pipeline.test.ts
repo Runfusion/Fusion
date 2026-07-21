@@ -218,8 +218,16 @@ describe("report pipeline", () => {
       commentOnIssue: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/issues/9#issuecomment-9" }),
       searchIssues: vi.fn().mockResolvedValue([{ number: 9, title: "dashboard rendering controls", body: "dashboard rendering controls", html_url: "https://github.com/Runfusion/Fusion/issues/9", state: "open" }]),
     };
-    const result = await runReportPipeline({ actionType: "idea", userPrompt: "Add dashboard rendering controls" }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    const artifactId = "123e4567-e89b-42d3-a456-426614174000";
+    const result = await runReportPipeline({
+      actionType: "idea",
+      userPrompt: "Add dashboard rendering controls",
+      activityTrace: ["private-project /Users/alice/private-project ghp_abcdefghijk1234567890"],
+      screenshotArtifactId: artifactId,
+    }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
     expect(result.kind).toBe("endorsed");
+    expect(String(client.commentOnIssue.mock.calls[0][3])).toContain(`artifact ${artifactId}`);
+    expect(String(client.commentOnIssue.mock.calls[0][3])).not.toMatch(/private-project|\/Users\/alice|ghp_/);
     expect(client.addIssueReaction).toHaveBeenCalledWith("Runfusion", "Fusion", 9, "+1");
     expect(client.commentOnIssue).toHaveBeenCalledOnce();
     expect(client.createIssue).not.toHaveBeenCalled();
@@ -235,8 +243,16 @@ describe("report pipeline", () => {
       addDiscussionReaction: vi.fn(),
       commentOnDiscussion: vi.fn().mockResolvedValue({ url: "https://github.com/Runfusion/Fusion/discussions/6#discussioncomment-1" }),
     };
-    const result = await runReportPipeline({ actionType: "feedback", userPrompt: "report flow status feedback" }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
+    const artifactId = "123e4567-e89b-42d3-a456-426614174000";
+    const result = await runReportPipeline({
+      actionType: "feedback",
+      userPrompt: "report flow status feedback",
+      activityTrace: ["private-project /Users/alice/private-project sk-abcdefghijklmnopqrstuvwxyz"],
+      screenshotArtifactId: artifactId,
+    }, deps({ projectSettings: { ...settings, reportMode: "auto-file" }, client }));
     expect(result.kind).toBe("endorsed");
+    expect(String(client.commentOnDiscussion.mock.calls[0][1])).toContain(`artifact ${artifactId}`);
+    expect(String(client.commentOnDiscussion.mock.calls[0][1])).not.toMatch(/private-project|\/Users\/alice|sk-/);
     expect(client.addDiscussionReaction).toHaveBeenCalledWith("D_kwDO1");
     expect(client.commentOnDiscussion).toHaveBeenCalledOnce();
     expect(client.createIssue).not.toHaveBeenCalled();
@@ -290,4 +306,67 @@ describe("report pipeline", () => {
   });
 
 
+  /*
+   * FNXC:ReportPipeline 2026-07-19-20:45:
+   * All report action types share one scrubbed artifact-reference contract.
+   * Unknown client input must not become GitHub-visible context.
+   */
+  it.each(["bug", "feedback", "idea", "help"] as const)("carries scrubbed trace and an optional screenshot reference for %s drafts", async (actionType) => {
+    const artifactId = "123e4567-e89b-42d3-a456-426614174000";
+    const result = await runReportPipeline({
+      actionType,
+      userPrompt: "report capture regression",
+      activityTrace: ["private-project /Users/alice/private-project ghp_abcdefghijk1234567890"],
+      screenshotArtifactId: artifactId,
+      ignoredClientField: "must not be forwarded",
+    } as never, deps());
+
+    expect(result).toMatchObject({ kind: "draft-ready", report: { screenshotArtifactId: artifactId } });
+    if (result.kind === "draft-ready") {
+      expect(result.report.context).toMatchObject({ actionType, activityTrace: [expect.not.stringMatching(/private-project|\/Users\/alice|ghp_/)] });
+      expect(result.report.body).toContain(`artifact ${artifactId}`);
+      expect(JSON.stringify(result.report)).not.toContain("must not be forwarded");
+    }
+  });
+
+  /*
+   * FNXC:ReportPipeline 2026-07-20-09:30:
+   * Fresh and duplicate egress must consume the same scrubbed structured body
+   * for both GitHub destinations, so a trace/reference cannot bypass privacy
+   * handling after the draft stage.
+   */
+  it.each([
+    ["fresh Issue", "bug", {}, "createIssue", 0],
+    ["fresh Discussion", "feedback", { reportDiscussionCategory: "DC_ideas" }, "createDiscussion", 3],
+  ] as const)("sends a scrubbed trace and screenshot reference through %s", async (_path, actionType, clientOverrides, egressMethod, bodyIndex) => {
+    const client = { ...deps().client!, ...clientOverrides };
+    const context = deps({ projectSettings: { ...settings, reportMode: "auto-file", reportDiscussionCategory: "DC_ideas" }, client });
+    const artifactId = "123e4567-e89b-42d3-a456-426614174000";
+
+    const result = await runReportPipeline({
+      actionType,
+      userPrompt: "report capture regression",
+      activityTrace: ["private-project /Users/alice/private-project ghp_abcdefghijk1234567890 sk-abcdefghijklmnopqrstuvwxyz"],
+      screenshotArtifactId: artifactId,
+    }, context);
+    expect(result).toMatchObject({ kind: expect.stringMatching(/filed|endorsed/) });
+
+    const call = (client[egressMethod] as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = egressMethod === "createIssue" ? String(call[0].body) : String(call[bodyIndex]);
+    expect(body).toContain(`artifact ${artifactId}`);
+    expect(body).not.toMatch(/private-project|\/Users\/alice|ghp_|sk-/);
+  });
+
+  it("omits a non-opted-in screenshot while retaining scrubbed trace in auto-file mode", async () => {
+    const context = deps({ projectSettings: { ...settings, reportMode: "auto-file" } });
+    const result = await runReportPipeline({
+      actionType: "bug",
+      userPrompt: "report capture regression",
+      activityTrace: ["private-project /Users/alice/private-project sk-abcdefghijklmnopqrstuvwxyz"],
+    }, context);
+
+    expect(result).toMatchObject({ kind: "filed", report: { screenshotArtifactId: undefined } });
+    if (result.kind === "filed") expect(JSON.stringify(result.report)).not.toMatch(/private-project|\/Users\/alice|sk-/);
+    expect(context.client!.createIssue).toHaveBeenCalledWith(expect.objectContaining({ body: expect.not.stringContaining("## Screenshot") }));
+  });
 });

@@ -336,6 +336,13 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   and applies at every width, so no mobile-only override is needed here.
   */
   .detail-meta-inline-controls {
+    /*
+    FNXC:QuickAddActionRow 2026-07-20-12:00:
+    FN-8421 keeps the Task Detail action row at the mobile touch floor while
+    the default compact Quick Add alias serves desktop and tablet widths.
+    */
+    --detail-priority-control-min-height: var(--quick-entry-action-row-height-mobile);
+
     flex-wrap: wrap;
   }
 
@@ -382,7 +389,14 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   low/high/urgent, oversight observe/steer/autonomous/off, execution-mode
   fast) are untouched.
   */
-  --detail-priority-control-min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+  /*
+  FNXC:QuickAddActionRow 2026-07-20-12:00:
+  FN-8421 completes FN-8287's shared-square contract. Desktop and tablet must
+  alias Quick Add's compact control token, not make every action equally tall
+  with the former space-calc box; the mobile rule above raises the same alias
+  to the touch-floor token.
+  */
+  --detail-priority-control-min-height: var(--quick-entry-action-row-height-desktop);
   --detail-control-border-radius: var(--radius-md);
 
   display: flex;
@@ -512,7 +526,6 @@ no raw colors so the tokenized-focus assertion stays green.
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  padding-block: var(--space-xs);
 }
 
 .detail-execution-mode-toggle--fast {
@@ -698,7 +711,6 @@ affect its size or anchoring — only the trigger's box height changes.
 }
 
 .detail-oversight-menu-trigger {
-  padding-block: var(--space-xs);
   /*
   FNXC:PlannerOversight 2026-07-05-00:00:
   FN-7604 — this trigger is now the single universal surface at every

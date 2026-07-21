@@ -11,7 +11,7 @@ import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeating
 import {mkdir, rm, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, TaskCreateInput, Column, Settings} from "../types.js";
+import type {Task, TaskCreateInput, Settings} from "../types.js";
 import "../builtin-traits.js";
 import {applyReviewLevelPreset} from "../review-level-preset.js";
 import {normalizeTaskPriority} from "../task-priority.js";
@@ -21,13 +21,14 @@ import {resolveTitleSummarizerSettingsModel} from "../model-resolution.js";
 import {resolveEffectiveSettingsById} from "../workflow-settings-resolver.js";
 import {getErrorMessage} from "../error-message.js";
 import {generateTaskLineageId} from "../task-lineage.js";
-import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate} from "../duplicate-intake.js";
+import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {resolveCreateDeclaredSymbols} from "../task-symbol-resolution.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
+import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async-audit.js";
 
 function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   /*
@@ -1010,142 +1011,95 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     return task;
   }
 
-export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
-    const sourceAgentId = task.sourceAgentId ?? null;
-    const sourceParentTaskId = task.sourceParentTaskId ?? null;
-    // Need at least one provenance handle to scope the dedup check.
-    if (!sourceAgentId && !sourceParentTaskId) return;
+/*
+FNXC:SameAgentDuplicateIntake 2026-07-19-16:24:
+FN-8401 requires PostgreSQL backendMode to use the FN-7658 flag-in-place policy,
+not its former delete-on-match cleanup. One resolver reads tombstones through
+listTasks(includeDeleted, includeArchived), so FN-5233 sticky near-duplicate blocking
+includes soft-deletes whose delete lifecycle puts them in `archived` on both
+persistence backends without a synchronous SQLite dependency.
+*/
+export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
+  const sourceAgentId = task.sourceAgentId ?? null;
+  const sourceParentTaskId = task.sourceParentTaskId ?? null;
+  if (!sourceAgentId && !sourceParentTaskId) return;
 
-    try {
-      const nowMs = Date.now();
-      const recent = (await store.listTasks({ slim: true, includeArchived: false })).filter((candidate) => {
-        if (candidate.id === task.id) return false;
-        const createdMs = Date.parse(candidate.createdAt);
-        if (Number.isNaN(createdMs)) return false;
-        if (createdMs < nowMs - 24 * 60 * 60 * 1000) return false;
+  try {
+    const nowMs = Date.now();
+    const settings = await store.getSettings();
+    const stickyWindowDays = Math.max(0, settings.tombstoneStickyWindowDays ?? 7);
+    const allCandidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
+    const matches = findSameAgentDuplicates(
+      { title: input.title ?? task.title, description: input.description, sourceParentTaskId },
+      allCandidates.flatMap<SameAgentDuplicateCandidate>((candidate) => {
+        if (candidate.id === task.id) return [];
+        const createdAt = Date.parse(candidate.createdAt);
+        if (Number.isNaN(createdAt)) return [];
+        if (candidate.deletedAt) {
+          const deletedAtMs = Date.parse(candidate.deletedAt);
+          if (sourceAgentId == null
+            || candidate.sourceAgentId !== sourceAgentId
+            || Number.isNaN(deletedAtMs)
+            || stickyWindowDays <= 0
+            || deletedAtMs < nowMs - stickyWindowDays * 24 * 60 * 60 * 1000) return [];
+          return [{
+            id: candidate.id, title: candidate.title ?? "", description: candidate.description,
+            column: candidate.column, createdAt, sourceAgentId: candidate.sourceAgentId ?? null,
+            sourceParentTaskId: candidate.sourceParentTaskId ?? null, tombstoned: true,
+            deletedAt: candidate.deletedAt, allowResurrection: candidate.allowResurrection === true,
+          }];
+        }
         const agentMatch = sourceAgentId != null && candidate.sourceAgentId === sourceAgentId;
         const parentMatch = sourceParentTaskId != null && candidate.sourceParentTaskId === sourceParentTaskId;
-        return agentMatch || parentMatch;
-      });
+        if (!agentMatch && !parentMatch) return [];
+        return [{
+          id: candidate.id, title: candidate.title ?? "", description: candidate.description,
+          column: candidate.column, createdAt, sourceAgentId: candidate.sourceAgentId ?? null,
+          sourceParentTaskId: candidate.sourceParentTaskId ?? null, tombstoned: false,
+        }];
+      }),
+      { nowMs, sourceAgentId },
+    );
+    if (matches.length === 0) return;
 
-      const settings = await store.getSettings();
-      const stickyWindowDays = Math.max(0, settings.tombstoneStickyWindowDays ?? 7);
-      let tombstonedCandidates: Array<{
-        id: string;
-        title: string | null;
-        description: string;
-        column: Column;
-        createdAt: string;
-        sourceAgentId: string | null;
-        deletedAt: string;
-        allowResurrection: number | null;
-      }> = [];
-
-      if (stickyWindowDays > 0) {
-        try {
-          const cutoffIso = new Date(nowMs - stickyWindowDays * 24 * 60 * 60 * 1000).toISOString();
-          tombstonedCandidates = store.db.prepare(`
-            SELECT id, title, description, "column", createdAt, sourceAgentId, deletedAt, allowResurrection
-              FROM tasks
-             WHERE deletedAt IS NOT NULL
-               AND deletedAt >= ?
-               AND sourceAgentId = ?
-               AND id != ?
-          `).all(cutoffIso, sourceAgentId, task.id) as typeof tombstonedCandidates;
-        } catch (error) {
-          storeLog.warn(`FN-5233 tombstone candidate widening failed open for ${task.id}: ${getErrorMessage(error)}`);
-        }
-      }
-
-      const matches = findSameAgentDuplicates(
-        {
-          title: input.title ?? task.title,
-          description: input.description,
-          sourceParentTaskId,
-        },
-        [
-          ...recent.map((candidate) => ({
-            id: candidate.id,
-            title: candidate.title ?? "",
-            description: candidate.description,
-            column: candidate.column,
-            createdAt: Date.parse(candidate.createdAt),
-            sourceAgentId: candidate.sourceAgentId ?? null,
-            sourceParentTaskId: candidate.sourceParentTaskId ?? null,
-            tombstoned: false,
-          })),
-          ...tombstonedCandidates.map((candidate) => ({
-            id: candidate.id,
-            title: candidate.title ?? "",
-            description: candidate.description,
-            column: "todo",
-            createdAt: Date.parse(candidate.createdAt),
-            sourceAgentId: candidate.sourceAgentId,
-            sourceParentTaskId: null,
-            tombstoned: true,
-            deletedAt: candidate.deletedAt,
-            allowResurrection: candidate.allowResurrection === 1,
-          })),
-        ],
-        { nowMs, sourceAgentId },
-      );
-
-      if (matches.length === 0) return;
-
-      const tombstonedMatch = matches.find((match) => match.tombstoned && match.allowResurrection !== true);
-      if (tombstonedMatch?.deletedAt) {
-        store.insertRunAuditEventRow({
-          taskId: task.id,
-          domain: "database",
-          mutationType: "intake:resurrection-blocked",
-          target: task.id,
-          metadata: {
-            matchedTaskId: tombstonedMatch.id,
-            score: tombstonedMatch.score,
-            tombstoneDeletedAt: tombstonedMatch.deletedAt,
-            stickyWindowDays,
-          },
+    const tombstonedMatch = matches.find((match) => match.tombstoned && match.allowResurrection !== true);
+    if (tombstonedMatch?.deletedAt) {
+      const metadata = {
+        matchedTaskId: tombstonedMatch.id, score: tombstonedMatch.score,
+        tombstoneDeletedAt: tombstonedMatch.deletedAt, stickyWindowDays,
+      };
+      if (store.backendMode) {
+        await recordRunAuditEventAsync(store.asyncLayer!, {
+          taskId: task.id, agentId: "system", runId: `store:intake:resurrection-blocked:${task.id}`,
+          domain: "database", mutationType: "intake:resurrection-blocked", target: task.id, metadata,
         });
-        if (store.isWatching) store.taskCache.delete(task.id);
-        store.deleteTaskById(task.id);
-        const { rm } = await import("node:fs/promises");
-        const taskDir = store.taskDir(task.id);
-        if (existsSync(taskDir)) {
-          await rm(taskDir, { recursive: true, force: true });
-        }
-        throw new TombstonedTaskResurrectionError(
-          tombstonedMatch.id,
-          tombstonedMatch.deletedAt,
-          tombstonedMatch.allowResurrection === true,
-        );
-      }
-
-      const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
-      if (siblingTaskIds.length === 0) return;
-      const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
-      /*
-      FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
-      Operators do not want same-agent duplicates silently vanishing into `archived`
-      during intake. Default (`autoArchiveDuplicateTasksEnabled` falsey) flags the
-      duplicate in place via the near-duplicate marker so a human decides (Keep/Archive
-      chip). Only an explicit `true` restores the pre-FN-7658 auto-archive behavior.
-      NOTE: the tombstone-resurrection block above (`TombstonedTaskResurrectionError`)
-      is a distinct safety mechanism and is intentionally NOT gated by this setting —
-      it always fires regardless of `autoArchiveDuplicateTasksEnabled`.
-      */
-      if (settings.autoArchiveDuplicateTasksEnabled === true) {
-        await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-        task.column = "archived";
+        await softDeleteTaskRowAsync(store.asyncLayer!, task.id, new Date().toISOString());
       } else {
-        const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-        if (appliedPatch) {
-          task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
-        }
+        store.insertRunAuditEventRow({ taskId: task.id, domain: "database", mutationType: "intake:resurrection-blocked", target: task.id, metadata });
+        store.deleteTaskById(task.id);
       }
-    } catch (error) {
-      if (error instanceof TombstonedTaskResurrectionError) {
-        throw error;
-      }
-      storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
+      if (store.isWatching) store.taskCache.delete(task.id);
+      const taskDir = store.taskDir(task.id);
+      if (existsSync(taskDir)) await rm(taskDir, { recursive: true, force: true });
+      throw new TombstonedTaskResurrectionError(tombstonedMatch.id, tombstonedMatch.deletedAt, false);
     }
+
+    const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
+    if (siblingTaskIds.length === 0) return;
+    const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
+    if (settings.autoArchiveDuplicateTasksEnabled === true) {
+      await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+      task.column = "archived";
+    } else {
+      const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+      if (appliedPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
+    }
+  } catch (error) {
+    if (error instanceof TombstonedTaskResurrectionError) throw error;
+    storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
   }
+}
+
+export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
+  return resolveSameAgentDuplicateIntake(store, task, input);
+}

@@ -54,6 +54,8 @@ export interface ClaudeSession {
   state: { errorMessage?: string; messages: unknown[] };
   sessionId?: string;
   lastModelDescription: string;
+  /** Fixed diagnostic outcome when requested Fusion custom-tool bridge could not start. */
+  fusionToolBridgeError?: { reasonCode: "mcp-schema-server-missing" | "bridge-start-failed" };
   callbacks: ClaudeCallbacks;
   /** Live ACP connection when createSession succeeded (composed AcpSession). */
   connection?: unknown;

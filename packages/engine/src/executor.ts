@@ -96,6 +96,7 @@ import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
+import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
@@ -1054,6 +1055,42 @@ export function parseAwaitInputSentinel(output: string | undefined): string | nu
   return question ? question : null;
 }
 
+const USER_QUESTION_TOOL_NAMES = new Set([
+  "askuserquestion",
+  "ask_user",
+  "ask_followup_question",
+  "request_user_input",
+  "elicit",
+  "ask_question",
+  "fn_ask_question",
+]);
+
+/**
+ * Normalize a question-tool invocation into the same durable await-input
+ * contract used by skill sentinels. Some runtimes expose an interactive
+ * question tool even though Fusion workflow-step sessions have no synchronous
+ * listener; detecting the call at the session event boundary prevents the
+ * task from continuing after the unanswered question is rendered.
+ */
+export function parseAwaitInputQuestionToolCall(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+): string | null {
+  if (!USER_QUESTION_TOOL_NAMES.has(toolName.trim().toLowerCase()) || !args) return null;
+
+  const records = Array.isArray(args.questions) ? args.questions : [args];
+  const questions = records.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const record = value as Record<string, unknown>;
+    const question = [record.question, record.prompt, record.message, record.text, record.title]
+      .find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)
+      ?.trim();
+    return question ? [question] : [];
+  });
+
+  return questions.length > 0 ? questions.join("\n\n") : null;
+}
+
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
  * step's prompt at the skill-prompt build path (runGraphCustomNode). It teaches
@@ -1662,11 +1699,12 @@ export class TaskExecutor {
   private workflowRerunPending = new Set<string>();
   /**
    * Task ids whose current `task:moved` event is being emitted by this
-   * executor's workflow column-boundary hook. The store emits synchronously,
-   * so this narrowly distinguishes a graph's own transition from an external
-   * engine/user move that must still hard-cancel the active run.
+   * executor's workflow lifecycle handling (column boundaries or Plan Review
+   * replans). The store emits synchronously, so this narrowly distinguishes a
+   * graph's own transition from an external engine/user move that must still
+   * hard-cancel the active run.
    */
-  private workflowBoundaryMovesInFlight = new Set<string>();
+  private workflowLifecycleMovesInFlight = new Set<string>();
   /** FN-5256: in-flight session-disposal promises keyed by taskId. The
    *  task:moved (away from in-progress) and task:deleted listeners populate
    *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
@@ -1693,6 +1731,12 @@ export class TaskExecutor {
   private effectiveColumnAgentByTask = new Map<string, string>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
+  /**
+   * FNXC:TaskTiming 2026-08-01-12:00:
+   * Only graph-owned Plan Review sessions appear here. Self-healing uses this
+   * narrow liveness proof so it never finalizes an in-flight planning segment.
+   */
+  private activePlanningWorkflowSessions = new Set<string>();
   /** Steering comments already observed for active workflow step sessions. */
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
   /** Active configured-command abort controllers keyed by task. */
@@ -2422,6 +2466,17 @@ export class TaskExecutor {
     ]);
   }
 
+  /**
+   * FNXC:TaskTiming 2026-08-01-12:00:
+   * A planning segment has one owner: a graph Plan Review session is live only
+   * while both its session registration and planning ownership marker remain.
+   * This is intentionally narrower than isTaskActive(), which also covers
+   * implementation and non-planning workflow sessions.
+   */
+  hasActivePlanningWorkflowSession(taskId: string): boolean {
+    return this.activePlanningWorkflowSessions.has(taskId) && this.activeWorkflowStepSessions.has(taskId);
+  }
+
   isTaskActive(taskId: string): boolean {
     return (
       this.executing.has(taskId)
@@ -3045,7 +3100,7 @@ export class TaskExecutor {
           }),
         );
       } else if (from === "in-progress") {
-        if (this.workflowBoundaryMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
+        if (this.workflowLifecycleMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
           executorLog.log(
             `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
           );
@@ -4570,13 +4625,32 @@ export class TaskExecutor {
       }
       await this.persistTokenUsage(task.id);
       const originColumn = task.column;
-      const promotedFromTodo = originColumn === "todo";
-      if (promotedFromTodo) {
+      const promotedFromPlannerColumn = originColumn === "todo" || originColumn === "triage";
+      let completionTask = task;
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
-        await this.store.moveTask(task.id, "in-progress");
+        /*
+        FNXC:WorkflowLifecycle 2026-07-20-08:42:
+        Advanced-triage recovery reaches this shared seam with completed work, a
+        preserved worktree, and a durable merge pin. The workflow transition map
+        deliberately rejects triage -> in-review, so re-home through the legal
+        triage -> todo -> in-progress path while the recovery ownership set prevents
+        scheduler/executor dispatch. Todo callers retain their existing single hop.
+        */
+        if (originColumn === "triage") {
+          completionTask = await this.store.moveTask(task.id, "todo", {
+            moveSource: "engine",
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+        }
+        completionTask = await this.store.moveTask(task.id, "in-progress");
       }
-      await this.handoffTaskToReview(task, "completed-task-recovered");
-      if (promotedFromTodo) {
+      await this.handoffTaskToReview(completionTask, "completed-task-recovered");
+      if (promotedFromPlannerColumn) {
         this.recoveringCompleted.delete(task.id);
       }
       this.clearCompletedTaskWatchdog(task.id);
@@ -4757,7 +4831,12 @@ export class TaskExecutor {
         optionalStepRevisionLogOutcome(feedback, revisionKey),
         this.getRunContextFor(taskId),
       );
-      await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      this.workflowLifecycleMovesInFlight.add(taskId);
+      try {
+        await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
+      } finally {
+        this.workflowLifecycleMovesInFlight.delete(taskId);
+      }
       await this.store.updateTask(taskId, {
         status: "needs-replan",
         error: null,
@@ -5836,7 +5915,7 @@ export class TaskExecutor {
       // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
       clearPin: pinPersistence.clearPin,
       moveTask: async (toColumn, ctx) => {
-        this.workflowBoundaryMovesInFlight.add(task.id);
+        this.workflowLifecycleMovesInFlight.add(task.id);
         try {
           await this.store.moveTask(task.id, toColumn, {
             moveSource: "engine",
@@ -5846,7 +5925,7 @@ export class TaskExecutor {
             workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
           });
         } finally {
-          this.workflowBoundaryMovesInFlight.delete(task.id);
+          this.workflowLifecycleMovesInFlight.delete(task.id);
         }
       },
       emitAudit: async (event) => {
@@ -16230,7 +16309,7 @@ ${scopeGuard}
      * unrelated local commits can make a plan-only gate reject implementation
      * state and loop back to triage after the planner already approved the spec.
      */
-    const approvedContractBlock = !isPlanReviewStep
+    const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
       ? workflowReviewSpecText
         ? `
 
@@ -16574,9 +16653,27 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
       );
       this.setActiveWorkflowStepSession(task.id, session, worktreePath, this.createSeenSteeringIds(task));
+      // FNXC:TaskTiming 2026-08-01-10:00: graph-owned Plan Review is the only
+      // post-spec planning lane. Start before prompting and finalize in finally before any replan handoff.
+      const ownsPlanningSegment = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
+      if (ownsPlanningSegment) {
+        this.activePlanningWorkflowSessions.add(task.id);
+        const planningStart = startPlanningSegment(task);
+        try {
+          if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
+        } catch (error) {
+          this.activePlanningWorkflowSessions.delete(task.id);
+          throw error;
+        }
+      }
 
       let output = "";
       const deltaNormalizer = createStreamingDeltaNormalizer();
+      let detectedQuestion: string | null = null;
+      let resolveQuestion: ((value: "await-input") => void) | undefined;
+      const questionPromise = new Promise<"await-input">((resolve) => {
+        resolveQuestion = resolve;
+      });
       session.subscribe((event) => {
         if (event.type === "message_update") {
           const msgEvent = event.assistantMessageEvent;
@@ -16595,6 +16692,16 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         }
         if (event.type === "tool_execution_start") {
           agentLogger.onToolStart(event.toolName, event.args as Record<string, unknown> | undefined);
+          if (!unattended && detectedQuestion === null) {
+            const question = parseAwaitInputQuestionToolCall(
+              event.toolName,
+              event.args as Record<string, unknown> | undefined,
+            );
+            if (question) {
+              detectedQuestion = question;
+              resolveQuestion?.("await-input");
+            }
+          }
         }
         if (event.type === "tool_execution_end") {
           agentLogger.onToolEnd(event.toolName, event.isError, event.result);
@@ -16620,7 +16727,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         const outcome = await Promise.race([
           promptPromise.then(() => "completed" as const),
           timeoutPromise,
+          questionPromise,
         ]);
+
+        if (outcome === "await-input" && detectedQuestion) {
+          try { session.dispose(); } catch { /* best-effort */ }
+          await agentLogger.flush();
+          return {
+            success: true,
+            output: `===FUSION_AWAIT_INPUT===\n${detectedQuestion}\n===END_FUSION_AWAIT_INPUT===`,
+          };
+        }
 
         if (outcome === "timeout") {
           executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' (${attemptLabel}) timed out after ${timeoutMs}ms — disposing session`);
@@ -16631,6 +16748,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: timed out`);
           }
+          // FNXC:TaskCost 2026-08-01-10:00: Plan Review tokens are task cost;
+          // snapshot before timeout disposal just like normal completion.
+          await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
           try { session.dispose(); } catch { /* best-effort */ }
           await agentLogger.flush();
           return { success: false, error: `workflow step timed out after ${timeoutMs}ms`, timedOut: true };
@@ -16686,6 +16806,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         return { success: true, output: parsed.output };
       } catch (err: unknown) {
         await agentLogger.flush();
+        // Persist the delta before error disposal so graph-owned planning reviews
+        // cannot disappear from operator cost totals.
+        await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
         try { session.dispose(); } catch { /* best-effort */ }
         if ((err instanceof ReadonlyViolationError) || ((err as { code?: string } | null)?.code === "READONLY_VIOLATION")) {
           const violation = err as ReadonlyViolationError;
@@ -16706,6 +16829,19 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         return { success: false, error: errorMessage };
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (ownsPlanningSegment) {
+          try {
+            const livePlanningTask = await this.store.getTask(task.id);
+            if (livePlanningTask) {
+              const planningEnd = finalizePlanningSegment(livePlanningTask);
+              if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+            }
+          } finally {
+            // Finalize before releasing Plan Review ownership so triage can only
+            // begin a subsequent, non-overlapping planning segment.
+            this.activePlanningWorkflowSessions.delete(task.id);
+          }
+        }
         const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
         if (activeWorkflowStepSession === session) {
           this.deleteActiveWorkflowStepSession(task.id, worktreePath);

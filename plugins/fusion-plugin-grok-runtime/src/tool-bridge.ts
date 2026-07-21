@@ -8,7 +8,7 @@ is left open after the session ends.
 */
 
 import { createServer, type Server } from "node:http";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,9 +53,21 @@ export function toolsToMcpToolDefs(tools: ReadonlyArray<ToolLike> | undefined): 
     }));
 }
 
-function fusionToolsMcpServerPath(): string {
-  // Packaged CLI copies this as mcp-schema-server.cjs next to the bundled plugin.
+/*
+FNXC:FusionToolBridgePackaging 2026-07-20-08:00:
+The stdio MCP child resolves this asset beside the loaded bridge module. Keep the
+source asset co-located for source-loaded plugins and copy it beside dist output
+on local builds (the OMP postbuild pattern); otherwise the host reports
+`handshake failed: connection closed: initialize response` for fusion-custom-tools.
+*/
+export function fusionToolsMcpServerPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "mcp-schema-server.cjs");
+}
+
+function missingMcpSchemaServerError(serverPath: string): Error {
+  const error = new Error(`Fusion MCP schema server is missing: ${serverPath}`) as Error & { code?: string };
+  error.code = "mcp-schema-server-missing";
+  return error;
 }
 
 function resultToText(result: unknown): string {
@@ -89,6 +101,11 @@ function resultToText(result: unknown): string {
 export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | undefined): Promise<FusionToolBridge | null> {
   const defs = toolsToMcpToolDefs(tools);
   if (defs.length === 0) return null;
+
+  const serverPath = fusionToolsMcpServerPath();
+  if (!existsSync(serverPath)) {
+    throw missingMcpSchemaServerError(serverPath);
+  }
 
   const byName = new Map<string, ToolLike>();
   for (const tool of tools ?? []) {
@@ -159,7 +176,6 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
   });
 
   const bridgeUrl = `http://127.0.0.1:${address.port}`;
-  const serverPath = fusionToolsMcpServerPath();
 
   return {
     toolCount: defs.length,

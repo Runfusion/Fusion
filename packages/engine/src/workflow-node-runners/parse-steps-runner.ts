@@ -24,7 +24,11 @@ export class ParseStepsNodeRunner implements WorkflowNodeRunner {
   public constructor(private readonly deps: ParseStepsHandlerDeps) {}
 
   public async run(node: WorkflowIrNode, ctx: WorkflowNodeRunnerContext): Promise<WorkflowNodeResult> {
-    const cfg = (node.config ?? {}) as { artifact?: unknown; parser?: unknown };
+    const cfg = (node.config ?? {}) as {
+      artifact?: unknown;
+      parser?: unknown;
+      requireStepsUnlessNoCommits?: unknown;
+    };
     const parserId = typeof cfg.parser === "string" ? cfg.parser : "";
     const artifactKey =
       typeof cfg.artifact === "string" && cfg.artifact.trim() !== ""
@@ -95,6 +99,13 @@ export class ParseStepsNodeRunner implements WorkflowNodeRunner {
           `parse-steps node '${node.id}' failed to write empty step list: ${message}`,
         );
         return { outcome: "failure", value: "parse-error" };
+      }
+      if (cfg.requireStepsUnlessNoCommits === true && ctx.task.noCommitsExpected !== true) {
+        this.audit(
+          "missing-implementation-steps",
+          `parse-steps node '${node.id}' found no executable steps for task ${ctx.task.id} without explicit no-commits authorization`,
+        );
+        return { outcome: "failure", value: "missing-implementation-steps" };
       }
       return { outcome: "success", value: "no-steps" };
     }

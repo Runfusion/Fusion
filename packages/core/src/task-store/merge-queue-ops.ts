@@ -54,13 +54,15 @@ async function appendProactiveStepStatus(store: TaskStore, taskId: string, messa
 }
 
 export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
+    // FNXC:WorkflowStepOrdering 2026-07-20-20:05:
     // Step-inversion projection discipline (U6/KTD-7). A `source: "graph"` write
     // is the workflow-graph executor projecting a foreach instance's lifecycle
     // (in-progress / done / pending) onto Task.steps[] with EXPLICIT indices. Three
-    // behaviors diverge from the legacy (default) write:
-    //   (a) the out-of-order-done guard relaxes from strict index order to
-    //       DEPENDENCY order (a done write is legal when every dependsOn step —
-    //       default: the immediately-preceding step — is done/skipped, KTD-11);
+    // behaviors diverge from a legacy write with no explicit dependency metadata:
+    //   (a) the out-of-order-done guard uses DEPENDENCY order (a done write is
+    //       legal when every dependsOn step — default: the immediately-preceding
+    //       step — is done/skipped, KTD-11). Explicit dependsOn metadata is
+    //       authoritative for every writer, not only graph-tagged writes;
     //   (b) a guard that DOES suppress a graph write logs an audit warning loudly
     //       (legacy stays silent — a graph suppression is a projection bug);
     //   (c) the auto-reinit-from-PROMPT.md path is bypassed (the graph pinned the
@@ -130,16 +132,39 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
 
       if (status === "done") {
         // The set of predecessor steps that must be done/skipped before this step
-        // may go done. Legacy: strict index order (every earlier step). Graph: the
-        // step's dependsOn list (default = the immediately-preceding step when the
-        // annotation is absent — preserving sequential behavior, KTD-11).
+        // may go done. Explicit dependency metadata is authoritative regardless
+        // of which execution surface performs the write: parallel step sessions
+        // and graph foreach instances share the same Task.steps[] contract. When
+        // metadata is absent, legacy callers retain strict index order while a
+        // graph-source write defaults to the immediately preceding step (KTD-11).
+        const explicitDependencies = task.steps[stepIndex]?.dependsOn;
+        const hasExplicitDependencies = Array.isArray(explicitDependencies);
+        const validExplicitDependencies =
+          hasExplicitDependencies &&
+          explicitDependencies.every(
+            (dependency) =>
+              Number.isInteger(dependency) &&
+              dependency >= 0 &&
+              dependency < stepIndex,
+          );
+        const dependencyOrdered =
+          validExplicitDependencies || (!hasExplicitDependencies && graphSource);
+
+        if (hasExplicitDependencies && !validExplicitDependencies) {
+          const ts = new Date().toISOString();
+          task.log.push({
+            timestamp: ts,
+            action:
+              `[integrity-warning] invalid dependsOn metadata for step ${stepIndex} ` +
+              `(${task.steps[stepIndex].name}); using strict index-order completion guard`,
+          });
+        }
         let blockingIndex = -1;
         let blockingStatus: import("../types.js").StepStatus | undefined;
-        if (graphSource) {
-          const deps = task.steps[stepIndex]?.dependsOn;
+        if (dependencyOrdered) {
           const depIndices =
-            Array.isArray(deps) && deps.length > 0
-              ? deps
+            validExplicitDependencies
+              ? explicitDependencies!
               : stepIndex > 0
               ? [stepIndex - 1]
               : [];
@@ -164,12 +189,12 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
         if (blockingIndex !== -1) {
           const ts = new Date().toISOString();
           task.updatedAt = ts;
-          const kind = graphSource ? "dependency-order" : "out-of-order";
+          const kind = dependencyOrdered ? "dependency-order" : "out-of-order";
           task.log.push({
             timestamp: ts,
             action:
               `Ignored ${kind} ${status} for step ${stepIndex} (${task.steps[stepIndex].name}) — ` +
-              `${graphSource ? "dependency" : "earlier"} step ${blockingIndex} (${task.steps[blockingIndex].name}) is still ${blockingStatus}`,
+              `${dependencyOrdered ? "dependency" : "earlier"} step ${blockingIndex} (${task.steps[blockingIndex].name}) is still ${blockingStatus}`,
           });
           // Graph-source suppression is a projection bug — surface it loudly in
           // the activity log (U6) rather than the legacy silent ignore.
@@ -192,14 +217,13 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
       task.steps[stepIndex].status = status;
       task.updatedAt = new Date().toISOString();
 
-      // Advance currentStep to first non-done/non-skipped step
+      // Recompute from the full list: an out-of-index parallel step may have
+      // moved currentStep ahead of an earlier unfinished dependency branch.
       if (status === "done") {
-        while (
-          task.currentStep < task.steps.length &&
-          (task.steps[task.currentStep].status === "done" || task.steps[task.currentStep].status === "skipped")
-        ) {
-          task.currentStep++;
-        }
+        const firstUnfinished = task.steps.findIndex(
+          (step) => step.status !== "done" && step.status !== "skipped",
+        );
+        task.currentStep = firstUnfinished === -1 ? task.steps.length : firstUnfinished;
       } else if (status === "in-progress") {
         task.currentStep = stepIndex;
       }

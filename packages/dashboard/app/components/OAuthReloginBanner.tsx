@@ -69,17 +69,6 @@ export function OAuthReloginBanner({
       const nextExpiredProviders = getVisibleExpiredOAuthProvidersForGlobalBanner(providers);
 
       setExpiredProviders(nextExpiredProviders);
-      setDismissedProviderIds((currentDismissed) => {
-        const expiredProviderIds = new Set(nextExpiredProviders.map((provider) => provider.id));
-        const filteredDismissed = new Set(
-          Array.from(currentDismissed).filter((providerId) => expiredProviderIds.has(providerId)),
-        );
-        if (filteredDismissed.size === currentDismissed.size) {
-          return currentDismissed;
-        }
-        persistDismissedProviderIds(filteredDismissed);
-        return filteredDismissed;
-      });
     } catch {
       // Non-blocking banner; ignore transient status fetch failures.
     }
@@ -97,8 +86,23 @@ export function OAuthReloginBanner({
   useEffect(() => {
     const handleOAuthReloginSuccess = (event: Event) => {
       const { detail } = event as CustomEvent<{ providerId?: string }>;
-      if (detail?.providerId) {
-        setExpiredProviders((current) => current.filter((provider) => provider.id !== detail.providerId));
+      const providerId = detail?.providerId;
+      if (providerId) {
+        setExpiredProviders((current) => current.filter((provider) => provider.id !== providerId));
+        setDismissedProviderIds((currentDismissed) => {
+          if (!currentDismissed.has(providerId)) {
+            return currentDismissed;
+          }
+
+          /*
+          FNXC:ProviderAuth 2026-07-20-12:00:
+          FN-8446 — A manual dismissal must survive an expired→refreshed→expired flicker from short-lived OAuth tokens such as GitHub Copilot. Re-arm only this provider after its successful re-login event; polling a healthy status must never prune its browser preference.
+          */
+          const nextDismissed = new Set(currentDismissed);
+          nextDismissed.delete(providerId);
+          persistDismissedProviderIds(nextDismissed);
+          return nextDismissed;
+        });
       }
       void refreshAuthStatus();
     };

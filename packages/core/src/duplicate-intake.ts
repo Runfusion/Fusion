@@ -277,21 +277,38 @@ export async function flagSameAgentDuplicate(
 
 
 /**
- * FNXC:DuplicateIntake 2026-07-16-13:00:
- * Issue #2225 keeps triage-marker duplicates visible for an operator decision. Reuse the
- * near-duplicate metadata consumed by the existing linked banner/chip; never move or delete here.
- * Reset a prior Keep acknowledgement so a later marker cannot leave the task blocked without its UI.
+ * FNXC:DuplicateIntake 2026-07-20-12:00:
+ * FN-8440 makes an operator Keep acknowledgement durable for exactly one task/canonical pair.
+ * Case-insensitive comparison matches task-id handling elsewhere: replan and maintenance must not
+ * recreate the decision hold for that same pair, while a new canonical remains actionable.
+ */
+export function isTriageDuplicateKeepAcknowledged(
+  sourceMetadata: Record<string, unknown> | null | undefined,
+  canonicalId: string,
+): boolean {
+  return sourceMetadata?.nearDuplicateDismissed === true
+    && typeof sourceMetadata.nearDuplicateOf === "string"
+    && sourceMetadata.nearDuplicateOf.toLowerCase() === canonicalId.toLowerCase();
+}
+
+/**
+ * FNXC:DuplicateIntake 2026-07-20-12:00:
+ * FN-8440 forbids re-asking after Keep for the same task/canonical pair. A marker for a different
+ * canonical deliberately resets acknowledgement so its operator decision can still be surfaced.
  */
 export async function flagTriageDuplicate(
   store: TaskStore,
   taskId: string,
   canonicalId: string,
 ): Promise<Record<string, unknown>> {
+  const existing = typeof store.getTask === "function"
+    ? await store.getTask(taskId).catch(() => null)
+    : null;
   const sourceMetadataPatch = {
     nearDuplicateOf: canonicalId,
     nearDuplicateScore: 1,
     duplicateSource: "triage-marker",
-    nearDuplicateDismissed: false,
+    nearDuplicateDismissed: isTriageDuplicateKeepAcknowledged(existing?.sourceMetadata, canonicalId),
   };
   await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
   await store.recordActivity({

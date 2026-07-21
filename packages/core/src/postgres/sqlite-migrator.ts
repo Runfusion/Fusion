@@ -457,6 +457,34 @@ async function ensureMigrationStateTable(db: PostgresJsDatabase<Record<string, n
     last_error text,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`));
+  await db.execute(sql.raw(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+        RETURN;
+      END IF;
+
+      ALTER TABLE public.${SQLITE_MIGRATION_STATE_TABLE} ENABLE ROW LEVEL SECURITY;
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'public.${SQLITE_MIGRATION_STATE_TABLE}'::regclass
+          AND polname = 'fusion_sqlite_migrations_project_read'
+      ) THEN
+        CREATE POLICY fusion_sqlite_migrations_project_read
+          ON public.${SQLITE_MIGRATION_STATE_TABLE}
+          FOR SELECT
+          TO fusion_runtime
+          USING (
+            current_setting('fusion.project_bypass', true) = 'on'
+            OR project_id = NULLIF(current_setting('fusion.project_id', true), '')
+          );
+      END IF;
+
+      GRANT SELECT ON public.${SQLITE_MIGRATION_STATE_TABLE} TO fusion_runtime;
+    END $$;
+  `));
 }
 
 export interface SqliteMigrationState {

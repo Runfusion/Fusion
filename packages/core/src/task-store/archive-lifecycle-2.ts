@@ -70,6 +70,8 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       columnMovedAt: task.columnMovedAt,
       firstExecutionAt: task.firstExecutionAt,
       cumulativeActiveMs: task.cumulativeActiveMs,
+      cumulativePlanningMs: task.cumulativePlanningMs,
+      planningStartedAt: task.planningStartedAt,
       executionStartedAt: task.executionStartedAt,
       executionCompletedAt: task.executionCompletedAt,
       archivedAt,

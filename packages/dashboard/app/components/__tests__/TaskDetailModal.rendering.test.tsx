@@ -1431,6 +1431,14 @@ describe("TaskDetailModal", () => {
       expect(row.indexOf("detail-inline-github-toggle")).toBeLessThan(row.indexOf("detail-oversight-menu-trigger"));
       expect(row.indexOf("detail-oversight-menu-trigger")).toBeLessThan(row.indexOf("detail-priority-trigger"));
       expect(row.indexOf("detail-priority-trigger")).toBeLessThan(row.indexOf("detail-execution-mode-toggle"));
+      // FNXC:QuickAddActionRow 2026-07-20-12:00: Every test-id affordance must
+      // also carry its FN-8287 sizing class, including optional GitHub and
+      // Oversight surfaces, so mounted tablet controls share one compact box.
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-inline-attach"/);
+      expect(row).toMatch(/className=\{`btn btn-icon btn-sm detail-inline-github-toggle/);
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-oversight-menu-trigger"/);
+      expect(row).toMatch(/className="btn btn-icon btn-sm detail-priority-trigger"/);
+      expect(row).toMatch(/className=\{`btn btn-icon btn-sm detail-execution-mode-toggle/);
       for (const label of ["aria-label", "title"]) {
         expect(row.match(new RegExp(label, "g"))?.length).toBeGreaterThanOrEqual(5);
       }

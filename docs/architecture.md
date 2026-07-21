@@ -2116,7 +2116,7 @@ The GitHub tracking state listener now attaches to every registered project stor
 - Engine-side automated follow-up creation now routes through `packages/engine/src/verification-followup-dedup.ts` instead of calling `TaskStore.createTask()` directly from recovery/eval/PR-comment paths.
 - Verification-style follow-ups stamp `sourceMetadata.verificationFailureSignature`, a deterministic SHA-256 digest over `{ lane, sorted failing test basenames }` (or `lane|no-files` when no files can be parsed). Open matches reuse the existing task and append at most one `[verification recurrence]` log entry per hour; closed/done/archived matches within 24 hours create a fresh task with `sourceMetadata.supersedesTaskId` pointing at the prior task.
 - Non-verification automated follow-ups can supply `extraMatchKeys` (for example eval `suggestionId` or PR `prNumber`) so dedup stays deterministic even when no test-file signature exists.
-- This layer composes with FN-4892 same-agent intake dedup in `@fusion/core`: engine dedup prevents repeated automated recovery spam up front, while store-side same-agent dedup still archives newly-created near-duplicates when `sourceAgentId` is present.
+- This layer composes with FN-4892 same-agent intake dedup in `@fusion/core`: engine dedup prevents repeated automated recovery spam up front, while store-side same-agent intake flags newly-created near-duplicates in place by default; only explicit `autoArchiveDuplicateTasksEnabled: true` archives the new task.
 - Run-audit emits `verification:followup-created` and `verification:followup-deduped` database events with hashed signature metadata only; no raw stdout/stderr or secret material is persisted in the audit payload.
 
 ### Conflict handling

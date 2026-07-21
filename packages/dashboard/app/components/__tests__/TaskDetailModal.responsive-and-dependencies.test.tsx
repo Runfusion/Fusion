@@ -291,6 +291,19 @@ describe("TaskDetailModal", () => {
       expect(sharedSizingBlock).toContain("border-width: var(--btn-border-width);");
       expect(sharedSizingBlock).toContain("border-color: var(--border);");
       expect(sharedSizingBlock).toContain("border-radius: var(--detail-control-border-radius);");
+
+      const inlineControlsBlock = getStandaloneCssRuleBlock(css, ".detail-meta-inline-controls");
+      const tabletBlock = getCssAtRuleBlockContaining(css, "@media (min-width: 769px) and (max-width: 1024px)", ".modal.task-detail-modal");
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-meta-inline-controls");
+      const mobileInlineControlsBlock = getCssRuleBlock(mobileBlock, ".detail-meta-inline-controls");
+
+      // FNXC:QuickAddActionRow 2026-07-20-12:00: Equal boxes are insufficient:
+      // desktop and tablet must use Quick Add's compact token, while mobile
+      // deliberately upgrades the same shared alias to its touch-floor token.
+      expect(inlineControlsBlock).toContain("--detail-priority-control-min-height: var(--quick-entry-action-row-height-desktop);");
+      expect(inlineControlsBlock).not.toContain("calc(var(--space-lg) + var(--space-lg) + var(--space-xs))");
+      expect(tabletBlock).not.toMatch(/\.detail-(?:oversight-menu-trigger|execution-mode-toggle)\s*\{[^}]*?(?:height|min-height|width|min-width):/);
+      expect(mobileInlineControlsBlock).toContain("--detail-priority-control-min-height: var(--quick-entry-action-row-height-mobile);");
     });
 
     it.skip("unifies border/radius/height across the Priority, Execution-mode, and Oversight quick controls (FN-7585)", () => {

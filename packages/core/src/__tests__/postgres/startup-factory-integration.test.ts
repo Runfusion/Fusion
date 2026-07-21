@@ -18,6 +18,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createTaskStoreForBackend } from "../../postgres/startup-factory.js";
+import { getSqliteMigrationState } from "../../postgres/sqlite-migrator.js";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "../../sqlite-adapter.js";
 import postgres from "postgres";
@@ -176,6 +177,92 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
     });
     expect(second).not.toBeNull();
     await second!.shutdown();
+  });
+
+  it("lets the restricted runtime role read an existing SQLite migration marker", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-migration-marker-role-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+
+    const first = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    const projectId = first.taskStore.getAsyncLayer()!.projectId!;
+    await first.shutdown();
+
+    const admin = postgres(testUrl, { max: 1 });
+    try {
+      await admin`CREATE TABLE public.fusion_sqlite_migrations (
+        migration_key text PRIMARY KEY,
+        project_id text,
+        status text NOT NULL CHECK (status IN ('running', 'complete', 'failed')),
+        last_error text,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+      await admin`
+        INSERT INTO public.fusion_sqlite_migrations
+          (migration_key, project_id, status, last_error, updated_at)
+        VALUES
+          (${`project:${projectId}`}, ${projectId}, 'failed', 'copy failed', now()),
+          ('project:other-project', 'other-project', 'failed', 'other copy failed', now())
+      `;
+      await admin`REVOKE ALL ON public.fusion_sqlite_migrations FROM fusion_runtime`;
+      await admin`DELETE FROM public.fusion_schema_migrations WHERE version = '0030'`;
+    } finally {
+      await admin.end();
+    }
+
+    const second = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    try {
+      await expect(getSqliteMigrationState(
+        second.taskStore.getAsyncLayer()!.db,
+        `project:${projectId}`,
+      )).resolves.toMatchObject({
+        migrationKey: `project:${projectId}`,
+        projectId,
+        status: "failed",
+      });
+      await expect(getSqliteMigrationState(
+        second.taskStore.getAsyncLayer()!.db,
+        "project:other-project",
+      )).resolves.toBeNull();
+    } finally {
+      await second.shutdown();
+    }
+  });
+
+  it("grants migration-marker reads when first-boot SQLite migration creates the table", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-new-migration-marker-role-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    seedLegacyTask(rootDir, "FN-MARKER-1", "Migration marker grant");
+
+    const result = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    try {
+      const projectId = result.taskStore.getAsyncLayer()!.projectId!;
+      await expect(getSqliteMigrationState(
+        result.taskStore.getAsyncLayer()!.db,
+        `project:${projectId}`,
+      )).resolves.toMatchObject({
+        migrationKey: `project:${projectId}`,
+        projectId,
+        status: "complete",
+      });
+    } finally {
+      await result.shutdown();
+    }
   });
 
   /*

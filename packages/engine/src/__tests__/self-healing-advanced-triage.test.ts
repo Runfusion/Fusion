@@ -95,6 +95,32 @@ describe("advanced workflow tasks stranded in triage", () => {
     expect(store.moveTaskIf).not.toHaveBeenCalled();
   });
 
+  it("clears a stale same-task session-path claim before promoting completed pinned work", async () => {
+    const stranded = task("FN-STALE-REGISTRY", {
+      workflowIrPinNodeId: "merge",
+      workflowIrPinColumnId: undefined,
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    const store = storeFor([stranded]);
+    const recoverCompletedTask = vi.fn(async () => true);
+    activeSessionRegistry.registerPath(stranded.worktree!, {
+      taskId: stranded.id,
+      kind: "workflow-step",
+      ownerKey: `${stranded.id}#stale`,
+    });
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      recoverCompletedTask,
+      getExecutingTaskIds: () => new Set<string>(),
+      getPlanningTaskIds: () => new Set<string>(),
+      isTaskActive: () => false,
+    });
+
+    expect(await manager.recoverAdvancedTriageTasks()).toBe(1);
+    expect(recoverCompletedTask).toHaveBeenCalledWith(stranded);
+    expect(activeSessionRegistry.isPathActive(stranded.worktree!)).toBe(false);
+  });
+
   it("leaves ordinary planning rows and actively-owned graph runs untouched", async () => {
     const ordinary = task("FN-ORDINARY", { worktree: undefined, workflowIrPinNodeId: undefined });
     const active = task("FN-ACTIVE");

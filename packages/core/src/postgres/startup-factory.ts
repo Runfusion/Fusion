@@ -66,7 +66,9 @@ import {
 import { runLoadedPluginSchemaInitHooks, type LoadedPluginSchemaContract } from "./plugin-schema-hook.js";
 import {
   lookupRegisteredProjectIdByPath,
+  ProjectPartitionRekeyError,
   rekeyFallbackProjectPartition,
+  selectDegradedBindTarget,
   stampMigratedProjectRows,
 } from "./migration-stamping.js";
 
@@ -851,11 +853,22 @@ export async function createTaskStoreForBackend(
         const fallbackProjectId = fallbackProjectIdForRoot(rootDir);
         migrationProjectId ??= fallbackProjectId;
         if (migrationProjectId !== fallbackProjectId) {
-          await rekeyFallbackProjectPartition(
-            connections.migration,
-            fallbackProjectId,
-            migrationProjectId,
-          );
+          try {
+            await rekeyFallbackProjectPartition(connections.migration, fallbackProjectId, migrationProjectId);
+          } catch (error) {
+            const target = error instanceof ProjectPartitionRekeyError
+              ? selectDegradedBindTarget(error.ownership)
+              : "refuse";
+            if (target === "fallback") {
+              /* FNXC:ProjectPartitionMerge 2026-07-20-12:00: Failed promotion must carry the pre-transaction fallback binding through every first-boot migration consumer; logging while continuing on the registered scaffold hides user data. */
+              log.warn(`startup-factory: partition promotion failed for ${rootDir} (${fallbackProjectId} -> ${migrationProjectId}); binding fallback data for this session (${error instanceof ProjectPartitionRekeyError ? error.reason : "unknown"})`);
+              migrationProjectId = fallbackProjectId;
+            } else if (target === "registered") {
+              log.warn(`startup-factory: partition promotion failed for ${rootDir} (${fallbackProjectId} -> ${migrationProjectId}); fallback was empty, retaining registered binding`);
+            } else {
+              throw new Error(`startup-factory: refusing project ${rootDir}; project partition reconciliation failed for ${fallbackProjectId} -> ${migrationProjectId}`, { cause: error });
+            }
+          }
         }
         /*
         FNXC:MultiProjectIsolation 2026-07-11:
@@ -1036,18 +1049,32 @@ export async function createTaskStoreForBackend(
   Unregistered paths resolve to undefined and boot unbound, preserving legacy
   single-project behavior.
   */
-  const resolvedProjectId = options.projectId
+  let resolvedProjectId = options.projectId
     ?? (rootDir
       ? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir))
         ?? fallbackProjectIdForRoot(rootDir)
       : undefined);
 
   if (rootDir && resolvedProjectId) {
-    await rekeyFallbackProjectPartition(
-      connections.migration,
-      fallbackProjectIdForRoot(rootDir),
-      resolvedProjectId,
-    );
+    const fallbackProjectId = fallbackProjectIdForRoot(rootDir);
+    if (fallbackProjectId !== resolvedProjectId) {
+      try {
+        await rekeyFallbackProjectPartition(connections.migration, fallbackProjectId, resolvedProjectId);
+      } catch (error) {
+        const target = error instanceof ProjectPartitionRekeyError
+          ? selectDegradedBindTarget(error.ownership)
+          : "refuse";
+        if (target === "fallback") {
+          /* FNXC:ProjectPartitionMerge 2026-07-20-12:00: A rolled-back merge has a reliable ownership snapshot on its typed error. Bind fallback rather than deepening a split by writing the registered scaffold. */
+          log.warn(`startup-factory: partition promotion failed for ${rootDir} (${fallbackProjectId} -> ${resolvedProjectId}); binding fallback data for this session (${error instanceof ProjectPartitionRekeyError ? error.reason : "unknown"})`);
+          resolvedProjectId = fallbackProjectId;
+        } else if (target === "registered") {
+          log.warn(`startup-factory: partition promotion failed for ${rootDir} (${fallbackProjectId} -> ${resolvedProjectId}); fallback was empty, retaining registered binding`);
+        } else {
+          throw new Error(`startup-factory: refusing project ${rootDir}; project partition reconciliation failed for ${fallbackProjectId} -> ${resolvedProjectId}`, { cause: error });
+        }
+      }
+    }
   }
 
   /*

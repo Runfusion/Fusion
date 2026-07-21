@@ -832,6 +832,37 @@ describe("MailboxView", () => {
     });
   });
 
+  it("opens task-only and planning-clarification related work from mailbox detail", async () => {
+    const taskMessage: Message = {
+      ...mockMessage,
+      id: "msg-task-only",
+      fromId: "task-agent",
+      metadata: { taskId: "FN-8428" },
+    };
+    const planningMessage: Message = {
+      ...mockMessage,
+      id: "msg-planning-clarification",
+      fromId: "planning-agent",
+      metadata: { kind: "planning-clarification", sessionId: "planning-8428", questionId: "question-8428" },
+    };
+    const onOpenTask = vi.fn();
+    const onOpenPlanningSession = vi.fn();
+    mockFetchInbox.mockResolvedValue(makeInboxResponse([taskMessage, planningMessage], 2));
+    mockFetchConversation.mockImplementation(async (fromId) => [fromId === taskMessage.fromId ? taskMessage : planningMessage]);
+    mockMarkMessageRead.mockResolvedValue({ ...taskMessage, read: true });
+
+    render(<MailboxView {...defaultProps} onOpenTask={onOpenTask} onOpenPlanningSession={onOpenPlanningSession} />);
+    await screen.findByTestId("mailbox-item-msg-task-only");
+
+    await act(async () => { fireEvent.click(screen.getByTestId("mailbox-item-msg-task-only")); });
+    fireEvent.click(await screen.findByTestId("mailbox-view-task"));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-8428");
+
+    await act(async () => { fireEvent.click(screen.getByTestId("mailbox-item-msg-planning-clarification")); });
+    fireEvent.click(await screen.findByTestId("mailbox-open-planning-session"));
+    expect(onOpenPlanningSession).toHaveBeenCalledWith("planning-8428");
+  });
+
   it("renders an inline artifact attachment in the single-message detail path", async () => {
     const artifactMessage: Message = {
       ...mockMessage,
@@ -863,10 +894,11 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
       expect(screen.getByRole("link", { name: "Open artifact: Mailbox Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
-      expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
+      expect(screen.getByTestId("mailbox-view-task")).toBeInTheDocument();
+      expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
     });
 
-    fireEvent.click(screen.getByTestId("mailbox-artifact-view-task"));
+    fireEvent.click(screen.getByTestId("mailbox-view-task"));
     expect(onOpenTask).toHaveBeenCalledWith("FN-1234");
   });
 
@@ -958,10 +990,11 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "/api/artifacts/art-thread-image/media?fn_token=daemon-token");
-      expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
+      expect(screen.getByTestId("mailbox-view-task")).toBeInTheDocument();
+      expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
     });
 
-    fireEvent.click(screen.getByTestId("mailbox-artifact-view-task"));
+    fireEvent.click(screen.getByTestId("mailbox-view-task"));
     expect(onOpenTask).toHaveBeenCalledWith("FN-5678");
   });
 

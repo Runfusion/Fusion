@@ -31,6 +31,8 @@ import {
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
+  resolveWorkflowIrForTask,
+  getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
@@ -47,6 +49,7 @@ import {
   deriveFallbackTaskTitle,
   detectContentLanguage,
   localeDisplayName,
+  parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -177,6 +180,7 @@ import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
+import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 
@@ -803,6 +807,31 @@ export class TriageProcessor {
     if (deterministicSpecFailure) {
       planLog.warn(`${task.id} planning recovery skipped — PROMPT.md failed deterministic validation (${deterministicSpecFailure})`);
       return false;
+    }
+
+    /*
+    FNXC:TriageStuckRecovery 2026-07-20:
+    A stuck planner may leave a partially edited seed that no longer matches the
+    byte-exact unplanned-seed detector. For step-heading workflows, non-empty prose
+    is not executable proof: require parsed steps unless the plan explicitly opts
+    into the legitimate zero-work contract. Otherwise recovery would release the
+    task to parse-steps, whose empty foreach could advance toward merge.
+    */
+    const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+    const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
+      node.kind === "parse-steps"
+      && (node.config?.artifact === undefined || node.config.artifact === "PROMPT.md")
+      && node.config?.parser === "step-headings"
+      && node.config?.requireStepsUnlessNoCommits === true
+    ) === true;
+    if (requiresPromptImplementationSteps && !promptDeclaresNoCommitsExpected(written)) {
+      const parsedSteps = getStepParser("step-headings")?.parse(written).steps ?? [];
+      if (parsedSteps.length === 0) {
+        const message = "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected";
+        planLog.warn(`${task.id} ${message}`);
+        await this.store.logEntry(task.id, message);
+        return false;
+      }
     }
 
     await this.finalizeApprovedTask(task, written, settings, {
@@ -1573,6 +1602,10 @@ export class TriageProcessor {
           "triage",
         );
 
+        // FNXC:TaskTiming 2026-08-01-10:00: triage owns the initial planning lane;
+        // first-start wins so a crash between ownership and persistence cannot open a second segment.
+        const planningStart = startPlanningSegment(task);
+        if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
         // Register session so the global pause listener can terminate it
         this.activeSessions.set(task.id, session);
 
@@ -1667,6 +1700,10 @@ export class TriageProcessor {
             );
           }
 
+          const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+          const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
+            ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
+            : [null, null];
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -1674,6 +1711,10 @@ export class TriageProcessor {
             attachmentContents,
             existingPrompt,
             feedback,
+            {
+              plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
+              originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+            },
           );
           await promptWithFallback(
             session,
@@ -1818,6 +1859,11 @@ export class TriageProcessor {
           Every triage planning exit path, including APPROVE, retry, pause/stuck abort, split/delete, and rate-limit wrapper attempts, records the active session's actual model before disposal so by-model analytics do not collapse triage usage to missing buckets.
           */
           await this.recordTriageSessionTokenUsage(task.id, session, { agentId: triageRunContext.agentId });
+          const livePlanningTask = await this.store.getTask(task.id);
+          if (livePlanningTask) {
+            const planningEnd = finalizePlanningSegment(livePlanningTask);
+            if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+          }
           session.dispose();
         }
       };
@@ -2502,6 +2548,27 @@ export class TriageProcessor {
       }
 
       const resolution = settings.triageDuplicateResolution ?? "prompt";
+      /*
+      FNXC:DuplicateIntake 2026-07-20-12:00:
+      FN-8440 requires a Keep decision to survive marker re-ingestion during replan. The
+      acknowledgement is scoped to this canonical id, so a marker targeting a different active
+      task still receives its own prompt; user and unrelated pauses remain untouched.
+      */
+      const keepAcknowledged = fusionCore.isTriageDuplicateKeepAcknowledged(task.sourceMetadata, canonicalId);
+      if (resolution === "prompt" && keepAcknowledged) {
+        if (canClearInactiveMarker) {
+          if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
+            await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+          })) return;
+          await this.updatePlanningStateIfStillCurrent(task, {
+            paused: false,
+            pausedReason: null,
+            status: null,
+            sourceMetadataPatch: { nearDuplicateDismissed: true },
+          });
+        }
+        return;
+      }
       if (resolution === "delete") {
         const deleteTaskIf = (this.store as unknown as { deleteTaskIf?: TaskStore["deleteTaskIf"] }).deleteTaskIf;
         if (typeof deleteTaskIf !== "function") return;
@@ -2598,8 +2665,7 @@ export class TriageProcessor {
     the row's reviewLevel from the specified prompt.
     */
 
-    const noCommitsExpectedMatch = written.match(/^\*\*No commits expected:\*\*\s*(true|yes)\b/im);
-    if (noCommitsExpectedMatch) {
+    if (promptDeclaresNoCommitsExpected(written)) {
       taskUpdates.noCommitsExpected = true;
     }
 
@@ -2615,13 +2681,20 @@ export class TriageProcessor {
 
     if (!options.preservePromptContent) {
       /*
-      FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
-      After the planner writes PROMPT.md, inject the operator's original description near
-      the top (verbatim) so Mission/Steps rewrites never hide the source request. Runs
-      before Frontend UX injection. Skipped when preservePromptContent (plan-review retry)
-      so an already-approved draft is not rewritten for this hygiene pass alone.
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 keeps the operator request separate from plan.md. Finalization must inject
+      original-description when present; a plan-shaped description falls back to its body.
       */
-      let nextPrompt = applyOriginalDescription(written, task.description ?? "");
+      const getTaskDocument = (this.store as unknown as { getTaskDocument?: (taskId: string, key: string) => Promise<{ content?: unknown } | null> }).getTaskDocument;
+      const originalDescriptionDocument = typeof getTaskDocument === "function"
+        ? await getTaskDocument.call(this.store, task.id, "original-description").catch(() => null)
+        : null;
+      const storedOriginalDescription = typeof originalDescriptionDocument?.content === "string"
+        ? originalDescriptionDocument.content.trim()
+        : "";
+      const parsedDescriptionPlan = parsePlanningPlanMd(task.description ?? "");
+      const originalDescription = storedOriginalDescription || parsedDescriptionPlan?.description || task.description || "";
+      let nextPrompt = applyOriginalDescription(written, originalDescription);
       nextPrompt = applyFrontendUxCriteria(nextPrompt, parsedFileScope);
       if (nextPrompt !== written) {
         const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
@@ -3019,6 +3092,10 @@ function parseFileScopeFromPrompt(text: string): string[] {
   return extractEffectiveWriteScopeFromPrompt(text);
 }
 
+function promptDeclaresNoCommitsExpected(text: string): boolean {
+  return /^\*\*No commits expected:\*\*\s*(true|yes)\b/im.test(text);
+}
+
 function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {
   const headingMatch = prompt.match(/^#\s+Task:\s+([A-Z]+-\d+)\s+-\s+(.+)$/m);
   if (!headingMatch) return null;
@@ -3167,8 +3244,14 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
+  planningContext?: { plan?: string; originalDescription?: string },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
+  const planDocument = planningContext?.plan?.trim();
+  const descriptionIsPlan = Boolean(parsePlanningPlanMd(task.description ?? ""));
+  const planInput = planDocument || (descriptionIsPlan ? task.description : undefined);
+  const originalDescription = planningContext?.originalDescription?.trim()
+    || (!descriptionIsPlan ? task.description : parsePlanningPlanMd(task.description ?? "")?.description || task.description);
   const isRevision = Boolean(existingPrompt && hasFeedback);
   const isFreshRespecification = Boolean(!existingPrompt && hasFeedback);
 
@@ -3380,12 +3463,17 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
 ## Task
 - **ID:** ${task.id}
 - **Title:** ${task.title || "(none)"}
-- **Description:** ${task.description}
+- **Description (current user context):** ${task.description}
+${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as the primary specification input. Expand it into the full executor-ready PROMPT.md; plan.md is not PROMPT.md.\n\n\`\`\`markdown\n${planInput}\n\`\`\`\n` : ""}
+## Original Request
+\`\`\`text
+${originalDescription}
+\`\`\`
 ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : ""}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

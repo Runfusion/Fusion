@@ -289,6 +289,15 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
       { description: "live task B", column: "in-progress" },
       { taskId: "FN-LIVE-B", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
     );
+    await store.createTaskWithReservedId(
+      { description: "soft-deleted live task", column: "in-progress" },
+      { taskId: "FN-LIVE-DELETED", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    await adminDb.execute(sql`
+      UPDATE project.tasks
+      SET deleted_at = ${IN_RANGE}, "column" = 'archived'
+      WHERE project_id = 'live-project-b' AND id = 'FN-LIVE-DELETED'
+    `);
     await adminDb.execute(sql`
       INSERT INTO project.agents (project_id, id, name, role, state, created_at, updated_at)
       VALUES
@@ -314,7 +323,8 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
     expect(unbound).toMatchObject({ activeSessions: 2, activeRuns: 2, activeNodes: 2 });
     expect(unbound.sessions.map(({ id }) => id).sort()).toEqual(["cli-live-a", "cli-live-b"]);
     expect(unbound.runs.map(({ id }) => id).sort()).toEqual(["run-live-a", "run-live-b"]);
-    expect(Object.fromEntries(unbound.columns.map(({ column, count }) => [column, count]))).toMatchObject({ todo: 1, "in-progress": 1 });
+    // FN-8429: a soft-deleted archived task is no longer live board work.
+    expect(Object.fromEntries(unbound.columns.map(({ column, count }) => [column, count]))).toEqual({ todo: 1, "in-progress": 1 });
 
     const bound = await composeLiveSnapshot({ ...layer, projectId: "live-project-a" }, Date.parse(IN_RANGE));
     expect(bound).toMatchObject({ activeSessions: 1, activeRuns: 1, activeNodes: 1 });

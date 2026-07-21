@@ -505,9 +505,9 @@ describe("useChat", () => {
       mockFetchChatMessages.mockResolvedValueOnce({ messages: [m2, m1] });
       mockStreamChatResponse.mockClear();
 
-      await act(async () => {
+      await expect(act(async () => {
         await result.current.editMessageAndResend("msg-1", "edited");
-      });
+      })).rejects.toThrow("boom");
 
       await waitFor(() => {
         expect(result.current.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
