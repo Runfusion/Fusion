@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Preserve workflow IR provenance and consistent continuation eligibility across lifecycle dispatch.
+summary: Preserve workflow lifecycle state and start execution steps only after worktree creation.
 category: fix
-dev: Adds shared active-state semantics, lifecycle decision records, and focused continuation-selection coverage.
+dev: Adds shared active-state semantics, lifecycle records, and worktree-first graph step projection.
