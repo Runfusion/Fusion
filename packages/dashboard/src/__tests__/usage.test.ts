@@ -1131,16 +1131,22 @@ describe("usage", () => {
         return mockReq;
       });
 
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((provider) => provider.name === "Claude")!;
+      /*
+      FNXC:UsageTesting 2026-07-21-21:30:
+      Claude usage probes must restore injected sleep behavior even when an assertion fails so later provider tests cannot inherit the mock.
+      */
+      try {
+        const providers = await fetchAllProviderUsage();
+        const claude = providers.find((provider) => provider.name === "Claude")!;
 
-      expect(claude.status).toBe("error");
-      expect(claude.error).toBe(
-        "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
-      );
-      expect(kill).toHaveBeenCalledOnce();
-
-      _resetSleepFn();
+        expect(claude.status).toBe("error");
+        expect(claude.error).toBe(
+          "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
+        );
+        expect(kill).toHaveBeenCalledOnce();
+      } finally {
+        _resetSleepFn();
+      }
     });
 
     it("reports the server login requirement when Claude 2.1.x shows API billing session statistics", async () => {
@@ -1187,19 +1193,21 @@ describe("usage", () => {
       });
 
       vi.useFakeTimers();
-      const providersPromise = fetchAllProviderUsage();
-      await vi.advanceTimersByTimeAsync(1_500);
-      const providers = await providersPromise;
-      vi.useRealTimers();
-      const claude = providers.find((provider) => provider.name === "Claude")!;
+      try {
+        const providersPromise = fetchAllProviderUsage();
+        await vi.advanceTimersByTimeAsync(1_500);
+        const providers = await providersPromise;
+        const claude = providers.find((provider) => provider.name === "Claude")!;
 
-      expect(claude.status).toBe("error");
-      expect(claude.error).toBe(
-        "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
-      );
-      expect(kill).toHaveBeenCalledOnce();
-
-      _resetSleepFn();
+        expect(claude.status).toBe("error");
+        expect(claude.error).toBe(
+          "Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage.",
+        );
+        expect(kill).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+        _resetSleepFn();
+      }
     });
 
     it("falls back to CLI parsing on 429 rate limit", async () => {
