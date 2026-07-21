@@ -229,6 +229,14 @@ describe("GlobalSettingsStore", () => {
       expect(parsed.themeMode).toBe("system");
     });
 
+    it("round-trips the Aurora color theme through persisted settings", async () => {
+      await store.init();
+      await store.updateSettings({ colorTheme: "aurora" });
+
+      await expect(store.getSettings()).resolves.toMatchObject({ colorTheme: "aurora" });
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ colorTheme: "aurora" });
+    });
+
     it("persists and clears the planner clarification preference", async () => {
       await store.init();
 
