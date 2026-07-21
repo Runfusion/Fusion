@@ -2209,21 +2209,26 @@ export class Scheduler {
           continue;
         }
 
-        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
-        await this.store.updateTask(task.id, {
-          status: null,
-          blockedBy: null,
-          executionStartBranch: baseBranch ?? undefined,
-          effectiveNodeId: effectiveNode.nodeId ?? null,
-          effectiveNodeSource: effectiveNode.source,
-          mergeRetries: 0,
-        });
         try {
-          await this.store.moveTask(task.id, "in-progress", {
-            moveSource: "scheduler",
-            allocateWorktree: (reservedNames) =>
-              this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
-          });
+          /*
+          FNXC:UserPausedDispatch 2026-07-21-21:45:
+          Scheduler dispatch predicates the todo-to-in-progress transition on both pause flags under the task lock. No awaited routing, metadata, or worktree preparation gap may let a concurrent operator pause lose to stale scheduler state.
+          */
+          const move = await this.store.moveTaskIf(
+            task.id,
+            "in-progress",
+            (live) => live.column === "todo" && live.paused !== true && live.userPaused !== true,
+            {
+              moveSource: "scheduler",
+              allocateWorktree: (reservedNames) =>
+                this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
+            },
+          );
+          if (!move.moved) {
+            schedulerLog.log(`Task ${task.id} became paused or left todo before dispatch — skipping`);
+            continue;
+          }
+          Object.assign(task, move.task);
         } catch (error) {
           if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
             await this.store.updateTask(task.id, { status: "queued" });
@@ -2233,6 +2238,15 @@ export class Scheduler {
           }
           throw error;
         }
+        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
+        await this.store.updateTask(task.id, {
+          status: null,
+          blockedBy: null,
+          executionStartBranch: baseBranch ?? undefined,
+          effectiveNodeId: effectiveNode.nodeId ?? null,
+          effectiveNodeSource: effectiveNode.source,
+          mergeRetries: 0,
+        });
         await this.store.updateTask(task.id, {
           dispatchStormCount: nextDispatchStormCount,
           lastDispatchAt: dispatchTimestamp,

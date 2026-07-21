@@ -57,6 +57,12 @@ function storeWith(
       if (current) current.column = column;
       return current as Task;
     }),
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      const current = byId.get(id)!;
+      if (!await predicate(current) || current.column === column) return { task: current, moved: false };
+      current.column = column;
+      return { task: current, moved: true };
+    }),
     parseFileScopeFromPrompt: vi.fn(async () => []),
     logEntry: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/project"),
@@ -170,7 +176,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-100", "in-progress", expect.objectContaining({
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-100", "in-progress", expect.any(Function), expect.objectContaining({
       moveSource: "scheduler",
       allocateWorktree: expect.any(Function),
     }));
@@ -193,7 +199,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalled();
     expect(onSchedule).not.toHaveBeenCalled();
     expect(parked.column).toBe("todo");
@@ -209,9 +215,27 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
+  });
+
+  it("does not dispatch when userPaused wins the atomic move race", async () => {
+    const ready = task({ id: "FN-ATOMIC-PAUSE", paused: false, userPaused: false });
+    const store = storeWith([ready]);
+    vi.mocked(store.moveTaskIf).mockImplementation(async (_id, _column, predicate) => {
+      ready.userPaused = true;
+      return { task: ready, moved: await predicate(ready) };
+    });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).toHaveBeenCalled();
+    expect(ready.column).toBe("todo");
+    expect(onSchedule).not.toHaveBeenCalled();
   });
 
   /*
@@ -253,7 +277,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-300", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-300", "in-progress", expect.anything(), expect.anything());
     expect(unplanned.column).toBe("ideas");
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-300" }));
   });
@@ -272,7 +296,7 @@ describe("Scheduler workflow cutover", () => {
       "FN-101",
       "queued — permanent executor selection unavailable (ephemeral agents disabled)",
     );
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-101", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-101", "in-progress", expect.anything(), expect.anything());
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
   });
@@ -288,7 +312,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    const moveOptions = vi.mocked(store.moveTask).mock.calls[0]?.[2] as {
+    const moveOptions = vi.mocked(store.moveTaskIf).mock.calls[0]?.[3] as {
       allocateWorktree?: (reservedNames: Set<string>) => string | null;
     };
     expect(moveOptions.allocateWorktree?.(new Set())).toBe("/tmp/project/custom-worktrees/fn-102");
@@ -352,7 +376,7 @@ describe("Scheduler workflow cutover", () => {
       status: "queued",
       blockedBy: "FN-001",
     });
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(onBlocked).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }), ["FN-001"]);
   });
 
@@ -366,7 +390,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
     expect(ready.column).toBe("todo");
@@ -382,7 +406,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
@@ -406,7 +430,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-200", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-200", "in-progress", expect.anything(), expect.anything());
     expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
@@ -431,9 +455,9 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-401", "in-progress", expect.anything());
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-402", "in-progress", expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-401", "in-progress", expect.any(Function), expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-402", "in-progress", expect.anything(), expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-402",
       expect.stringContaining("gate=maxWorktrees; maxConcurrent used=4/10"),
@@ -451,9 +475,9 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", expect.anything());
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-001", "in-progress", expect.any(Function), expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(onSchedule).toHaveBeenCalledTimes(1);
     expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001", column: "in-progress" }));
@@ -464,7 +488,7 @@ describe("Scheduler workflow cutover", () => {
   it("leaves a task queued when the authoritative release move rejects after reservation", async () => {
     const ready = task({ id: "FN-002", status: "queued" });
     const store = storeWith([ready], { maxConcurrent: 4, maxWorktrees: 4 });
-    vi.mocked(store.moveTask).mockRejectedValueOnce(
+    vi.mocked(store.moveTaskIf).mockRejectedValueOnce(
       new TransitionRejectionError(
         makeTransitionRejection(
           "capacity-exhausted",
@@ -481,7 +505,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-002", "in-progress", expect.any(Function), expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-002",
@@ -507,7 +531,7 @@ describe("Scheduler workflow cutover", () => {
       semaphore.release();
     }
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything());
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
