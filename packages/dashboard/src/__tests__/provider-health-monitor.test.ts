@@ -110,10 +110,17 @@ describe("ProviderHealthMonitor", () => {
       { id: "FN-8", paused: true, pausedReason: "provider-rate-limit:unknown" },
       { id: "FN-9", paused: true, pausedReason: "provider-rate-limit" },
     ]);
+    const failedStore = createStore([
+      { id: "FN-FAILED", paused: true, pausedReason: "provider-rate-limit:openrouter" },
+    ]);
+    failedStore.listTasks
+      .mockResolvedValueOnce([{ id: "FN-FAILED", paused: true, pausedReason: "provider-rate-limit:openrouter" }])
+      .mockRejectedValue(new Error("database unavailable"));
     const probe = vi.fn();
+    const logger = createLogger();
     const monitor = new ProviderHealthMonitor({
-      getStores: () => [store],
-      logger: createLogger(),
+      getStores: () => [failedStore, store],
+      logger,
       probe,
       supportsProbe: () => false,
       now: () => now,
@@ -129,6 +136,10 @@ describe("ProviderHealthMonitor", () => {
     expect(store.pauseTask).toHaveBeenCalledWith("FN-7", false);
     expect(store.pauseTask).toHaveBeenCalledWith("FN-8", false);
     expect(store.pauseTask).toHaveBeenCalledWith("FN-9", false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to recover tasks after provider cooldown",
+      { providerId: "openrouter", error: "database unavailable" },
+    );
   });
 
   it("probes a persisted unavailable provider once and resumes exact matching parks across projects", async () => {

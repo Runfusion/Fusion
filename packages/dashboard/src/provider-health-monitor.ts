@@ -159,6 +159,9 @@ export class ProviderHealthMonitor {
       /*
       FNXC:ProviderRateLimitRecovery 2026-07-21-21:30:
       A provider without an independent quota meter must never be parked forever. Give it one normal poll interval as a cooldown, then requeue its exact provider-qualified parks so ordinary execution can confirm that capacity returned. Legacy unqualified parks use the same bounded fallback under the synthetic "unknown" provider id.
+
+      FNXC:ProviderRateLimitRecovery 2026-07-21-21:50:
+      Cooldown recovery is isolated per project store so one unavailable database cannot prevent healthy projects or other providers from resuming.
       */
       if (!this.supportsProbe(providerId)) {
         if (!state || state.status !== "unavailable") {
@@ -173,8 +176,17 @@ export class ProviderHealthMonitor {
           return;
         }
 
-        const recoveredCounts = await Promise.all(stores.map(async (store) =>
-          new UsageLimitPauser(store).onProviderAvailable(providerId)));
+        const recoveredCounts = await Promise.all(stores.map(async (store) => {
+          try {
+            return await new UsageLimitPauser(store).onProviderAvailable(providerId);
+          } catch (error: unknown) {
+            this.options.logger.warn("Failed to recover tasks after provider cooldown", {
+              providerId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return 0;
+          }
+        }));
         const recoveredTasks = recoveredCounts.reduce((total, count) => total + count, 0);
         this.states.set(providerId, {
           status: "available",
