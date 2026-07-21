@@ -1084,6 +1084,7 @@ export {
   ensureGhAuth,
   parseRepoFromRemote,
   getCurrentRepo,
+  getPushRepo,
   type GhError,
   type GhErrorCode,
   type StructuredGhError,

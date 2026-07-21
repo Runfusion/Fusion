@@ -502,3 +502,25 @@ export function getCurrentRepo(cwd?: string): { owner: string; repo: string } | 
     return null;
   }
 }
+
+/**
+ * Get the GitHub repository that receives pushes for a remote.
+ *
+ * A fork workflow commonly keeps `origin`'s fetch URL pointed at upstream while
+ * configuring a distinct push URL for the contributor fork. PR creation must
+ * qualify the head branch with that fork owner or GitHub looks for the branch
+ * in the upstream repository and rejects the request.
+ */
+export function getPushRepo(cwd?: string, remote = "origin"): { owner: string; repo: string } | null {
+  try {
+    const remoteUrl = execFileSync("git", ["remote", "get-url", "--push", remote], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+
+    return parseRepoFromRemote(remoteUrl);
+  } catch {
+    return null;
+  }
+}

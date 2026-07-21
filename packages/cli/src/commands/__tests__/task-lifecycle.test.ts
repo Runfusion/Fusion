@@ -35,10 +35,11 @@ vi.mock("@fusion/core", async () => {
   return {
     ...actual,
     getCurrentRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
+    getPushRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
   };
 });
 
-import { getCurrentRepo } from "@fusion/core";
+import { getCurrentRepo, getPushRepo } from "@fusion/core";
 import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
@@ -1876,6 +1877,7 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     execFileCalls.length = 0;
     vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
       cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "central-owner", repo: "central-repo" });
   });
 
   const githubStub = () => ({
@@ -1940,6 +1942,23 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     expect(result.prNumber).toBe(9);
   });
 
+  it("qualifies the PR head with the fork owner when origin pushes to a fork", async () => {
+    execMock.mockReturnValue("");
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "fork-owner", repo: "central-repo" });
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+
+    await ops.createPr({
+      task: { id: "FN-9601", title: "t", description: "d", worktree: "/projects/repo-a/.worktrees/fn-9601" },
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", headBranch: "fusion/fn-9601", baseBranch: "main" },
+    } as never);
+
+    expect(vi.mocked(getPushRepo)).toHaveBeenCalledWith("/projects/repo-a/.worktrees/fn-9601");
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fork-owner:fusion/fn-9601" }),
+    );
+  });
+
   it("mergePr passes owner/repo parsed from entity.repo", async () => {
     const github = githubStub();
     const ops = createPrNodeGithubOps(github as never);
@@ -1952,4 +1971,3 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     );
   });
 });
-
