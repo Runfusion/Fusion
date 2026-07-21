@@ -109,7 +109,7 @@ describe("Column count-flash", () => {
     const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
 
-    const badge = screen.getByText("1");
+    const badge = screen.getByText("1").parentElement!;
     expect(badge.className).toContain("column-count");
     expect(badge.className).not.toContain("count-flash");
   });
@@ -121,7 +121,7 @@ describe("Column count-flash", () => {
     const moreTasks = [makeTask("FN-001"), makeTask("FN-002")];
     rerender(<Column {...defaultProps} tasks={moreTasks} />);
 
-    const badge = screen.getByText("2");
+    const badge = screen.getByText("2").parentElement!;
     expect(badge.className).toContain("count-flash");
   });
 
@@ -998,7 +998,7 @@ describe("Column same-column drop", () => {
     // Dropping into "in-review" column (which has 0 tasks)
     render(<Column {...defaultProps} column="in-review" tasks={tasksInTargetColumn} onMoveTask={onMoveTask} addToast={addToast} />);
 
-    const columnEl = screen.getByText("0").closest(".column") as HTMLElement;
+    const columnEl = screen.getAllByText("0")[0].closest(".column") as HTMLElement;
     const dataTransfer = {
       getData: vi.fn().mockReturnValue("FN-001"),
       dropEffect: "move",

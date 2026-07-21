@@ -1677,7 +1677,7 @@ Planner rewrote mission without the raw request.
   });
 
   describe("poll ordering", () => {
-    it("dispatches eligible triage tasks by priority desc then createdAt asc", async () => {
+    it("dispatches eligible triage tasks by createdAt asc", async () => {
       const tasks: Task[] = [
         createTriageTask({
           id: "FN-100",
@@ -1721,10 +1721,10 @@ Planner rewrote mission without the raw request.
 
       expect(specifySpy).toHaveBeenCalledTimes(4);
       expect(specifySpy.mock.calls.map(([task]) => task.id)).toEqual([
-        "FN-101",
+        "FN-100",
         "FN-103",
         "FN-102",
-        "FN-100",
+        "FN-101",
       ]);
     });
 
@@ -1802,6 +1802,7 @@ Planner rewrote mission without the raw request.
           ...createTriageTask({ id: "FN-EXEC", priority: "normal" }),
           column: "in-progress",
           status: null,
+          sessionFile: "/tmp/fusion-fn-exec-session.json",
         } as Task,
       ];
 

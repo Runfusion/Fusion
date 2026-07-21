@@ -566,7 +566,13 @@ export {
   getRunningAgentCountSource,
   deriveRunningAgentCounts,
   isRunningAgentTask,
+  isWaitingAgentTask,
   countRunningAgentTasks,
+  enrichRunningAgentTaskShape,
+  enrichRunningAgentTaskShapeFromFlags,
+  resolveColumnTerminalKind,
+  type RunningAgentTaskShape,
+  type ColumnTerminalKind,
   type RunningAgentCountSource,
   type RunningAgentCounts,
 } from "./live-agent-count.js";

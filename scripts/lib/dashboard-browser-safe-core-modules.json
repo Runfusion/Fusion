@@ -54,6 +54,11 @@
       "module": "detect-content-language",
       "reason": "2026-07-16: Language detection is pure shared string logic with an explicit Vite subpath alias.",
       "verifiedAt": "2026-07-16"
+    },
+    {
+      "module": "live-agent-count",
+      "reason": "2026-07-21: FN-8453 shares pure workflow-trait-based Running and Waiting predicates with dashboard capacity indicators; its dependency graph has no Node-only modules.",
+      "verifiedAt": "2026-07-21"
     }
   ]
 }

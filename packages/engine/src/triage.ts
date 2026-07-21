@@ -26,8 +26,6 @@ import {
   resolveTaskPlanningPrompt,
   resolveTaskSeamPrompt,
   resolvePersistAgentThinkingLog,
-  compareTaskPriority,
-  sortTasksByPriorityThenAgeAndId,
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
@@ -128,7 +126,11 @@ import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spe
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import {
   PRIORITY_SPECIFY,
-  computeTopLevelConcurrencyClaimed,
+  computeTopLevelConcurrencyClaimedFromStore,
+  dropPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
+  registerPreHeldExecutorSlot,
+  takePreHeldExecutorSlot,
   recoverIdleSemaphoreLeakCandidate,
   type AgentSemaphore,
 } from "./concurrency.js";
@@ -221,6 +223,10 @@ export class TriageProcessor {
   private processing = new Set<string>();
   /** Synchronous ownership fence shared with advanced-triage self-healing. */
   private advancedRecoveryReservations = new Set<string>();
+  /** Prevent a selected planner from reappearing before specifyTask claims it. */
+  private readonly coordinatorAdmittedTaskIds = new Set<string>();
+  /** Durable planning provider keeps this lane visible to execute/merge polls. */
+  private unregisterAdmissionProvider: (() => void) | null = null;
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
   private processingSince = new Map<string, number>();
   private wasGlobalPaused = false;
@@ -367,6 +373,34 @@ export class TriageProcessor {
     private rootDir: string,
     private options: TriageProcessorOptions = {},
   ) {
+    this.unregisterAdmissionProvider = projectAdmissionCoordinator.registerProvider(`specify:${this.rootDir}`, {
+      projectId: this.rootDir,
+      refresh: async () => {
+        const settings = await this.store.getSettings();
+        // poll() supplies its own fresh candidates to the same admission pass;
+        // do not duplicate them through this durable provider or a provider
+        // handoff can bypass the poll's bounded refinement scheduling.
+        if (!this.running || this.polling || settings.globalPause || settings.enginePaused) return [];
+        const now = Date.now();
+        // FNXC:ConcurrencyAdmission 2026-08-07-10:30:
+        // FN-8453/#2359 requires coordinator refresh to use the identical
+        // discovery predicate as poll(). A seed is ready before specifyTask
+        // stamps status:"planning"; exposing only that durable status lets newer
+        // execute/merge work overtake an older planner.
+        const tasks = await this.discoverReadyPlanningTasks(
+          await this.store.listTasks({ slim: true, includeArchived: false }),
+          now,
+        );
+        return tasks.filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id)).map((task) => ({
+          taskId: task.id, projectId: this.rootDir, createdAt: task.createdAt,
+          reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
+          start: async () => {
+            this.coordinatorAdmittedTaskIds.add(task.id);
+            void this.specifyTask(task);
+          },
+        }));
+      },
+    });
     // When globalPause transitions from false → true, terminate all active triage sessions.
     store.on("settings:updated", ({ settings, previous }) => {
       if (settings.globalPause && !previous.globalPause) {
@@ -508,6 +542,8 @@ export class TriageProcessor {
 
   stop(): void {
     this.running = false;
+    this.unregisterAdmissionProvider?.();
+    this.unregisterAdmissionProvider = null;
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
@@ -1047,6 +1083,53 @@ export class TriageProcessor {
    * well before the dispatched tasks finish — so subsequent polls can discover
    * newly arrived triage tasks promptly.
    */
+  /**
+   * Discover planner-ready work for both direct triage polling and coordinator
+   * refresh. Keeping the seed-prompt checks here makes the cross-lane admission
+   * union include cards before their planner writes status:"planning".
+   */
+  private async discoverReadyPlanningTasks(allTasks: Task[], now: number): Promise<Task[]> {
+    const eligibleTriageTasks = allTasks.filter(
+      (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+        && !this.advancedRecoveryReservations.has(t.id)
+        && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+        && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
+        && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
+    );
+    const eligibleTodoTasksRaw = allTasks.filter(
+      (t) => t.column === "todo" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+        && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
+        && t.status !== "planning"
+        && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
+    );
+    const eligibleTodoTasks: Task[] = [];
+    for (const todoTask of eligibleTodoTasksRaw) {
+      if (todoTask.status === "needs-replan") {
+        eligibleTodoTasks.push(todoTask);
+        continue;
+      }
+      try {
+        const promptPath = join(this.rootDir, ".fusion", "tasks", todoTask.id, "PROMPT.md");
+        const content = await readFile(promptPath, "utf-8");
+        if (isUnplannedSeedPrompt(content, todoTask.id, todoTask.title, todoTask.description)) {
+          eligibleTodoTasks.push(todoTask);
+        }
+      } catch {
+        // Missing/unreadable prompt — scheduler filesystem validation owns it.
+      }
+    }
+    return [...eligibleTriageTasks, ...eligibleTodoTasks].sort((a, b) => {
+      const aTime = Date.parse(a.createdAt);
+      const bTime = Date.parse(b.createdAt);
+      const aValid = Number.isFinite(aTime);
+      const bValid = Number.isFinite(bTime);
+      if (aValid !== bValid) return aValid ? -1 : 1;
+      if (aValid && aTime !== bTime) return aTime - bTime;
+      const numeric = compareTaskIdNumeric(a.id, b.id);
+      return numeric !== 0 ? numeric : a.id.localeCompare(b.id);
+    });
+  }
+
   private async poll(): Promise<void> {
     if (!this.running) return;
     if (this.polling) return;
@@ -1099,84 +1182,15 @@ export class TriageProcessor {
         this.idleSemaphoreLeakCandidateSince = result.candidateSinceMs;
       }
 
-      const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
-          && !this.advancedRecoveryReservations.has(t.id)
-          && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
-          // Skip tasks awaiting manual plan approval — they should not be auto-discovered
-          && t.status !== "awaiting-approval"
-          // Skip failed specifications until the user explicitly retries them.
-          && t.status !== "failed"
-          && t.status !== "stuck-killed"
-          // Skip tasks with a recovery backoff that hasn't elapsed yet
-          && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
-      );
+      const triageTasks = await this.discoverReadyPlanningTasks(allTasks, now);
+
       /*
-      Workflows with a manual intake (e.g. Coding (Ideas)) merge the planner and capacity-hold stages into a single "todo" column. The triage service must also discover "todo" tasks whose PROMPT.md is still an unplanned seed — they have been promoted out of the manual intake but not yet planned in place. Planned todo tasks carry a real spec and are left for the scheduler. The seed-prompt file check is the ground-truth unplanned signal; it is false for every normal-workflow todo task because triage writes a real spec before it ever moves a card into todo.
-
-      FNXC:CodingIdeasWorkflow 2026-07-12-23:05:
-      Two discovery gaps let plan-in-place workflow cards strand or misexecute in "todo":
-      1. `needs-replan` todo tasks carry a REAL PROMPT.md (the failed plan under revision), so the seed check alone never rediscovers them. Workflows without a "triage" column keep replanning tasks in "todo" (the executor's workflow-aware replan rebound targets the planner column), so triage must pick up `needs-replan` todo cards regardless of prompt content — processTask already routes them through the isReplan path.
-      2. Refinement seeds (`# {title}\n\n{description}`, no id prefix) previously failed the strict bootstrap-stub equality, so a promoted refinement skipped planning entirely; isUnplannedSeedPrompt accepts both seed shapes.
+      FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+      FN-8453 removes the separate maxTriageConcurrent pool. Planning uses the
+      same maxConcurrent live-agent claim as execute/review so a project cannot
+      exceed its operator-facing top-level capacity in a different lane.
       */
-      const eligibleTodoTasksRaw = allTasks.filter(
-        (t) => t.column === "todo" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
-          && t.status !== "awaiting-approval"
-          && t.status !== "failed"
-          && t.status !== "stuck-killed"
-          && t.status !== "planning"
-          && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
-      );
-      const eligibleTodoTasks: Task[] = [];
-      for (const todoTask of eligibleTodoTasksRaw) {
-        if (todoTask.status === "needs-replan") {
-          eligibleTodoTasks.push(todoTask);
-          continue;
-        }
-        try {
-          const promptPath = join(this.rootDir, ".fusion", "tasks", todoTask.id, "PROMPT.md");
-          const content = await readFile(promptPath, "utf-8");
-          if (isUnplannedSeedPrompt(content, todoTask.id, todoTask.title, todoTask.description)) {
-            eligibleTodoTasks.push(todoTask);
-          }
-        } catch {
-          // Missing/unreadable prompt — skip; the scheduler's filesystem validation handles it.
-        }
-      }
-      const triageTasks = sortTasksByPriorityThenAgeAndId([...eligibleTriageTasks, ...eligibleTodoTasks]).sort((a, b) => {
-        const priorityCmp = compareTaskPriority(a.priority, b.priority);
-        if (priorityCmp !== 0) {
-          return priorityCmp;
-        }
-
-        // Keep the global priority contract intact, but for same-priority tasks,
-        // prefer refinements so follow-up work does not starve behind bulk triage imports.
-        const aIsRefinement = a.sourceType === "task_refine";
-        const bIsRefinement = b.sourceType === "task_refine";
-        if (aIsRefinement !== bIsRefinement) {
-          return aIsRefinement ? -1 : 1;
-        }
-
-        if (a.createdAt !== b.createdAt) {
-          return a.createdAt.localeCompare(b.createdAt);
-        }
-
-        return compareTaskIdNumeric(a.id, b.id);
-      });
-
-      // Respect both per-project maxTriageConcurrent and the global semaphore.
-      // Only planning tasks count against the triage limit; execution is governed by maxConcurrent.
-      /*
-      FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-      Live utilization counts in-progress executors and active planners toward the same global cap. Cap new triage starts by remaining room under that shared claim (not only semaphore.availableCount), so planning cannot fill the entire global max while an in-progress executor is already counted as running.
-      */
-      const maxTriageConcurrent = settings.maxTriageConcurrent ?? settings.maxConcurrent ?? 2;
-      const planning = allTasks.filter(
-        (t) => (t.column === "triage" || t.column === "todo") && t.status === "planning" && !t.paused,
-      ).length;
-      const activeAgents = planning;
-
-      const perProjectAvailable = Math.max(0, maxTriageConcurrent - activeAgents);
+      const maxConcurrent = settings.maxConcurrent ?? 2;
       const semaphoreAvailable = this.options.semaphore
         ? Math.max(0, this.options.semaphore.availableCount)
         : Infinity;
@@ -1186,15 +1200,15 @@ export class TriageProcessor {
         const row = allTasks.find((t) => t.id === id);
         if (!row || row.status !== "planning") pendingSpecifyCount += 1;
       }
-      const claimed = computeTopLevelConcurrencyClaimed({
+      const claimed = await computeTopLevelConcurrencyClaimedFromStore({
+        store: this.store,
         tasks: allTasks,
-        semaphoreActiveCount: this.options.semaphore?.activeCount,
         pendingSpecifyCount,
       });
-      const globalRoom = this.options.semaphore
-        ? Math.max(0, this.options.semaphore.limit - claimed)
-        : Infinity;
-      const maxToStart = Math.min(perProjectAvailable, semaphoreAvailable, globalRoom);
+      // `claimed` is project-local. The scoped/global host semaphore remains a
+      // distinct process-wide availability gate, so project A cannot spend B's cap.
+      const projectRoom = Math.max(0, maxConcurrent - claimed);
+      const maxToStart = Math.min(projectRoom, semaphoreAvailable);
 
       if (maxToStart <= 0 && triageTasks.length > 0) {
         const semaphoreSnapshot = this.options.semaphore?.snapshot();
@@ -1203,20 +1217,53 @@ export class TriageProcessor {
           : ", semaphore unavailable";
         const processingIds = [...this.processing].slice(0, 5);
         const eligibleIds = triageTasks.slice(0, 5).map((t) => t.id);
-        const blockedBy = perProjectAvailable <= 0
-          ? "triage concurrency"
-          : globalRoom <= 0
-            ? "global running-agent cap"
-            : "global semaphore";
+        const blockedBy = projectRoom <= 0 ? "running-agent cap" : "global semaphore";
         planLog.log(
           `Plan throttled by ${blockedBy}: eligible=${triageTasks.length} [${eligibleIds.join(", ")}], ` +
-          `planning=${activeAgents}/${maxTriageConcurrent}, claimed=${claimed}, processing=${this.processing.size}` +
+          `maxConcurrent=${maxConcurrent}, claimed=${claimed}, processing=${this.processing.size}` +
           `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}${semaphoreDetail}`,
         );
       }
 
+      // Keep handoff reservations visible even when a test/runtime wrapper delays
+      // the planner's synchronous processing claim until after this poll returns.
+      const admittedThisPoll = new Set<string>();
       for (let i = 0; i < Math.min(triageTasks.length, maxToStart); i++) {
-        void this.specifyTask(triageTasks[i]);
+        await projectAdmissionCoordinator.admitOldest({
+          // rootDir is the stable per-project identity held by this processor.
+          projectId: this.rootDir,
+          maxConcurrent,
+          claimed: async () => {
+            const fresh = await this.store.listTasks({ slim: true, includeArchived: false });
+            let pending = 0;
+            for (const id of this.processing) {
+              const row = fresh.find((task) => task.id === id);
+              if (!row || row.status !== "planning") pending++;
+            }
+            return computeTopLevelConcurrencyClaimedFromStore({
+              store: this.store,
+              tasks: fresh,
+              pendingSpecifyCount: pending,
+            });
+          },
+          semaphore: this.options.semaphore,
+          refresh: async () => triageTasks
+            .filter((task) => !admittedThisPoll.has(task.id) && !this.coordinatorAdmittedTaskIds.has(task.id) && !this.processing.has(task.id) && !this.hasLivePlanningWork(task.id))
+            .map((task) => ({
+              taskId: task.id,
+              projectId: this.rootDir,
+              createdAt: task.createdAt,
+              // FNXC:ConcurrencyAdmission 2026-08-05-10:00: the planner must
+              // own the coordinator's real host reservation before it starts;
+              // deferring to semaphore.run would reintroduce priority overtaking.
+              reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
+              start: async () => {
+                admittedThisPoll.add(task.id);
+                this.coordinatorAdmittedTaskIds.add(task.id);
+                void this.specifyTask(task);
+              },
+            })),
+        });
       }
     } catch (err) {
       planLog.error("Poll error:", err);
@@ -1261,7 +1308,14 @@ export class TriageProcessor {
       this.advancedRecoveryReservations.has(task.id)
       || this.processing.has(task.id)
       || this.hasLivePlanningWork(task.id)
-    ) return;
+    ) {
+      // FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+      // A coordinator winner owns a real pre-held host slot. A duplicate/stale
+      // planner handoff must return it instead of pinning max concurrency.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      this.coordinatorAdmittedTaskIds.delete(task.id);
+      return;
+    }
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 
@@ -1879,7 +1933,15 @@ export class TriageProcessor {
         },
       });
 
-      if (this.options.semaphore) {
+      if (this.options.semaphore && takePreHeldExecutorSlot(task.id)) {
+        // Coordinator already owns this top-level slot; run directly so it
+        // cannot join the priority queue after age-based admission.
+        try {
+          await retryableWork();
+        } finally {
+          this.options.semaphore.release();
+        }
+      } else if (this.options.semaphore) {
         await this.options.semaphore.run(retryableWork, PRIORITY_SPECIFY);
       } else {
         await retryableWork();
@@ -2037,8 +2099,14 @@ export class TriageProcessor {
         this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
+      // FNXC:ConcurrencyAdmission 2026-08-06-10:00: a coordinator reservation
+      // can exist before planner setup reaches takePreHeldExecutorSlot(). Every
+      // early setup failure must return that untransferred host slot; after a
+      // successful transfer this is intentionally a no-op.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
       this.processing.delete(task.id);
       this.processingSince.delete(task.id);
+      this.coordinatorAdmittedTaskIds.delete(task.id);
     }
   }
 

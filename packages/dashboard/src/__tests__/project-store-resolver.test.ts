@@ -506,6 +506,7 @@ describe("countRunningAgentsInRegisteredProjectStores", () => {
     column: string;
     status?: string;
     paused?: boolean;
+    sessionFile?: string;
   };
 
   function installTaskList(store: TaskStore, seedTasks: Array<string | SeedTask>) {
@@ -523,7 +524,7 @@ describe("countRunningAgentsInRegisteredProjectStores", () => {
 
   it("counts in-progress tasks from already-open stores without opening unopened projects", async () => {
     const openStore = await getOrCreateProjectStore("proj_open");
-    const listTasks = installTaskList(openStore, ["todo", "in-progress", "in-progress", "done"]);
+    const listTasks = installTaskList(openStore, ["todo", { column: "in-progress", sessionFile: "/tmp/a" }, { column: "in-progress", sessionFile: "/tmp/b" }, "done"]);
     const openEntry = createdStores.find((entry) => entry.projectId === "proj_open");
     expect(openEntry).toBeDefined();
     vi.clearAllMocks();
@@ -558,8 +559,8 @@ describe("countRunningAgentsInRegisteredProjectStores", () => {
   it("returns per-project counts for multiple already-open stores", async () => {
     const storeA = await getOrCreateProjectStore("proj_a");
     const storeB = await getOrCreateProjectStore("proj_b");
-    const listTasksA = installTaskList(storeA, ["in-progress", "todo"]);
-    const listTasksB = installTaskList(storeB, ["todo", "in-progress", "in-progress"]);
+    const listTasksA = installTaskList(storeA, [{ column: "in-progress", sessionFile: "/tmp/a" }, "todo"]);
+    const listTasksB = installTaskList(storeB, ["todo", { column: "in-progress", sessionFile: "/tmp/b" }, { column: "in-progress", sessionFile: "/tmp/c" }]);
     vi.clearAllMocks();
 
     const counts = await countRunningAgentsInRegisteredProjectStores(["proj_a", "proj_b"]);
@@ -584,7 +585,7 @@ describe("countRunningAgentsInRegisteredProjectStores", () => {
   it("sums in-progress executors, active triage agents, and active in-review agents while excluding inactive states", async () => {
     const store = await getOrCreateProjectStore("proj_mixed");
     installTaskList(store, [
-      "in-progress",
+      { column: "in-progress", sessionFile: "/tmp/live" },
       { column: "triage", status: "planning" },
       { column: "triage", status: "planning", paused: true },
       { column: "triage", status: "triaged" },
@@ -606,7 +607,7 @@ describe("countRunningAgentsInRegisteredProjectStores", () => {
     const storeA = await getOrCreateProjectStore("proj_triage_a");
     const storeB = await getOrCreateProjectStore("proj_triage_b");
     const listTasksA = installTaskList(storeA, [
-      "in-progress",
+      { column: "in-progress", sessionFile: "/tmp/live" },
       { column: "triage", status: "planning" },
       { column: "triage", status: "waiting" },
     ]);
