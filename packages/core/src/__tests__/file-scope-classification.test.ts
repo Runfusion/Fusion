@@ -9,6 +9,11 @@
  * FNXC:FileScopeClassification 2026-07-21-18:05:
  * Also covers fenced repro snippets (GitHub #2389) whose escaped backticks produced
  * tokens like `global.json\` and blocked import via InvalidFileScopeError.
+ *
+ * FNXC:FileScopeClassification 2026-07-21-19:00:
+ * The regression invariant covers ecosystem-neutral root files, not only the four-path
+ * .NET repro. Classification, create/update validation, and the public store re-export
+ * must agree while duplicate, read-only, and invalid tokens remain excluded from writes.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -17,18 +22,27 @@ import {
   isValidFileScopeEntry,
 } from "../file-scope-classification.js";
 import {
-  isValidFileScopeEntry as storeIsValidFileScopeEntry,
+  isValidFileScopeEntry as storeFileScopeIsValidFileScopeEntry,
   validateFileScopeInPromptContent,
 } from "../task-store/file-scope.js";
+import { isValidFileScopeEntry as storeIsValidFileScopeEntry } from "../store.js";
 import { buildBootstrapPrompt } from "../mesh-task-replication.js";
 
 describe("isValidFileScopeEntry", () => {
   it("accepts root-level repo files with letter-leading extensions", () => {
     const roots = [
       "global.json",
+      "Directory.Build.props",
+      "Directory.Build.targets",
       "Directory.Packages.props",
+      "nuget.config",
+      "NuGet.config",
+      ".editorconfig",
       "MyApp.slnx",
       "MyApp.sln",
+      "Cargo.toml",
+      "go.mod",
+      "pyproject.toml",
       "tsconfig.json",
       "package.json",
       "pnpm-lock.yaml",
@@ -38,6 +52,7 @@ describe("isValidFileScopeEntry", () => {
     ];
     for (const path of roots) {
       expect(isValidFileScopeEntry(path), path).toBe(true);
+      expect(storeFileScopeIsValidFileScopeEntry(path), `task-store:${path}`).toBe(true);
       expect(storeIsValidFileScopeEntry(path), `store:${path}`).toBe(true);
     }
   });
@@ -82,7 +97,8 @@ describe("isValidFileScopeEntry", () => {
     }
   });
 
-  it("keeps create/update validation and classification on the same function", () => {
+  it("keeps create/update validation and store exports on the same function", () => {
+    expect(storeFileScopeIsValidFileScopeEntry).toBe(isValidFileScopeEntry);
     expect(storeIsValidFileScopeEntry).toBe(isValidFileScopeEntry);
   });
 });
@@ -109,6 +125,28 @@ describe("extractEffectiveWriteScopeFromPrompt / validateFileScopeInPromptConten
     ]);
   });
 
+  it("retains the broader .NET root set in effective scope", () => {
+    const rootPaths = [
+      ".editorconfig",
+      "Directory.Build.props",
+      "Directory.Build.targets",
+      "Directory.Packages.props",
+      "global.json",
+      "nuget.config",
+      "MyApp.slnx",
+    ];
+    const broaderPrompt = `## File Scope
+${rootPaths.map((path) => `- \`${path}\` (new)`).join("\n")}
+- \`src/MyApp/Program.cs\` (new)
+`;
+
+    expect(extractEffectiveWriteScopeFromPrompt(broaderPrompt)).toEqual([
+      ...rootPaths,
+      "src/MyApp/Program.cs",
+    ]);
+    expect(validateFileScopeInPromptContent(broaderPrompt).invalid).toEqual([]);
+  });
+
   it("passes create/update File Scope validation for root-level extension paths", () => {
     const { valid, invalid } = validateFileScopeInPromptContent(prompt);
     expect(invalid).toEqual([]);
@@ -116,6 +154,28 @@ describe("extractEffectiveWriteScopeFromPrompt / validateFileScopeInPromptConten
       "global.json",
       "Directory.Packages.props",
       "MyApp.slnx",
+      "src/MyApp/Program.cs",
+    ]);
+  });
+
+  it("omits duplicate, read-only, conditional, and invalid tokens from write scope", () => {
+    const classified = `## File Scope
+- \`global.json\`
+- \`global.json\`
+
+Read-only context:
+- \`Directory.Build.props\`
+
+Files changed:
+- \`src/MyApp/Program.cs\`
+
+Only if changed:
+- \`.changeset/fix.md\`
+
+## Steps
+`;
+    expect(extractEffectiveWriteScopeFromPrompt(classified)).toEqual([
+      "global.json",
       "src/MyApp/Program.cs",
     ]);
   });
