@@ -50,11 +50,13 @@ export const COMMAND_EXECUTION_FN_TOOLS: ReadonlySet<string> = new Set([
 /*
 FNXC:MissionAdmission 2026-07-30-00:00:
 FN-8307 treats autonomous implementation creation and delegation as one admission
-class in both gate paths. They must never fall through as permanent-agent
-coordination, because agent-tools.ts validates the referenced active lineage
-before it can persist the task.
+class at the tool factory (requireMissionLineage + resolveApprovedMissionLineage).
+
+FNXC:MissionAdmission 2026-07-22-13:07:
+Gates no longer hard-block missing lineage so freeform chat/user-directed creates
+remain policy-governed. Lineage enforcement for idle heartbeat patrol lives in
+agent-tools.ts (requireMissionLineage), not a gate pre-check.
 */
-export const MISSION_LINEAGE_ADMISSION_TOOLS: ReadonlySet<string> = new Set(["fn_task_create", "fn_delegate_task"]);
 const PERMANENT_AND_ACTION_TASK_AGENT_TOOLS = ["fn_task_create", "fn_delegate_task"] as const;
 const ACTION_GATE_TASK_AGENT_ONLY_TOOLS = [
   ...PERMANENT_AND_ACTION_TASK_AGENT_TOOLS,

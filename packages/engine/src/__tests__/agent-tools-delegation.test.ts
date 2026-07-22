@@ -492,6 +492,67 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:EngineTests 2026-07-22-13:07:
+  Chat/user-directed freeform intake omits mission_lineage. Schema marks it optional;
+  the tool factory must create the task without mission fields rather than hard-fail.
+  */
+  it("creates freeform chat-style tasks when mission_lineage is omitted", async () => {
+    const tool = createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir: "/project" });
+
+    const result = await tool.execute(
+      "call-1",
+      { description: "Create a red button", priority: "high" },
+      undefined as any,
+      undefined as any,
+      undefined as any,
+    );
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(taskStore.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Create a red button",
+        priority: "high",
+        source: expect.objectContaining({ sourceType: "api" }),
+      }),
+      expect.anything(),
+    );
+    const createInput = vi.mocked(taskStore.createTask).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(createInput.missionId).toBeUndefined();
+    expect(createInput.sliceId).toBeUndefined();
+  });
+
+  it("delegates freeform tasks when mission_lineage is omitted", async () => {
+    const agent = createAgent({ id: "agent-001", name: "Bob" });
+    vi.mocked(agentStore.getAgent).mockResolvedValue(agent);
+    vi.mocked(taskStore.createTask).mockResolvedValue({
+      id: "FN-060",
+      description: "Create a red button",
+      dependencies: [],
+      column: "todo" as const,
+      assignedAgentId: "agent-001",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as Task);
+
+    const tool = createDelegateTaskTool(agentStore, taskStore);
+    const result = await tool.execute(
+      "call-1",
+      { agent_id: "agent-001", description: "Create a red button" },
+      undefined as any,
+      undefined as any,
+      undefined as any,
+    );
+
+    expect(result).not.toMatchObject({ isError: true });
+    const createInput = vi.mocked(taskStore.createTask).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(createInput.missionId).toBeUndefined();
+    expect(createInput.sliceId).toBeUndefined();
+  });
+
   it("serializes three concurrent paraphrased creates from one parent", async () => {
     const tasks: Task[] = [];
     vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
