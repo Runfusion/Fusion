@@ -581,7 +581,7 @@ describe("WorkflowResultsTab", () => {
         taskId: "FN-001",
         agent: "triage",
         type: "text",
-        text: "Triage using model: runtime-planning/runtime-planning-model (thinking effort: low)",
+        text: "Planning using model: runtime-planning/runtime-planning-model (thinking effort: low)",
       },
     ];
     const assignedAgent = {

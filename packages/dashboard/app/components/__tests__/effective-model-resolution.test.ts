@@ -64,17 +64,18 @@ function runtimeAgent(runtimeConfig?: Record<string, unknown>): Agent {
 }
 
 describe("effective model resolution", () => {
-  it("extracts the latest role-specific model marker from legacy and suffixed agent logs", () => {
+  it("extracts the latest role-specific model marker from Planning and legacy Triage agent logs", () => {
     const entries = [
       log("executor", "Executor using model: old-provider/old-model"),
       log("reviewer", "Reviewer using model: reviewer-provider/reviewer-model (thinking effort: high)"),
-      log("triage", "Triage using model: triage-provider/triage-model (thinking effort: low)"),
+      log("triage", "Triage using model: legacy-planning/legacy-planning-model"),
+      log("triage", "Planning using model: planning-provider/planning-model (thinking effort: low)"),
       log("executor", "Executor using model: new-provider/new-model (thinking effort: high)"),
     ];
 
     expect(extractExecutorModelFromLog(entries)).toEqual({ provider: "new-provider", modelId: "new-model" });
     expect(extractReviewerModelFromLog(entries)).toEqual({ provider: "reviewer-provider", modelId: "reviewer-model" });
-    expect(extractPlanningModelFromLog(entries)).toEqual({ provider: "triage-provider", modelId: "triage-model" });
+    expect(extractPlanningModelFromLog(entries)).toEqual({ provider: "planning-provider", modelId: "planning-model" });
   });
 
   /*
@@ -88,15 +89,17 @@ describe("effective model resolution", () => {
     const statusEntries = [
       { ...log("executor", "Executor using model: status-provider/status-model"), type: "status" as const },
       { ...log("reviewer", "Reviewer using model: status-reviewer/status-reviewer-model"), type: "status" as const },
-      { ...log("triage", "Triage using model: status-triage/status-triage-model"), type: "status" as const },
+      { ...log("triage", "Planning using model: status-planning/status-planning-model"), type: "status" as const },
     ];
     expect(extractExecutorModelFromLog(statusEntries)).toEqual({ provider: "status-provider", modelId: "status-model" });
     expect(extractReviewerModelFromLog(statusEntries)).toEqual({ provider: "status-reviewer", modelId: "status-reviewer-model" });
-    expect(extractPlanningModelFromLog(statusEntries)).toEqual({ provider: "status-triage", modelId: "status-triage-model" });
+    expect(extractPlanningModelFromLog(statusEntries)).toEqual({ provider: "status-planning", modelId: "status-planning-model" });
 
-    // Legacy rows written before the `status` type existed still resolve.
+    // Legacy text rows, including the former Triage planning prefix, still resolve.
     const legacyEntries = [log("executor", "Executor using model: legacy-provider/legacy-model")];
+    const legacyPlanningEntries = [log("triage", "Triage using model: legacy-planning/legacy-planning-model")];
     expect(extractExecutorModelFromLog(legacyEntries)).toEqual({ provider: "legacy-provider", modelId: "legacy-model" });
+    expect(extractPlanningModelFromLog(legacyPlanningEntries)).toEqual({ provider: "legacy-planning", modelId: "legacy-planning-model" });
 
     // A tool row is still never a model marker, whatever its text says.
     const toolEntries = [{ ...log("executor", "Executor using model: tool-provider/tool-model"), type: "tool" as const }];
@@ -104,10 +107,13 @@ describe("effective model resolution", () => {
   });
 
   it("parses runtime model markers for all roles while ignoring parenthesized diagnostics", () => {
-    expect(parseRuntimeModelMarker("Triage using model: google/gemini-pro", "Triage")).toEqual({ provider: "google", modelId: "gemini-pro" });
+    expect(parseRuntimeModelMarker("Planning using model: google/gemini-pro (thinking effort: low)", "Planning")).toEqual({ provider: "google", modelId: "gemini-pro" });
+    expect(parseRuntimeModelMarker("Triage using model: google/gemini-pro", "Planning")).toEqual({ provider: "google", modelId: "gemini-pro" });
+    expect(parseRuntimeModelMarker("Planning using model: google/gemini-pro", "Triage")).toEqual({ provider: "google", modelId: "gemini-pro" });
     expect(parseRuntimeModelMarker("Executor using model: openai/gpt-4o (thinking effort: high)", "Executor")).toEqual({ provider: "openai", modelId: "gpt-4o" });
     expect(parseRuntimeModelMarker("Reviewer using model: anthropic/claude-sonnet-4-5 (thinking effort: high) (fallback after timeout)", "Reviewer")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
     expect(parseRuntimeModelMarker("Executor using model: openai/gpt-4o (thinking effort: high)", "Reviewer")).toBeNull();
+    expect(parseRuntimeModelMarker("Planning using model: google/gemini-pro", "Executor")).toBeNull();
     expect(parseRuntimeModelMarker("Executor using model: unknown model", "Executor")).toBeNull();
   });
 
@@ -139,8 +145,8 @@ describe("effective model resolution", () => {
   it("resolves planning from task override before triage log marker and settings fallback", () => {
     const task = { ...baseTask, planningModelProvider: "task-planning", planningModelId: "task-planning-model" } as Task;
 
-    expect(resolveEffectivePlanning(task, [log("triage", "Triage using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "task-planning", modelId: "task-planning-model" });
-    expect(resolveEffectivePlanning({ ...baseTask, planningModelProvider: null, planningModelId: null } as Task, [log("triage", "Triage using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "log-planning", modelId: "log-planning-model" });
+    expect(resolveEffectivePlanning(task, [log("triage", "Planning using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "task-planning", modelId: "task-planning-model" });
+    expect(resolveEffectivePlanning({ ...baseTask, planningModelProvider: null, planningModelId: null } as Task, [log("triage", "Planning using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "log-planning", modelId: "log-planning-model" });
     expect(resolveEffectivePlanning({ ...baseTask, planningModelProvider: null, planningModelId: null } as Task, [], settings)).toEqual({ provider: "settings-planning", modelId: "settings-planning-model" });
   });
 });

@@ -24,7 +24,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
-import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
@@ -2678,9 +2678,8 @@ export function ListView({
                             && !visualStatus
                             && Boolean(task.recentAgentActivityAt)
                             && isAgentActive;
-                          const hasStatus = (typeof visualStatus === "string" && visualStatus.trim().length > 0
-                            || isTransientPlannerActive)
-                            && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
+                          const hasStatus = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
+                            || isTransientPlannerActive;
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const optionalGateBadge = getRunningOptionalGateBadge(task);
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
@@ -2916,8 +2915,8 @@ export function ListView({
                               && !visualStatus
                               && Boolean(task.recentAgentActivityAt)
                               && isAgentActive;
-                            const showStatusBadge = (Boolean(visualStatus) || isTransientPlannerActive)
-                              && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
+                            const showStatusBadge = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
+                              || isTransientPlannerActive;
                             const optionalGateBadge = getRunningOptionalGateBadge(task);
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                             const isDragging = draggingTaskId === task.id;

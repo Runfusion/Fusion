@@ -206,7 +206,7 @@ export function getBoardTaskOpenRoute(options: {
   rightDockActive: boolean;
   initialTab?: DetailTaskTab;
 }): BoardTaskOpenRoute {
-  if (!options.initialTab && options.openMobileTasksInPopup) {
+  if (options.openMobileTasksInPopup) {
     return "popup";
   }
   if (shouldOpenBoardTaskInDock(options.openTasksInRightSidebar, options.rightDockActive, options.initialTab)) {
@@ -588,7 +588,7 @@ function AppInner() {
     closePoppedOutTask(taskId, originTaskView);
   }, [closePoppedOutTask, removeNav]);
 
-  const popOutTaskDetailForCurrentView = useCallback((task: Task | TaskDetail) => {
+  const popOutTaskDetailForCurrentView = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
     const identityKey = taskPopupIdentityKey(task.id, taskView);
     const alreadyOpen = poppedOutTaskEntries.some((entry) => entry.task.id === task.id && entry.originTaskView === taskView);
     if (isMobile && !alreadyOpen) {
@@ -599,7 +599,7 @@ function AppInner() {
       popupNavCloseRef.current.set(identityKey, closeFromHistory);
       pushNav({ type: "modal", close: closeFromHistory });
     }
-    popOutTaskDetail(task, taskView);
+    popOutTaskDetail(task, taskView, initialTab);
   }, [isMobile, poppedOutTaskEntries, popOutTaskDetail, pushNav, closePoppedOutTask, taskView]);
 
   const boardSourceTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
@@ -1134,14 +1134,22 @@ function AppInner() {
     handleChangeTaskView("board");
   }, [handleChangeTaskView, removeNav, requestRestore]);
 
+  /*
+  FNXC:TaskPopupDeepTabs 2026-07-21-00:00:
+  FN-8478 makes every board TaskCard deep-tab action, including files changed, honor Open tasks as popups. Route once to the popup with its requested tab so a click never opens both a FloatingWindow and a main-panel/modal detail surface.
+  */
   const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => {
+    if (openMobileTasksInPopup) {
+      popOutTaskDetailForCurrentView(task, initialTab);
+      return;
+    }
     if (initialTab === "changes") {
       openTaskDetailInMainPanel(task, "changes");
       return;
     }
     modalManager.openDetailTask(task, initialTab);
     pushNav({ type: "modal", close: modalManager.closeDetailTask });
-  }, [modalManager, openTaskDetailInMainPanel, pushNav]);
+  }, [modalManager, openMobileTasksInPopup, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView, pushNav]);
 
   /*
   FNXC:Settings 2026-06-22-00:00:
@@ -1482,8 +1490,8 @@ function AppInner() {
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
   Board card clicks are the only task-open path governed by openTasksInRightSidebar. When the project setting is enabled and the tablet/desktop right dock is active, the board keeps its current view and asks the dock controller to render task detail; otherwise the existing full main-panel replacement remains the fallback, including mobile and hidden-footer states.
 
-  FNXC:MobileTaskPopups 2026-07-01-12:00:
-  Board-card clicks on every viewport may opt into the existing task pop-out path, but only for ordinary task opens with no deep initial tab. The route is intentionally ordered as all-viewport popup, then tablet/desktop right dock, then main-panel fallback so the popup setting keeps the board visible when requested while deep-tab opens and non-board handlers keep their existing behavior.
+  FNXC:MobileTaskPopups 2026-07-21-00:00:
+  FN-8478 makes board TaskCard deep-tab opens use the all-viewport popup route when enabled, preserving the requested tab. Popup routing remains first so neither dock nor main-panel detail can double-open behind the FloatingWindow.
   */
   const openBoardTaskDetail = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
     const route = getBoardTaskOpenRoute({
@@ -1495,7 +1503,7 @@ function AppInner() {
     });
 
     if (route === "popup") {
-      popOutTaskDetailForCurrentView(task);
+      popOutTaskDetailForCurrentView(task, initialTab);
       return;
     }
 
@@ -2023,7 +2031,7 @@ function AppInner() {
       FNXC:TaskPopupViewGating 2026-07-15-15:20:
       Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView }) => {
+      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
         const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
         const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
@@ -2043,6 +2051,7 @@ function AppInner() {
           >
             <TaskDetailContent
               task={liveTask}
+              initialTab={initialTab}
               projectId={currentProject?.id}
               tasks={tasks}
               embedded

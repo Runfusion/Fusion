@@ -2327,11 +2327,14 @@ export const COLUMN_LABELS: Record<Column, string> = {
   archived: "Archived",
 };
 
-export const COLUMN_DESCRIPTIONS: Record<Column, string> = {
+/*
+FNXC:BoardColumnDescriptions 2026-07-21-00:00:
+Todo and In Review must not carry redundant status prose in board headers.
+Their omitted entries intentionally suppress the description element.
+*/
+export const COLUMN_DESCRIPTIONS: Partial<Record<Column, string>> = {
   triage: "Raw ideas — AI will plan these",
-  todo: "Specified and ready to start",
   "in-progress": "AI is working on this in a worktree",
-  "in-review": "Complete — ready to merge",
   done: "Merged and closed",
   archived: "Completed and archived",
 };

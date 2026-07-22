@@ -53,12 +53,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
         value={form.openTasksInRightSidebar === true}
         onChange={(v) => setForm((f) => ({ ...f, openTasksInRightSidebar: v === true }))}
       />
-      {/* FNXC:MobileTaskPopups 2026-07-13-00:00 (FN-7945): Keep the stored openMobileTasksInPopup key for compatibility, but present the setting as all-viewport ordinary task popup routing because desktop operators also need the board, List view, or right-dock Tasks list visible behind task detail. */}
+      {/* FNXC:MobileTaskPopups 2026-07-21-00:00 (FN-8478): Keep the stored openMobileTasksInPopup key for compatibility and explain that board-card deep-tab chips now use the same popup routing, preserving the board behind Changes, Retries, or Workflow detail. */}
       <SettingsToggleRow
         descriptor={{
           key: "openMobileTasksInPopup",
           label: t("settings.appearance.openMobileTasksInPopup", "Open tasks as popups"),
-          help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card, List row/card, and right-dock Tasks-list clicks open the existing movable task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled."),
+          help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row/card and right-dock Tasks-list clicks, open the existing movable task popup so the board or list remains visible. Other task opens keep their current behavior. Default: disabled."),
           scope: "project",
         }}
         value={form.openMobileTasksInPopup === true}

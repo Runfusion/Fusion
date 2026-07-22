@@ -2169,16 +2169,16 @@ describe("ListView", () => {
     expect(screen.queryByText("Reviewing")).not.toBeInTheDocument();
   });
 
-  it("FN-8170 suppresses stale planning only on Todo and In Progress table rows", () => {
+  it("FN-8475 renders Todo planning in desktop table rows without a placeholder", () => {
     const matchMediaSpy = mockDesktopViewport();
     try {
       renderListView({
         tasks: [
-          createMockTask({ id: "FN-8170-todo", column: "todo", status: "planning" }),
-          createMockTask({ id: "FN-8170-active", column: "in-progress", status: "planning" }),
-          createMockTask({ id: "FN-8170-triage", column: "triage", status: "planning" }),
+          createMockTask({ id: "FN-8475-todo", column: "todo", status: "planning" }),
+          createMockTask({ id: "FN-8475-active", column: "in-progress", status: "planning" }),
+          createMockTask({ id: "FN-8475-triage", column: "triage", status: "planning" }),
           createMockTask({
-            id: "FN-8170-executing",
+            id: "FN-8475-executing",
             column: "in-progress",
             status: "executing",
             steps: [{ name: "Running step", status: "in-progress" }],
@@ -2186,13 +2186,26 @@ describe("ListView", () => {
         ],
       });
 
-      for (const id of ["FN-8170-todo", "FN-8170-active"]) {
+      for (const id of ["FN-8475-todo", "FN-8475-active", "FN-8475-triage"]) {
         const row = screen.getByText(id).closest("tr") as HTMLElement;
-        expect(within(row).queryByText("planning")).toBeNull();
-        expect(row.querySelector(".list-status-badge")).toHaveTextContent("-");
+        expect(within(row).getByText("planning")).toHaveClass("list-status-badge");
+        expect(row.querySelector(".list-status-badge")).not.toHaveTextContent("-");
       }
-      expect(within(screen.getByText("FN-8170-triage").closest("tr") as HTMLElement).getByText("planning")).toBeInTheDocument();
-      expect(within(screen.getByText("FN-8170-executing").closest("tr") as HTMLElement).getByText("executing")).toBeInTheDocument();
+      expect(within(screen.getByText("FN-8475-executing").closest("tr") as HTMLElement).getByText("executing")).toBeInTheDocument();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
+  });
+
+  it("FN-8475 renders Todo planning in grouped mobile cards", () => {
+    const matchMediaSpy = mockMobileViewport();
+    try {
+      renderListView({
+        tasks: [createMockTask({ id: "FN-8475-todo-mobile", column: "todo", status: "planning" })],
+      });
+
+      const card = screen.getByText("FN-8475-todo-mobile").closest(".list-card") as HTMLElement;
+      expect(within(card).getByText("planning")).toHaveClass("list-status-badge");
     } finally {
       matchMediaSpy.mockRestore();
     }
@@ -5170,7 +5183,7 @@ describe("ListView - Bulk Selection", () => {
       expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
     });
 
-    it("FN-8170 suppresses stale planning only on Todo and In Progress mobile cards", () => {
+    it("FN-8475 renders Todo and In Progress planning in mobile cards", () => {
       mockMobileViewport();
 
       const { container } = renderListView({
@@ -5187,10 +5200,9 @@ describe("ListView - Bulk Selection", () => {
         ],
       });
 
-      for (const id of ["FN-8170-mobile-todo", "FN-8170-mobile-active"]) {
-        expect(within(container.querySelector(`[data-id="${id}"]`) as HTMLElement).queryByText("planning")).toBeNull();
+      for (const id of ["FN-8170-mobile-todo", "FN-8170-mobile-active", "FN-8170-mobile-triage"]) {
+        expect(within(container.querySelector(`[data-id="${id}"]`) as HTMLElement).getByText("planning")).toHaveClass("list-status-badge");
       }
-      expect(within(container.querySelector('[data-id="FN-8170-mobile-triage"]') as HTMLElement).getByText("planning")).toBeInTheDocument();
       expect(within(container.querySelector('[data-id="FN-8170-mobile-executing"]') as HTMLElement).getByText("executing")).toBeInTheDocument();
     });
 

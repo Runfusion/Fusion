@@ -6,29 +6,36 @@ Popped-out task-detail windows are movable, resizable, non-blocking FloatingWind
 import { useCallback, useMemo, useState } from "react";
 import type { Task, TaskDetail } from "@fusion/core";
 import type { TaskView } from "./useViewState";
+import type { DetailTaskTab } from "./useModalManager";
 
 export interface PoppedOutTaskEntry {
   task: Task | TaskDetail;
   originTaskView?: TaskView;
+  initialTab?: DetailTaskTab;
 }
 
 export interface UsePoppedOutTasksResult {
   entries: PoppedOutTaskEntry[];
   tasks: Array<Task | TaskDetail>;
-  popOut: (task: Task | TaskDetail, originTaskView?: TaskView) => void;
+  popOut: (task: Task | TaskDetail, originTaskView?: TaskView, initialTab?: DetailTaskTab) => void;
   close: (taskId: string, originTaskView?: TaskView) => void;
 }
 
 export function usePoppedOutTasks(): UsePoppedOutTasksResult {
   const [entries, setEntries] = useState<PoppedOutTaskEntry[]>([]);
 
-  const popOut = useCallback((task: Task | TaskDetail, originTaskView?: TaskView) => {
+  /*
+  FNXC:TaskPopupDeepTabs 2026-07-21-00:00:
+  FN-8478 requires board card deep-tab actions to keep the board visible when Open tasks as popups is enabled. Store the requested tab with the popup snapshot so reopening an existing task-and-view pair refreshes both its data and destination.
+  */
+  const popOut = useCallback((task: Task | TaskDetail, originTaskView?: TaskView, initialTab?: DetailTaskTab) => {
     setEntries((current) => {
       const existingIndex = current.findIndex((entry) => entry.task.id === task.id && entry.originTaskView === originTaskView);
-      if (existingIndex === -1) return [...current, { task, originTaskView }];
+      const entry = { task, originTaskView, ...(initialTab ? { initialTab } : {}) };
+      if (existingIndex === -1) return [...current, entry];
 
       const upgraded = [...current];
-      upgraded[existingIndex] = { task, originTaskView };
+      upgraded[existingIndex] = entry;
       return upgraded;
     });
   }, []);

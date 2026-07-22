@@ -2295,7 +2295,8 @@ describe("TaskCard", () => {
   it.each([
     { column: "todo" as const, status: "planning" },
     { column: "in-progress" as const, status: "planning" },
-  ])("FN-8170 suppresses stale planning status and its empty header wrapper on $column cards", ({ column, status }) => {
+    { column: "triage" as const, status: "planning" },
+  ])("FN-8475 renders real planning status and a non-empty header wrapper on $column cards", ({ column, status }) => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column, status })}
@@ -2304,11 +2305,12 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.queryByText("planning")).toBeNull();
-    expect(container.querySelector(".card-header-badges")).toBeNull();
+    const badge = screen.getByText("planning");
+    expect(badge).toHaveClass("card-status-badge");
+    expect(container.querySelector(".card-header-badges")).toContainElement(badge);
   });
 
-  it("FN-8170 preserves triage planning and non-planning status badges", () => {
+  it("FN-8475 preserves non-planning status badges", () => {
     const { rerender } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "planning" })}
@@ -2341,9 +2343,11 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("Merging fixes…")).toBeDefined();
-    const badge = container.querySelector(".card-status-badge");
-    expect(badge?.className).toContain("pulsing");
+    const badge = screen.getByText("Merging fixes");
+    expect(badge.classList.contains("card-status-badge")).toBe(true);
+    expect(badge.textContent).not.toContain("…");
+    expect(container.querySelector(".card-status-badge")).toBe(badge);
+    expect(badge.className).toContain("pulsing");
   });
 
   it("FN-4208 keeps failed in-review TaskCard badge on error colors", () => {
@@ -2795,14 +2799,20 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("Merging…")).toBeDefined();
+    expect(screen.getByText("Merging")).toBeDefined();
     expect(screen.queryByText("Merge blocked")).toBeNull();
   });
 
-  it.each(["merging", "reviewing", "landing", "merging-pr"] as const)(
-    "FN-merge-badge: shows Merging… badge while task.status is %s",
-    (status) => {
-      render(
+  it.each([
+    ["merging", "Merging"],
+    ["merging-pr", "Merging"],
+    ["reviewing", "Merging"],
+    ["landing", "Merging"],
+    ["merging-fix", "Merging fixes"],
+  ] as const)(
+    "FN-8482: shows compact %s badge without ellipsis while task.status is %s",
+    (status, expectedLabel) => {
+      const { container } = render(
         <TaskCard
           task={makeTask({
             column: "in-review",
@@ -2813,7 +2823,10 @@ describe("TaskCard", () => {
         />,
       );
 
-      expect(screen.getByText("Merging…")).toBeDefined();
+      const badge = screen.getByText(expectedLabel);
+      expect(badge.classList.contains("card-status-badge")).toBe(true);
+      expect(badge.textContent).not.toContain("…");
+      expect(container.querySelector(".card-status-badge")).toBe(badge);
     },
   );
 

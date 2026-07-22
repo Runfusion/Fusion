@@ -64,23 +64,27 @@ describe("board task detail routing", () => {
     })).toBe("popup");
   });
 
-  it("keeps deep-tab opens off the all-viewport popup path", () => {
+  it("routes every board-card deep tab to the popup when enabled", () => {
     for (const initialTab of ["changes", "retries", "workflow"] as const) {
-      expect(getBoardTaskOpenRoute({
-        isMobile: true,
-        openMobileTasksInPopup: true,
-        openTasksInRightSidebar: true,
-        rightDockActive: true,
-        initialTab,
-      })).toBe("main-panel");
-
-      expect(getBoardTaskOpenRoute({
-        isMobile: false,
-        openMobileTasksInPopup: true,
-        openTasksInRightSidebar: true,
-        rightDockActive: true,
-        initialTab,
-      })).toBe("main-panel");
+      for (const isMobile of [true, false]) {
+        expect(getBoardTaskOpenRoute({
+          isMobile,
+          openMobileTasksInPopup: true,
+          openTasksInRightSidebar: true,
+          rightDockActive: true,
+          initialTab,
+        })).toBe("popup");
+      }
     }
+  });
+
+  it("keeps a popup-disabled changes deep link in the main panel", () => {
+    expect(getBoardTaskOpenRoute({
+      isMobile: false,
+      openMobileTasksInPopup: false,
+      openTasksInRightSidebar: true,
+      rightDockActive: true,
+      initialTab: "changes",
+    })).toBe("main-panel");
   });
 });

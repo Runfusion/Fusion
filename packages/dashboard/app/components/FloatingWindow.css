@@ -107,6 +107,20 @@ Headerless task pop-outs still need a visible drag affordance. The embedded task
 }
 
 /*
+FNXC:FloatingWindow 2026-07-21-00:00:
+Tablet task-detail popups prioritize symmetric content insets over desktop resize affordances. Their body removes the desktop scrollbar-clearance gutter only while all resize handles are suppressed; desktop retains the clearance and resize-safe handles, and the delegated task header remains draggable.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .floating-window--task-detail .floating-window__body {
+    margin-inline-end: 0;
+  }
+
+  .floating-window--task-detail .floating-window__resize-handle {
+    display: none;
+  }
+}
+
+/*
 FNXC:ChatModal 2026-06-22-14:49:
 On mobile/narrow app viewports, opening Quick Chat should present the full Chat modal as a full-screen sheet instead of a small draggable desktop window. Scope this to the chat FloatingWindow and override the inline desktop geometry only at the mobile breakpoint; desktop pop-out behavior remains movable/resizable.
 */

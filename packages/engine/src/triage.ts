@@ -1674,11 +1674,15 @@ export class TriageProcessor {
         });
 
         const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel));
+        /*
+        FNXC:PlanningModelMarker 2026-07-21-12:00:
+        Planning-lane provenance is operator-facing, so its task activity marker uses the board's Planning name while the persisted agent role remains the internal `triage` identifier.
+        */
         planLog.log(`${task.id}: using model ${modelDesc}`);
-        await this.store.logEntry(task.id, `Triage using model: ${modelDesc}`);
+        await this.store.logEntry(task.id, `Planning using model: ${modelDesc}`);
         await this.store.appendAgentLog(
           task.id,
-          `Triage using model: ${modelDesc}`,
+          `Planning using model: ${modelDesc}`,
           "status",
           undefined,
           "triage",

@@ -835,7 +835,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
           </div>
         )}
       </div>
-      {!isCollapsed && (workflowMode ? COLUMN_DESCRIPTIONS[column] !== undefined : true) && (
+      {!isCollapsed && COLUMN_DESCRIPTIONS[column] !== undefined && (
         <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
       )}
       {!isCollapsed && inlineFeedback && (

@@ -1,4 +1,6 @@
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -175,6 +177,75 @@ describe("Column count-flash", () => {
     );
 
     expect(screen.getByLabelText("1 executing of 4")).toHaveTextContent("1/4");
+  });
+});
+
+/*
+FNXC:CodingIdeasWorkflow 2026-07-21-23:42:
+Coding (Ideas) uses the canonical non-legacy `ideas` intake ID. Cover empty and
+populated real Column markup here because Board selected/aggregate views and Lane
+all compose this shared renderer; duplicate consumer tests would not add another path.
+*/
+describe("Column Coding (Ideas) header indicator", () => {
+  it.each([
+    ["empty", []],
+    ["populated", [{ ...makeTask("FN-IDEA-1"), column: "ideas" as ColumnType }]],
+  ])("renders one Ideas dot before the heading for a %s intake column", (_state, tasks) => {
+    render(
+      <Column
+        {...defaultProps}
+        column={"ideas" as ColumnType}
+        workflowMode
+        columnDisplayName="Ideas"
+        columnFlags={{ intake: true }}
+        tasks={tasks}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { name: "Ideas", level: 2 });
+    const header = heading.closest(".column-header");
+    expect(header?.querySelectorAll(".column-dot.dot-ideas")).toHaveLength(1);
+    expect(heading.previousElementSibling).toHaveClass("column-dot", "dot-ideas");
+  });
+
+  it("maps the canonical Ideas dot to the shared triage token", () => {
+    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.dot-ideas\s*\{\s*background:\s*var\(--triage\);\s*\}/);
+  });
+});
+
+/*
+FNXC:BoardColumnDescriptions 2026-07-21-00:00:
+Todo and In Review omit redundant readiness prose, and the shared Column renderer
+must leave no empty description shell across desktop/mobile and task-data states.
+*/
+describe("Column legacy descriptions", () => {
+  it.each([
+    ["Todo", "todo" as ColumnType, "Specified and ready to start"],
+    ["In Review", "in-review" as ColumnType, "Complete — ready to merge"],
+  ])("omits the description shell for an empty %s column", (label, column, removedDescription) => {
+    render(<Column {...defaultProps} column={column} tasks={[]} />);
+
+    expect(screen.getByRole("heading", { name: label, level: 2 })).toBeInTheDocument();
+    expect(screen.queryByText(removedDescription)).not.toBeInTheDocument();
+    expect(document.querySelector(".column-desc")).toBeNull();
+  });
+
+  it.each([
+    ["Todo", "todo" as ColumnType, "Specified and ready to start"],
+    ["In Review", "in-review" as ColumnType, "Complete — ready to merge"],
+  ])("omits the description shell for a populated %s column", (label, column, removedDescription) => {
+    render(<Column {...defaultProps} column={column} tasks={[{ ...makeTask("FN-8480"), column }]} />);
+
+    expect(screen.getByRole("heading", { name: label, level: 2 })).toBeInTheDocument();
+    expect(screen.queryByText(removedDescription)).not.toBeInTheDocument();
+    expect(document.querySelector(".column-desc")).toBeNull();
+  });
+
+  it("retains the description for Planning", () => {
+    render(<Column {...defaultProps} tasks={[]} />);
+
+    expect(screen.getByText("Raw ideas — AI will plan these")).toHaveClass("column-desc");
   });
 });
 

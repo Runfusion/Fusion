@@ -17,8 +17,11 @@ FN-7040 requires the Chat tab, Agent Log header, and Workflow tab Model settings
 
 FNXC:TaskLogModelThinking 2026-07-01-00:00:
 Runtime "using model" markers may append parenthesized diagnostics such as thinking effort, workflow-step overrides, or fallback reasons. Dashboard model resolution strips those suffix annotations while preserving legacy exact markers so provider icons and effective-model headers continue to resolve from the same row operators read in Activity and Raw Logs.
+
+FNXC:PlanningModelMarker 2026-07-21-12:00:
+New planning sessions identify the operator-facing lane as Planning, while historical rows retain Triage. Treat both prefixes as one planning lane so stored logs continue to resolve provider icons and effective-model headers.
 */
-const MODEL_MARKER_PATTERN = /^(Triage|Executor|Reviewer) using model: ([^/\s]+)\/(.+?)(?:\s+\([^)]*\))*$/;
+const MODEL_MARKER_PATTERN = /^(Planning|Triage|Executor|Reviewer) using model: ([^/\s]+)\/(.+?)(?:\s+\([^)]*\))*$/;
 
 /*
 FNXC:TaskLogModelThinking 2026-07-15-11:20:
@@ -28,9 +31,13 @@ function isEngineMarkerEntryType(type: AgentLogEntry["type"]): boolean {
   return type === "status" || type === "text";
 }
 
-export function parseRuntimeModelMarker(text: string, role: "Triage" | "Executor" | "Reviewer"): { provider: string; modelId: string } | null {
+export function parseRuntimeModelMarker(text: string, role: "Planning" | "Triage" | "Executor" | "Reviewer"): { provider: string; modelId: string } | null {
   const match = text.match(MODEL_MARKER_PATTERN);
-  if (!match || match[1] !== role) return null;
+  const isPlanningRole = role === "Planning" || role === "Triage";
+  const matchesRole = isPlanningRole
+    ? match?.[1] === "Planning" || match?.[1] === "Triage"
+    : match?.[1] === role;
+  if (!match || !matchesRole) return null;
   return { provider: match[2], modelId: match[3] };
 }
 
@@ -130,15 +137,16 @@ export function resolveEffectiveValidator(
 
 /**
  * Extract planning model from agent log entries.
- * Looks for text entries with agent role "triage" matching the pattern:
- *   "Triage using model: <provider>/<modelId>"
+ * Looks for status or text entries with agent role "triage" matching either pattern:
+ *   "Planning using model: <provider>/<modelId>"
+ *   "Triage using model: <provider>/<modelId>" (legacy)
  * Returns the latest match, or null if none found.
  */
 export function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
   let result: { provider: string; modelId: string } | null = null;
   entries.forEach((entry) => {
     if (entry.agent !== "triage" || !isEngineMarkerEntryType(entry.type)) return;
-    const match = parseRuntimeModelMarker(entry.text, "Triage");
+    const match = parseRuntimeModelMarker(entry.text, "Planning");
     if (match) {
       result = match;
     }

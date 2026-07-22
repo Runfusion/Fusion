@@ -404,7 +404,7 @@ The Task Detail Activity → Raw Logs model header prefers runtime provenance ma
 
 - `Executor using model: <provider>/<modelId>`
 - `Reviewer using model: <provider>/<modelId>`
-- `Triage using model: <provider>/<modelId>`
+- `Planning using model: <provider>/<modelId>` (legacy `Triage using model: <provider>/<modelId>` rows remain parseable)
 
 When the lane resolves a thinking level, the same row appends ` (thinking effort: <level>)`, for example `Executor using model: openai/gpt-4o (thinking effort: high)`. Dashboard parsers ignore parenthesized diagnostics for provider icons/effective-model headers while Raw Logs and Activity rows keep the full text visible.
 

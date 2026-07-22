@@ -4266,11 +4266,11 @@ describe("taskCreate tool model inheritance", () => {
 
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-7437",
-        "Triage using model: mock-model (thinking effort: low)",
+        "Planning using model: mock-model (thinking effort: low)",
       );
       expect(store.appendAgentLog).toHaveBeenCalledWith(
         "FN-7437",
-        "Triage using model: mock-model (thinking effort: low)",
+        "Planning using model: mock-model (thinking effort: low)",
         "status",
         undefined,
         "triage",
@@ -5241,11 +5241,11 @@ describe("taskCreate tool model inheritance", () => {
       // Verify appendAgentLog was called with model and thinking effort info on the same triage row.
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-300",
-        "Triage using model: mock-model (thinking effort: high)",
+        "Planning using model: mock-model (thinking effort: high)",
       );
       expect(store.appendAgentLog).toHaveBeenCalledWith(
         "FN-300",
-        "Triage using model: mock-model (thinking effort: high)",
+        "Planning using model: mock-model (thinking effort: high)",
         "status",
         undefined,
         "triage",

@@ -2851,4 +2851,95 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  describe("Coding (Ideas) workflow detail moves", () => {
+    const ideasWorkflowPayload = {
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding-ideas",
+      workflows: [{
+        id: "builtin:coding-ideas",
+        name: "Coding (Ideas)",
+        columns: [
+          { id: "ideas", name: "Ideas", flags: { intake: true } },
+          { id: "todo", name: "Todo", flags: {} },
+        ],
+      }],
+      taskWorkflowIds: { "FN-ideas": "builtin:coding-ideas" },
+    };
+    const ideasTask = () => makeTask({ id: "FN-ideas", column: "ideas", title: "Parked coding idea" });
+    const setViewport = (width: number) => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      window.dispatchEvent(new Event("resize"));
+    };
+
+    beforeEach(() => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockReset();
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValue(ideasWorkflowPayload);
+    });
+
+    afterEach(() => {
+      setViewport(1024);
+    });
+
+    async function expectIdeasMove(renderDetail: () => void, onMoveTask: ReturnType<typeof vi.fn>) {
+      renderDetail();
+      const moveButton = await screen.findByRole("button", { name: "Move to Todo" });
+      expect(moveButton).toBeEnabled();
+      await userEvent.click(moveButton);
+      expect(onMoveTask).toHaveBeenCalledWith("FN-ideas", "todo", undefined);
+    }
+
+    it("moves an Ideas task to Todo from the modal at desktop width", async () => {
+      setViewport(1024);
+      const onMoveTask = vi.fn(async () => ideasTask());
+      await expectIdeasMove(() => {
+        render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      }, onMoveTask);
+    });
+
+    it("moves an Ideas task to Todo from the modal at 375px", async () => {
+      setViewport(375);
+      const onMoveTask = vi.fn(async () => ideasTask());
+      await expectIdeasMove(() => {
+        render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      }, onMoveTask);
+    });
+
+    it("moves an Ideas task to Todo from embedded detail at desktop width", async () => {
+      setViewport(1024);
+      const onMoveTask = vi.fn(async () => ideasTask());
+      await expectIdeasMove(() => {
+        render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      }, onMoveTask);
+    });
+
+    it("moves an Ideas task to Todo from embedded detail at 375px", async () => {
+      setViewport(375);
+      const onMoveTask = vi.fn(async () => ideasTask());
+      await expectIdeasMove(() => {
+        render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      }, onMoveTask);
+    });
+
+    it("keeps supplied fields while independently resolving and clearing Ideas move metadata", async () => {
+      const onMoveTask = vi.fn(async () => ideasTask());
+      const workflowFieldDefs = [{ id: "owner", name: "Owner", type: "string" as const, render: { placement: "detail" as const } }];
+      const { rerender } = render(
+        <TaskDetailModal initialTab="definition" task={ideasTask()} workflowFieldDefs={workflowFieldDefs} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
+      );
+
+      expect(await screen.findByLabelText("Owner")).toBeInTheDocument();
+      const moveButton = await screen.findByRole("button", { name: "Move to Todo" });
+      await userEvent.click(moveButton);
+      expect(onMoveTask).toHaveBeenCalledWith("FN-ideas", "todo", undefined);
+      expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1);
+
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} });
+      rerender(
+        <TaskDetailModal initialTab="definition" task={makeTask({ id: "FN-unresolved", column: "ideas" })} workflowFieldDefs={workflowFieldDefs} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
+      );
+      await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("button", { name: "Move to Todo" })).toBeNull();
+    });
+  });
+
 });
