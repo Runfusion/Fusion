@@ -14,6 +14,8 @@ const SCROLL_IDLE_SETTLE_MS = 48;
 const CENTER_TOLERANCE_PX = 1;
 /** Minimum finger travel to count as a horizontal pan (short swipe still commits). */
 const MIN_PAN_CLIENT_PX = 12;
+/** Keep a WebKit compositor write from outliving the main-thread hard jump. */
+const PIN_REASSERT_INTERVAL_MS = 16;
 
 export interface UseColumnScrollSnapOptions {
   /** Restrict magnetic snapping to phone-class viewports. */
@@ -233,10 +235,17 @@ export function useColumnScrollSnap(
     let capturedPointerId: number | null = null;
     /** Force scrollLeft until the next user touch. */
     let pinnedScrollLeft: number | null = null;
+    /** Continues correcting late WebKit compositor writes until the next user interaction. */
+    let pinReassertTimer: ReturnType<typeof setTimeout> | null = null;
 
     const clearIdleTimer = () => {
       if (idleTimer !== null) clearTimeout(idleTimer);
       idleTimer = null;
+    };
+
+    const clearPinReassertion = () => {
+      if (pinReassertTimer !== null) clearTimeout(pinReassertTimer);
+      pinReassertTimer = null;
     };
 
     const restoreNativeSnap = () => {
@@ -265,6 +274,7 @@ export function useColumnScrollSnap(
     };
 
     const clearPin = () => {
+      clearPinReassertion();
       pinnedScrollLeft = null;
     };
 
@@ -281,6 +291,24 @@ export function useColumnScrollSnap(
       lockedDirection = resolvePanDirection({ scrollDelta, clientDelta });
     };
 
+    /*
+    FNXC:BoardNavigation 2026-07-22-19:15:
+    On phone-class WebKit, `scrollend` can precede a final compositor fling write that has no
+    usable `scroll` callback. Two post-jump tasks can both run before that late write, so retain a
+    lightweight pin watchdog until the next user interaction. It corrects only a changed value,
+    preserving free-scroll while held and CSS proximity rather than making snap mandatory.
+    */
+    const reassertPinnedScrollLeft = () => {
+      pinReassertTimer = setTimeout(() => {
+        pinReassertTimer = null;
+        if (pinnedScrollLeft === null) return;
+        if (scroller.scrollLeft !== pinnedScrollLeft) {
+          hardJumpScrollLeft(scroller, pinnedScrollLeft);
+        }
+        reassertPinnedScrollLeft();
+      }, PIN_REASSERT_INTERVAL_MS);
+    };
+
     const applySnapTo = (targetLeft: number) => {
       const target = Math.round(targetLeft);
       pointerHeld = false;
@@ -288,6 +316,8 @@ export function useColumnScrollSnap(
       hardJumpScrollLeft(scroller, target);
       pinnedScrollLeft = target;
       scroller.scrollLeft = target;
+      clearPinReassertion();
+      reassertPinnedScrollLeft();
     };
 
     const snapInScrollDirection = () => {

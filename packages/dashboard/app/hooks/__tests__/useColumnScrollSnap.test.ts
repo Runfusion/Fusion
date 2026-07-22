@@ -279,6 +279,27 @@ describe("useColumnScrollSnap", () => {
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
   });
 
+  it("keeps the integer pin after a compositor fling tick arrives after earlier reassertions", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      // iOS can report scrollend before its final compositor fling tick.
+      scroller.dispatchEvent(new Event("scrollend"));
+      expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+
+      // Let multiple watchdog passes complete before the callback-less compositor write.
+      vi.advanceTimersByTime(48);
+      scroller.scrollLeft = COLUMN_WIDTH + 40;
+      vi.advanceTimersByTime(16);
+    });
+
+    const columns = [...scroller.children] as HTMLElement[];
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+    expect(isColumnCentered(scroller, columns)).toBe(true);
+  });
+
   it("does not snap on touchcancel mid-drag", () => {
     const scroller = createScroller();
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
