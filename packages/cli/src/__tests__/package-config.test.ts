@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
@@ -156,6 +157,19 @@ describe("CLI package.json publishing config", () => {
   it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
     expect(deps).toContain("ioredis");
+  });
+
+  it("installs the agent-browser binary with the published CLI on Windows", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+    const launcher = join(workspaceRoot, "packages", "cli", "agent-browser.mjs");
+
+    expect(pkg.dependencies?.["agent-browser"]).toBe("0.26.0");
+    expect(publishedPkg.dependencies?.["agent-browser"]).toBe(pkg.dependencies["agent-browser"]);
+    expect(pkg.bin?.["agent-browser"]).toBe("./agent-browser.mjs");
+    expect(pkg.files).toContain("agent-browser.mjs");
+    expect(execFileSync(process.execPath, [launcher, "--version"], { encoding: "utf-8" }).trim()).toBe(
+      "agent-browser 0.26.0",
+    );
   });
 
   /**
