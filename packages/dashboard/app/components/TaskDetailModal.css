@@ -3394,14 +3394,80 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
     font-size: 16px;
   }
 
-  .modal-actions {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-22-00:00:
+  FN-8492 requires the task-detail footer to keep Actions, Move, and the
+  Merge/review control on one row from 320 CSS px through the 768px mobile
+  breakpoint without horizontal overflow. `nowrap` alone only trades wrapping
+  for overflow, so scoped tokenized packing, flex shrink guards, and label
+  ellipsis let every text-bearing footer control yield while upward menus stay
+  unclipped.
+  */
+  .task-detail-content .modal-actions {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-xs);
     padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2) calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
   }
 
-  .modal-actions .btn {
+  .task-detail-content .modal-actions-spacer {
+    flex: 1 1 0;
     min-width: 0;
+  }
+
+  .task-detail-content .detail-actions-dropdown,
+  .task-detail-content .detail-move-dropdown {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .task-detail-content .detail-move-dropdown {
+    flex: 1 1 auto;
+  }
+
+  .task-detail-content .detail-move-actions-in-review {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+    gap: var(--space-xs);
+  }
+
+  .task-detail-content .detail-move-actions-in-review > div,
+  .task-detail-content .detail-move-actions-in-review > .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .task-detail-content .modal-actions .btn {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    padding-inline: var(--space-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-detail-content .detail-move-btn {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .task-detail-content .detail-footer-button-label,
+  .task-detail-content .detail-move-btn__label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task-detail-content .detail-move-btn__arrow,
+  .task-detail-content .modal-actions .btn > svg {
+    flex-shrink: 0;
   }
 
   /* Mobile dropdown menus — position above action bar, constrained to viewport */
