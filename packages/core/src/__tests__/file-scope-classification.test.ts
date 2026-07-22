@@ -5,16 +5,22 @@
  * with paths like global.json / Directory.Packages.props / MyApp.slnx, createTask
  * must not throw InvalidFileScopeError, and extractEffectiveWriteScopeFromPrompt
  * must keep all four write targets (not only nested src/... entries).
+ *
+ * FNXC:FileScopeClassification 2026-07-21-18:05:
+ * Also covers fenced repro snippets (GitHub #2389) whose escaped backticks produced
+ * tokens like `global.json\` and blocked import via InvalidFileScopeError.
  */
 import { describe, expect, it } from "vitest";
 import {
   extractEffectiveWriteScopeFromPrompt,
+  extractFileScopeTokens,
   isValidFileScopeEntry,
 } from "../file-scope-classification.js";
 import {
   isValidFileScopeEntry as storeIsValidFileScopeEntry,
   validateFileScopeInPromptContent,
 } from "../task-store/file-scope.js";
+import { buildBootstrapPrompt } from "../mesh-task-replication.js";
 
 describe("isValidFileScopeEntry", () => {
   it("accepts root-level repo files with letter-leading extensions", () => {
@@ -122,5 +128,69 @@ describe("extractEffectiveWriteScopeFromPrompt / validateFileScopeInPromptConten
     const { valid, invalid } = validateFileScopeInPromptContent(bad);
     expect(valid).toEqual(["packages/core/src/store.ts"]);
     expect(invalid).toEqual(["origin/main"]);
+  });
+
+  it("ignores ## File Scope headings inside fenced code blocks (GitHub #2389 repro shape)", () => {
+    // Mirrors issue body: fenced TS sample with escaped markdown backticks around paths.
+    const issueBody = `## Summary
+
+Root-level File Scope files are dropped.
+
+## Repro (unit-level)
+
+\`\`\`ts
+import { extractEffectiveWriteScopeFromPrompt } from "packages/core/src/file-scope-classification";
+
+const prompt = \`
+## File Scope
+
+- \\\`global.json\\\` (new)
+- \\\`Directory.Packages.props\\\` (new)
+- \\\`MyApp.slnx\\\` (new)
+- \\\`src/MyApp/Program.cs\\\` (new)
+\`;
+
+extractEffectiveWriteScopeFromPrompt(prompt);
+// actual:   ["src/MyApp/Program.cs"]
+// expected: all four entries
+\`\`\`
+`;
+
+    expect(extractFileScopeTokens(issueBody)).toEqual([]);
+    expect(extractEffectiveWriteScopeFromPrompt(issueBody)).toEqual([]);
+    expect(validateFileScopeInPromptContent(issueBody)).toEqual({ valid: [], invalid: [] });
+
+    const bootstrap = buildBootstrapPrompt(
+      "FN-8460",
+      "File-Scope classifier silently drops .NET root-level files",
+      `${issueBody}\n\nSource: https://github.com/Runfusion/Fusion/issues/2389`,
+    );
+    expect(validateFileScopeInPromptContent(bootstrap)).toEqual({ valid: [], invalid: [] });
+  });
+
+  it("still reads a real File Scope section after a fenced sample that also mentions File Scope", () => {
+    const prompt = `# Task: FN-1
+
+## Context
+
+Example only:
+
+\`\`\`md
+## File Scope
+- \\\`bogus/path\\\`
+\`\`\`
+
+## File Scope
+- \`global.json\`
+- \`src/MyApp/Program.cs\`
+
+## Steps
+- [ ] Go
+`;
+    expect(extractFileScopeTokens(prompt)).toEqual(["global.json", "src/MyApp/Program.cs"]);
+    expect(extractEffectiveWriteScopeFromPrompt(prompt)).toEqual([
+      "global.json",
+      "src/MyApp/Program.cs",
+    ]);
   });
 });

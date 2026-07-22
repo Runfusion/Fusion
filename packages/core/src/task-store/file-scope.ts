@@ -11,28 +11,18 @@
  * validation and extractEffectiveWriteScopeFromPrompt cannot drift. Root-level
  * files with extensions (global.json, Directory.Packages.props, MyApp.slnx) must
  * pass both paths — GitHub issue bodies that declare them were failing import.
+ *
+ * FNXC:FileScopeClassification 2026-07-21-18:05:
+ * Token extraction and section location are shared with classification so fenced
+ * code-block File Scope headings (issue repros) are ignored consistently on create,
+ * sanitize, and effective write-scope paths.
  */
-export { isValidFileScopeEntry } from "../file-scope-classification.js";
-import { isValidFileScopeEntry } from "../file-scope-classification.js";
-
-export function extractFileScopeTokens(content: string): string[] {
-  const headingMatch = content.match(/^##\s+File\s+Scope\s*$/m);
-
-  if (!headingMatch) return [];
-
-  const startIdx = headingMatch.index! + headingMatch[0].length;
-  const rest = content.slice(startIdx);
-  const nextHeading = rest.search(/\n##?\s/);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  const tokens: string[] = [];
-  const backtickRegex = /`([^`]+)`/g;
-  let match;
-  while ((match = backtickRegex.exec(section)) !== null) {
-    tokens.push(match[1]);
-  }
-
-  return tokens;
-}
+export { isValidFileScopeEntry, extractFileScopeTokens } from "../file-scope-classification.js";
+import {
+  isValidFileScopeEntry,
+  extractFileScopeTokens,
+  locateFileScopeSection,
+} from "../file-scope-classification.js";
 
 export function validateFileScopeInPromptContent(prompt: string): { valid: string[]; invalid: string[] } {
   const tokens = extractFileScopeTokens(prompt);
@@ -49,16 +39,13 @@ export function validateFileScopeInPromptContent(prompt: string): { valid: strin
 }
 
 export function sanitizeFileScopeInPromptContent(prompt: string): { sanitized: string; dropped: string[]; kept: string[] } {
-  const headingMatch = prompt.match(/^##\s+File\s+Scope\s*$/m);
-  if (!headingMatch) {
+  const located = locateFileScopeSection(prompt);
+  if (!located) {
     return { sanitized: prompt, dropped: [], kept: [] };
   }
 
-  const startIdx = headingMatch.index! + headingMatch[0].length;
-  const rest = prompt.slice(startIdx);
-  const nextHeading = rest.search(/\n##?\s/);
-  const endIdx = nextHeading === -1 ? prompt.length : startIdx + nextHeading;
-  const section = prompt.slice(startIdx, endIdx);
+  const { sectionStart, sectionEnd } = located;
+  const section = prompt.slice(sectionStart, sectionEnd);
   const { valid: kept, invalid: dropped } = validateFileScopeInPromptContent(prompt);
   if (dropped.length === 0) {
     return { sanitized: prompt, dropped, kept };
@@ -74,7 +61,7 @@ export function sanitizeFileScopeInPromptContent(prompt: string): { sanitized: s
     .join("\n");
 
   return {
-    sanitized: `${prompt.slice(0, startIdx)}${sanitizedSection}${prompt.slice(endIdx)}`,
+    sanitized: `${prompt.slice(0, sectionStart)}${sanitizedSection}${prompt.slice(sectionEnd)}`,
     dropped,
     kept,
   };
