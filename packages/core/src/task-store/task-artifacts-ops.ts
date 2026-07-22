@@ -1,5 +1,7 @@
 /**
- * remaining-ops-7 operations.
+ * FNXC:CodeOrganization 2026-07-20-14:00:
+ * Domain rename from remaining-ops-7: merge-queue peeks, archive/done transitions,
+ * comments, artifacts/documents, and related task side-effect helpers.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure
