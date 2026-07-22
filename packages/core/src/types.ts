@@ -7,14 +7,11 @@ import type { PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js
 // be re-exported here (type-only — no engine/runtime code crosses into the browser
 // bundle) rather than requiring dashboard code to import the source module path.
 export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
-import type { ModelPricing } from "./model-pricing.js";
 import type { InReviewStalledSignal } from "./in-review-stalled.js";
 import type { StalePausedReviewSignal } from "./stale-paused-review.js";
 import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
 import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
-import type { SecretScope } from "./secrets-store.js";
-import type { UpdateChannel } from "./app-version.js";
 // FNXC:UpdateChannels 2026-07-19-12:30: re-export type-only so browser-side
 // dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
 // package barrel) can name the update channel union.

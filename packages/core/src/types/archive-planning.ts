@@ -14,7 +14,6 @@ import type {
   AgentLogEntry,
   ArchiveAgentLogMode,
   MergeDetails,
-  Task,
   TaskAttachment,
   TaskBranchContext,
   TaskComment,
