@@ -12,10 +12,10 @@
 import type { TaskStore, TaskComment, AgentPromptsConfig, Settings } from "@fusion/core";
 import {
   buildReviewerMemoryInstructions,
+  hasConfiguredFallbackLane,
   resolveAgentMemoryInclusionMode,
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
-  resolveSelectedWorkflowModelLane,
   resolveTaskSeamPrompt,
   resolveValidatorFallbackModel,
 } from "@fusion/core";
@@ -25,7 +25,12 @@ import { describeModel, formatModelMarkerDetails, promptWithFallback } from "./p
 import { isContextLimitError } from "./context-limit-detector.js";
 import { classifyError } from "./transient-error-detector.js";
 import { withRetry } from "./retry-with-backoff.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveValidatorSessionModel } from "./agent-session-helpers.js";
+import {
+  createResolvedAgentSession,
+  extractRuntimeHint,
+  resolveValidatorFallbackThinkingLevel,
+  resolveValidatorSessionModel,
+} from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
@@ -316,12 +321,7 @@ export async function reviewStep(
     reviewerFallbackSettings.fallbackProvider = options.fallbackProvider;
     reviewerFallbackSettings.fallbackModelId = options.fallbackModelId;
   }
-  const hasConfiguredValidatorFallback = Boolean(
-    (reviewerFallbackSettings.validatorFallbackProvider && reviewerFallbackSettings.validatorFallbackModelId)
-    || (reviewerFallbackSettings.fallbackProvider && reviewerFallbackSettings.fallbackModelId)
-    || (resolveSelectedWorkflowModelLane(reviewerFallbackSettings, "validatorFallbackProvider")
-      && resolveSelectedWorkflowModelLane(reviewerFallbackSettings, "validatorFallbackModelId")),
-  );
+  const hasConfiguredValidatorFallback = hasConfiguredFallbackLane(reviewerFallbackSettings, "validation");
   const validatorFallback = hasConfiguredValidatorFallback
     ? resolveValidatorFallbackModel(reviewerFallbackSettings)
     : { provider: undefined, modelId: undefined };
@@ -502,7 +502,8 @@ export async function reviewStep(
       defaultModelId: overrides?.forceModelId ?? validatorModelId,
       fallbackProvider: validatorFallbackProvider,
       fallbackModelId: validatorFallbackModelId,
-      fallbackThinkingLevel: options.fallbackThinkingLevel,
+      fallbackThinkingLevel: options.fallbackThinkingLevel
+        ?? resolveValidatorFallbackThinkingLevel(options.defaultThinkingLevel, reviewerFallbackSettings),
       defaultThinkingLevel: options.defaultThinkingLevel,
       runAuditor,
       settings: effectiveSettings,

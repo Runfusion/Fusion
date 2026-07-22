@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTestModeOverrides,
+  hasConfiguredFallbackLane,
   resolveExecutionSettingsModel,
   resolveExecutorFallbackModel,
   resolvePlanningFallbackModel,
@@ -19,6 +20,27 @@ import {
 } from "../model-resolution.js";
 
 describe("model-resolution", () => {
+  it("detects complete fallback pairs at the lane, global, and selected-workflow tiers", () => {
+    expect(hasConfiguredFallbackLane({
+      planningFallbackProvider: "project-provider",
+      planningFallbackModelId: "project-model",
+    }, "planning")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      fallbackProvider: "global-provider",
+      fallbackModelId: "global-model",
+    }, "validation")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      selectedWorkflowModelLanes: {
+        executionFallbackProvider: "workflow-provider",
+        executionFallbackModelId: "workflow-model",
+      },
+    }, "execution")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      planningFallbackProvider: "incomplete-provider",
+      selectedWorkflowModelLanes: { planningFallbackModelId: "incomplete-model" },
+    }, "planning")).toBe(false);
+  });
+
   it("uses only a complete task merger pair before settings and preserves test mode", () => {
     const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
     expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });

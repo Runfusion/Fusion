@@ -834,7 +834,11 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
 
     const task = { id: "FN-4092", column: "in-progress", description: "d", dependencies: [], steps: [], currentStep: 0, log: [], prompt: "# prompt", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", reviewerFallbackRetryCount: 0 };
     const store = {
-      getSettings: vi.fn().mockResolvedValue({ maxReviewerFallbackRetries: 2, maxTotalRetriesBeforeFail: 25 }),
+      getSettings: vi.fn().mockResolvedValue({
+        maxReviewerFallbackRetries: 2,
+        maxTotalRetriesBeforeFail: 25,
+        validatorFallbackThinkingLevel: "xhigh",
+      }),
       getTask: vi.fn().mockImplementation(async () => task),
       updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
       logEntry: vi.fn().mockResolvedValue(undefined),
@@ -853,6 +857,7 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
 
     expect(result.verdict).toBe("APPROVE");
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(mockedCreateFnAgent.mock.calls.every(([options]) => options.fallbackThinkingLevel === "xhigh")).toBe(true);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4092",
       expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"),

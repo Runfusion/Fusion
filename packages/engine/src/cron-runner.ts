@@ -22,6 +22,7 @@ import { HybridEvaluatorService } from "./evaluator.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "./effective-settings.js";
+import { resolveExecutorThinkingLevel } from "./agent-session-helpers.js";
 
 const log = createLogger("cron-runner");
 
@@ -895,7 +896,7 @@ export class CronRunner {
     const defaultModel = resolveExecutionSettingsModel(settings);
     const modelProvider = step.modelProvider?.trim() || defaultModel.provider;
     const modelId = step.modelId?.trim() || defaultModel.modelId;
-    const thinkingLevel = step.thinkingLevel?.trim() || undefined;
+    const thinkingLevel = resolveExecutorThinkingLevel(step.thinkingLevel, settings);
 
     const model = modelProvider && modelId
       ? `${modelProvider}/${modelId}`

@@ -226,7 +226,7 @@ function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined 
 
 /**
  * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
- * Model-lane thinking overrides must resolve through the same session option (`defaultThinkingLevel`) pi.ts already guards with the thinking/reasoning conflict fallback. Keep node/step thinking first when supplied by callers, then task, project lane, global lane, selected-workflow lane, project default thinking override, and global default.
+ * Model-lane thinking overrides must resolve through the same session option (`defaultThinkingLevel`) that pi.ts already guards with the thinking/reasoning conflict fallback. Keep node/step thinking first when supplied by callers, then task, project lane, global lane, selected-workflow lane, project default thinking override, and global default.
  */
 export function resolveExecutorThinkingLevel(
   taskThinkingLevel: ThinkingLevel | string | undefined,

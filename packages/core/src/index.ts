@@ -1573,6 +1573,7 @@ export {
 } from "./ai-summarize.js";
 export {
   applyTestModeOverrides,
+  hasConfiguredFallbackLane,
   isTestModeActive,
   resolveExecutionSettingsModel,
   resolveExecutorFallbackModel,

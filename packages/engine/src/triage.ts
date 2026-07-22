@@ -12,6 +12,7 @@ import type {
 } from "@fusion/core";
 import {
   DUPLICATE_OF_METADATA_KEY,
+  hasConfiguredFallbackLane,
   PLAN_REVIEW_GROUP_ID,
   TaskDeletedError,
   buildTriageMemoryInstructions,
@@ -27,7 +28,6 @@ import {
   resolveTaskSeamPrompt,
   resolvePersistAgentThinkingLog,
   resolvePlanningFallbackModel,
-  resolveSelectedWorkflowModelLane,
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
@@ -120,6 +120,7 @@ import {
   createResolvedAgentSession,
   extractRuntimeHint,
   resolveImplicitPlanningFallbackModel,
+  resolvePlanningFallbackThinkingLevel,
   resolvePlanningSessionModel,
   resolvePlanningThinkingLevel,
 } from "./agent-session-helpers.js";
@@ -1612,12 +1613,7 @@ export class TriageProcessor {
          * fallback === primary) and test mode are excluded so the single-swap,
          * no-loop invariant and the mock lane stay unchanged.
          */
-        const hasConfiguredPlanningFallback = Boolean(
-          (settings.planningFallbackProvider && settings.planningFallbackModelId)
-          || (settings.fallbackProvider && settings.fallbackModelId)
-          || (resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider")
-            && resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId")),
-        );
+        const hasConfiguredPlanningFallback = hasConfiguredFallbackLane(settings, "planning");
         const planningFallback = hasConfiguredPlanningFallback
           ? resolvePlanningFallbackModel(settings)
           : { provider: undefined, modelId: undefined };
@@ -1653,6 +1649,10 @@ export class TriageProcessor {
           ...planningSessionModelOptions,
           fallbackProvider: planningFallback.provider ?? implicitPlanningFallback.provider,
           fallbackModelId: planningFallback.modelId ?? implicitPlanningFallback.modelId,
+          fallbackThinkingLevel: resolvePlanningFallbackThinkingLevel(
+            settings,
+            task.planningThinkingLevel ?? task.thinkingLevel,
+          ),
           /*
            * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
            * Planning sessions honor the per-task planning override before the shared task thinking level, then the project lane, global lane, selected-workflow lane, and default thinking settings.

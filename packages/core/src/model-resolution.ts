@@ -72,8 +72,40 @@ export function resolveSelectedWorkflowModelLane(
   settings: Partial<Settings> | undefined,
   key: string,
 ): string | undefined {
+  /*
+   * FNXC:WorkflowModelLaneLookup 2026-07-22-00:00:
+   * Selected-workflow model lanes are stored as a dynamic key/value overlay. Keep lookup centralized: only a trimmed, non-empty string is a configured lane value; every other stored shape preserves inheritance by resolving to undefined.
+   */
   const value = settings?.selectedWorkflowModelLanes?.[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function hasConfiguredFallbackLane(
+  settings: Partial<Settings> | undefined,
+  phase: ModelThinkingPhase,
+): boolean {
+  const laneProvider = phase === "execution"
+    ? settings?.executionFallbackProvider
+    : phase === "planning"
+      ? settings?.planningFallbackProvider
+      : settings?.validatorFallbackProvider;
+  const laneModelId = phase === "execution"
+    ? settings?.executionFallbackModelId
+    : phase === "planning"
+      ? settings?.planningFallbackModelId
+      : settings?.validatorFallbackModelId;
+  const workflowPrefix = phase === "execution"
+    ? "executionFallback"
+    : phase === "planning"
+      ? "planningFallback"
+      : "validatorFallback";
+
+  return Boolean(
+    (laneProvider && laneModelId)
+    || (settings?.fallbackProvider && settings?.fallbackModelId)
+    || (resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}Provider`)
+      && resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}ModelId`)),
+  );
 }
 
 /**

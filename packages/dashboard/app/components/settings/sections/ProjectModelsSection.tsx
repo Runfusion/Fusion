@@ -576,6 +576,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
 
       {/* --- Project workflow model lanes --- */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
+      {/* FNXC:ProjectWorkflowModelBaseline 2026-07-22-00:00: These controls persist on the active default workflow as the cross-workflow project baseline. Runtime precedence is task-specific selection > project baseline > global lane > selected-workflow lane; keep this explanation in the shared heading help tip rather than restoring per-control prose. */}
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Project workflow model lanes")}</h4>
         <SettingsHelpTip settingKey="default-workflow-model-lanes">
