@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskDocument, TaskStore } from "@fusion/core";
+import { TaskDocumentPreconditionFailedError, type TaskDocument, type TaskStore } from "@fusion/core";
 import {
   createChatTaskDocumentTools,
   createTaskDocumentReadTool,
@@ -23,6 +23,7 @@ function createMockDocument(overrides: Partial<TaskDocument> = {}): TaskDocument
     key: "plan",
     content: "Initial plan content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-08T12:00:00.000Z",
     updatedAt: "2026-04-08T12:00:00.000Z",
@@ -88,6 +89,33 @@ describe("task_document_write tool", () => {
     });
     expect(getText(result)).toContain("Saved document \"plan\"");
     expect(getText(result)).toContain("revision 3");
+  });
+
+  it("forwards combined CAS expectations and returns revision/hash details", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    const hash = `sha256:${"a".repeat(64)}`;
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ revision: 4, contentHash: hash }));
+    const result = await runTool(createTaskDocumentWriteTool(store, TASK_ID), "call-cas", {
+      key: "plan", content: "rebased", expected_revision: 3, expected_content_hash: hash,
+    });
+    expect(upsertTaskDocument).toHaveBeenCalledWith(TASK_ID, {
+      key: "plan", content: "rebased", author: "agent", expectedRevision: 3, expectedContentHash: hash,
+    });
+    expect(result.details).toEqual({ key: "plan", revision: 4, contentHash: hash });
+  });
+
+  it("returns a typed error result for stale task-bound publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new TaskDocumentPreconditionFailedError({
+      projectId: "p1", taskId: TASK_ID, key: "plan", expectedRevision: 1,
+      currentRevision: 2, currentContentHash: `sha256:${"b".repeat(64)}`,
+    }));
+    const result = await runTool(createTaskDocumentWriteTool(store, TASK_ID), "call-stale", {
+      key: "plan", content: "stale", expected_revision: 1,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.details).toEqual(expect.objectContaining({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", currentRevision: 2 }));
+    expect(getText(result)).toContain("re-read");
   });
 
   it("defaults author to agent when not provided", async () => {
@@ -189,7 +217,7 @@ describe("task_document_read tool", () => {
     vi.clearAllMocks();
   });
 
-  it("reads a specific document by key and returns content", async () => {
+  it("reads a retained archived document directly by key and returns content", async () => {
     const { store, getTaskDocument } = createMockStore();
     getTaskDocument.mockResolvedValue(
       createMockDocument({ key: "plan", content: "Detailed execution checklist", revision: 4 }),
@@ -231,7 +259,7 @@ describe("task_document_read tool", () => {
     expect(getText(result)).toContain("- research (revision 1, updated 2026-04-08T12:30:00.000Z)");
   });
 
-  it("returns a no-documents message when list is empty", async () => {
+  it("keeps the archived document registry hidden when list is empty", async () => {
     const { store, getTaskDocuments } = createMockStore();
     getTaskDocuments.mockResolvedValue([]);
 
@@ -265,13 +293,15 @@ describe("chat task document tools", () => {
     return tool!;
   }
 
-  it("exposes canonical document tool names for chat agents", () => {
+  it("exposes canonical document tools without an archived publication capability", () => {
     const { store } = createMockStore();
+    const tools = createChatTaskDocumentTools(store);
 
-    expect(createChatTaskDocumentTools(store).map((tool) => tool.name)).toEqual([
+    expect(tools.map((tool) => tool.name)).toEqual([
       "fn_task_document_write",
       "fn_task_document_read",
     ]);
+    expect(JSON.stringify(tools.map((tool) => tool.parameters))).not.toMatch(/archived.publication|append_content|allow_archived/i);
   });
 
   it("writes a document to the explicit task_id", async () => {
@@ -295,7 +325,32 @@ describe("chat task document tools", () => {
     expect(getText(result)).toContain("revision 5");
   });
 
-  it("reads a document from the explicit task_id", async () => {
+  it("forwards hash-only CAS for explicit cross-task publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    const hash = `sha256:${"c".repeat(64)}`;
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2020", contentHash: hash, revision: 6 }));
+    await runTool(findChatTool("fn_task_document_write", store), "call-chat-cas", {
+      task_id: "FN-2020", key: "plan", content: "rebased", expected_content_hash: hash,
+    });
+    expect(upsertTaskDocument).toHaveBeenCalledWith("FN-2020", {
+      key: "plan", content: "rebased", author: "agent", expectedContentHash: hash,
+    });
+  });
+
+  it("returns typed stale details for explicit cross-task publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new TaskDocumentPreconditionFailedError({
+      projectId: "p1", taskId: "FN-2020", key: "plan", expectedContentHash: `sha256:${"a".repeat(64)}`,
+      currentRevision: null, currentContentHash: null,
+    }));
+    const result = await runTool(findChatTool("fn_task_document_write", store), "call-chat-stale", {
+      task_id: "FN-2020", key: "plan", content: "stale", expected_content_hash: `sha256:${"a".repeat(64)}`,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.details).toEqual(expect.objectContaining({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", taskId: "FN-2020" }));
+  });
+
+  it("reads a retained archived document from the explicit task_id", async () => {
     const { store, getTaskDocument } = createMockStore();
     getTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2021", key: "notes", content: "Chat notes" }));
 
@@ -318,7 +373,7 @@ describe("chat task document tools", () => {
     expect(getText(result)).toContain("Document \"missing\" not found.");
   });
 
-  it("lists documents for the explicit task_id when key is omitted", async () => {
+  it("continues to use the live-only registry when an explicit key is omitted", async () => {
     const { store, getTaskDocuments } = createMockStore();
     getTaskDocuments.mockResolvedValue([
       createMockDocument({ taskId: "FN-2023", key: "plan", revision: 1 }),

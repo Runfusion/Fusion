@@ -132,8 +132,17 @@ export function TaskDocumentsTab({
   const [loading, setLoading] = useState(true);
   const [expandedDocKeys, setExpandedDocKeys] = useState<Set<string>>(() => new Set());
   const [revisionContentByKey, setRevisionContentByKey] = useState<Record<string, string>>({});
+  /*
+  FNXC:TaskDocumentCAS 2026-07-20-11:06:
+  Task Detail captures the loaded revision/hash when editing begins and never replaces that baseline behind the draft. A 409 refreshes visible server state while retaining the editor and exact user draft on desktop and mobile; Save never silently retries a stale overwrite. New-document saves use revision zero so duplicate-key races are visible conflicts.
+
+  FNXC:TaskDocumentCAS 2026-07-20-15:42:
+  After a conflict, keep the refreshed revision/hash pending until the operator explicitly rebases the preserved draft. Disable Save during that decision so repeated clicks cannot resubmit the stale baseline or silently adopt a newer baseline.
+  */
   const [editingDocKey, setEditingDocKey] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
+  const [editPrecondition, setEditPrecondition] = useState<{ revision: number; contentHash: string } | null>(null);
+  const [pendingEditRebase, setPendingEditRebase] = useState<{ revision: number; contentHash: string } | null>(null);
   const [showHistory, setShowHistory] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<TaskDocumentRevision[]>([]);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
@@ -178,8 +187,10 @@ export function TaskDocumentsTab({
         return next;
       });
       setRevisionContentByKey((current) => Object.fromEntries(Object.entries(current).filter(([key]) => nextKeys.has(key))));
+      return docs;
     } catch (error) {
       addToast(getErrorMessage(error) || t("taskDocuments.failedToLoad", "Failed to load documents"), "error");
+      return undefined;
     } finally {
       setLoading(false);
     }
@@ -214,6 +225,8 @@ export function TaskDocumentsTab({
       if (editingDocKey === doc.key) {
         setEditingDocKey(null);
         setEditContent("");
+        setEditPrecondition(null);
+        setPendingEditRebase(null);
       }
       if (showHistory === doc.key) {
         setShowHistory(null);
@@ -243,20 +256,35 @@ export function TaskDocumentsTab({
   function handleStartEdit(doc: TaskDocument) {
     setEditingDocKey(doc.key);
     setEditContent(revisionContentByKey[doc.key] ?? doc.content);
+    setEditPrecondition({ revision: doc.revision, contentHash: doc.contentHash });
+    setPendingEditRebase(null);
   }
 
   function handleCancelEdit() {
     setEditingDocKey(null);
     setEditContent("");
+    setEditPrecondition(null);
+    setPendingEditRebase(null);
+  }
+
+  function handleRebaseEdit() {
+    if (!pendingEditRebase) return;
+    setEditPrecondition(pendingEditRebase);
+    setPendingEditRebase(null);
   }
 
   async function handleSaveEdit() {
-    if (!editingDocKey || !editContent.trim()) return;
+    if (!editingDocKey || !editContent.trim() || !editPrecondition || pendingEditRebase) return;
     setSaving(true);
     try {
-      await putTaskDocument(taskId, editingDocKey, editContent, {}, projectId);
+      await putTaskDocument(taskId, editingDocKey, editContent, {
+        expectedRevision: editPrecondition.revision,
+        expectedContentHash: editPrecondition.contentHash,
+      }, projectId);
       setEditingDocKey(null);
       setEditContent("");
+      setEditPrecondition(null);
+      setPendingEditRebase(null);
       setRevisionContentByKey((current) => {
         const next = { ...current };
         delete next[editingDocKey];
@@ -265,7 +293,16 @@ export function TaskDocumentsTab({
       await loadDocuments();
       addToast(t("taskDocuments.saved", "Document saved"), "success");
     } catch (error) {
-      addToast(getErrorMessage(error) || t("taskDocuments.failedToSave", "Failed to save document"), "error");
+      if (typeof error === "object" && error !== null && "status" in error && error.status === 409) {
+        const latestDocuments = await loadDocuments();
+        const latest = latestDocuments?.find((doc) => doc.key === editingDocKey);
+        if (latest) {
+          setPendingEditRebase({ revision: latest.revision, contentHash: latest.contentHash });
+          addToast(t("taskDocuments.staleCopy", "This document changed since you opened it. Your draft is preserved; review the latest revision, then choose Rebase draft before saving."), "error");
+        }
+      } else {
+        addToast(getErrorMessage(error) || t("taskDocuments.failedToSave", "Failed to save document"), "error");
+      }
     } finally {
       setSaving(false);
     }
@@ -291,14 +328,19 @@ export function TaskDocumentsTab({
 
     setSaving(true);
     try {
-      await putTaskDocument(taskId, key, content, {}, projectId);
+      await putTaskDocument(taskId, key, content, { expectedRevision: 0 }, projectId);
       setShowCreateForm(false);
       setNewDocKey("");
       setNewDocContent("");
       await loadDocuments();
       addToast(t("taskDocuments.created", "Document created"), "success");
     } catch (error) {
-      addToast(getErrorMessage(error) || t("taskDocuments.failedToCreate", "Failed to create document"), "error");
+      if (typeof error === "object" && error !== null && "status" in error && error.status === 409) {
+        await loadDocuments();
+        addToast(t("taskDocuments.keyAlreadyCreated", "A document with this key was created elsewhere. Your draft is preserved; choose a new key or rebase onto the current document."), "error");
+      } else {
+        addToast(getErrorMessage(error) || t("taskDocuments.failedToCreate", "Failed to create document"), "error");
+      }
     } finally {
       setSaving(false);
     }
@@ -611,10 +653,15 @@ export function TaskDocumentsTab({
                     <button className="btn btn-sm" onClick={handleCancelEdit} disabled={saving}>
                       {t("taskDocuments.cancel", "Cancel")}
                     </button>
+                    {pendingEditRebase && (
+                      <button className="btn btn-sm" onClick={handleRebaseEdit} disabled={saving}>
+                        {t("taskDocuments.rebaseDraft", "Rebase draft")}
+                      </button>
+                    )}
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={() => void handleSaveEdit()}
-                      disabled={saving || !editContent.trim()}
+                      disabled={saving || !editContent.trim() || pendingEditRebase !== null}
                     >
                       {saving ? t("taskDocuments.saving", "Saving…") : t("taskDocuments.save", "Save")}
                     </button>

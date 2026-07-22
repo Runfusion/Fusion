@@ -15,6 +15,12 @@ The Fusion dashboard is the main control plane for tasks, agents, missions, sett
 
 When Fusion detects a newer `@runfusion/fusion` release, the Settings modal footer shows the available version with **Learn more** and **Update now** actions. **Update now** installs the latest global package with npm; after it succeeds, both the Settings update-success state and dashboard update banner offer a one-click **Restart Fusion** action because the already-running dashboard server is unchanged until restart. When Fusion is unsupervised (for example, started with `--no-supervise`), either action remains disabled and explains that Fusion must be restarted manually.
 
+### Supervised source-checkout rebuilds
+
+For a capability that has just merged, rebuild only after its commit is present in the fixed source checkout reported by `GET /api/system` as `sourceWorkspaceRoot`. Confirm `rebuildSupported` and supervision, then send authenticated `POST /api/system/rebuild` with `{ "scope": "app", "restart": true }`. Poll `GET /api/system/rebuild/current` until the build succeeds and restart is scheduled; expect the connection to drop, reconnect to the supervised process, and verify `GET /api/health` before capability probes.
+
+Never copy worktree files into the reported checkout, rebuild an unmerged branch, kill port 4040, use `nohup`, or replace the daemon with a raw detached process. An implementation task running inside Fusion cannot continue after stopping its own host, so post-merge restart and live verification belong to a separate operator-run/dependent task with the deployed commit, source workspace, health response, and probe evidence recorded.
+
 ## Settings discovery
 
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->
@@ -976,6 +982,7 @@ Features:
 - Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
 - Toggle between raw text and rendered markdown using the **Markdown/Plain** button
 - Highlight text in raw or rendered project-file previews or the selected Task Document's right pane, choose **Add comment**, and send the source path/key, selected snippet, and your comment to the **New Task** dialog
+- Task Detail creates documents with an absence precondition and edits using the revision/hash loaded with the draft. The global **Artifacts → Task Documents** editor uses the same conditional save. If another writer wins first, Fusion keeps the editor open and preserves the exact draft on desktop and mobile, refreshes the visible current revision, and asks the operator to review/rebase; it never silently retries or overwrites the newer document.
 
 Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
 
