@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, resolveOrphanedPendingStepResults, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -1379,6 +1379,12 @@ export class SelfHealingManager {
       // legacy `planning`/`needs-replan` row is judged by recovery rules that no longer
       // have a writer for that status.
       { name: "adopt-legacy-task-rows", fn: () => this.adoptLegacyTaskRows().then(() => undefined) },
+      // FNXC:OrphanedPendingSteps 2026-07-22-16:20 (FN-8492 incident): runs right after
+      // adoption and BEFORE every in-review recovery step below — those reason about
+      // step-result completeness, and an orphaned `pending` result reads as "work in
+      // flight" to all of them (the merge gate included), which is the two-hour
+      // stall-deadlock ride this sweep exists to prevent.
+      { name: "reconcile-orphaned-pending-step-results", fn: () => this.reconcileOrphanedPendingStepResults().then(() => undefined) },
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
@@ -6661,6 +6667,78 @@ export class SelfHealingManager {
       return adopted;
     } catch (error) {
       log.error(`adoptLegacyTaskRows failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /*
+  FNXC:OrphanedPendingSteps 2026-07-22-16:20 (FN-8492 incident):
+  Startup consumer of `resolveOrphanedPendingStepResults` — the U9b helper shipped with NO
+  caller (the same gap U9 left for the adoption table), so an engine restart that killed an
+  in-flight pre-merge step session left its `pending` workflowStepResult behind forever.
+  The merge gate read it as "incomplete pre-merge workflow steps", surfaced an identical
+  stall every 30 minutes, and after 3 stalls the deadlock disposer parked the task `failed`
+  (FN-8492: Code Review died in the 21:29 restart, task parked two hours later).
+
+  Runs at STARTUP, right after legacy adoption: sessions do not survive a restart, so a
+  `pending` result with no live session behind it is orphaned by construction. Liveness
+  uses the canonical triple (activeSessionRegistry path, executingTaskLock, isTaskActive)
+  because runStartupRecovery runs AFTER the executor resumes orphaned sessions — a resumed
+  session re-registers its path and must veto the clear. User pauses are never disturbed.
+  */
+  async reconcileOrphanedPendingStepResults(): Promise<number> {
+    try {
+      const pageSize = 500;
+      let offset = 0;
+      let recovered = 0;
+
+      for (;;) {
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        for (const task of tasks) {
+          // An operator park is authoritative; this sweep must not reach through it.
+          if (task.userPaused === true) continue;
+          const results = task.workflowStepResults;
+          if (!results?.some((result) => result.status === "pending")) continue;
+
+          const livePaths = activeSessionRegistry.pathsForTask(task.id);
+          const hasActiveRegisteredPath = livePaths.some((path) => activeSessionRegistry.isPathActive(path));
+          const sessionLive = hasActiveRegisteredPath || executingTaskLock.has(task.id)
+            || this.options.isTaskActive?.(task.id) === true;
+
+          const { cleared, clearedCount } = resolveOrphanedPendingStepResults(results, () => sessionLive);
+          if (clearedCount === 0) continue;
+
+          try {
+            await this.store.updateTask(task.id, { workflowStepResults: cleared });
+            await createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("reconcile-orphaned-pending-steps", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reconcile-orphaned-pending-step-results",
+            }).database({
+              type: "task:reconcile-orphaned-pending-step-results" as DatabaseMutationType,
+              target: task.id,
+              // ids/counts/outcomes only — never step output or reviewer prose.
+              metadata: {
+                taskId: task.id,
+                column: task.column,
+                clearedCount,
+                remainingCount: cleared.length,
+              },
+            });
+            recovered += 1;
+          } catch (error) {
+            log.warn(`reconcileOrphanedPendingStepResults: failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if (tasks.length < pageSize) break;
+        offset += tasks.length;
+      }
+      if (recovered > 0) log.log(`Cleared orphaned pending step results on ${recovered} task(s)`);
+      return recovered;
+    } catch (error) {
+      log.error(`reconcileOrphanedPendingStepResults failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
   }
