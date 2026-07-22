@@ -650,7 +650,16 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
 // #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (non-members correctly resolve to false → not editable).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
-const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review"]);
+const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
+const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
+
+/*
+FNXC:GitHubTracking 2026-07-22-00:46:
+Ideas tasks must be able to opt into or out of GitHub tracking before planning, whether they remain in the Ideas intake column or have advanced in Coding (Ideas). Use the resolved workflow ID rather than its display name so localized names and arbitrary custom workflows cannot gain this editing capability.
+*/
+function canTaskEditGithubTracking(column: ColumnId, workflowId: string | undefined): boolean {
+  return GITHUB_TRACKING_EDITABLE_COLUMNS.has(column) || workflowId === CODING_IDEAS_WORKFLOW_ID;
+}
 
 export function TaskDetailContent({
   task,
@@ -1618,7 +1627,7 @@ export function TaskDetailContent({
 
   // Check if task can be edited
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
-  const canEditGithubTracking = GITHUB_TRACKING_EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
   const gitlabTrackedItem = workingTask.gitlabTracking?.item;
