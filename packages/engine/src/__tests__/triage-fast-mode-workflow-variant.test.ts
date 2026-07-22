@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +31,12 @@ vi.mock("../pi.js", () => ({
   // must expose the export so the planning path can reach finalization
   // (moveTask todo) instead of throwing on a missing mock member.
   formatModelMarkerDetails: vi.fn((model: string) => model),
+  /*
+  FNXC:EngineTests 2026-07-22-03:20:
+  Catch blocks use `err instanceof ModelFallbackExhaustedError`; wholesale pi mock
+  must export the class or planning failures throw on the instanceof check itself.
+  */
+  ModelFallbackExhaustedError: class ModelFallbackExhaustedError extends Error {},
 }));
 
 vi.mock("@fusion/core", async (importOriginal) => {
@@ -162,11 +168,46 @@ async function captureBasePrompt(task: Task, store: TaskStore): Promise<string> 
 }
 
 async function runPlanningSession(task: Task, store: TaskStore, rootDir: string): Promise<void> {
-  mockSession();
+  const capture: { customTools?: any[] } = {};
+  mockSession(capture);
+  /*
+  FNXC:EngineTests 2026-07-22-03:20:
+  Keep write-through on live task state while also materializing PROMPT.md. A prompt-only
+  updateTask mock left finalize reading an empty prompt and withholds coding recovery.
+  Executable Steps satisfy the recoverApprovedTask step-heading gate after U10b.
+  Capture the prior mockImplementation (not bind the mock) so re-wrapping cannot recurse.
+  */
+  const priorUpdate = (store.updateTask as ReturnType<typeof vi.fn>).getMockImplementation?.()
+    ?? (async () => undefined);
+  vi.mocked(store.updateTask).mockImplementation(async (taskId, patch) => {
+    const result = await priorUpdate(taskId, patch);
+    if (typeof patch.prompt === "string") {
+      const promptDir = join(rootDir, ".fusion", "tasks", task.id);
+      await mkdir(promptDir, { recursive: true });
+      await writeFile(join(promptDir, "PROMPT.md"), patch.prompt, "utf8");
+    }
+    return result;
+  });
   mockPromptWithFallback.mockImplementationOnce(async () => {
-    const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
-    await mkdir(join(rootDir, ".fusion", "tasks", task.id), { recursive: true });
-    await writeFile(promptPath, "# Task: FN-6236\n\n## Mission\n\nVerify fast policy.\n", "utf8");
+    const promptWriter = capture.customTools?.find((tool) => tool.name === "fn_task_prompt_write");
+    expect(promptWriter).toBeDefined();
+    await promptWriter.execute("persist-plan", {
+      content: [
+        "# Task: FN-6236",
+        "",
+        "## Mission",
+        "",
+        "Verify fast policy.",
+        "",
+        "## Steps",
+        "",
+        "### Step 0: Implement",
+        "- [ ] do the work",
+        "",
+      ].join("\n"),
+    });
+    await expect(readFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), "utf8"))
+      .resolves.toContain("Verify fast policy");
   });
 
   await new TriageProcessor(store, rootDir).specifyTask(task);
@@ -250,7 +291,7 @@ describe("fast-mode workflow variant resolution", () => {
     await runPlanningSession(task, store, rootDir);
 
     expect(mockReviewStep).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo");
+    expect(store.moveTaskIf).toHaveBeenCalledWith(task.id, "todo", expect.any(Function));
   });
 
   it("finalizes standard tasks without invoking a separate spec reviewer", async () => {
@@ -262,7 +303,7 @@ describe("fast-mode workflow variant resolution", () => {
     await runPlanningSession(task, store, rootDir);
 
     expect(mockReviewStep).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo");
+    expect(store.moveTaskIf).toHaveBeenCalledWith(task.id, "todo", expect.any(Function));
   });
 
   it("ignores legacy autoApproveSpec because workflow Plan Review owns approval", async () => {
@@ -274,7 +315,7 @@ describe("fast-mode workflow variant resolution", () => {
     await runPlanningSession(task, store, rootDir);
 
     expect(mockReviewStep).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo");
+    expect(store.moveTaskIf).toHaveBeenCalledWith(task.id, "todo", expect.any(Function));
   });
 
   it("preserves user triage prompt override precedence over the fast variant", async () => {

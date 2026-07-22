@@ -1156,7 +1156,6 @@ export function SettingsModal({
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
     maxConcurrentVerifications: 1,
-    maxTriageConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15000,
     heartbeatMultiplier: 1,

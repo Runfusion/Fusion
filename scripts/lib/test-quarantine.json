@@ -3,8 +3,13 @@
   "entries": [
     {
       "file": "packages/engine/src/__tests__/executor-task-done-invariant.test.ts",
-      "reason": "FN-5241 handoff pair skipped in-file (it.skip): graph fails at steps#0:step-execute under PG mock-agent fixture after U10b; same class red on origin/main full-suite 29805577293. Rewrite graph completion harness before rescue. quarantinedAt 2026-07-20.",
+      "reason": "FN-5241 handoff pair skipped in-file (it.skip): graph fails at steps#0:step-execute under PG mock-agent fixture after U10b; same class red on origin/main full-suite https://github.com/Runfusion/Fusion/actions/runs/29805577293. Rewrite graph completion harness before rescue. quarantinedAt 2026-07-20.",
       "quarantinedAt": "2026-07-20"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/planning-browser-e2e.test.ts",
+      "reason": "Chromium/Vite teardown timed out after the desktop assertions passed during [local Codex run 2026-07-21 09:29 PDT](local://codex/2026-07-21/planning-browser-e2e-teardown); repeated once in the same session.",
+      "quarantinedAt": "2026-07-21"
     }
   ]
 }

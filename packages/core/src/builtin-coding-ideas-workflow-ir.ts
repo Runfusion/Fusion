@@ -81,9 +81,37 @@ const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {
       node.column = "todo";
       continue;
     }
+    if (node.id === "code-review" || node.id === "completion-summary" || node.id.startsWith("merge-")) {
+      node.column = "in-review";
+      continue;
+    }
+    if (node.id === "code-review-remediation") {
+      node.column = "in-progress";
+      continue;
+    }
     if (!node.column || !knownColumnIds.has(node.column)) {
       node.column = "todo";
     }
+  }
+
+  // FNXC:CodingIdeasWorkflow 2026-07-21-12:20:
+  // Keep this preset intentionally small: planning + plan review in Todo,
+  // implementation in In progress, then code review and merge in In review.
+  // Browser and post-merge verification remain available in richer workflows;
+  // direct success edges replace the removed nodes so the reduced preset keeps
+  // one continuous executable path.
+  const removedNodeIds = new Set([
+    "browser-verification",
+    "browser-verification-remediation",
+    "post-merge-verification",
+  ]);
+  v2.nodes = v2.nodes.filter((node) => !removedNodeIds.has(node.id));
+  v2.edges = v2.edges.filter((edge) => !removedNodeIds.has(edge.from) && !removedNodeIds.has(edge.to));
+  if (!v2.edges.some((edge) => edge.from === "steps" && edge.to === "code-review")) {
+    v2.edges.push({ from: "steps", to: "code-review", condition: "success" });
+  }
+  if (!v2.edges.some((edge) => edge.from === "merge-attempt" && edge.to === "end" && edge.condition === "success")) {
+    v2.edges.push({ from: "merge-attempt", to: "end", condition: "success" });
   }
 
   v2.settings = BUILTIN_WORKFLOW_SETTINGS;

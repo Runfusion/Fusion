@@ -16,7 +16,7 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, setRunningAgentCountSource } from "@fusion/core";
+import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, setRunningAgentCountSource } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -72,6 +72,7 @@ import { getProjectIdFromRequest, resolveStoreForProjectId } from "./routes/cont
 import type { CliRelaunchRegistry } from "./cli-session-transport.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion, isUnresolvedCliPackageVersion } from "./cli-package-version.js";
+import { performUpdateCheck } from "./update-check.js";
 import {
   dayHasSamples,
   fileScopeInvariantFailuresPerDay,
@@ -89,6 +90,7 @@ import {
   resolveDashboardPostgresLayer,
   type DashboardTaskIdIntegrityHealth,
 } from "./dashboard-postgres-health.js";
+import { ProviderHealthMonitor } from "./provider-health-monitor.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -99,14 +101,6 @@ export function buildViewPreloadInjection(chunkMap: Record<string, ViewChunkMani
   The served dashboard may open directly into a persisted lazy view before React's dynamic import runs. Inject both the modulepreload and stylesheet links from Vite's manifest so Command Center and every other co-located-CSS lazy view have their CSS requested on first paint, while in-app navigation remains owned by Vite's __vitePreload runtime.
   */
   return `<script>window.__FUSION_VIEW_CHUNKS__=${serializedChunkMap};(()=>{try{const chunkMap=window.__FUSION_VIEW_CHUNKS__||{};const projectId=localStorage.getItem("kb-dashboard-current-project");const scopedKey=projectId?"kb:"+projectId+":kb-dashboard-task-view":null;let taskView=(scopedKey&&localStorage.getItem(scopedKey))||localStorage.getItem("kb-dashboard-task-view");if(taskView==="devserver")taskView="dev-server";if(taskView==="roadmaps")taskView="board";if(typeof taskView!=="string"||taskView.startsWith("plugin:"))return;const chunkEntry=chunkMap[taskView];if(!chunkEntry)return;const chunkPath=typeof chunkEntry==="string"?chunkEntry:chunkEntry.file;const cssPaths=Array.isArray(chunkEntry.css)?chunkEntry.css:[];for(const cssPath of cssPaths){if(!cssPath)continue;const cssLink=document.createElement("link");cssLink.rel="stylesheet";cssLink.href=cssPath;document.head.appendChild(cssLink);}if(!chunkPath)return;const link=document.createElement("link");link.rel="modulepreload";link.href=chunkPath;link.crossOrigin="";document.head.appendChild(link);}catch{}})();</script>`;
-}
-
-function parseVersion(version: string): number[] {
-  return version
-    .split(".")
-    .slice(0, 3)
-    .map((part) => Number.parseInt(part, 10))
-    .map((value) => (Number.isFinite(value) ? value : 0));
 }
 
 function buildTaskIdIntegrityHealth(report: DashboardTaskIdIntegrityHealth) {
@@ -149,27 +143,6 @@ function buildHealthPayload(args: {
     taskIdIntegrity,
     ...(migration ? { migration } : {}),
   };
-}
-
-function isRemoteVersionNewer(remoteVersion: string, currentVersion: string): boolean {
-  const remote = parseVersion(remoteVersion);
-  const current = parseVersion(currentVersion);
-  const maxLength = Math.max(remote.length, current.length, 3);
-
-  for (let i = 0; i < maxLength; i += 1) {
-    const remotePart = remote[i] ?? 0;
-    const currentPart = current[i] ?? 0;
-
-    if (remotePart > currentPart) {
-      return true;
-    }
-
-    if (remotePart < currentPart) {
-      return false;
-    }
-  }
-
-  return false;
 }
 
 const DEFAULT_AI_SESSION_TTL_MS = SESSION_CLEANUP_DEFAULT_MAX_AGE_MS;
@@ -1997,6 +1970,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   });
 
+  /*
+   * FNXC:UpdateChannels 2026-07-21-20:33:
+   * Settings "Check for updates" hits GET /api/updates/check. The previous
+   * implementation always fetched npm dist-tag `latest` and compared only
+   * major.minor.patch, so beta-channel users never saw X.Y.Z-beta.N (and a
+   * beta install looked "up to date" against older stable). Route through the
+   * shared channel-aware performUpdateCheck (same as /update-check/refresh).
+   */
   app.get("/api/updates/check", async (_req, res) => {
     const currentVersion = cliPackageVersion;
     res.set("Cache-Control", "no-store");
@@ -2011,29 +1992,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       return;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
     try {
-      const response = await fetch("https://registry.npmjs.org/@runfusion/fusion/latest", {
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`registry request failed: ${response.status}`);
+      let channel: "stable" | "beta" = "stable";
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        if (globalSettings.updateChannel === "beta") {
+          channel = "beta";
+        }
+      } catch {
+        // Fall back to stable if global settings are unreadable.
       }
 
-      const payload = (await response.json()) as { version?: unknown };
-      if (typeof payload.version !== "string" || payload.version.trim().length === 0) {
-        throw new Error("registry response missing version");
-      }
-
-      const latestVersion = payload.version;
-      res.json({
-        currentVersion,
-        latestVersion,
-        updateAvailable: isRemoteVersionNewer(latestVersion, currentVersion),
+      const result = await performUpdateCheck(resolveGlobalDir(), currentVersion, {
+        force: true,
+        channel,
       });
+      res.json(result);
     } catch {
       res.status(200).json({
         currentVersion,
@@ -2041,8 +2015,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         updateAvailable: false,
         error: "Failed to check for updates",
       });
-    } finally {
-      clearTimeout(timeout);
     }
   });
 
@@ -2206,6 +2178,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // FUSION_OTEL_METRICS_ENDPOINT is explicitly configured. Held here so the
   // server "close" handler can stop its timer.
   let otelExporter: OtelExporterHandle | null = null;
+  let providerHealthMonitor: ProviderHealthMonitor | null = null;
   dashboardApp.listen = ((...args: Parameters<typeof dashboardApp.listen>) => {
     const normalizedArgs = normalizeListenArgsForTests(args) as Parameters<typeof originalListen>;
 
@@ -2241,11 +2214,31 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       });
     }
 
+    if (!providerHealthMonitor && (options?.engineManager || options?.engine)) {
+      const providerHealthLogger = runtimeLogger.child("provider-health");
+      providerHealthMonitor = new ProviderHealthMonitor({
+        authStorage: options?.authStorage,
+        logger: providerHealthLogger,
+        getStores: () => {
+          const stores = new Set<TaskStore>([store]);
+          const singleEngineStore = options?.engine?.getTaskStore?.();
+          if (singleEngineStore) stores.add(singleEngineStore);
+          for (const projectEngine of options?.engineManager?.getAllEngines?.().values() ?? []) {
+            stores.add(projectEngine.getTaskStore());
+          }
+          return stores;
+        },
+      });
+      providerHealthMonitor.start();
+    }
+
     server.once("close", () => {
       clearAiSessionCleanupInterval();
       aiSessionStore?.stopScheduledCleanup();
       otelExporter?.stop();
       otelExporter = null;
+      providerHealthMonitor?.stop();
+      providerHealthMonitor = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();
       void stopAllDevServers().catch((error) => {
         runtimeLogger.warn("Failed to shutdown dev-server managers", {

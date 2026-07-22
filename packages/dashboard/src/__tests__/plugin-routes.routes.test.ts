@@ -2,10 +2,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TaskStore } from "@fusion/core";
-import type { PluginInstallation } from "@fusion/core";
-import type { PluginStore } from "@fusion/core";
-import type { PluginLoader } from "@fusion/core";
+import { PluginLoader, type PluginInstallation, type PluginStore } from "@fusion/core";
+import { PluginRunner } from "@fusion/engine";
 import { createApiRoutes } from "../routes.js";
 import { createPluginRouter } from "../plugin-routes.js";
 import { get as performGet, request as performRequest } from "../test-request.js";
@@ -53,10 +55,21 @@ function createMockPluginLoader(overrides: Partial<PluginLoader> = {}): PluginLo
     getLoadedPlugins: vi.fn().mockReturnValue([]),
     getPluginTools: vi.fn().mockReturnValue([]),
     getPluginRoutes: vi.fn().mockReturnValue([]),
+    getPluginUiSlots: vi.fn().mockReturnValue([]),
+    getPluginUiContributions: vi.fn().mockReturnValue([]),
+    getPluginRuntimes: vi.fn().mockReturnValue([]),
+    getCliProviderContributions: vi.fn().mockReturnValue([]),
+    getPluginSkills: vi.fn().mockReturnValue([]),
+    getPluginWorkflowSteps: vi.fn().mockReturnValue([]),
+    getPluginWorkflowExtensions: vi.fn().mockReturnValue([]),
+    getPluginWorkflowStepTemplates: vi.fn().mockReturnValue([]),
+    getPluginPromptContributions: vi.fn().mockReturnValue([]),
     loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
     stopAllPlugins: vi.fn().mockResolvedValue(undefined),
     invokeHook: vi.fn().mockResolvedValue(undefined),
     reloadPlugin: vi.fn().mockResolvedValue(undefined),
+    on: vi.fn(),
+    off: vi.fn(),
     createRouteContext: vi.fn().mockImplementation(async (pluginId: string, ctx: Record<string, unknown>) => ({
       pluginId,
       taskStore: ctx.taskStore,
@@ -654,21 +667,106 @@ describe("POST /plugins/:id/enable", () => {
     expect(pluginLoader.loadPlugin).toHaveBeenCalledWith("test-plugin");
   });
 
-  it("supports body-based projectId scoping", async () => {
-    // Set up mock for scoped store with projectId
-    const scopedPluginStore = createMockPluginStore();
-    (scopedPluginStore.enablePlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce(FAKE_PLUGIN);
+  it("initializes one fallback loader before project-scoped introspection", async () => {
+    const scopedPluginStore = createMockPluginStore({ listPlugins: vi.fn().mockResolvedValue([]) });
     const scopedStore = createMockTaskStore({
       getPluginStore: vi.fn().mockReturnValue(scopedPluginStore),
+      on: vi.fn(),
+      off: vi.fn(),
     });
     mockGetOrCreateProjectStore.mockResolvedValue(scopedStore);
+    const loadAll = vi.spyOn(PluginLoader.prototype, "loadAllPlugins");
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore, pluginLoader }));
 
-    const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/enable", {
-      projectId: "proj_123",
+    try {
+      expect((await GET(app, "/api/plugins/ui-slots?projectId=project-p")).status).toBe(200);
+      expect((await GET(app, "/api/plugins/ui-contributions?projectId=project-p")).status).toBe(200);
+      expect(loadAll).toHaveBeenCalledTimes(1);
+    } finally {
+      loadAll.mockRestore();
+    }
+  });
+
+  it("keeps the enable route and real engine startup reader scoped to the managed project", async () => {
+    const hostLoader = pluginLoader;
+    const pluginDir = await mkdtemp(join(tmpdir(), "fusion-plugin-scope-"));
+    const entryPath = join(pluginDir, "plugin.mjs");
+    await writeFile(entryPath, `
+      const plugin = {
+        manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+        hooks: {}, tools: [], routes: [],
+      };
+      export default plugin;
+    `);
+    const projectPlugin: PluginInstallation = {
+      ...FAKE_PLUGIN,
+      enabled: false,
+      path: entryPath,
+      state: "installed",
+    };
+    const projectPluginStore = createMockPluginStore({
+      enablePlugin: vi.fn(async () => {
+        projectPlugin.enabled = true;
+        return { ...projectPlugin };
+      }),
+      getPlugin: vi.fn(async () => ({ ...projectPlugin })),
+      listPlugins: vi.fn(async (filter?: { enabled?: boolean }) =>
+        filter?.enabled === true && !projectPlugin.enabled ? [] : [{ ...projectPlugin }]),
+      updatePluginState: vi.fn(async (_id, state) => {
+        projectPlugin.state = state as PluginInstallation["state"];
+        return { ...projectPlugin };
+      }),
+      on: vi.fn(),
+      off: vi.fn(),
     });
+    const projectStore = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(projectPluginStore),
+      getRootDir: vi.fn().mockReturnValue("/managed/project-p"),
+      preflightPluginSchema: vi.fn().mockReturnValue(null),
+      runPluginSchemaInits: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+      off: vi.fn(),
+    });
+    const projectLoader = new PluginLoader({
+      pluginStore: projectPluginStore,
+      taskStore: projectStore,
+    });
+    const warn = vi.spyOn((projectLoader as any).log, "warn");
+    const projectRunner = new PluginRunner({
+      pluginLoader: projectLoader,
+      pluginStore: projectPluginStore,
+      taskStore: projectStore,
+      rootDir: "/managed/project-p",
+    });
+    const projectEngine = {
+      getTaskStore: vi.fn().mockReturnValue(projectStore),
+      getPluginRunner: vi.fn().mockReturnValue(projectRunner),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, {
+      pluginStore,
+      pluginLoader: hostLoader,
+      engineManager: { getEngine: vi.fn().mockReturnValue(projectEngine) } as any,
+    }));
 
-    expect(res.status).toBe(200);
-    expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith("proj_123");
+    try {
+      const enabled = await REQUEST(app, "POST", "/api/plugins/test-plugin/enable?projectId=project-p", {});
+      const listed = await GET(app, "/api/plugins?projectId=project-p");
+      await projectRunner.init();
+
+      expect(enabled.status).toBe(200);
+      expect(enabled.body).toMatchObject({ id: "test-plugin", enabled: true });
+      expect(listed.body).toEqual([expect.objectContaining({ id: "test-plugin", enabled: true })]);
+      expect(projectLoader.isPluginLoaded("test-plugin")).toBe(true);
+      expect(warn).not.toHaveBeenCalledWith("Skipped disabled plugin during loadAllPlugins: test-plugin");
+      expect(hostLoader.loadPlugin).not.toHaveBeenCalled();
+      expect(hostLoader.loadAllPlugins).not.toHaveBeenCalled();
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -732,6 +830,7 @@ describe("POST /plugins/:id/disable", () => {
 describe("POST /plugins/:id/reload", () => {
   let store: TaskStore;
   let pluginStore: PluginStore;
+  let pluginLoader: PluginLoader;
   let pluginRunner: {
     getPluginRoutes: ReturnType<typeof vi.fn>;
     reloadPlugin: ReturnType<typeof vi.fn>;
@@ -743,6 +842,7 @@ describe("POST /plugins/:id/reload", () => {
 
   beforeEach(() => {
     pluginStore = createMockPluginStore();
+    pluginLoader = createMockPluginLoader();
     pluginRunner = {
       getPluginRoutes: vi.fn().mockReturnValue([]),
       reloadPlugin: vi.fn().mockResolvedValue(undefined),
@@ -761,7 +861,7 @@ describe("POST /plugins/:id/reload", () => {
     app.use(express.json());
     app.use("/api", createApiRoutes(store, {
       pluginStore,
-      pluginLoader: createMockPluginLoader(),
+      pluginLoader,
       pluginRunner: includeRunner ? pluginRunner : undefined,
     }));
     return app;
@@ -775,7 +875,7 @@ describe("POST /plugins/:id/reload", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/reload", {});
 
     expect(res.status).toBe(200);
-    expect(pluginRunner.reloadPlugin).toHaveBeenCalledWith("test-plugin");
+    expect(pluginLoader.reloadPlugin).toHaveBeenCalledWith("test-plugin");
     expect(res.body.id).toBe("test-plugin");
   });
 
@@ -801,7 +901,7 @@ describe("POST /plugins/:id/reload", () => {
     expect(res.body.error).toContain("Use enable instead");
   });
 
-  it("returns 500 when plugin runner is unavailable", async () => {
+  it("uses the scoped loader when the host runner is unavailable", async () => {
     (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...FAKE_PLUGIN,
       state: "started",
@@ -809,8 +909,8 @@ describe("POST /plugins/:id/reload", () => {
 
     const res = await REQUEST(buildApp(false), "POST", "/api/plugins/test-plugin/reload", {});
 
-    expect(res.status).toBe(500);
-    expect(res.body.error).toContain("Plugin runner not available");
+    expect(res.status).toBe(200);
+    expect(pluginLoader.reloadPlugin).toHaveBeenCalledWith("test-plugin");
   });
 
   it("returns 500 when reload operation fails", async () => {
@@ -818,7 +918,7 @@ describe("POST /plugins/:id/reload", () => {
       ...FAKE_PLUGIN,
       state: "started",
     });
-    pluginRunner.reloadPlugin.mockRejectedValueOnce(new Error("boom"));
+    (pluginLoader.reloadPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/reload", {});
 

@@ -1743,13 +1743,17 @@ describe("executeHeartbeat", () => {
       FNXC:EngineTests 2026-07-20-23:55:
       Pin patrol-on resolution via workflow stored values, and assert disabled copy through the
       pure renderer when patrol is off (the no-task path defaults enabled if settings resolution fails).
+
+      FNXC:EngineTests 2026-07-22-03:15:
+      Also exercise plannerHeartbeatPatrolEnabled:false through HeartbeatMonitor so settings
+      resolution → prompt wiring is covered, not only the pure renderers.
       */
       const { renderHeartbeatNoTaskSystemPrompt, HEARTBEAT_NO_TASK_PROCEDURE } = await import("../agent-heartbeat-prompts.js");
       const { renderHeartbeatNoTaskProcedure } = await import("../agent-heartbeat-prompts.js");
       expect(renderHeartbeatNoTaskSystemPrompt({ plannerHeartbeatPatrolEnabled: false })).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
       expect(renderHeartbeatNoTaskProcedure(HEARTBEAT_NO_TASK_PROCEDURE, { plannerHeartbeatPatrolEnabled: false })).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
 
-      for (const storedValue of [undefined, true] as const) {
+      for (const storedValue of [undefined, true, false] as const) {
         vi.clearAllMocks();
         const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
         const mockSession = createMockAgentSession();
@@ -1771,9 +1775,14 @@ describe("executeHeartbeat", () => {
         expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
         const systemPrompt = mockedCreateFnAgent.mock.calls[0]![0]!.systemPrompt as string;
         const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] ?? "";
-        expect(systemPrompt).toContain("Use fn_task_create only with an approved Feature");
-        expect(executionPrompt).toContain("create a focused task instead of attempting unscheduled implementation");
-        expect(systemPrompt).not.toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+        if (storedValue === false) {
+          expect(systemPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+          expect(executionPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+        } else {
+          expect(systemPrompt).toContain("Use fn_task_create only with an approved Feature");
+          expect(executionPrompt).toContain("create a focused task instead of attempting unscheduled implementation");
+          expect(systemPrompt).not.toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
+        }
       }
     });
 
@@ -2874,6 +2883,7 @@ describe("executeHeartbeat", () => {
         const messages: Map<string, Message[]> = new Map();
         let messageCounter = 0;
 
+        const byId = new Map<string, Message>();
         const fakeMessageStore = {
           setMessageToAgentHook: vi.fn(),
           sendMessage: vi.fn((input: Omit<Message, "id" | "read" | "createdAt" | "updatedAt">) => {
@@ -2891,8 +2901,14 @@ describe("executeHeartbeat", () => {
             const inbox = messages.get(key) || [];
             inbox.push(msg);
             messages.set(key, inbox);
+            byId.set(id, msg);
             return msg;
           }),
+          /*
+          FNXC:EngineTests 2026-07-22-03:15:
+          fn_send_message looks up reply_to_message_id via getMessage before persisting linked replies.
+          */
+          getMessage: vi.fn(async (id: string) => byId.get(id)),
           getInbox: vi.fn((participantId: string, participantType: string, opts?: { read?: boolean }) => {
             const key = `${participantId}:${participantType}`;
             const inbox = messages.get(key) || [];
@@ -2972,13 +2988,20 @@ describe("executeHeartbeat", () => {
           );
         }
 
+        /*
+        FNXC:EngineTests 2026-07-22-03:15:
+        Alias routing must persist a linked reply on the dashboard user inbox (not a vacuous length check).
+        */
         const dashboardInbox = fakeMessageStore.getInbox("dashboard", "user");
-        // FNXC:EngineTests 2026-07-20-23:55: primary contract is that alias routing can invoke send;
-        // inbox persistence of reply metadata is covered by message-store unit tests.
         expect(sendMessageTool).toBeDefined();
-        expect(dashboardInbox.length + fakeMessageStore.getInbox("user:dashboard", "user").length).toBeGreaterThanOrEqual(0);
-        const anyReply = ["dashboard", "user:dashboard"].flatMap((id) => fakeMessageStore.getInbox(id.replace(/^user:/, "") === id ? id : "dashboard", "user"));
-        // Prefer asserting the tool was exercised (above execute loop) rather than exact inbox layout.
+        expect(dashboardInbox.length).toBeGreaterThan(0);
+        const linkedReplies = dashboardInbox.filter(
+          (message) =>
+            message.fromType === "agent"
+            && message.metadata?.replyTo?.messageId === inboundFromUser.id
+            && String(message.content).includes("Status: I am on it"),
+        );
+        expect(linkedReplies.length).toBeGreaterThan(0);
         expect(mockSession.prompt).toHaveBeenCalled();
 
         monitor.stop();

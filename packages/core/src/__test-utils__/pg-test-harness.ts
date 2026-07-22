@@ -239,18 +239,38 @@ function uniqueDbName(prefix = "fusion_test"): string {
  * Route admin DDL through the same short-lived postgres.js maintenance
  * connection as template lifecycle so no shell children are tracked.
  * Bounded by Promise.race so a stuck catalog lock cannot hang the worker.
+ *
+ * FNXC:PgTestHarness 2026-07-22-03:15:
+ * Client-side Promise.race alone left in-flight `client.unsafe(statement)`
+ * running after timeout — a delayed DROP DATABASE WITH (FORCE) could still
+ * complete and kill later tests' connections. Own the maintenance client so
+ * timeout can SET statement_timeout (server cancel) and force-close the
+ * socket before the caller returns.
  */
 async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let client: ReturnType<typeof postgres> | undefined;
   try {
     await Promise.race([
-      withMaintenanceSql(async (client) => {
+      (async () => {
+        const maintUrl = new URL(PG_TEST_URL_BASE);
+        maintUrl.pathname = "/postgres";
+        client = postgres(maintUrl.toString(), {
+          max: 1,
+          prepare: false,
+          onnotice: () => {},
+        });
+        // Server-side cancel slightly before the JS race so PG stops the statement.
+        const serverTimeoutMs = Math.max(1_000, timeoutMs - 500);
+        await client.unsafe(`SET statement_timeout = ${serverTimeoutMs}`);
         await client.unsafe(statement);
-      }),
+      })(),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => {
           timedOut = true;
+          // Force-close the socket so a late DROP/CREATE cannot outlive this call.
+          void client?.end({ timeout: 0 }).catch(() => {});
           reject(new Error(`adminExec timed out after ${timeoutMs}ms: ${statement}`));
         }, timeoutMs);
       }),
@@ -264,6 +284,9 @@ async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<vo
     );
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (client) {
+      await client.end({ timeout: 5 }).catch(() => {});
+    }
   }
 }
 

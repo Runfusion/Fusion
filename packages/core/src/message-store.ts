@@ -18,6 +18,7 @@ import { createLogger } from "./logger.js";
 import { DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata, type Message, type MessageCreateInput, type MessageFilter, type MessageType, type Mailbox, type ParticipantType } from "./types.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncMessageStore from "./async-message-store.js";
+import { sanitizeTextValue, sanitizeJsonbValue } from "./postgres/nul-sanitize.js";
 
 const messageStoreLog = createLogger("message-store");
 
@@ -176,10 +177,17 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       fromType: from.type,
       toId: to.id,
       toType: to.type,
-      content: input.content,
+      // FNXC:PostgresMigrationNulSanitize 2026-07-21: sanitize here so the
+      // exact same object is persisted, emitted (message:sent/message:received,
+      // consumed by the agent wake hook), and returned to the caller. The
+      // async-message-store.ts sendMessage() layer also sanitizes before its
+      // own insert, but this class discarded that function's return value and
+      // used its own locally-built (unsanitized) `message` object for
+      // everything else — this closes that gap.
+      content: sanitizeTextValue(input.content),
       type: input.type,
       read: false,
-      metadata: input.metadata,
+      metadata: sanitizeJsonbValue(input.metadata),
       createdAt: now,
       updatedAt: now,
     };
@@ -263,10 +271,15 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       fromType: from.type,
       toId: to.id,
       toType: to.type,
-      content: input.content,
+      // FNXC:PostgresMigrationNulSanitize 2026-07-21: see sendMessage() above
+      // for why this must sanitize here rather than rely solely on
+      // asyncMessageStore.sendMessageOnce's own internal sanitization —
+      // that function only returns a boolean, so this class's locally-built
+      // `message` object is what actually gets emitted/returned.
+      content: sanitizeTextValue(input.content),
       type: input.type,
       read: false,
-      metadata: input.metadata,
+      metadata: sanitizeJsonbValue(input.metadata),
       createdAt: now,
       updatedAt: now,
     };

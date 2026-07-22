@@ -9,17 +9,17 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
-import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
@@ -187,11 +187,24 @@ import {
   formatExternalIntegrationEvidenceDiagnostic,
 } from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
+import {
+  isRequiredArtifactReadFailedValue,
+  parseRequiredArtifactMissingValue,
+  requiredArtifactMissingValue,
+  requiredArtifactReadFailedValue,
+  workflowEntryArtifacts,
+} from "./required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { StepSessionExecutor } from "./step-session-executor.js";
-import { makeAncestryBlastRadiusGuard, resetStepToBaseline, runTaskStep } from "./step-runner.js";
+import {
+  isUsableWorktreeDirectory,
+  makeAncestryBlastRadiusGuard,
+  resetStepToBaseline,
+  runTaskStep,
+  type RunTaskStepResult,
+} from "./step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree-acquisition.js";
 import { resolveCapturedBaseCommitSha } from "./base-commit-capture.js";
@@ -313,6 +326,36 @@ import type { AgentBrowserExec } from "./executor/browser-probe.js";
 function mergeAdditionalSkillPaths(...pathGroups: Array<string[] | undefined>): string[] | undefined {
   const merged = Array.from(new Set(pathGroups.flatMap((paths) => paths ?? [])));
   return merged.length > 0 ? merged : undefined;
+}
+
+/**
+ * FNXC:WorkflowSteps 2026-08-08-00:00:
+ * FN-8461 / GitHub #2388 require workflow skill-load warnings to describe a true
+ * named-skill delivery failure, not an optional Compound Engineering source being
+ * absent. Plugin body directories are paired with their parent discovery roots,
+ * so check the requested bare name against each merged source; unrelated paths
+ * must never hide a missing requested skill.
+ */
+function isWorkflowStepSkillDiscoverable(
+  skillName: string,
+  additionalSkillPaths: string[] | undefined,
+  ceSkillsDir: string | undefined,
+): boolean {
+  // A configured CE root remains a viable source by contract: deployments can
+  // inject a synthetic install root before its skill tree is materialized locally.
+  if (ceSkillsDir) return true;
+
+  const bareSkillName = skillName.includes(":")
+    ? skillName.slice(skillName.lastIndexOf(":") + 1)
+    : skillName;
+  if (!bareSkillName || basename(bareSkillName) !== bareSkillName || bareSkillName === "." || bareSkillName === "..") {
+    return false;
+  }
+
+  return (additionalSkillPaths ?? []).some((skillPath) =>
+    (basename(skillPath) === bareSkillName && existsSync(join(skillPath, "SKILL.md")))
+    || existsSync(join(skillPath, bareSkillName, "SKILL.md")),
+  );
 }
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
@@ -1150,6 +1193,8 @@ export interface WorkflowStepOutcome {
   timedOut?: boolean;
   /** True when no structured or prose verdict could be inferred. */
   malformed?: boolean;
+  /** Machine-readable graph failure used for deterministic recovery routing. */
+  failureValue?: string;
 }
 
 /**
@@ -1532,7 +1577,10 @@ export interface TaskExecutorOptions {
   semaphore?: AgentSemaphore;
   /** Worktree pool for recycling idle worktrees across tasks. */
   pool?: WorktreePool;
-  /** Usage limit pauser — triggers global pause when API limits are detected. */
+  /**
+   * FNXC:ProviderRateLimitIsolation 2026-07-21-18:00:
+   * Parks only tasks routed through the provider whose API limit was detected.
+   */
   usageLimitPauser?: UsageLimitPauser;
   /** Stuck task detector — monitors agent sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
@@ -4734,6 +4782,14 @@ export class TaskExecutor {
     if (info.status !== "advisory_failure" && info.status !== "failed") return false;
 
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
+    const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
+    if (missingArtifactKeys) {
+      await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
+        source: "workflow-step",
+        nodeId: info.nodeId,
+      });
+      return true;
+    }
     const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
     if (isPlanReview) {
       /*
@@ -4880,6 +4936,91 @@ export class TaskExecutor {
       `Pre-merge optional workflow step "${info.stepName}" requested revision`,
     );
     return true;
+  }
+
+  private async recoverMissingRequiredArtifacts(
+    task: Task,
+    artifactKeys: string[],
+    source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
+  ): Promise<void> {
+    const currentTask = await this.store.getTask(task.id).catch(() => null);
+    if (!currentTask || this.isRequiredArtifactRecoveryProtected(currentTask)) return;
+    task = currentTask;
+    const decision = computeRecoveryDecision({
+      recoveryRetryCount: task.recoveryRetryCount,
+      nextRecoveryAt: task.nextRecoveryAt,
+    });
+    const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+    const context = this.getRunContextFor(task.id);
+    const action = decision.shouldRetry ? "replan" : "park-failed";
+
+    await this.store.recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "executor",
+      runId: context?.runId ?? generateSyntheticRunId("required-artifact-missing", task.id),
+      domain: "database",
+      mutationType: "task:required-artifact-missing",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        artifactKeys,
+        owner: "planning",
+        source: source.source,
+        action,
+        attempt,
+        maxAttempts: MAX_RECOVERY_RETRIES,
+        ...(source.nodeId ? { nodeId: source.nodeId } : {}),
+      },
+    });
+
+    if (!decision.shouldRetry) {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+      await this.store.logEntry(task.id, error, undefined, context);
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }, context);
+      return;
+    }
+
+    const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
+    await this.store.logEntry(
+      task.id,
+      `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
+      `Missing artifact keys: ${artifactKeys.join(", ")}`,
+      context,
+    );
+    this.workflowLifecycleMovesInFlight.add(task.id);
+    try {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      await moveTaskToReplanColumn(this.store, { id: task.id, column: liveTask.column }, replanColumn);
+    } finally {
+      this.workflowLifecycleMovesInFlight.delete(task.id);
+    }
+    await this.store.updateTask(task.id, {
+      status: "needs-replan",
+      error: null,
+      recoveryRetryCount: decision.nextState.recoveryRetryCount,
+      nextRecoveryAt: decision.nextState.nextRecoveryAt,
+      graphResumeRetryCount: 0,
+    }, context);
+  }
+
+  private isRequiredArtifactRecoveryProtected(task: Task): boolean {
+    return Boolean(
+      task.deletedAt
+      || task.paused
+      || task.userPaused === true
+      || task.column === "done"
+      || task.column === "archived"
+      || task.mergeDetails?.mergeConfirmed === true
+      || (task.column === "in-review" && task.autoMerge === false),
+    );
   }
 
   /**
@@ -5504,6 +5645,31 @@ export class TaskExecutor {
       } catch {
         columnAgentIr = undefined;
       }
+      if (columnAgentIr) {
+        const missingEntryArtifacts: string[] = [];
+        for (const artifact of workflowEntryArtifacts(columnAgentIr)) {
+          let content: string | undefined;
+          try {
+            content = await this.readTaskArtifact(task.id, artifact.key);
+          } catch (error) {
+            const failureValue = requiredArtifactReadFailedValue(artifact.key);
+            await this.handleGraphFailure(task, {
+              disposition: "failed",
+              outcome: "failure",
+              reason: `workflow-required-artifact-read-failed:${artifact.key}:${error instanceof Error ? error.message : String(error)}`,
+              visitedNodeIds: ["workflow-entry-artifact"],
+              context: { "node:workflow-entry-artifact:value": failureValue },
+            });
+            return;
+          }
+          if (typeof content !== "string" || !content.trim()) missingEntryArtifacts.push(artifact.key);
+        }
+        if (missingEntryArtifacts.length > 0) {
+          const liveTask = await this.store.getTask(task.id).catch(() => task);
+          await this.recoverMissingRequiredArtifacts(liveTask, missingEntryArtifacts, { source: "graph-entry" });
+          return;
+        }
+      }
       const resolveBindingForNode = (nodeId: string): WorkflowColumnAgent | undefined =>
         columnAgentIr ? resolveColumnAgentBinding(columnAgentIr, nodeId) : undefined;
       // Column-agent seam wiring (U4): expose the same per-run resolver to the
@@ -5643,9 +5809,10 @@ export class TaskExecutor {
         // pending U6/U7 trait re-key; safe now). Absent → the graph performs no
         // lifecycle moves (pre-cutover byte-identical); present → the controller
         // moves the card on each node-column boundary with all move-safety.
-        columnBoundaryHooks: this.buildColumnBoundaryHooks(task),
+        columnBoundaryHooks: this.buildColumnBoundaryHooks(task, resolvedRunId),
       });
       let result: WorkflowGraphTaskRunResult;
+      let continuation: WorkflowWorkItem | undefined;
       try {
         const loadedDetail = await this.store.getTask(task.id);
         /*
@@ -5655,8 +5822,30 @@ export class TaskExecutor {
         const detail: TaskDetail = loadedDetail?.id === task.id
           ? loadedDetail
           : { ...task, prompt: task.prompt ?? task.description ?? "" };
-        result = await runner.run(detail, settings);
+        const workItems = await this.store.listWorkflowWorkItemsForTask?.(task.id, { kinds: ["task"] }) ?? [];
+        for (let index = workItems.length - 1; index >= 0; index -= 1) {
+          const candidate = workItems[index];
+          if (ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(candidate.state)) {
+            continuation = candidate;
+            break;
+          }
+        }
+        if (continuation && continuation.state !== "running") {
+          continuation = await this.store.transitionWorkflowWorkItem(continuation.id, "running", {
+            leaseOwner: `executor:${task.id}`,
+            leaseExpiresAt: null,
+            lastError: null,
+          });
+        }
+        result = await runner.run(detail, settings, continuation?.nodeId);
       } catch (err) {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: "workflow-continuation-dispatch-failed",
+          }).catch(() => undefined);
+        }
         executorLog.error(
           `[workflow-graph] ${task.id} interpreter threw — parking task as workflow failure: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -5678,9 +5867,26 @@ export class TaskExecutor {
         });
         return;
       }
+      if (result.disposition === "suspended") {
+        return;
+      }
       if (result.disposition === "failed") {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: "workflow-continuation-failed",
+          });
+        }
         await this.handleGraphFailure(task, result);
       } else if (result.disposition === "completed") {
+        if (continuation) {
+          await this.store.transitionWorkflowWorkItem(continuation.id, "succeeded", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: null,
+          });
+        }
         const live = await this.store.getTask(task.id).catch(() => task);
         if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
@@ -5900,7 +6106,7 @@ export class TaskExecutor {
     });
   }
 
-  private buildColumnBoundaryHooks(task: Pick<Task, "id">): WorkflowColumnBoundaryHooks {
+  private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): WorkflowColumnBoundaryHooks {
     // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
     // buildBranchPersistence — structural probe of the row surface so a store
     // lacking the pin fields degrades to the inert no-pin seam.
@@ -5914,6 +6120,24 @@ export class TaskExecutor {
       // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
       // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
       clearPin: pinPersistence.clearPin,
+      onSuspend: async (suspension) => {
+        const items = await this.store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
+        const live = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
+        if (live.some((item) => item.nodeId === suspension.nodeId)) return;
+        await this.store.replaceActiveTaskWorkflowContinuation({
+          runId: `${workflowRunId ?? `${task.id}:workflow`}:continuation:${suspension.nodeId}:${items.length}`,
+          taskId: task.id,
+          nodeId: suspension.nodeId,
+          kind: "task",
+          state: "held",
+          stableWorkflowRunId: workflowRunId ?? `${task.id}:workflow`,
+          continuationSequence: items.length,
+          waitReason: "capacity",
+          sourceColumn: suspension.fromColumn,
+          targetColumn: suspension.toColumn,
+          irHash: suspension.irHash,
+        });
+      },
       moveTask: async (toColumn, ctx) => {
         this.workflowLifecycleMovesInFlight.add(task.id);
         try {
@@ -5938,7 +6162,7 @@ export class TaskExecutor {
           target: event.taskId,
           metadata:
             event.type === "task:column-transition"
-              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId }
+              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId, irHash: event.irHash }
               : { taskId: event.taskId, workflowId: event.workflowId, pinnedNodeId: event.pinnedNodeId, reason: event.reason },
         });
       },
@@ -5999,20 +6223,26 @@ export class TaskExecutor {
    */
   private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
     // Declared artifacts ride the task-documents layer.
+    let documentReadError: unknown;
     try {
       const doc = await this.store.getTaskDocument(taskId, key);
       if (doc) return doc.content;
-    } catch {
-      // Fall through to the PROMPT fallback below.
+    } catch (error) {
+      documentReadError = error;
     }
     if (key === "PROMPT.md") {
       try {
         const detail = await this.store.getTask(taskId);
         if (typeof detail.prompt === "string") return detail.prompt;
-      } catch {
-        // No PROMPT available.
+        return undefined;
+      } catch (error) {
+        throw new Error(
+          `Unable to read required artifact ${key} from task documents or task storage: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: documentReadError ?? error },
+        );
       }
     }
+    if (documentReadError) throw documentReadError;
     return undefined;
   }
 
@@ -6630,6 +6860,63 @@ export class TaskExecutor {
     return only;
   }
 
+  /**
+   * Project a graph-owned step only after it has a real worktree.
+   *
+   * A fresh task has no worktree until the authoritative implementation pass
+   * acquires one. Projecting before that pass produces a false "step started"
+   * event and captures the baseline from the project root. In that fresh path,
+   * let the implementation pass own the first projection and reuse the base SHA
+   * it captures during worktree acquisition. Resumed and isolated-step runs
+   * already have a worktree, so they keep the normal per-step projection and
+   * pre-work baseline behavior.
+   */
+  private async runProjectedGraphTaskStep(
+    task: Task,
+    live: TaskDetail,
+    stepIndex: number,
+    active: ForeachActiveContext,
+    governingNodeId?: string,
+    thinkingLevel?: ThinkingLevel,
+  ): Promise<RunTaskStepResult> {
+    const worktreePath = active.worktreePath || live.worktree;
+    const runStep = (idx: number) =>
+      this.runGraphTaskStep(
+        task,
+        idx,
+        active.instanceId,
+        governingNodeId,
+        thinkingLevel,
+      );
+
+    /*
+     * FNXC:BaselineCwdGating 2026-07-21-19:21:
+     * FN-8464 requires graph step projection to defer until this candidate is a real directory.
+     * A stale, non-directory, or inaccessible truthy path must follow fresh-worktree ordering so
+     * runTaskStep never spawns baseline git with an unusable cwd; acquisition supplies baseCommitSha.
+     */
+    if (!worktreePath || !isUsableWorktreeDirectory(worktreePath)) {
+      const result = await runStep(stepIndex);
+      const refreshed = await this.store.getTask(task.id).catch(() => live);
+      return {
+        outcome: result.success ? "success" : "failure",
+        baselineSha: refreshed.baseCommitSha,
+        checkpointId: undefined,
+      };
+    }
+
+    return runTaskStep(
+      {
+        store: this.store,
+        worktreePath,
+        runStep,
+      },
+      { id: task.id, steps: live.steps },
+      stepIndex,
+      { markDoneOnSuccess: active.deferDoneToReview !== true, projectionSource: "graph" },
+    );
+  }
+
   /** Public authoritative-driver seam factory: exposes the same real lifecycle
    * seams the internal graph runner uses, without changing legacy behavior. */
   public createAuthoritativeWorkflowPrimitives(settings: Settings): WorkflowRuntimePrimitives {
@@ -6732,24 +7019,14 @@ export class TaskExecutor {
             data: { status: liveStatus },
           };
         }
-        const worktreePath = active.worktreePath || live.worktree || this.rootDir;
         this.graphStepActiveContext.set(this.graphActiveContextKey(task.id, active.instanceId), active);
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
-        return await runTaskStep(
-          {
-            store: this.store,
-            worktreePath,
-            runStep: (idx) =>
-              this.runGraphTaskStep(
-                task,
-                idx,
-                active.instanceId,
-                typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
-              ),
-          },
-          { id: task.id, steps: live.steps },
+        return await this.runProjectedGraphTaskStep(
+          task,
+          live,
           stepIndex,
-          { markDoneOnSuccess: active.deferDoneToReview !== true, projectionSource: "graph" },
+          active,
+          typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
         );
       },
       resetTaskStep: async (ctx, task, stepIndex, baselineSha, checkpointId) => {
@@ -7332,7 +7609,6 @@ export class TaskExecutor {
         // worktree when the foreach allocated one; otherwise the task's main
         // worktree (shared isolation — unchanged). The file-scope guard the session
         // machinery installs applies to either worktree unchanged (not bypassed).
-        const worktreePath = active.worktreePath || live.worktree || this.rootDir;
         // Stamp the active instance so `runGraphTaskStep` can honor
         // `deferDoneToReview` when judging a non-terminal step (FIX 3).
         this.graphStepActiveContext.set(this.graphActiveContextKey(seamTask.id, active.instanceId), active);
@@ -7347,35 +7623,15 @@ export class TaskExecutor {
         // foreach (overwrite mid-build, or clear while the shared pass is live).
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
         const seamThinkingLevel = context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
-        const result: Awaited<ReturnType<typeof runTaskStep>> = await runTaskStep(
-          {
-            store: this.store,
-            worktreePath,
-            // U6/U8: graph-owned per-step physics. Per-step-review workflows
-            // pin StepSessionExecutor inside runGraphTaskStep; final-review coding
-            // honors runStepsInNewSessions and may reuse one executor session.
-            // Thread the instanceId so the active-context read is per-instance
-            // (parallel-foreach safe).
-            runStep: (stepIndex) =>
-              this.runGraphTaskStep(
-                seamTask,
-                stepIndex,
-                active.instanceId,
-                typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
-                typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)
-                  ? (seamThinkingLevel as ThinkingLevel)
-                  : undefined,
-              ),
-          },
-          { id: seamTask.id, steps: live.steps },
+        const result = await this.runProjectedGraphTaskStep(
+          seamTask,
+          live,
           active.stepIndex,
-          {
-            // Single-authority done-marking (U6/KTD-4): when the foreach template
-            // has a step-review node, leave the step in-progress so the review's
-            // APPROVE marks it done (the review is the single done authority).
-            markDoneOnSuccess: active.deferDoneToReview !== true,
-            projectionSource: "graph",
-          },
+          active,
+          typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
+          typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)
+            ? (seamThinkingLevel as ThinkingLevel)
+            : undefined,
         );
         // Capture baseline/checkpoint back into the reserved active context so the
         // foreach sub-walk threads them to later template nodes (step-review/reset).
@@ -8537,7 +8793,7 @@ export class TaskExecutor {
     */
     return {
       outcome: outcome.success || !blocking || malformed ? "success" : "failure",
-      value: verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
+      value: (outcome as WorkflowStepOutcome).failureValue ?? verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
       ...(Object.keys(contextPatch).length > 0 ? { contextPatch } : {}),
     };
   }
@@ -9579,6 +9835,43 @@ export class TaskExecutor {
       the task failed with the signature erased (FN-7996 looped dispatch→park all day).
       */
       if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result)) {
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      if (isRequiredArtifactReadFailedValue(this.graphFailureValue(result))) {
+        /*
+        FNXC:WorkflowArtifacts 2026-07-21-17:00:
+        A TaskStore read outage is not proof that an artifact is absent. Keep the
+        task in place and use the bounded graph-resume budget instead of replanning
+        or terminalizing a possibly healthy workflow contract.
+        */
+        const priorRetries = live.graphResumeRetryCount ?? 0;
+        if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
+          const nextRetries = priorRetries + 1;
+          const message = `Required workflow artifact could not be read — retrying in place (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+          await this.store.updateTask(task.id, { graphResumeRetryCount: nextRetries }, this.getRunContextFor(task.id));
+          const scheduleRetry = () => {
+            void (async () => {
+              try {
+                const resumeTask = await this.store.getTask(task.id);
+                if (this.isRequiredArtifactRecoveryProtected(resumeTask) || resumeTask.status === "failed") return;
+                await this.execute(resumeTask);
+              } catch (err) {
+                executorLog.error(`Failed required-artifact read retry for ${task.id}:`, err);
+              }
+            })();
+          };
+          const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
+          handle.unref?.();
+        } else {
+          await this.store.logEntry(
+            task.id,
+            "Required workflow artifact read retry budget exhausted — task remains held in its current state",
+            undefined,
+            this.getRunContextFor(task.id),
+          );
+        }
         await this.persistTokenUsage(task.id);
         return;
       }
@@ -16258,11 +16551,43 @@ ${scopeGuard}
      * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
      * FN-7561 established that review agents cannot reliably locate the project-root PROMPT.md from a task worktree. Load it once through the store and embed it for every review-type node. FN-8288 extends that invariant beyond Plan Review: approved planning revisions are authoritative, the original task description is historical, and a failed artifact read must stay visible instead of silently restoring superseded scope.
      */
-    const workflowReviewSpecArtifact = isReviewTypeWorkflowStep
-      ? await this.readTaskArtifact(task.id, "PROMPT.md")
-      : undefined;
+    let workflowReviewSpecArtifact: string | undefined;
+    if (isReviewTypeWorkflowStep) {
+      try {
+        workflowReviewSpecArtifact = await this.readTaskArtifact(task.id, "PROMPT.md");
+      } catch (error) {
+        const diagnostic = `PROMPT.md could not be read because task storage failed; ${workflowStep.name} must retry without replanning. ${error instanceof Error ? error.message : String(error)}`;
+        await this.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} artifact read failed: ${diagnostic}`);
+        return {
+          success: false,
+          error: diagnostic,
+          output: diagnostic,
+          failureValue: requiredArtifactReadFailedValue("PROMPT.md"),
+        };
+      }
+    }
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
+
+    /*
+    FNXC:PlanReview 2026-07-21-16:30:
+    Review steps must never approve or execute against an unavailable contract. Confirmed missing or whitespace-only PROMPT.md fails closed before reviewer creation; typed recovery routes ownership back to planning without spending the review-revision budget.
+    */
+    if (isReviewTypeWorkflowStep && !workflowReviewSpecText.trim()) {
+      const diagnostic = `PROMPT.md could not be loaded; ${workflowStep.name} cannot approve without the authoritative task contract.`;
+      await this.store.logEntry(
+        task.id,
+        `[pre-merge] ${workflowStep.name} refused to run without PROMPT.md: ${diagnostic}`,
+      );
+      return {
+        success: false,
+        revisionRequested: true,
+        output: `REVISE: ${diagnostic}`,
+        verdict: "REVISE",
+        notes: diagnostic,
+        failureValue: requiredArtifactMissingValue(["PROMPT.md"]),
+      };
+    }
 
     if (isPlanReviewStep && requireExternalIntegrationEvidence) {
       /*
@@ -16324,8 +16649,7 @@ ${scopeGuard}
      * state and loop back to triage after the planner already approved the spec.
      */
     const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
-      ? workflowReviewSpecText
-        ? `
+      ? `
 
 Approved Task Contract:
 - PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
@@ -16336,12 +16660,6 @@ Approved Task Contract:
 --- BEGIN APPROVED PROMPT.md ---
 ${workflowReviewSpecText}
 --- END APPROVED PROMPT.md ---`
-        : `
-
-Approved Task Contract Unavailable:
-- PROMPT.md could not be loaded for this review. The Task Description is historical input only and is not a substitute contract.
-- Do not infer, reinstate, approve, or reject requirements from the Task Description.
-- Return REVISE with the single reason that the approved contract could not be loaded so the workflow can retry with canonical scope.`
       : "";
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:
@@ -16351,7 +16669,7 @@ Approved Task Contract Unavailable:
 - If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
 
 --- BEGIN PROMPT.md ---
-${planReviewSpecText || `(The plan artifact could not be loaded into this prompt. Read it read-only from the project root at .fusion/tasks/${task.id}/PROMPT.md before judging; do not treat an unavailable artifact as a plan defect.)`}
+${planReviewSpecText}
 --- END PROMPT.md ---`
       : `Diff Scope (files changed by THIS task vs base):
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
@@ -16549,19 +16867,22 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           requestedSkillNames: mergedNames,
         };
       }
-      // FNXC:WorkflowSteps 2026-06-20-23:35:
-      // A named skill with no discovery path silently degrades to the role-fallback
-      // skill (the exact pre-fix bug this change exists to kill). If the injected
-      // FUSION_CE_SKILLS_DIR never arrived (degraded/throwing plugin, missing install
-      // dir), warn loudly so an env-threading regression is visible on a board run
-      // instead of failing silent with a green hand-fed test.
-      if (workflowStep.skillName && workflowStep.skillName.trim() && !ceSkillsDir) {
+      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
+      // FNXC:WorkflowSteps 2026-08-08-00:00:
+      // FN-8461 / GitHub #2388: workflow steps resolve skills from enabled-plugin
+      // body directories and the optional CE install root. Warn only after merging
+      // those sources when THIS named skill remains undiscoverable: a non-empty path
+      // array for another skill is not viable, while an actual plugin body makes CE
+      // env absence expected rather than misleading operator-facing noise.
+      if (
+        workflowStep.skillName?.trim()
+        && !isWorkflowStepSkillDiscoverable(workflowStep.skillName.trim(), additionalSkillPaths, ceSkillsDir)
+      ) {
         await this.store.logEntry(
           task.id,
-          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but FUSION_CE_SKILLS_DIR is unset — the skill cannot be discovered; the step runs with role-fallback skills only.`,
+          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
         );
       }
-      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
       const logBrowserVerificationActivity = async (message: string) => {
         await this.store.logEntry(task.id, message);
         await this.store.appendAgentLog(task.id, message, "status", undefined, "reviewer");

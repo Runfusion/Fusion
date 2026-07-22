@@ -26,6 +26,11 @@ Upgrade paths from early baselines may have project.tasks without the token_usag
 columns yet (they land in later migrations). ALTER COLUMN fails hard if the column
 is missing, so only widen columns that already exist. Fresh baselines already declare
 bigint in SCHEMA_BASELINE DDL.
+
+FNXC:PostgresBigintCounters 2026-07-22-03:15:
+Per-column guards (not a single representative-column check) so a partial schema —
+e.g. only token_usage_input_tokens present — never references a missing sibling and
+aborts the schema-applier transaction.
 */
 DO $$
 BEGIN
@@ -34,12 +39,31 @@ BEGIN
       SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_input_tokens'
     ) THEN
-      ALTER TABLE project.tasks
-        ALTER COLUMN token_usage_input_tokens TYPE bigint,
-        ALTER COLUMN token_usage_output_tokens TYPE bigint,
-        ALTER COLUMN token_usage_cached_tokens TYPE bigint,
-        ALTER COLUMN token_usage_cache_write_tokens TYPE bigint,
-        ALTER COLUMN token_usage_total_tokens TYPE bigint;
+      ALTER TABLE project.tasks ALTER COLUMN token_usage_input_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_output_tokens'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN token_usage_output_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_cached_tokens'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN token_usage_cached_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_cache_write_tokens'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN token_usage_cache_write_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'token_usage_total_tokens'
+    ) THEN
+      ALTER TABLE project.tasks ALTER COLUMN token_usage_total_tokens TYPE bigint;
     END IF;
 
     IF EXISTS (
@@ -62,12 +86,31 @@ BEGIN
       SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'input_tokens'
     ) THEN
-      ALTER TABLE project.chat_token_usage
-        ALTER COLUMN input_tokens TYPE bigint,
-        ALTER COLUMN output_tokens TYPE bigint,
-        ALTER COLUMN cached_tokens TYPE bigint,
-        ALTER COLUMN cache_write_tokens TYPE bigint,
-        ALTER COLUMN total_tokens TYPE bigint;
+      ALTER TABLE project.chat_token_usage ALTER COLUMN input_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'output_tokens'
+    ) THEN
+      ALTER TABLE project.chat_token_usage ALTER COLUMN output_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'cached_tokens'
+    ) THEN
+      ALTER TABLE project.chat_token_usage ALTER COLUMN cached_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'cache_write_tokens'
+    ) THEN
+      ALTER TABLE project.chat_token_usage ALTER COLUMN cache_write_tokens TYPE bigint;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_token_usage' AND column_name = 'total_tokens'
+    ) THEN
+      ALTER TABLE project.chat_token_usage ALTER COLUMN total_tokens TYPE bigint;
     END IF;
   END IF;
 END

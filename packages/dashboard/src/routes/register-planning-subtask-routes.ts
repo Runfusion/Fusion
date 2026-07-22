@@ -1,7 +1,6 @@
 import {
   DEFAULT_TASK_PRIORITY,
   formatPlanningPlanMd,
-  MessageStore,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -17,7 +16,6 @@ import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
-import { requireAsyncLayer } from "../require-async-layer.js";
 import { randomUUID } from "node:crypto";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
@@ -76,27 +74,9 @@ function rethrowPlanningWorkflowCreateError(
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
   const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
   const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
-  const messageStoreCache = new Map<string, MessageStore>();
-  const getPlanningMessageStore = async (req: import("express").Request): Promise<MessageStore | undefined> => {
-    try {
-      const { store: scopedStore, engine } = await getProjectContext(req);
-      const runtimeStore = engine?.getMessageStore();
-      if (runtimeStore) return runtimeStore;
-      const rootDir = scopedStore.getRootDir();
-      const cached = messageStoreCache.get(rootDir);
-      if (cached) return cached;
-      const created = new MessageStore(null, { asyncLayer: requireAsyncLayer(scopedStore, "Planning MessageStore") });
-      messageStoreCache.set(rootDir, created);
-      return created;
-    } catch (error) {
-      planningLogger.warn("Planning mailbox unavailable; continuing without inbox delivery", { error: String(error) });
-      return undefined;
-    }
-  };
-  const planningRuntime = async (req: import("express").Request, settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
+  const planningRuntime = (settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
     clarificationEnabled: settings.agentClarificationEnabled === true,
     ntfyConfig: { enabled: settings.ntfyEnabled ?? false, topic: settings.ntfyTopic, ntfyBaseUrl: settings.ntfyBaseUrl, dashboardHost: settings.ntfyDashboardHost, events: settings.ntfyEvents },
-    messageStore: await getPlanningMessageStore(req),
   });
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
@@ -551,10 +531,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       /*
       FNXC:AgentClarification 2026-07-16-16:10:
       The legacy synchronous planning-start endpoint can emit the initial proactive question too.
-      Attach live notification and mailbox dependencies here so it follows the same setting-gated
-      hold and delivery contract as streaming Planning Mode.
+      Attach live notification settings here so it follows the same setting-gated hold and
+      delivery contract as streaming Planning Mode.
       */
-      const runtime = await planningRuntime(req, settings);
+      const runtime = planningRuntime(settings);
 
       const { createSession, RateLimitError: _RateLimitError } = await import("../planning.js");
       const result = await createSession(
@@ -709,7 +689,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
       const resolvedClarificationEnabled = clarificationEnabled ?? settings.agentClarificationEnabled ?? false;
-      const runtime = await planningRuntime(req, settings);
+      const runtime = planningRuntime(settings);
       runtime.clarificationEnabled = resolvedClarificationEnabled;
 
       // Resolve planning model using canonical lane hierarchy:
@@ -914,7 +894,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { submitResponse, attachPlanningRuntime, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
-      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
       const result = await submitResponse(
         sessionId,
         responses,
@@ -951,7 +931,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { rewindSession, attachPlanningRuntime } = await import("../planning.js");
-      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
       const rewound = await rewindSession(
         sessionId,
         questionId,
@@ -991,7 +971,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { retrySession, attachPlanningRuntime } = await import("../planning.js");
-      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
       await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
       res.json({ success: true, sessionId });
     } catch (err: unknown) {
@@ -1163,7 +1143,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       } = await import("../planning.js");
 
       let session = await getSession(sessionId);
-      if (session && !session.validated) throw badRequest("Planning session must be validated before creating tasks");
       let summary = summaryOverride ?? getSummary(sessionId);
       let initialPlan = session?.initialPlan;
 
@@ -1177,18 +1156,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
-        const persistedInput = JSON.parse(persistedSession.inputPayload) as { validated?: unknown };
-        if (persistedSession.status !== "complete" || persistedInput.validated !== true) {
-          throw badRequest("Planning session must be validated before creating tasks");
-        }
-
-        if (!persistedSession.result) {
+        const persistedResult = persistedSession.result;
+        if (!summaryOverride && !persistedResult) {
           throw badRequest("Planning session result is not available");
         }
 
         if (!summaryOverride) {
           try {
-            const parsedSummary = JSON.parse(persistedSession.result) as {
+            const parsedSummary = JSON.parse(persistedResult as string) as {
               title?: unknown;
               description?: unknown;
               suggestedSize?: unknown;
@@ -1297,7 +1272,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       */
       /*
       FNXC:PlanningMode 2026-07-20-12:00:
-      FN-8441 hands the validated lean plan to triage as task description plus a plan
+      FN-8441 hands the current lean plan to triage as task description plus a plan
       document. The raw session request remains a separate original-description document.
       */
       const planMd = formatPlanningPlanMd(summary);

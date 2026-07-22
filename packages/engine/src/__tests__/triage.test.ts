@@ -1627,6 +1627,45 @@ Planner rewrote mission without the raw request.
     }
   });
 
+  it("does not release planning to todo when the authoritative PROMPT.md disappears before transition", async () => {
+    const task = createTriageTask({ id: "FN-MISSING-RELEASE", status: "planning", recoveryRetryCount: 0 });
+    const tempRoot = await mkdtemp(join(tmpdir(), "fusion-missing-release-"));
+    try {
+      const taskDir = join(tempRoot, ".fusion", "tasks", task.id);
+      await mkdir(taskDir, { recursive: true });
+      const written = `# Task: ${task.id} - Missing release artifact\n\n## Steps\n\n### Step 1: Implement\n\n- [ ] Do the work\n`;
+      await writeFile(join(taskDir, "PROMPT.md"), written, "utf-8");
+      const localStore = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, prompt: "" }),
+        recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+      });
+      const localProcessor = new TriageProcessor(localStore, tempRoot);
+
+      await (localProcessor as any).finalizeApprovedTask(task, written, { requirePlanApproval: false } as Settings);
+
+      expect(localStore.moveTaskIf).not.toHaveBeenCalled();
+      for (const [, patch] of localStore.updateTask.mock.calls) {
+        expect(patch).not.toEqual(expect.objectContaining({
+          steps: expect.anything(),
+        }));
+        expect(patch).not.toEqual(expect.objectContaining({
+          sourceMetadataPatch: expect.anything(),
+        }));
+      }
+      expect(localStore.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+        status: null,
+        recoveryRetryCount: 1,
+        nextRecoveryAt: expect.any(String),
+      }));
+      expect(localStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:required-artifact-missing",
+        metadata: expect.objectContaining({ source: "planning-release", action: "replan" }),
+      }));
+    } finally {
+      await cleanupTriageFixtureRoot(tempRoot);
+    }
+  });
+
   it("includes workflow discovery and selection tools in the full triage toolset", async () => {
     const task = createTriageTask({ id: "FN-WORKFLOW-TOOLS" });
     const detailedTask = { ...mockTaskDetail, id: task.id, attachments: [], comments: [] };
@@ -1677,7 +1716,7 @@ Planner rewrote mission without the raw request.
   });
 
   describe("poll ordering", () => {
-    it("dispatches eligible triage tasks by priority desc then createdAt asc", async () => {
+    it("dispatches eligible triage tasks by createdAt asc", async () => {
       const tasks: Task[] = [
         createTriageTask({
           id: "FN-100",
@@ -1721,10 +1760,10 @@ Planner rewrote mission without the raw request.
 
       expect(specifySpy).toHaveBeenCalledTimes(4);
       expect(specifySpy.mock.calls.map(([task]) => task.id)).toEqual([
-        "FN-101",
+        "FN-100",
         "FN-103",
         "FN-102",
-        "FN-100",
+        "FN-101",
       ]);
     });
 
@@ -1802,6 +1841,7 @@ Planner rewrote mission without the raw request.
           ...createTriageTask({ id: "FN-EXEC", priority: "normal" }),
           column: "in-progress",
           status: null,
+          sessionFile: "/tmp/fusion-fn-exec-session.json",
         } as Task,
       ];
 

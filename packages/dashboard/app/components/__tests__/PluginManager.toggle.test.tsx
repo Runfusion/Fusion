@@ -116,6 +116,44 @@ describe("PluginManager toggle switch", () => {
     });
   });
 
+  it("preserves the scoped enable response after a stale background refresh resolves", async () => {
+    vi.mocked(fetchPlugins)
+      .mockResolvedValueOnce([plugin(false)])
+      // The confirmation request can return the original host-scoped false value.
+      .mockResolvedValueOnce([plugin(false)]);
+    vi.mocked(enablePlugin).mockResolvedValueOnce(plugin(true));
+
+    render(<PluginManager addToast={addToast} projectId="project-p" />);
+
+    const checkbox = await screen.findByRole("checkbox", { name: "Enable Test Plugin A" });
+    await userEvent.click(checkbox.closest("label.toggle-switch") as HTMLLabelElement);
+
+    await waitFor(() => {
+      expect(enablePlugin).toHaveBeenCalledWith("plugin-a", "project-p");
+      expect(fetchPlugins).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("checkbox", { name: "Disable Test Plugin A" })).toBeChecked();
+    });
+  });
+
+  it("preserves the scoped disable response after a stale background refresh resolves", async () => {
+    vi.mocked(fetchPlugins)
+      .mockResolvedValueOnce([plugin(true)])
+      // The reciprocal stale response must not re-enable a plugin just disabled for P.
+      .mockResolvedValueOnce([plugin(true)]);
+    vi.mocked(disablePlugin).mockResolvedValueOnce(plugin(false));
+
+    render(<PluginManager addToast={addToast} projectId="project-p" />);
+
+    const checkbox = await screen.findByRole("checkbox", { name: "Disable Test Plugin A" });
+    await userEvent.click(checkbox.closest("label.toggle-switch") as HTMLLabelElement);
+
+    await waitFor(() => {
+      expect(disablePlugin).toHaveBeenCalledWith("plugin-a", "project-p");
+      expect(fetchPlugins).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("checkbox", { name: "Enable Test Plugin A" })).not.toBeChecked();
+    });
+  });
+
   it("renders slider next to input and reflects enabled state", async () => {
     vi.mocked(fetchPlugins).mockResolvedValue([plugin(true)]);
     const first = render(<PluginManager addToast={addToast} />);

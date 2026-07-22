@@ -166,16 +166,6 @@ vi.mock("lucide-react", () => ({
   Image: (props: any) => React.createElement("svg", { "data-testid": "image-icon", ...props }),
   FileText: (props: any) => React.createElement("svg", { "data-testid": "file-text-icon", ...props }),
   FileType: (props: any) => React.createElement("svg", { "data-testid": "file-type-icon", ...props }),
-  /*
-  FNXC:DashboardTests 2026-07-19-01:10:
-  FN-8288/FN-8291 NativeStructurePreview (via StandardChatSurface under TaskDetail)
-  imports Map/Lightbulb/BarChart3/Target for structure cards. Shared TaskDetailModal
-  lucide mock must export them or five modal suites fail at import.
-  */
-  Map: (props: any) => React.createElement("svg", { "data-testid": "map-icon", ...props }),
-  Lightbulb: (props: any) => React.createElement("svg", { "data-testid": "lightbulb-icon", ...props }),
-  BarChart3: (props: any) => React.createElement("svg", { "data-testid": "barchart3-icon", ...props }),
-  Target: (props: any) => React.createElement("svg", { "data-testid": "target-icon", ...props }),
   Video: (props: any) => React.createElement("svg", { "data-testid": "video-icon", ...props }),
   AudioLines: (props: any) => React.createElement("svg", { "data-testid": "audio-lines-icon", ...props }),
   Package: (props: any) => React.createElement("svg", { "data-testid": "package-icon", ...props }),
@@ -183,7 +173,7 @@ vi.mock("lucide-react", () => ({
   User: (props: any) => React.createElement("svg", { "data-testid": "user-icon", ...props }),
   /*
   FNXC:NativeStructureEmbed 2026-07-19-04:30:
-  FN-8291/8292/8293 mount NativeStructurePreview from chat/mail surfaces reachable via
+  FN-8288/FN-8291/8292/8293 mount NativeStructurePreview from chat/mail surfaces reachable via
   StandardChatSurface under TaskDetailModal. Keep Map/Lightbulb/BarChart3/Target/CircleAlert
   on this shared mock or every focused TaskDetailModal suite fails at import.
   */

@@ -587,11 +587,12 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   padding: 0 8px;
 }
 
-.planning-mobile-back {
-  /* Visible only on mobile (see media query below). On desktop the sidebar
-     is always visible alongside the detail pane, so a back button is never
-     needed. */
-  display: none;
+.planning-session-back {
+  display: inline-flex;
+  min-width: calc(var(--space-md) * 2.25);
+  min-height: calc(var(--space-md) * 2.25);
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text);
@@ -602,11 +603,11 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.planning-mobile-back:hover {
+.planning-session-back:hover {
   background: var(--card-hover);
 }
 
-.planning-mobile-back:focus-visible {
+.planning-session-back:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
 }
@@ -711,14 +712,6 @@ The New session button must look EXACTLY like Missions' primary sidebar create b
   .planning-modal-body--show-list .planning-detail {
     display: none;
   }
-  /* The rendered Back control needs a full touch target and must not be squeezed out of the title row. */
-  .planning-mobile-back {
-    display: inline-flex;
-    min-width: calc(var(--space-md) * 2.25);
-    min-height: calc(var(--space-md) * 2.25);
-    align-items: center;
-    justify-content: center;
-  }
   /* Always keep action buttons visible on mobile (no hover) */
   .planning-sidebar-item-delete,
   .planning-sidebar-item-archive {
@@ -787,7 +780,7 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   gap: var(--space-sm);
   padding: var(--space-md);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
 }
 
@@ -1050,16 +1043,21 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
 }
 
 /* Question View */
+/*
+FNXC:PlanningMode 2026-07-21-16:47:
+The interview workspace no longer insets the question/plan panes with outer padding or inter-pane gap.
+That gutter read as dead space around the framed cards; panes now sit flush edge-to-edge with a single column divider, matching Missions split layout and the desktop flush rules below.
+*/
 .planning-workspace {
   position: relative;
   display: grid;
   grid-template-areas: "question plan";
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
-  gap: var(--space-lg);
+  gap: 0;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-lg);
+  padding: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--card) 40%, var(--surface));
 }
@@ -1075,10 +1073,10 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: var(--radius-xl);
+  border: none;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .planning-plan-pane {
@@ -1092,6 +1090,7 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
 
 .planning-question-pane {
   grid-area: question;
+  border-right: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
 }
 
 .planning-workspace--generating > .planning-plan-pane,
@@ -1662,6 +1661,42 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
   min-height: calc(var(--space-2xl) + var(--space-sm));
 }
 
+/*
+FNXC:PlanningMode 2026-07-21-09:15:
+Desktop Planning panes already own their framed surfaces, so their scroll content must sit flush and their action rows must share a compact baseline. Scope these overrides to Planning's pane wrappers and desktop breakpoint so shared Mission/Milestone interview classes and compact safe-area padding retain their existing presentation.
+
+FNXC:PlanningMode 2026-07-21-18:41:
+Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell below the 1025px flush gate, so the right plan pane still stacked scroll padding + card chrome. Lower the gate to 769px so tablet inherits the flush pane treatment; phone (≤768) keeps its own mobile flush block.
+*/
+@media (min-width: 769px) {
+  .planning-question-pane .planning-question-scroll,
+  .planning-plan-pane .planning-plan-scroll {
+    padding: 0;
+  }
+
+  .planning-question-pane .planning-question-panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 0;
+  }
+
+  .planning-plan-pane .planning-plan-document {
+    width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .planning-question-pane .planning-actions,
+  .planning-plan-actions {
+    padding: var(--space-sm) var(--space-xl);
+  }
+
+  .planning-question-pane .planning-actions .btn,
+  .planning-plan-actions .btn {
+    min-height: calc(var(--space-2xl) + var(--space-sm));
+  }
+}
+
 .planning-refine-menu {
   position: absolute;
   right: var(--space-xl);
@@ -1797,14 +1832,6 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
     display: none;
   }
 
-  .planning-mobile-back {
-    display: inline-flex;
-    min-width: calc(var(--space-md) * 2.25);
-    min-height: calc(var(--space-md) * 2.25);
-    align-items: center;
-    justify-content: center;
-  }
-
   .planning-summary-actions {
     flex-wrap: wrap;
     align-items: flex-start;
@@ -1861,6 +1888,72 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
   gap: var(--space-lg);
   padding: var(--space-xl);
   color: var(--text-muted);
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-23:20:
+Successful plan creation remains a compact handoff instead of closing Planning or presenting
+another review screen. Reuse the shared button primitives and semantic success token so both
+mobile and desktop offer the same View task / Return to sessions choices.
+*/
+.planning-task-created {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.planning-task-created-icon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-2xl) + var(--space-lg));
+  aspect-ratio: 1;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-success) 35%, var(--border));
+  border-radius: 50%;
+}
+
+.planning-task-created-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: calc(var(--space-2xl) * 12);
+}
+
+.planning-task-created-copy h4,
+.planning-task-created-copy p {
+  margin: 0;
+}
+
+.planning-task-created-copy p {
+  color: var(--text-muted);
+}
+
+.planning-task-created-id {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.planning-task-created-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.planning-task-created-actions .btn {
+  justify-content: center;
 }
 
 /* AI Thinking Output Display */
@@ -2051,6 +2144,15 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 
 /* Responsive */
 @media (max-width: 768px) {
+  .planning-task-created-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .planning-task-created-actions .btn {
+    width: 100%;
+  }
+
   .planning-modal--embedded .modal-header--embedded {
     align-content: center;
     flex-wrap: wrap;
@@ -2061,7 +2163,7 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
   /*
   FNXC:PlanningModeMobile 2026-07-20-21:50:
   The Planning detail header keeps Back, the lightbulb, a single-line truncated title, and Edit on
-  one row. Fixed icon controls may not shrink; only the title yields space before Sessions/History.
+  one row. Fixed icon controls may not shrink; only the title yields space before History.
   */
 
   .planning-modal--embedded .modal-header--embedded .detail-title-row {
@@ -2083,7 +2185,7 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 
   .planning-modal--embedded .modal-header--embedded .detail-title-row > svg,
   .planning-modal--embedded .modal-header--embedded .detail-title-row > .btn-icon,
-  .planning-modal--embedded .modal-header--embedded .planning-mobile-back {
+  .planning-modal--embedded .modal-header--embedded .planning-session-back {
     flex: 0 0 auto;
   }
 
@@ -2094,7 +2196,7 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 
   .planning-header-controls {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     width: 100%;
   }
 
@@ -2113,10 +2215,18 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
     padding: var(--space-lg);
   }
 
+  /*
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Mobile question and plan-review panes were double-inset: workspace gutter + scroll padding + nested card chrome on top of the pane frame. Drop the outer gutter and pane chrome so content sits flush edge-to-edge like desktop, keep a light tab strip inset, and leave readable content padding on the question panel / plan document only. Clear the desktop column divider so a solo question/plan card is not edged by a right border.
+  */
   .planning-workspace {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-md);
-    padding: var(--space-md);
+    gap: 0;
+    padding: 0;
+  }
+
+  .planning-question-pane {
+    border-right: none;
   }
 
   .planning-workspace--mobile-tab-question,
@@ -2132,6 +2242,7 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-xs);
+    margin: var(--space-sm) var(--space-sm) 0;
     padding: var(--space-xs);
     border: solid var(--btn-border-width) var(--border);
     border-radius: var(--radius-lg);
@@ -2179,7 +2290,33 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 
   .planning-plan-pane,
   .planning-question-pane {
-    border-radius: var(--radius-lg);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Scope flush scroll overrides to Planning's pane wrappers so shared Mission/Milestone interview
+  classes keep their existing mobile view-scroll padding.
+  */
+  .planning-question-pane .planning-question-scroll,
+  .planning-plan-pane .planning-plan-scroll {
+    padding: 0;
+  }
+
+  .planning-question-pane .planning-question-panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 0;
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+  }
+
+  .planning-plan-pane .planning-plan-document {
+    width: 100%;
+    padding: var(--space-lg);
+    border-radius: 0;
+    box-shadow: none;
   }
 
   /* FNXC:PlanningMode 2026-06-22-15:30: this legacy full-viewport sheet sizing

@@ -1725,11 +1725,15 @@ describe("reviewStep — provider errors are not review verdicts", () => {
     mockedPromptWithFallback.mockRejectedValue(new Error(RATE_LIMIT_ERROR));
 
     const error = await reviewStep(
-      "/tmp/worktree", "FN-RL", 2, "Rate limited", "code", "# prompt", "abc123", {},
+      "/tmp/worktree", "FN-RL", 2, "Rate limited", "code", "# prompt", "abc123", {
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet",
+      },
     ).then(() => null, (err: unknown) => err);
 
     expect(error).toBeInstanceOf(ReviewerProviderError);
     expect((error as ReviewerProviderError).classification).toBe("usage-limit");
+    expect((error as ReviewerProviderError).provider).toBe("anthropic");
     // The reported bug: with no configured fallback the ladder re-ran the SAME model
     // immediately, so a 429 spawned a second session (and a second identical marker).
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);

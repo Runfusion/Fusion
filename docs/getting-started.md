@@ -62,6 +62,8 @@ fusion --help
 
 If `fn update` fails with an npm bin-link collision (for example `EEXIST` / `File exists` mentioning `fn` or `fusion`), Fusion now retries once with `--force` automatically.
 
+Older CLI installations may predate `fn update --channel beta`. Bootstrap directly onto the beta dist-tag with `npm install -g @runfusion/fusion@beta`, then use `fn update --channel beta` to persist that track. `fn update` rejects unknown or duplicate options with a non-zero exit code, so check spelling when it reports an option error.
+
 If update still fails, run the manual recovery commands:
 
 ```bash

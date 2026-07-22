@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task } from "@fusion/core";
+import type { Task, TraitFlags } from "@fusion/core";
+import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgentTask } from "../../../core/src/live-agent-count";
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
 import { isTaskStuck } from "../utils/taskStuck";
@@ -58,10 +59,18 @@ function deriveExecutorState(
 /**
  * Derive statistics from the task list.
  *
- * FNXC:ExecutorStatusBar 2026-07-03-00:18:
- * Footer task counters must mirror the board's operator-facing active work states: Queued includes todo plus planning/triage work, Running and Stuck stay scoped to in-progress execution, Done remains absent from the footer contract unless a labeled Done segment is introduced, and archived/completed/non-planning custom lanes never inflate active pressure counts.
+ * FNXC:ExecutorStatusBar 2026-07-21-14:30:
+ * FN-8453 / #2359 requires footer capacity indicators to share the live top-level
+ * agent predicate with admission: Waiting is trait-derived intake/hold membership,
+ * Running is unpaused WIP plus live planners/reviewers, and custom columns require
+ * task-scoped workflow flags rather than legacy column-id assumptions.
+ *
+ * FNXC:ExecutorStatusBar 2026-07-21-19:00:
+ * Do not require task.sessionFile for Running — it is not on board/listTasks rows.
  */
-function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFetchTimeMs?: number): Pick<
+export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
+
+export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFetchTimeMs?: number, columnFlagsById?: ReadonlyMap<string, ExecutorColumnFlags>, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): Pick<
   ExecutorStats,
   "runningTaskCount" | "blockedTaskCount" | "stuckTaskCount" | "queuedTaskCount" | "inReviewCount"
 > {
@@ -72,27 +81,15 @@ function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFe
   let inReviewCount = 0;
 
   for (const task of tasks) {
-    switch (task.column) {
-      case "in-progress":
-        runningTaskCount++;
-        if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs)) {
-          stuckTaskCount++;
-        }
-        break;
-      case "todo":
-      case "triage":
-        queuedTaskCount++;
-        break;
-      case "in-review":
-        inReviewCount++;
-        break;
-      default:
-        if (task.status === "planning" && !isTerminalOrActiveTaskColumn(task.column)) {
-          queuedTaskCount++;
-        }
-        break;
+    // Task-scoped flags preserve custom workflow meaning when aggregate boards reuse column ids.
+    const enriched = enrichRunningAgentTaskShapeFromFlags(task, columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column));
+    if (isRunningAgentTask(enriched)) {
+      runningTaskCount++;
+      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs)) stuckTaskCount++;
     }
-
+    if (isWaitingAgentTask(enriched)) queuedTaskCount++;
+    // Kept in the API shape for compatibility; the footer no longer renders it.
+    if (task.column === "in-review") inReviewCount++;
     if (hasActionableBlockedBy(task.blockedBy)) {
       blockedTaskCount++;
     }
@@ -105,10 +102,6 @@ function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFe
     queuedTaskCount,
     inReviewCount,
   };
-}
-
-function isTerminalOrActiveTaskColumn(column: Task["column"]): boolean {
-  return column === "in-progress" || column === "in-review" || column === "done" || column === "archived";
 }
 
 function hasActionableBlockedBy(blockedBy: Task["blockedBy"] | string[] | null): boolean {
@@ -140,7 +133,7 @@ const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "lastActivityAt"> 
   maxConcurrent: 2,
 };
 
-export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTimeoutMs?: number, lastFetchTimeMs?: number): UseExecutorStatsResult {
+export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTimeoutMs?: number, lastFetchTimeMs?: number, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): UseExecutorStatsResult {
 
   const [apiDataState, setApiDataState] = useState<{
     projectId?: string;
@@ -255,7 +248,7 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
   const effectiveLoading = loading || (!error && !currentProjectApiDataState);
 
   // Derive stats from tasks and API data
-  const taskStats = deriveStatsFromTasks(tasks, taskStuckTimeoutMs, lastFetchTimeMs);
+  const taskStats = deriveStatsFromTasks(tasks, taskStuckTimeoutMs, lastFetchTimeMs, undefined, columnFlagsByTaskId);
   const executorState = deriveExecutorState(
     apiData.globalPause,
     apiData.enginePaused,

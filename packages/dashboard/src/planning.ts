@@ -24,7 +24,6 @@ import type {
   MessageStore,
 } from "@fusion/core";
 import {
-  DASHBOARD_USER_ID,
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -73,13 +72,16 @@ type AgentMessage = {
 
 const PLANNING_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 type PlanningMcpServers = Awaited<ReturnType<typeof resolveMcpServersForStore>>["servers"];
+/*
+FNXC:PlanningMode 2026-07-21-09:15:
+Planning questions must never create dashboard Mailbox messages. Retain the optional MessageStore input only as a source-compatible no-op for callers compiled against the prior planning API while route and session code omit every mailbox read/write path.
+*/
 type PlanningSessionOptions = {
   projectId?: string;
   ntfyConfig?: PlanningNtfyConfig;
   clarificationEnabled?: boolean;
   /** Workflow selected by the planning entry point; retained for agent rebuilds. */
   workflowId?: string;
-  /** Runtime-only mailbox dependency; never serialize this store. */
   messageStore?: MessageStore;
   pluginRunner?: SkillPluginRunner;
 };
@@ -304,7 +306,10 @@ export const DRAFT_PLACEHOLDER_TITLE = "New planning session";
 export interface DraftInputPayload {
   initialPlan?: string;
   generationPurpose?: "initial_plan" | "plan_update" | "question";
+  generationStartedAt?: string;
+  generationReturnQuestion?: PlanningQuestion;
   clarificationEnabled?: boolean;
+  /* FNXC:PlanningMode 2026-07-21-09:15: Keep old payloads source-compatible without reading or writing this retired mailbox dedupe marker. */
   lastMailboxNotifiedQuestionKey?: string;
   modelProvider?: string;
   modelId?: string;
@@ -341,7 +346,6 @@ export const GENERATION_LOOP_REPEAT_LIMIT = 8;
 
 const PLANNING_STUCK_ERROR_MESSAGE = "AI generation appears stuck with no new output. You can retry or start a new session.";
 const PLANNING_LOOP_ERROR_MESSAGE = "AI generation appears stuck repeating the same output. You can retry or start a new session.";
-const PLANNING_USER_STOP_ERROR_MESSAGE = "Generation stopped by user. You can retry or start a new session.";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -380,13 +384,9 @@ interface Session {
   ntfyConfig?: PlanningNtfyConfig;
   /** Persisted per-session override for proactive AI clarification checkpoints. */
   clarificationEnabled?: boolean;
-  /** Runtime-only mailbox dependency, attached by the current route. */
-  messageStore?: MessageStore;
   autoMerge?: boolean;
   /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
   lastNotifiedQuestionKey?: string;
-  /** Durable fast-path marker; the inbox lookup remains authoritative after a crash. */
-  lastMailboxNotifiedQuestionKey?: string;
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   /** Question currently being edited; history is preserved rather than truncated. */
@@ -401,6 +401,10 @@ interface Session {
   claimStartedAt?: string;
   /** Whether the current generation must end at plan review rather than a question. */
   generationPurpose?: "initial_plan" | "plan_update" | "question";
+  /** Durable start time for the active turn so each concurrent session owns its elapsed clock. */
+  generationStartedAt?: string;
+  /** Question restored when the user stops the active turn. */
+  generationReturnQuestion?: PlanningQuestion;
   /** Last terminal error for retry UX */
   error?: string;
   /** AI agent session for real-time interaction */
@@ -612,7 +616,8 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
         ? { clarificationEnabled: session.clarificationEnabled }
         : {}),
       ...(session.generationPurpose ? { generationPurpose: session.generationPurpose } : {}),
-      ...(session.lastMailboxNotifiedQuestionKey ? { lastMailboxNotifiedQuestionKey: session.lastMailboxNotifiedQuestionKey } : {}),
+      ...(session.generationStartedAt ? { generationStartedAt: session.generationStartedAt } : {}),
+      ...(session.generationReturnQuestion ? { generationReturnQuestion: session.generationReturnQuestion } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -674,6 +679,21 @@ function unpersistSession(sessionId: string): Promise<void> {
     }
   });
   return queued;
+}
+
+/*
+FNXC:PlanningMode 2026-07-21-00:25:
+Each active planning turn owns a durable clock and return point. A modal-level Date.now()
+clock makes concurrent sessions appear synchronized, while clearing the question before
+generation leaves Stop with nowhere safe to return. Persist both at the turn boundary.
+*/
+function beginPlanningGeneration(
+  session: Session,
+  purpose: NonNullable<Session["generationPurpose"]>,
+): void {
+  session.generationPurpose = purpose;
+  session.generationStartedAt = new Date().toISOString();
+  session.generationReturnQuestion = session.currentQuestion ?? session.generationReturnQuestion;
 }
 
 /** Release in-memory planning runtime state while keeping persisted history. */
@@ -752,8 +772,11 @@ function buildSessionFromRow(row: AiSessionRow): Session {
       || payload.generationPurpose === "question"
       ? payload.generationPurpose
       : undefined,
-    lastMailboxNotifiedQuestionKey: typeof payload.lastMailboxNotifiedQuestionKey === "string"
-      ? payload.lastMailboxNotifiedQuestionKey
+    generationStartedAt: typeof payload.generationStartedAt === "string"
+      ? payload.generationStartedAt
+      : undefined,
+    generationReturnQuestion: payload.generationReturnQuestion && typeof payload.generationReturnQuestion === "object"
+      ? normalizePlanningQuestion(payload.generationReturnQuestion, payload.initialPlan ?? row.title)
       : undefined,
     history,
     currentQuestion,
@@ -1079,10 +1102,10 @@ export async function createSession(
     clarificationEnabled: options?.clarificationEnabled === true,
     workflowId: options?.workflowId,
     ntfyConfig: options?.ntfyConfig,
-    messageStore: options?.messageStore,
   };
 
   sessions.set(sessionId, session);
+  beginPlanningGeneration(session, "initial_plan");
   persistSession(session, "generating");
 
   const systemPrompt = await resolvePlanningModeSystemPrompt(store, promptOverrides, session.workflowId);
@@ -1586,9 +1609,8 @@ export async function startExistingSession(
   if (runtimeOptions) {
     session.clarificationEnabled = runtimeOptions.clarificationEnabled === true;
     session.ntfyConfig = runtimeOptions.ntfyConfig;
-    session.messageStore = runtimeOptions.messageStore;
   }
-  session.generationPurpose = "initial_plan";
+  beginPlanningGeneration(session, "initial_plan");
   await persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
@@ -1659,7 +1681,6 @@ export async function createSessionWithAgent(
         }
       : undefined,
     clarificationEnabled: options?.clarificationEnabled === true,
-    messageStore: options?.messageStore,
     history: [],
     summary: buildRunningSummary(initialPlan, []),
     validated: false,
@@ -1672,7 +1693,7 @@ export async function createSessionWithAgent(
   };
 
   sessions.set(sessionId, session);
-  session.generationPurpose = "initial_plan";
+  beginPlanningGeneration(session, "initial_plan");
   await persistSession(session, "generating");
 
   planningStreamManager.registerInitialTurn(sessionId, () => {
@@ -1914,43 +1935,6 @@ async function maybeNotifyPlanningAwaitingInput(
 ): Promise<void> {
   const questionKey = `${session.id}:${question.id}`;
 
-  /*
-  FNXC:AgentClarification 2026-07-16-12:00:
-  Proactive planner questions use an inbox message independently of ntfy. The
-  inbox lookup is authoritative because a process can die after sendMessage but
-  before the persisted marker write; ntfy remains best-effort and separately deduped.
-
-  FNXC:MailboxRelatedWork 2026-07-20-09:30:
-  FN-8428 relies on this stable kind/sessionId/questionId tuple to deduplicate clarification
-  notices and open the exact Planning session from mailbox detail. Keep the readable question in
-  the body, but never replace these metadata fields with a markdown-only navigation link.
-  */
-  if (proactiveClarification && session.clarificationEnabled && session.messageStore
-    && session.lastMailboxNotifiedQuestionKey !== questionKey) {
-    try {
-      const inbox = await session.messageStore.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
-      const delivered = inbox.some((message) => message.metadata?.kind === "planning-clarification"
-        && message.metadata?.sessionId === session.id && message.metadata?.questionId === question.id);
-      if (!delivered) {
-        await session.messageStore.sendMessage({
-          fromType: "system",
-          toType: "user",
-          toId: DASHBOARD_USER_ID,
-          type: "system",
-          content: `Planning needs your answer in the planner chat: ${question.question}`,
-          metadata: { kind: "planning-clarification", sessionId: session.id, questionId: question.id },
-        });
-      }
-      session.lastMailboxNotifiedQuestionKey = questionKey;
-      await persistSession(session, "awaiting_input");
-    } catch (error) {
-      diagnostics.warn("Failed to deliver planning clarification mailbox message", {
-        sessionId: session.id, questionId: question.id,
-        error: error instanceof Error ? error.message : String(error), operation: "planning-clarification-mailbox",
-      });
-    }
-  }
-
   // Summary deepening checkpoints retain their existing ntfy behavior regardless
   // of the clarification preference; only proactive questions are setting-gated.
   if (proactiveClarification && !session.clarificationEnabled) return;
@@ -2104,14 +2088,6 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
 
   try {
     return await Promise.race([operation(abortController.signal), abortPromise]);
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      const reason = generationRecord.abortReason;
-      if (reason === "user-stop" && !session.error) {
-        setSessionError(session, PLANNING_USER_STOP_ERROR_MESSAGE);
-      }
-    }
-    throw error;
   } finally {
     clearTimeout(generationRecord.timer);
     if (activeGenerations.get(session.id) === generationRecord) {
@@ -2480,6 +2456,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
       session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       session.generationPurpose = undefined;
+      session.generationStartedAt = undefined;
+      session.generationReturnQuestion = undefined;
       session.currentQuestion = coerceQuestionResponse(parsed, session);
       await persistSession(session, "awaiting_input");
       planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
@@ -2835,8 +2813,8 @@ export async function submitResponse(
   if (isRefineRequest(responses) && session.summary) {
     // Refinement steers which question comes next; it is never an answer to the
     // currently displayed question and therefore must not create a history entry.
+    beginPlanningGeneration(session, "question");
     session.currentQuestion = undefined;
-    session.generationPurpose = "question";
     session.error = undefined;
     await persistSession(session, "generating");
 
@@ -2877,8 +2855,8 @@ export async function submitResponse(
 
     // Clear the answered question while generation is active so reconnects cannot replay it.
     // The completed turn persists and broadcasts exactly one newly generated question.
+    beginPlanningGeneration(session, "plan_update");
     session.currentQuestion = undefined;
-    session.generationPurpose = "plan_update";
     await persistSession(session, "generating");
     if (!session.agent) {
       // An edited older answer must be replayed in its original position with every
@@ -2962,7 +2940,7 @@ export async function retrySession(
   */
   session.currentQuestion = undefined;
   session.updatedAt = new Date();
-  session.generationPurpose = session.history.length === 0 ? "initial_plan" : "plan_update";
+  beginPlanningGeneration(session, session.history.length === 0 ? "initial_plan" : "plan_update");
   await persistSession(session, "generating");
 
   if (session.history.length === 0) {
@@ -3058,7 +3036,35 @@ export function stopGeneration(sessionId: string): boolean {
   activeGeneration.abortController.abort();
   activeGenerations.delete(sessionId);
 
-  setSessionError(session, PLANNING_USER_STOP_ERROR_MESSAGE);
+  const returnQuestion = session.generationReturnQuestion;
+  const stoppedPurpose = session.generationPurpose;
+  session.error = undefined;
+  session.thinkingOutput = "";
+  session.generationPurpose = undefined;
+  session.generationStartedAt = undefined;
+  session.generationReturnQuestion = undefined;
+  session.updatedAt = new Date();
+
+  if (returnQuestion) {
+    session.currentQuestion = returnQuestion;
+    session.editingQuestionId = session.history.some((entry) => entry.question.id === returnQuestion.id)
+      ? returnQuestion.id
+      : undefined;
+    session.summary = buildRunningSummary(session.initialPlan, session.history, session.summary);
+    void persistSession(session, "awaiting_input");
+    planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+    planningStreamManager.broadcast(session.id, { type: "question", data: returnQuestion });
+  } else {
+    session.currentQuestion = undefined;
+    session.editingQuestionId = undefined;
+    // A stopped initial turn with a usable running plan resumes at plan review; only a turn
+    // stopped before any plan exists returns to the initial draft editor.
+    const hasReviewablePlan = Boolean(session.summary);
+    void persistSession(session, hasReviewablePlan || stoppedPurpose !== "initial_plan" ? "awaiting_input" : "draft");
+    if (session.summary) {
+      planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+    }
+  }
   return true;
 }
 
@@ -3252,12 +3258,11 @@ export async function attachPlanningRuntime(
   /*
   FNXC:AgentClarification 2026-07-16-16:15:
   The following mutator owns the authoritative missing-session error. Runtime
-  attachment is best-effort so restored live sessions receive current ntfy and
-  mailbox dependencies without changing existing route error semantics.
+  attachment is best-effort so restored live sessions receive current ntfy
+  settings without changing existing route error semantics.
   */
   if (!session) return;
   session.ntfyConfig = options.ntfyConfig;
-  session.messageStore = options.messageStore;
   // Persisted session choice wins on resumed sessions; route defaults only fill old rows.
   if (session.clarificationEnabled === undefined) session.clarificationEnabled = options.clarificationEnabled === true;
 }
@@ -3329,7 +3334,7 @@ export async function getDurablePlanningSession(sessionId: string): Promise<Sess
   return row?.type === "planning" ? restoreClaimSession(row) : undefined;
 }
 
-/** Atomically claim a validated planning session for its one task creation. */
+/** Atomically claim a planning session for its one task creation. */
 export async function claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string): Promise<Session | undefined> {
   if (!_aiSessionStore || typeof (_aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown }).claimPlanningTaskCreation !== "function") {
     const session = await getSession(sessionId);

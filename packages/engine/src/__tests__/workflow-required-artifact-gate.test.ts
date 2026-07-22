@@ -5,8 +5,8 @@ import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
 import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
 
 /*
-FNXC:WorkflowGates 2026-06-17-18:24:
-FN-6582 requires terminal workflow success to depend on declared task-document artifact key existence, not only graph node success. Missing declared keys keep the run incomplete/failed; empty document content still counts as present because the MVP artifact contract currently requires existence.
+FNXC:WorkflowArtifacts 2026-07-21-17:00:
+FN-6582 requires terminal workflow success to depend on declared task-document artifact key existence, not only graph node success. Planning-owned and step-source artifacts must also be non-empty because downstream execution cannot consume an empty contract.
 */
 
 const task = { id: "FN-6582" } as TaskDetail;
@@ -79,7 +79,7 @@ describe("workflow required-artifact terminal gate", () => {
     expect(getTaskDocument).toHaveBeenCalledWith(task.id, "plan");
   });
 
-  it("completes when every declared task-document artifact key exists, including whitespace content", async () => {
+  it("fails when a planning input exists but contains only whitespace", async () => {
     const ir = trivialIr([
       { key: "plan", role: "step-source" },
       { key: "evidence", role: "context" },
@@ -91,9 +91,20 @@ describe("workflow required-artifact terminal gate", () => {
 
     const result = await runtime.run(task, settings);
 
+    expect(result.disposition).toBe("failed");
+    expect(result.reason).toBe("workflow-required-artifacts-missing:plan");
+    expect(result.context["workflow:required-artifacts:missing"]).toEqual(["plan"]);
+  });
+
+  it("allows an empty context artifact when its contract requires presence only", async () => {
+    const { runtime } = runtimeFor(
+      trivialIr([{ key: "evidence", role: "context" }]),
+      new Map([["evidence", ""]]),
+    );
+
+    const result = await runtime.run(task, settings);
+
     expect(result.disposition).toBe("completed");
-    expect(result.outcome).toBe("success");
-    expect(result.context["workflow:required-artifacts:missing"]).toBeUndefined();
   });
 
   it("reports all missing keys for multi-artifact workflows", async () => {

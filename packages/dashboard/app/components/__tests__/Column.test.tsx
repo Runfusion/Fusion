@@ -109,9 +109,11 @@ describe("Column count-flash", () => {
     const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
 
-    const badge = screen.getByText("1");
+    // Badge is active/total (0/1 for triage without a live planner).
+    const badge = screen.getByText("1").parentElement!;
     expect(badge.className).toContain("column-count");
     expect(badge.className).not.toContain("count-flash");
+    expect(badge).toHaveTextContent("0/1");
   });
 
   it("applies count-flash class when task count increases", () => {
@@ -121,8 +123,9 @@ describe("Column count-flash", () => {
     const moreTasks = [makeTask("FN-001"), makeTask("FN-002")];
     rerender(<Column {...defaultProps} tasks={moreTasks} />);
 
-    const badge = screen.getByText("2");
+    const badge = screen.getByText("2").parentElement!;
     expect(badge.className).toContain("count-flash");
+    expect(badge).toHaveTextContent("0/2");
   });
 
   it("does not apply count-flash class when task count decreases", () => {
@@ -132,8 +135,46 @@ describe("Column count-flash", () => {
     const fewerTasks = [makeTask("FN-001")];
     rerender(<Column {...defaultProps} tasks={fewerTasks} />);
 
-    const badge = screen.getByText("1");
+    const badge = screen.getByText("1").parentElement!;
     expect(badge.className).not.toContain("count-flash");
+  });
+
+  it("shows accurate executing/total for WIP (unpaused active over card total)", () => {
+    const tasks = [
+      { ...makeTask("FN-001"), column: "in-progress" as ColumnType },
+      { ...makeTask("FN-002"), column: "in-progress" as ColumnType },
+      { ...makeTask("FN-003"), column: "in-progress" as ColumnType, paused: true },
+      { ...makeTask("FN-004"), column: "in-progress" as ColumnType, userPaused: true },
+    ];
+    render(
+      <Column
+        {...defaultProps}
+        column={"in-progress" as ColumnType}
+        columnFlags={{ countsTowardWip: true }}
+        tasks={tasks}
+      />,
+    );
+
+    expect(screen.getByLabelText("2 executing of 4")).toHaveTextContent("2/4");
+  });
+
+  it("counts only live planners as executing in todo (queued is not executing)", () => {
+    const tasks = [
+      { ...makeTask("FN-001"), column: "todo" as ColumnType, status: "planning" as any },
+      { ...makeTask("FN-002"), column: "todo" as ColumnType, status: "queued" as any },
+      { ...makeTask("FN-003"), column: "todo" as ColumnType, status: "queued" as any },
+      { ...makeTask("FN-004"), column: "todo" as ColumnType, status: "queued" as any },
+    ];
+    render(
+      <Column
+        {...defaultProps}
+        column={"todo" as ColumnType}
+        columnFlags={{ hold: true }}
+        tasks={tasks}
+      />,
+    );
+
+    expect(screen.getByLabelText("1 executing of 4")).toHaveTextContent("1/4");
   });
 });
 
@@ -998,7 +1039,7 @@ describe("Column same-column drop", () => {
     // Dropping into "in-review" column (which has 0 tasks)
     render(<Column {...defaultProps} column="in-review" tasks={tasksInTargetColumn} onMoveTask={onMoveTask} addToast={addToast} />);
 
-    const columnEl = screen.getByText("0").closest(".column") as HTMLElement;
+    const columnEl = screen.getAllByText("0")[0].closest(".column") as HTMLElement;
     const dataTransfer = {
       getData: vi.fn().mockReturnValue("FN-001"),
       dropEffect: "move",

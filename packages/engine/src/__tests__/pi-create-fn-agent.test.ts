@@ -496,6 +496,114 @@ describe("worktree path boundary helpers", () => {
       expect(result).toEqual({ ok: true, content: [{ type: "text", text: "attachment content" }] });
     });
 
+    it("allows only read/glob/grep under host-advertised skill roots", async () => {
+      const makeTool = (name: string) => ({
+        name,
+        label: name,
+        description: `${name} a skill file`,
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      });
+      const skillRoot = "/Users/agent/.fusion/plugins/de-sloppify/skills";
+      const skillPath = `${skillRoot}/de-sloppify/references/style.md`;
+      const [readTool, globTool, grepTool, writeTool, editTool, bashTool] = [
+        makeTool("read"),
+        makeTool("glob"),
+        makeTool("grep"),
+        makeTool("write"),
+        makeTool("edit"),
+        makeTool("bash"),
+      ];
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(
+        [readTool, globTool, grepTool, writeTool, editTool, bashTool] as any,
+        "/project/.worktrees/fn-8466",
+        "/project",
+        [skillRoot],
+      );
+
+      for (const tool of wrapped.slice(0, 3) as any[]) {
+        await tool.execute(`call-${tool.name}`, { path: skillPath });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
+
+      for (const tool of wrapped.slice(3, 5) as any[]) {
+        const result = await tool.execute(`call-${tool.name}`, { path: skillPath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(writeTool.execute).not.toHaveBeenCalled();
+      expect(editTool.execute).not.toHaveBeenCalled();
+
+      const bashResult = await (wrapped[5] as any).execute("call-bash", { command: "pwd", cwd: skillRoot });
+      expect(bashResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(bashTool.execute).not.toHaveBeenCalled();
+
+      const outsideResult = await (wrapped[0] as any).execute("call-outside", { path: "/other/project/secret" });
+      expect(outsideResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(readTool.execute).toHaveBeenCalledOnce();
+    });
+
+    it("rejects host skill paths when no read-only extra roots are provided", async () => {
+      const mockReadTool = {
+        name: "read",
+        label: "Read",
+        description: "Read a file",
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      };
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary([mockReadTool as any], "/project/.worktrees/fn-8466", "/project");
+
+      const result = await (wrapped[0] as any).execute("call-1", {
+        path: "/Users/agent/.fusion/plugins/de-sloppify/skills/de-sloppify/SKILL.md",
+      });
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(mockReadTool.execute).not.toHaveBeenCalled();
+    });
+
+    it("canonicalizes macOS-style skill roots before allowing reads", async () => {
+      const skillRoot = "/var/folders/fn-8466/plugin/skills";
+      const canonicalSkillPath = "/private/var/folders/fn-8466/plugin/skills/de-sloppify/SKILL.md";
+      const mockReadTool = {
+        name: "read",
+        label: "Read",
+        description: "Read a file",
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      };
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        return text.startsWith("/var/") ? `/private${text}` : text;
+      });
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(
+        [mockReadTool as any],
+        "/project/.worktrees/fn-8466",
+        "/project",
+        [skillRoot],
+      );
+
+      const result = await (wrapped[0] as any).execute("call-1", { path: canonicalSkillPath });
+      expect(result).toEqual({ ok: true, content: [] });
+      expect(mockReadTool.execute).toHaveBeenCalledOnce();
+    });
+
+    it("normalizes one stable skill-root list for resource loading and boundary wiring", async () => {
+      const { normalizeAdditionalSkillPaths } = await import("../pi.js");
+      expect(normalizeAdditionalSkillPaths(["/skills/plugin", "", "/skills/plugin/", "/skills/ce"])).toEqual([
+        "/skills/plugin",
+        "/skills/ce",
+      ]);
+
+      const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+      const source = fs.readFileSync(`${process.cwd()}/src/pi.ts`, "utf8");
+      expect(source).toContain("const normalizedAdditionalSkillPaths = normalizeAdditionalSkillPaths(options.additionalSkillPaths);");
+      expect(source).toContain("additionalSkillPaths: normalizedAdditionalSkillPaths");
+      expect(source).toMatch(/wrapToolsWithBoundary\(\s*toolsWithActionGate,\s*boundaryContext\.worktreePath,\s*boundaryContext\.worktreeProjectRoot,\s*normalizedAdditionalSkillPaths,/);
+    });
+
     it("does not wrap tools when cwd is not a worktree", async () => {
       const mockTool = {
         name: "read",
@@ -2204,6 +2312,27 @@ describe("createFnAgent", () => {
 
     const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
     expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_list_agents");
+  });
+
+  it("keeps fn_task_prompt_write in coding session tools", async () => {
+    const promptWriter = {
+      name: "fn_task_prompt_write",
+      label: "Write PROMPT.md",
+      description: "Persist the task specification",
+      parameters: {},
+      execute: vi.fn(),
+    };
+
+    const { createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "coding",
+      customTools: [promptWriter as any],
+    });
+
+    const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
+    expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_task_prompt_write");
   });
 
   it("does not allow extra builtin tools in readonly sessions by default", async () => {

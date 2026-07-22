@@ -174,6 +174,42 @@ describe("useTheme", () => {
     expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("forest");
   });
 
+  it("hydrates, caches, and applies Aurora from backend settings", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "aurora" });
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("aurora");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("aurora");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("aurora");
+  });
+
+  it("hydrates, caches, and applies Calm from backend settings", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "calm" });
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("calm");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("calm");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("calm");
+  });
+
+  it("hydrates, caches, and applies Dawn from backend settings", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "dawn" });
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("dawn");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("dawn");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("dawn");
+  });
+
   it("hydrates dashboard font scale from backend on mount", async () => {
     mockFetchGlobalSettings.mockResolvedValue({ dashboardFontScalePct: 110 });
 

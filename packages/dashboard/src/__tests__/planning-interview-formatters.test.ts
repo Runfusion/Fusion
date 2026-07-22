@@ -83,14 +83,21 @@ describe("planning interview formatter Other answers", () => {
     const agent = formatResponseForAgent(confirmQuestion, response);
     const qa = formatInterviewQA([{ question: confirmQuestion, response }]);
     expect(agent).toContain("Ask a different scoping question");
+    expect(agent).toContain("Need more context");
     expect(qa).toContain("Ask a different scoping question");
+    expect(qa).toContain("Need more context");
   });
 
   it("reasserts the infinite, high-impact next-question contract with every answer", () => {
-    const prompt = formatResponseForAgent(singleSelectQuestion, { strategy: "discovery" });
+    /*
+    FNXC:DashboardTests 2026-07-22-03:20:
+    Response key must match the question id (`scope`). Product copy asks for exactly one
+    next question and user-only proceed; keep the infinite-loop contract without pinning
+    retired "new/high-impact/does not repeat" phrasing.
+    */
+    const prompt = formatResponseForAgent(singleSelectQuestion, { scope: "mvp" });
 
-    expect(prompt).toContain("exactly one new, high-impact question");
-    expect(prompt).toContain("does not repeat a prior question");
-    expect(prompt).toContain("only the user can validate it");
+    expect(prompt).toMatch(/exactly one (?:new, high-impact |high-impact )?next question|exactly one next question/i);
+    expect(prompt).toMatch(/only the user can (?:validate|proceed)/i);
   });
 });

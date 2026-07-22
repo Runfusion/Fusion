@@ -3,6 +3,13 @@ export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent
 export type { AgentActionGateContext } from "./agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
 export {
+  DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
+  refreshFusionModelRegistry,
+  type ModelRegistryRefreshOutcome,
+  type RefreshableModelRegistry,
+  type RefreshFusionModelRegistryOptions,
+} from "./model-registry-refresh.js";
+export {
   wrapAuthStorageWithApiKeyProviders,
   mergeAuthStorageReads,
   createReadOnlyAuthFileStorage,

@@ -353,6 +353,7 @@ const plugin: FusionPlugin = {
 
 ### Hook Behavior
 
+- **Single-load lifecycle**: For one project in one Fusion process, Fusion invokes `onLoad` exactly once for each intentional load lifecycle, including when the host and engine bootstrap concurrently. Plugin authors do not need process-local locking to defend against an accidental second host/engine startup load. Explicit enable→load and `reloadPlugin` are new lifecycles and can invoke `onLoad` again after unload; request-scoped temporary loaders for *another* project root may also load and then stop a plugin while discovering skills. Keep registration idempotent where inexpensive so these intentional lifecycles remain safe.
 - **Context parity**: `onUnload` receives the same `PluginContext` shape as `onLoad`.
 - **Timeout**: 5 seconds per invocation (logged and skipped if exceeded)
 - **Error Isolation**: Hook failures never block other hooks or abort startup

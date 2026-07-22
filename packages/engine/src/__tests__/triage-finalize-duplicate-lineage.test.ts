@@ -69,7 +69,12 @@ recoverApprovedTask withholds non-marker specs without step headings on coding w
 DUPLICATE markers stay single-line; other recovery prompts need executable steps.
 */
 function executablePrompt(body: string): string {
-  if (body.includes("## Steps") || /^\*\*No commits expected:\*\*/im.test(body) || body.trimStart().startsWith("DUPLICATE:")) {
+  /*
+  FNXC:EngineTests 2026-07-22-03:15:
+  parseExplicitDuplicateMarker is case-insensitive; keep marker-only fixtures intact for any
+  casing so the helper does not append Steps and break the duplicate-redirect path.
+  */
+  if (body.includes("## Steps") || /^\*\*No commits expected:\*\*/im.test(body) || /^DUPLICATE:/im.test(body.trimStart())) {
     return body;
   }
   return `${body.trim()}\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n`;

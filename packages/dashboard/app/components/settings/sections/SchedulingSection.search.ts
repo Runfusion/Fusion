@@ -32,15 +32,6 @@ export const schedulingSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "scheduling",
-    key: "maxTriageConcurrent",
-    labelKey: "settings.scheduling.maxTriageConcurrent",
-    labelFallback: "Max Triage Concurrent",
-    helpKey: "settings.scheduling.maximumConcurrentPlanningAgents",
-    helpFallback: "Maximum concurrent planning agents. Default: 2.",
-    keywords: ["parallelism", "capacity", "spec"],
-  },
-  {
-    sectionId: "scheduling",
     key: "executorToolFailureRetryCount",
     labelKey: "settings.scheduling.executorToolFailureRetryCount",
     labelFallback: "Executor tool-failure retries",

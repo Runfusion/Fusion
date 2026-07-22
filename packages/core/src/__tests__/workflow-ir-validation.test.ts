@@ -24,6 +24,30 @@ import { computeRemovedOccupiedColumns } from "../workflow-reconciliation.js";
 
 // ── Save-time hard errors ─────────────────────────────────────────────────────
 
+describe("workflow IR validation — capacity release topology (hard error)", () => {
+  it("rejects a capacity hold that has no downstream processing column", () => {
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "deadlocked-capacity-hold",
+      columns: [
+        { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+        { id: "todo", name: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "ideas" },
+        { id: "plan", kind: "prompt", column: "todo", config: { prompt: "plan" } },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "plan" },
+        { from: "plan", to: "end", condition: "success" },
+      ],
+    };
+    expect(() => parseWorkflowIr(ir)).toThrow("capacity hold column 'todo' requires a downstream wip column");
+  });
+});
+
 describe("workflow IR validation — node → nonexistent column (hard error)", () => {
   it("rejects a node assigned to a column the workflow does not declare", () => {
     const ir: WorkflowIr = {

@@ -88,11 +88,13 @@ Use this inventory as the documentation map for current workflow behavior:
 ### Skill-backed workflow steps
 
 <!--
-FNXC:WorkflowSteps 2026-06-27-17:05:
-FN-7145 locks the execution invariant for skill-backed workflow nodes: naming a skill must load the skill into the step session, not only mention it in prompt text. The engine passes both namespaced and bare request forms plus the injected Compound Engineering discovery path so bundled `SKILL.md` files are discoverable, and logs a loud warning when that path is missing.
+FNXC:WorkflowSteps 2026-08-08-00:00:
+FN-7145 locks the execution invariant for skill-backed workflow nodes: naming a skill must load the skill into the step session, not only mention it in prompt text. FN-8461 / GitHub #2388 makes discovery multi-source: enabled-plugin body directories and the optional Compound Engineering root both participate. The executor warns only when the named skill has no viable source after that merge; missing CE configuration alone must not mislead operators when a plugin body resolves the named skill.
 -->
 
-Skill-backed prompt/gate nodes run through the same workflow-step session builder as other prompt nodes, but their `skillName` is also treated as a resource-loading request. At execution time Fusion merges both the namespaced form (for example `compound-engineering:ce-work`) and the bare form (`ce-work`) into `requestedSkillNames`, then threads the injected `FUSION_CE_SKILLS_DIR` value as `additionalSkillPaths` so the bundled `SKILL.md` can be discovered. If a step names a skill but `FUSION_CE_SKILLS_DIR` is absent, the executor logs a `[skill-load]` warning instead of silently presenting only prompt text while falling back to role skills.
+Skill-backed prompt/gate nodes run through the same workflow-step session builder as other prompt nodes, but their `skillName` is also treated as a resource-loading request. At execution time Fusion merges both the namespaced form (for example `compound-engineering:ce-work`) and the bare form (`ce-work`) into `requestedSkillNames`. Discovery paths are merged from enabled-plugin skill body directories and, when configured, the injected `FUSION_CE_SKILLS_DIR` Compound Engineering install root.
+
+The executor logs `[skill-load]` only when the **named** skill has no viable discovery source after that multi-source merge. Therefore an unset optional CE directory does not warn when the requested plugin skill body is discoverable, and paths for an unrelated skill do not suppress a missing-name warning. CE-root-dependent skills still require `FUSION_CE_SKILLS_DIR` when no plugin or other source delivers their body; absence of every viable source remains a loud warning rather than a silent role-skill fallback.
 
 ### Custom workflow authoring
 

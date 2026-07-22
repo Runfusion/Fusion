@@ -4,7 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ThemeDropdown } from "../ThemeDropdown";
 
 // FNXC:Theme 2026-07-16-14:30: FN-8146 pins the historical Settings-grid set, including restored shadcn-mono, so a removal from COLOR_THEMES cannot make the all-themes checks pass circularly.
-const EXPECTED_THEME_IDS = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'] as const;
+const EXPECTED_THEME_IDS = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'aurora', 'calm', 'dawn', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'] as const;
 
 function renderedThemeIds(listbox: HTMLElement) {
   return within(listbox).getAllByRole("option").map((option) => {
@@ -83,6 +83,55 @@ describe("ThemeDropdown", () => {
     const glassSilverOption = screen.getByRole("option", { name: /glass silver/i });
     expect(glassSilverOption).toHaveTextContent("Glass Silver");
     expect(glassSilverOption.querySelector(".theme-swatch-glass-silver")).toBeTruthy();
+  });
+
+  it.each([
+    ["compact", "compact" as const, /ocean/i],
+    ["current-row", "current-row" as const, /current theme dark \/ ocean/i],
+  ])("selects Dawn with a non-empty preview from the shared %s trigger", (_label, triggerVariant, triggerName) => {
+    document.documentElement.setAttribute("data-color-theme", "ocean");
+    document.documentElement.setAttribute("data-theme", "dark");
+    const previewTokens = document.createElement("style");
+    previewTokens.textContent = `
+      :root { --dawn-swatch-sample-1: #151229; --dawn-swatch-sample-2: #2a2248; --dawn-swatch-sample-3: #efb66a; --dawn-swatch-sample-4: #c8a4ff; }
+      [data-theme="light"] { --dawn-swatch-sample-1: #fff8f2; --dawn-swatch-sample-2: #f1ddd7; --dawn-swatch-sample-3: #9b5618; --dawn-swatch-sample-4: #704eaa; }
+    `;
+    document.head.appendChild(previewTokens);
+    const onColorThemeChange = vi.fn();
+
+    const { rerender } = render(
+      <ThemeDropdown
+        triggerVariant={triggerVariant}
+        colorTheme="ocean"
+        themeMode="dark"
+        onColorThemeChange={onColorThemeChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: triggerName }));
+    const dawnOption = screen.getByRole("option", { name: "Dawn" });
+    expect(dawnOption.querySelector(".theme-swatch-dawn")).toBeTruthy();
+    expect(dawnOption.querySelectorAll(".theme-option-swatch-sample")).toHaveLength(4);
+    for (const sample of [1, 2, 3, 4]) {
+      expect(getComputedStyle(document.documentElement).getPropertyValue(`--dawn-swatch-sample-${sample}`).trim()).not.toBe("");
+    }
+    fireEvent.click(dawnOption);
+    expect(onColorThemeChange).toHaveBeenCalledWith("dawn");
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    document.documentElement.setAttribute("data-theme", "light");
+    rerender(
+      <ThemeDropdown
+        triggerVariant={triggerVariant}
+        colorTheme="ocean"
+        themeMode="light"
+        onColorThemeChange={onColorThemeChange}
+      />,
+    );
+    for (const sample of [1, 2, 3, 4]) {
+      expect(getComputedStyle(document.documentElement).getPropertyValue(`--dawn-swatch-sample-${sample}`).trim()).not.toBe("");
+    }
+    previewTokens.remove();
   });
 
   it("selects themes and closes from click, escape, and outside click", () => {

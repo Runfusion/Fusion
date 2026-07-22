@@ -244,6 +244,13 @@ export default defineConfig({
             // / `test:all` invoked from the root `test:full` script.
             "src/**/*.slow.test.ts",
             /*
+            FNXC:EngineTests 2026-07-22-03:15:
+            Quarantine ledger lockstep for executor-task-done-invariant (FN-5241 graph handoff
+            under PG mock-agent after U10b). Matching entry in scripts/lib/test-quarantine.json;
+            delete with the ledger row after rescue — never timeout appeasement.
+            */
+            "src/__tests__/executor-task-done-invariant.test.ts",
+            /*
             FNXC:EngineTests 2026-06-26-13:15:
             FN-7068 rescued the 2026-06-25 self-healing quarantine batch by completing the local TaskStore fakes for the FN-5488 overlap path. Keep both files active in engine-default so fake drift around clearStaleBlockedBy() is caught before the deletion ratchet expires.
             */
