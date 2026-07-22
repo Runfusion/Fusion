@@ -40,8 +40,8 @@ import { join, resolve } from "node:path";
 import { existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
-import { createLogger } from "../logger.js";
+import { isValidSqliteDatabaseFile } from "../db/sqlite-validation.js";
+import { createLogger } from "../process/logger.js";
 import { TaskStore } from "../store.js";
 import {
   resolveBackend,
@@ -399,7 +399,7 @@ async function bootSchemaBackendOnce(
   if (backend.mode === "embedded") {
     const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
       await import("./embedded-lifecycle.js");
-    const { GlobalSettingsStore } = await import("../global-settings.js");
+    const { GlobalSettingsStore } = await import("../config/global-settings.js");
     // Tests that boot an embedded backend intentionally do not have an
     // operator global-settings directory. Production always reads the shared
     // global preference before it starts the server.
@@ -539,7 +539,7 @@ export async function resolveStartupDatabaseOptions(
   // can safely read the file-backed bootstrap setting before PostgreSQL opens.
   const runningVitest = process.env.VITEST === "true";
   if (options.globalSettingsDir || !runningVitest) {
-    const { GlobalSettingsStore } = await import("../global-settings.js");
+    const { GlobalSettingsStore } = await import("../config/global-settings.js");
     globalTestMode = (await new GlobalSettingsStore(options.globalSettingsDir).getSettings()).testMode === true;
   }
 
@@ -566,7 +566,7 @@ export async function resolveStartupDatabaseOptions(
 
   let globalDir = options.globalSettingsDir;
   if (!globalDir) {
-    const { resolveGlobalDir } = await import("../global-settings.js");
+    const { resolveGlobalDir } = await import("../config/global-settings.js");
     globalDir = resolveGlobalDir();
   }
   return {
@@ -610,7 +610,7 @@ export async function createCentralBackendLayer(
     */
     let globalDir = options.globalSettingsDir;
     if (!globalDir) {
-      const { resolveGlobalDir } = await import("../global-settings.js");
+      const { resolveGlobalDir } = await import("../config/global-settings.js");
       globalDir = resolveGlobalDir();
     }
     const legacyCentralPath = join(globalDir, "fusion-central.db");
@@ -878,7 +878,7 @@ export async function createTaskStoreForBackend(
         let globalDir = options.globalSettingsDir;
         if (!globalDir) {
           try {
-            const { resolveGlobalDir } = await import("../global-settings.js");
+            const { resolveGlobalDir } = await import("../config/global-settings.js");
             globalDir = resolveGlobalDir();
           } catch {
             globalDir = undefined;
@@ -889,7 +889,7 @@ export async function createTaskStoreForBackend(
           ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
         const legacyCentralPath = globalDir ? join(globalDir, "fusion-central.db") : undefined;
         if (!migrationProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
-          const { DatabaseSync } = await import("../sqlite-adapter.js");
+          const { DatabaseSync } = await import("../db/sqlite-adapter.js");
           // FNXC:LegacySqliteBoundary 2026-07-14-18:42: central identity lookup is migration-only and read-only.
           const legacyCentral = new DatabaseSync(legacyCentralPath, { readOnly: true });
           try {
@@ -1195,7 +1195,7 @@ export async function createTaskStoreForBackend(
   the bound AsyncDataLayer provides central marker/lock access; schema bootstrap
   has neither capability and must not attempt this cross-storage migration.
   */
-  await (await import("../backup-settings-migration.js")).migrateBackupSettingsToGlobalOnce(
+  await (await import("../backup/backup-settings-migration.js")).migrateBackupSettingsToGlobalOnce(
     taskStore.getAsyncLayer(),
     taskStore.getGlobalSettingsStore(),
   );

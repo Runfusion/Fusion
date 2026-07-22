@@ -16,7 +16,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import type { AsyncTodoStore } from "../../async-todo-store.js";
+import type { AsyncTodoStore } from "../../async-stores/async-todo-store.js";
 
 const pgTest = pgDescribe;
 

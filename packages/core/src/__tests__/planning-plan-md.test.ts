@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPlanningPlanMd, parsePlanningPlanMd } from "../planning-plan-md.js";
+import { formatPlanningPlanMd, parsePlanningPlanMd } from "../planner/planning-plan-md.js";
 
 describe("Planning Mode plan.md", () => {
   it("round-trips the lean operator schema without priority", () => {

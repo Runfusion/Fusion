@@ -6,8 +6,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GlobalSettingsStore } from "../global-settings.js";
-import { sanitizeCliAgentsSettings, sanitizeCliAgentSettings } from "../settings-schema.js";
+import { GlobalSettingsStore } from "../config/global-settings.js";
+import { sanitizeCliAgentsSettings, sanitizeCliAgentSettings } from "../config/settings-schema.js";
 
 describe("sanitizeCliAgentSettings (write-boundary validation)", () => {
   it("keeps valid fields and trims strings", () => {

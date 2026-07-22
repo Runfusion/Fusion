@@ -15,11 +15,11 @@
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { validatePluginManifest } from "../plugin-types.js";
-import type { PluginInstallation, PluginManifest } from "../plugin-types.js";
-import { resolvePluginEntryPath } from "../plugin-loader.js";
-import type { PluginLoader } from "../plugin-loader.js";
-import type { PluginStore } from "../plugin-store.js";
+import { validatePluginManifest } from "./plugin-types.js";
+import type { PluginInstallation, PluginManifest } from "./plugin-types.js";
+import { resolvePluginEntryPath } from "./plugin-loader.js";
+import type { PluginLoader } from "./plugin-loader.js";
+import type { PluginStore } from "../stores/plugin-store.js";
 
 const DEPENDENCY_GRAPH_PLUGIN_ID = "fusion-plugin-dependency-graph";
 const CURSOR_RUNTIME_PLUGIN_ID = "fusion-plugin-cursor-runtime";

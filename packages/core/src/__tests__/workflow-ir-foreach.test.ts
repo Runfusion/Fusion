@@ -4,12 +4,12 @@ import {
   serializeWorkflowIr,
   downgradeIrToV1IfPure,
   WorkflowIrError,
-} from "../workflow-ir.js";
+} from "../workflows/workflow-ir.js";
 import type {
   WorkflowIrEdge,
   WorkflowIrNode,
   WorkflowIrV2,
-} from "../workflow-ir-types.js";
+} from "../workflows/workflow-ir-types.js";
 
 // Step-inversion (U1) — foreach / step-review / parse-steps / code / rework /
 // fields validation.

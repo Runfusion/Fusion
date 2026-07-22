@@ -64,7 +64,7 @@ import { homedir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { dirname, join, basename, sep } from "node:path";
 import { createRequire, syncBuiltinESMExports } from "node:module";
-import { createLogger } from "../logger.js";
+import { createLogger } from "../process/logger.js";
 import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
 import {

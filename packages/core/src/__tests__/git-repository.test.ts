@@ -9,7 +9,7 @@ import {
   GitRepositoryInitializationError,
   detectWorkspaceRepos,
   type GitRepositoryCommandRunner,
-} from "../git-repository.js";
+} from "../git/git-repository.js";
 
 const execFileAsync = promisify(execFile);
 

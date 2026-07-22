@@ -27,8 +27,8 @@ import {
 import {
   executeInsightRunLifecycle,
   retryInsightRunLifecycle,
-} from "../../insight-run-executor.js";
-import type { AsyncInsightStore } from "../../async-insight-store.js";
+} from "../../insights/insight-run-executor.js";
+import type { AsyncInsightStore } from "../../async-stores/async-insight-store.js";
 
 const pgTest = pgDescribe;
 

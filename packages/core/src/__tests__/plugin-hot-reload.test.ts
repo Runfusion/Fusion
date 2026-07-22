@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
-import { PluginLoader } from "../plugin-loader.js";
-import { PluginStore } from "../plugin-store.js";
-import type { FusionPlugin, PluginInstallation } from "../plugin-types.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
+import { PluginStore } from "../stores/plugin-store.js";
+import type { FusionPlugin, PluginInstallation } from "../plugins/plugin-types.js";
 
 // Helper to create temp directory
 function makeTmpDir(): string {
@@ -20,7 +20,7 @@ function makeTmpDir(): string {
 }
 
 // Test plugin manifest
-function makeManifest(overrides: Partial<import("../plugin-types.js").PluginManifest> = {}): import("../plugin-types.js").PluginManifest {
+function makeManifest(overrides: Partial<import("../plugins/plugin-types.js").PluginManifest> = {}): import("../plugins/plugin-types.js").PluginManifest {
   return {
     id: "test-plugin",
     name: "Test Plugin",
@@ -34,7 +34,7 @@ function makeManifest(overrides: Partial<import("../plugin-types.js").PluginMani
 async function writePluginModule(
   dir: string,
   filename: string,
-  manifest: import("../plugin-types.js").PluginManifest,
+  manifest: import("../plugins/plugin-types.js").PluginManifest,
   options: {
     tools?: Array<{ name: string; description: string }>;
     routes?: Array<{ method: string; path: string }>;
@@ -117,7 +117,7 @@ function createMockPluginStore(
       }
       return { ...installation };
     },
-    async updatePluginState(id: string, state: import("../plugin-types.js").PluginState, error?: string) {
+    async updatePluginState(id: string, state: import("../plugins/plugin-types.js").PluginState, error?: string) {
       if (id !== installation.id) {
         throw Object.assign(new Error(`Plugin "${id}" not found`), { code: "ENOENT" });
       }

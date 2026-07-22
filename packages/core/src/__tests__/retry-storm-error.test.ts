@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RetryStormError, serializeRetryStormError } from "../retry-storm-error.js";
+import { RetryStormError, serializeRetryStormError } from "../tasks/retry-storm-error.js";
 import type { RetrySummary } from "../types.js";
 
 const BREAKDOWN: RetrySummary = {

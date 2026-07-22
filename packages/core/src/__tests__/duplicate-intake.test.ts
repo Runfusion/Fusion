@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, findSameAgentDuplicates, flagSameAgentDuplicate } from "../duplicate-intake.js";
+import { computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, findSameAgentDuplicates, flagSameAgentDuplicate } from "../duplicates/duplicate-intake.js";
 import type { TaskStore } from "../store.js";
 
 describe("findSameAgentDuplicates", () => {
@@ -250,7 +250,7 @@ describe("flagSameAgentDuplicate (FN-7658)", () => {
 
 describe("flagTriageDuplicate", () => {
   it("flags a triage marker without moving or deleting the task", async () => {
-    const { flagTriageDuplicate } = await import("../duplicate-intake.js");
+    const { flagTriageDuplicate } = await import("../duplicates/duplicate-intake.js");
     const store = { logEntry: vi.fn(), recordActivity: vi.fn(), updateTask: vi.fn() } as any;
     await flagTriageDuplicate(store, "FN-2", "FN-1");
     expect(store.updateTask).toHaveBeenCalledWith("FN-2", { sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false } });
@@ -259,7 +259,7 @@ describe("flagTriageDuplicate", () => {
   });
 
   it("preserves a same-canonical Keep acknowledgement when re-flagged", async () => {
-    const { flagTriageDuplicate } = await import("../duplicate-intake.js");
+    const { flagTriageDuplicate } = await import("../duplicates/duplicate-intake.js");
     const store = {
       getTask: vi.fn().mockResolvedValue({ sourceMetadata: { nearDuplicateOf: "fn-1", nearDuplicateDismissed: true } }),
       logEntry: vi.fn(),

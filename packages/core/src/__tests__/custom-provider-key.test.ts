@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CustomProvider } from "../types.js";
-import { customProviderRegistryKey } from "../custom-provider-key.js";
+import { customProviderRegistryKey } from "../ai/custom-provider-key.js";
 
 function provider(id: string, name: string): CustomProvider {
   return {

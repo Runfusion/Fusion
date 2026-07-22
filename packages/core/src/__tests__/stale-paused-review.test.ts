@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS, getStalePausedReviewSignal } from "../stale-paused-review.js";
+import { DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS, getStalePausedReviewSignal } from "../tasks/stale-paused-review.js";
 
 const NOW = Date.parse("2026-05-14T12:00:00.000Z");
 

@@ -9,7 +9,7 @@ facts always yield the identical rejection.
 */
 import { describe, expect, it } from "vitest";
 
-import type { TraitFlags } from "../../trait-types.js";
+import type { TraitFlags } from "../../workflows/trait-types.js";
 import {
   type TransitionColumnFacts,
   evaluateCapacityRejection,
@@ -19,7 +19,7 @@ import {
   isHoldToWipBoundary,
   isTerminalColumn,
   isWipColumn,
-} from "../../workflow-transition-policy.js";
+} from "../../workflows/workflow-transition-policy.js";
 
 const facts = (columnId: string, flags: TraitFlags): TransitionColumnFacts => ({ columnId, flags });
 

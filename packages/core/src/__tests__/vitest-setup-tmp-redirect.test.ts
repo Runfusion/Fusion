@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { __fusionTmpdirRedirectTestHooks } from "../__test-utils__/vitest-setup";
-import { DatabaseSync } from "../sqlite-adapter.js";
+import { DatabaseSync } from "../db/sqlite-adapter.js";
 
 const createdPaths: string[] = [];
 

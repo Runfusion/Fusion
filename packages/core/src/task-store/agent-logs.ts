@@ -9,8 +9,8 @@
 import {TaskStore} from "../store.js";
 import type {AgentLogEntry, GoalCitationInput} from "../types.js";
 import "../builtin-traits.js";
-import {appendAgentLogEntriesSync} from "../agent-log-file-store.js";
-import {truncateAgentLogDetail} from "../agent-log-constants.js";
+import {appendAgentLogEntriesSync} from "../agents/agent-log-file-store.js";
+import {truncateAgentLogDetail} from "../agents/agent-log-constants.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 
 export function flushAgentLogBufferImpl(store: TaskStore): void {

@@ -3,7 +3,7 @@ import {
   configurationTargetKey,
   createConfigurationRevision,
   diffConfigurationSnapshots,
-} from "../async-configuration-revision-store.js";
+} from "../async-stores/async-configuration-revision-store.js";
 
 describe("configuration revision snapshots", () => {
   it("uses canonical structured target identity independent of key order", () => {

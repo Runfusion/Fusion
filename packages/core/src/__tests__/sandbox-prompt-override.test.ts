@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { SANDBOX_BACKEND_NAMES } from "../settings-validation.js";
-import { parseSandboxPromptOverride, resolveSandboxBackend } from "../sandbox-prompt-override.js";
+import { SANDBOX_BACKEND_NAMES } from "../config/settings-validation.js";
+import { parseSandboxPromptOverride, resolveSandboxBackend } from "../sandbox/sandbox-prompt-override.js";
 
 describe("sandbox prompt override", () => {
   describe("parseSandboxPromptOverride", () => {

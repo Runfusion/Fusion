@@ -3,15 +3,15 @@ import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
 } from "../__test-utils__/pg-test-harness.js";
-import { serializeWorkflowIr } from "../workflow-ir.js";
-import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { serializeWorkflowIr } from "../workflows/workflow-ir.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import {
   BUILTIN_WORKFLOWS,
   DEFAULT_WORKFLOW_ID,
   getBuiltinWorkflow,
   resolveDefaultWorkflowIr,
-} from "../builtin-workflows.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+} from "../workflows/builtin-workflows.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 
 /*
 FNXC:WorkflowBuiltins 2026-07-19-10:40:

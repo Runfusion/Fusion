@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { GlobalSettingsStore, defaultGlobalDir } from "../global-settings.js";
+import { GlobalSettingsStore, defaultGlobalDir } from "../config/global-settings.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "../types.js";
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";

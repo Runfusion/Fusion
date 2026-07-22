@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { getBuiltinWorkflow } from "../builtin-workflows.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { getBuiltinWorkflow } from "../workflows/builtin-workflows.js";
 import {
   applyPromptOverridesToIr,
   enumeratePromptBearingWorkflowNodes,
   normalizeWorkflowPromptOverrides,
-} from "../workflow-prompt-overrides.js";
+} from "../workflows/workflow-prompt-overrides.js";
 
 describe("workflow prompt override overlay", () => {
   it("normalizes empty and whitespace overrides as absent", () => {

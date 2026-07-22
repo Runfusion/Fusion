@@ -11,8 +11,8 @@ import {
   getAgentLogFilePath,
   readAgentLogEntries,
   readAgentLogEntriesByTimeRange,
-} from "../agent-log-file-store.js";
-import { AGENT_LOG_TOOL_DETAIL_TRUNCATION_NOTICE } from "../agent-log-constants.js";
+} from "../agents/agent-log-file-store.js";
+import { AGENT_LOG_TOOL_DETAIL_TRUNCATION_NOTICE } from "../agents/agent-log-constants.js";
 
 const tempDirs: string[] = [];
 

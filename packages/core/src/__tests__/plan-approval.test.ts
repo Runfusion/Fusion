@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computePlanApprovalFingerprint, resolvePlanApprovalRequired, type PlanApprovalMode } from "../plan-approval.js";
-import { applyFrontendUxCriteria } from "../frontend-ux-policy.js";
-import { applyOriginalDescription } from "../original-description-policy.js";
+import { computePlanApprovalFingerprint, resolvePlanApprovalRequired, type PlanApprovalMode } from "../planner/plan-approval.js";
+import { applyFrontendUxCriteria } from "../tasks/frontend-ux-policy.js";
+import { applyOriginalDescription } from "../tasks/original-description-policy.js";
 
 const workflowValues = [true, false, undefined] as const;
 

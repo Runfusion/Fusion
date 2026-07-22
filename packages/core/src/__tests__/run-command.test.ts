@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runCommandAsync } from "../run-command.js";
+import { runCommandAsync } from "../process/run-command.js";
 
 function isProcessAlive(pid: number): boolean {
   try {

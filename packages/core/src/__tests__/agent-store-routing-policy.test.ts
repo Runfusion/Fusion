@@ -11,8 +11,8 @@
  * project's tasks through any binding primitive.
  */
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
-import { AgentStore } from "../agent-store.js";
-import { AgentTaskRoutingPolicyError } from "../agent-role-policy.js";
+import { AgentStore } from "../agents/agent-store.js";
+import { AgentTaskRoutingPolicyError } from "../agents/agent-role-policy.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,

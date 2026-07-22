@@ -8,7 +8,7 @@ import {
   normalizeAgentPermissionPolicy,
   normalizeAgentPermissionPolicyFromPreset,
   resolveEffectiveAgentPermissionPolicy,
-} from "../agent-permission-policy.js";
+} from "../agents/agent-permission-policy.js";
 import { AGENT_PERMISSION_POLICY_ACTION_CATEGORIES } from "../types.js";
 import {
   ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,

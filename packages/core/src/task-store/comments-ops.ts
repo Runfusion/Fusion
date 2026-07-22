@@ -14,7 +14,7 @@ import {existsSync} from "node:fs";
 import type {Task, Column, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateDocumentKey} from "../types.js";
 import "../builtin-traits.js";
-import {toJsonNullable} from "../db.js";
+import {toJsonNullable} from "../db/db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
 import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async/async-comments-attachments.js";
 import type {TaskDocumentRow} from "../task-store/row-types.js";

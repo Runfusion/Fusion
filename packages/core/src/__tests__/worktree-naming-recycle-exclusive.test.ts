@@ -3,7 +3,7 @@ import {
   assertWorktreeNamingRecycleExclusive,
   isRecycleWorktreeNamingConflict,
   RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE,
-} from "../settings-validation.js";
+} from "../config/settings-validation.js";
 
 describe("worktreeNaming/recycleWorktrees mutual exclusion", () => {
   it("flags only recycle + task-id together as a conflict", () => {

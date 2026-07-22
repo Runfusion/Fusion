@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import { readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentLogFilePath } from "../agent-log-file-store.js";
+import { getAgentLogFilePath } from "../agents/agent-log-file-store.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { vi } from "vitest";
 
@@ -14,8 +14,8 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
-vi.mock("../run-command.js", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("../run-command.js")>();
+vi.mock("../process/run-command.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../process/run-command.js")>();
   return {
     ...mod,
     runCommandAsync: vi.fn((...args: Parameters<typeof mod.runCommandAsync>) => mod.runCommandAsync(...args)),
@@ -23,8 +23,8 @@ vi.mock("../run-command.js", async (importOriginal) => {
 });
 
 import { execSync } from "node:child_process";
-import { runCommandAsync } from "../run-command.js";
-import { Database, setInMemoryTemplateSnapshot } from "../db.js";
+import { runCommandAsync } from "../process/run-command.js";
+import { Database, setInMemoryTemplateSnapshot } from "../db/db.js";
 import { DEFAULT_PROJECT_SETTINGS } from "../types.js";
 import { TaskStore, TaskHasDependentsError } from "../store.js";
 import type { Task } from "../types.js";

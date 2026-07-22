@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidRepoSlug, parseRepoSlug, resolveTaskGithubTracking } from "../github-tracking.js";
+import { isValidRepoSlug, parseRepoSlug, resolveTaskGithubTracking } from "../git/github-tracking.js";
 import { REPO_OVERRIDE_RE } from "../types.js";
 
 describe("REPO_OVERRIDE_RE", () => {

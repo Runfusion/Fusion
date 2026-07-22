@@ -6,7 +6,7 @@ import {
   ProjectIdentityMismatchError,
   readProjectIdentity,
   writeProjectIdentity,
-} from "../project-identity.js";
+} from "../central/project-identity.js";
 
 describe("project identity", () => {
   it("returns null for missing db", () => {

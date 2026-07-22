@@ -10,23 +10,23 @@
  */
 
 import { TaskStore } from "../store.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
-import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
-import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
-import { CentralCore } from "../central-core.js";
-import { fromJson } from "../db.js";
-import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../distributed-task-id.js";
-import { ExperimentSessionStore } from "../experiment-session-store.js";
-import { MasterKeyManager } from "../master-key.js";
-import { MissionStore } from "../mission-store.js";
-import { AsyncMissionStore } from "../async-mission-store.js";
-import { AsyncIdeationStore } from "../async-ideation-store.js";
-import { type PluginGateVerdict } from "../plugin-gate-verdict.js";
-import { PluginStore } from "../plugin-store.js";
-import { SecretsStore } from "../secrets-store.js";
+import {resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
+import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agents/agent-log-file-store.js";
+import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../workflows/builtin-workflows.js";
+import { CentralCore } from "../central/central-core.js";
+import { fromJson } from "../db/db.js";
+import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../tasks/distributed-task-id.js";
+import { ExperimentSessionStore } from "../eval/experiment-session-store.js";
+import { MasterKeyManager } from "../secrets/master-key.js";
+import { MissionStore } from "../missions/mission-store.js";
+import { AsyncMissionStore } from "../async-stores/async-mission-store.js";
+import { AsyncIdeationStore } from "../async-stores/async-ideation-store.js";
+import { type PluginGateVerdict } from "../plugins/plugin-gate-verdict.js";
+import { PluginStore } from "../stores/plugin-store.js";
+import { SecretsStore } from "../secrets/secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async/async-allocator.js";
-import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
-import { isPostgresUniqueError } from "../postgres-errors.js";
+import { getWorkflowRow, listWorkflowRows } from "../async-stores/async-workflow-store.js";
+import { isPostgresUniqueError } from "../db/postgres-errors.js";
 import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async/async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async/async-settings.js";
@@ -36,13 +36,13 @@ import { ActivityLogRow } from "./row-types.js";
 import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
-import { WorkflowIr } from "../workflow-ir-types.js";
-import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
-import { resolveDefaultOnOptionalGroupIds } from "../workflow-optional-steps.js";
-import { resolveSwitchReconciliation } from "../workflow-reconciliation.js";
+import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflows/workflow-definition-types.js";
+import { WorkflowIr } from "../workflows/workflow-ir-types.js";
+import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
+import { resolveDefaultOnOptionalGroupIds } from "../workflows/workflow-optional-steps.js";
+import { resolveSwitchReconciliation } from "../workflows/workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
-import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -838,8 +838,8 @@ export async function getSecretsStoreImpl(store: TaskStore): Promise<SecretsStor
       // CentralCore is not needed in backend mode; the async layer serves both
       // project and central schemas. We pass dummy stubs for the sync DBs since
       // they are never used when asyncLayer is present.
-      const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db.js").Database;
-      const noopCentral = noopDb as unknown as import("../central-db.js").CentralDatabase;
+      const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db/db.js").Database;
+      const noopCentral = noopDb as unknown as import("../central/central-db.js").CentralDatabase;
       store.secretsStore = new SecretsStore(noopDb, noopCentral, masterKeyProvider, { asyncLayer: layer });
       return store.secretsStore;
     }
@@ -847,7 +847,7 @@ export async function getSecretsStoreImpl(store: TaskStore): Promise<SecretsStor
     const central = new CentralCore(store.getFusionDir());
     await central.init();
     store.secretsCentralCore = central;
-    const centralDb = (central as unknown as { db: import("../central-db.js").CentralDatabase | null }).db;
+    const centralDb = (central as unknown as { db: import("../central/central-db.js").CentralDatabase | null }).db;
     if (!centralDb) {
       throw new Error("Central database unavailable for secrets store");
     }

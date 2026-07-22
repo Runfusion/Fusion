@@ -10,24 +10,24 @@
  */
 
 import { TaskStore } from "../store.js";
-import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { toJsonNullable } from "../db.js";
+import { countAgentLogEntries, readAgentLogEntries } from "../agents/agent-log-file-store.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { toJsonNullable } from "../db/db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { runCommandAsync } from "../run-command.js";
-import { getStepParser } from "../step-parsers.js";
-import { getTaskMergeBlocker } from "../task-merge.js";
+import { runCommandAsync } from "../process/run-command.js";
+import { getStepParser } from "../tasks/step-parsers.js";
+import { getTaskMergeBlocker } from "../merge/task-merge.js";
 import { deleteTaskDocument as deleteTaskDocumentAsync, getArtifact as getArtifactAsync, getArtifacts as getArtifactsAsync, getLiveTaskColumn, getTaskDocument as getTaskDocumentAsync, getTaskDocumentRevisions as getTaskDocumentRevisionsAsync, listTaskDocuments as listTaskDocumentsAsync, updateArtifactRow as updateArtifactRowAsync } from "./async/async-comments-attachments.js";
 import { emitUsageEvent as emitUsageEventAsync, recordPluginActivation as recordPluginActivationAsync } from "./async/async-events.js";
 import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMergeQueueAsync, peekMergeQueueHead as peekMergeQueueHeadAsync } from "./async/async-merge-coordination.js";
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async/async-workflow-workitems.js";
-import { extractEffectiveWriteScopeFromPrompt } from "../file-scope-classification.js";
+import { extractEffectiveWriteScopeFromPrompt } from "../tasks/file-scope-classification.js";
 import { ArtifactRow, CompletionHandoffMarkerRow, MergeQueueRow, TaskDocumentRevisionRow, TaskDocumentRow, WorkflowWorkItemRow } from "./row-types.js";
 import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunAuditEvent, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
-import { type UsageEventInput, emitUsageEvent as emitUsageEventToDb } from "../usage-events.js";
-import { DUAL_ACCEPT_PARITY_MUTATIONS, type WorkflowColumnsGraduationReport, computeWorkflowColumnsGraduationReport } from "../workflow-parity.js";
+import { type UsageEventInput, emitUsageEvent as emitUsageEventToDb } from "../tasks/usage-events.js";
+import { DUAL_ACCEPT_PARITY_MUTATIONS, type WorkflowColumnsGraduationReport, computeWorkflowColumnsGraduationReport } from "../workflows/workflow-parity.js";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";

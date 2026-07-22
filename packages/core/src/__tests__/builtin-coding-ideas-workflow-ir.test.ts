@@ -6,8 +6,8 @@ import {
   getBuiltinWorkflow,
   resolveEntryColumnId,
 } from "../index.js";
-import { resolveColumnFlags } from "../trait-registry.js";
-import type { WorkflowIrV2 } from "../workflow-ir-types.js";
+import { resolveColumnFlags } from "../workflows/trait-registry.js";
+import type { WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 describe("builtin coding-ideas workflow ir", () => {
   it("parses and round-trips", () => {

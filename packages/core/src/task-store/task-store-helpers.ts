@@ -11,21 +11,21 @@
  */
 
 import { TaskStore } from "../store.js";
-import { isBuiltinWorkflowId } from "../builtin-workflows.js";
-import { InsightStore } from "../insight-store.js";
-import { ResearchStore } from "../research-store.js";
+import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
+import { InsightStore } from "../insights/insight-store.js";
+import { ResearchStore } from "../research/research-store.js";
 import { type TaskRow } from "./persistence.js";
 import { eq } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { MergeRequestRow, WorkflowWorkItemRow } from "./row-types.js";
-import { TodoStore } from "../todo-store.js";
-import { AsyncTodoStore } from "../async-todo-store.js";
-import { AsyncInsightStore } from "../async-insight-store.js";
-import { AsyncResearchStore } from "../async-research-store.js";
-import { assertColumnTraitsValid } from "../trait-registry.js";
+import { TodoStore } from "../stores/todo-store.js";
+import { AsyncTodoStore } from "../async-stores/async-todo-store.js";
+import { AsyncInsightStore } from "../async-stores/async-insight-store.js";
+import { AsyncResearchStore } from "../async-stores/async-research-store.js";
+import { assertColumnTraitsValid } from "../workflows/trait-registry.js";
 import { BoardConfig, BranchGroup, MergeRequestRecord, Task, WorkflowStepTemplate, WorkflowWorkItem, WorkflowWorkItemKind } from "../types.js";
-import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflow-ir-types.js";
-import { applyPromptOverridesToIr } from "../workflow-prompt-overrides.js";
+import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
+import { applyPromptOverridesToIr } from "../workflows/workflow-prompt-overrides.js";
 import { MoveTaskOptions } from "../store.js";
 import { activityProjectPartition } from "./async/async-audit.js";
 

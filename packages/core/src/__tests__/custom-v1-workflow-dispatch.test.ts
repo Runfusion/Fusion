@@ -16,10 +16,10 @@ import {
 } from "../__test-utils__/pg-test-harness.js";
 import { sql } from "drizzle-orm";
 import { type WorkflowIr, type WorkflowIrV1, type WorkflowIrV2 } from "../index.js";
-import { resolveColumnFlags } from "../trait-registry.js";
-import { downgradeIrToV1IfPure, parseWorkflowIr } from "../workflow-ir.js";
-import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
-import { stepsToWorkflowIr } from "../workflow-steps-to-ir.js";
+import { resolveColumnFlags } from "../workflows/trait-registry.js";
+import { downgradeIrToV1IfPure, parseWorkflowIr } from "../workflows/workflow-ir.js";
+import { resolveWorkflowIrById } from "../workflows/workflow-ir-resolver.js";
+import { stepsToWorkflowIr } from "../workflows/workflow-steps-to-ir.js";
 
 const pureV1CustomWorkflow = (): WorkflowIrV1 => ({
   version: "v1",

@@ -13,7 +13,7 @@ import {
   isProtocolRef,
   isQuorumSatisfied,
   isRetryableMeshWriteFailure,
-} from "../mesh-replication-protocol.js";
+} from "../mesh/mesh-replication-protocol.js";
 
 describe("mesh-replication-protocol", () => {
   it("exposes protocol identity", () => {

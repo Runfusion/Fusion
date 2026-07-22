@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types.js";
-import { computeBlockerFanoutMap } from "../blocker-fanout.js";
+import { computeBlockerFanoutMap } from "../tasks/blocker-fanout.js";
 
 const MAX_AUTO_MERGE_RETRIES = 3;
 

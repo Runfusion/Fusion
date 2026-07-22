@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAppVersion, parseSemver, compareVersions, isVersionNewer, resolveUpdateTargetVersion } from "../app-version.js";
+import { getAppVersion, parseSemver, compareVersions, isVersionNewer, resolveUpdateTargetVersion } from "../i18n/app-version.js";
 
 describe("getAppVersion", () => {
   it("should return a non-empty string", () => {

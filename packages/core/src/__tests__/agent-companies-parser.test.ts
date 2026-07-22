@@ -22,7 +22,7 @@ import {
   parseTaskManifest,
   parseTeamManifest,
   parseYamlFrontmatter,
-} from "../agent-companies-parser.js";
+} from "../agents/agent-companies-parser.js";
 
 const tempDirs: string[] = [];
 
@@ -469,7 +469,7 @@ name: Archive CEO
         };
       });
 
-      const parserModule = await import("../agent-companies-parser.js");
+      const parserModule = await import("../agents/agent-companies-parser.js");
       const pkg = await parserModule.parseCompanyArchive(archivePath);
 
       expect(pkg.company?.name).toBe("Archive Company");
@@ -672,7 +672,7 @@ name: Nested Archive CEO
       vi.doMock("extract-zip", extractZipModuleFactory);
       vi.doMock("tar", tarModuleFactory);
 
-      const parserModule = await import("../agent-companies-parser.js");
+      const parserModule = await import("../agents/agent-companies-parser.js");
 
       const parsed = parserModule.parseYamlFrontmatter(`---
 name: Pure Helper
@@ -726,7 +726,7 @@ Keep things tidy.`);
       vi.resetModules();
       vi.doMock("extract-zip", extractZipModuleFactory);
 
-      const parserModule = await import("../agent-companies-parser.js");
+      const parserModule = await import("../agents/agent-companies-parser.js");
       const root = createTempDir();
       const archivePath = join(root, "company.zip");
       writeFileSync(archivePath, Buffer.from("placeholder zip contents"));
@@ -755,7 +755,7 @@ Keep things tidy.`);
       vi.resetModules();
       vi.doMock("tar", tarModuleFactory);
 
-      const parserModule = await import("../agent-companies-parser.js");
+      const parserModule = await import("../agents/agent-companies-parser.js");
       const root = createTempDir();
       const archivePath = join(root, "company.tgz");
       writeFileSync(archivePath, Buffer.from("placeholder tgz contents"));

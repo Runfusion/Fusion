@@ -24,7 +24,7 @@
 
 import postgres from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { createLogger } from "../logger.js";
+import { createLogger } from "../process/logger.js";
 import {
   resolveBackend,
   type ResolvedBackend,

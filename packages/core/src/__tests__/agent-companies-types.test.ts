@@ -11,7 +11,7 @@ import type {
   SourceReference,
   TaskManifest,
   TeamManifest,
-} from "../agent-companies-types.js";
+} from "../agents/agent-companies-types.js";
 
 describe("agent-companies-types", () => {
   it("supports schema and kind literals", () => {

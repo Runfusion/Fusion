@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { join, resolve } from "node:path";
-import { resolvePluginSkillBodyPath } from "../plugin-skill-paths.js";
-import type { PluginSkillContribution } from "../plugin-types.js";
+import { resolvePluginSkillBodyPath } from "../plugins/plugin-skill-paths.js";
+import type { PluginSkillContribution } from "../plugins/plugin-types.js";
 
 function skill(overrides: Partial<PluginSkillContribution> = {}): PluginSkillContribution {
   return {

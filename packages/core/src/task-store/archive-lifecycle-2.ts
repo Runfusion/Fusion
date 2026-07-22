@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId} from "../async-mission-store-queries.js";
+import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId} from "../async-stores/async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -15,14 +15,14 @@ import {and, eq} from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type {Task, Column, ArchivedTaskEntry, GithubIssueAction} from "../types.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../task-priority.js";
-import {generateTaskLineageId} from "../task-lineage.js";
+import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from "../task-store/async/async-persistence.js";
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async/async-lifecycle.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async/async-archive-lineage.js";
-import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
+import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-stores/async-archive-db.js";
 import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchivedWorkspaceWorktrees, releasePreparedWorkspaceArchiveDisposal} from "./archive-lifecycle.js";
 
 export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {

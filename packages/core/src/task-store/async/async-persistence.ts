@@ -33,7 +33,7 @@ import { and, Column, eq, is, isNull, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
-import { isPostgresUniqueError } from "../../postgres-errors.js";
+import { isPostgresUniqueError } from "../../db/postgres-errors.js";
 import { taskProjectScope } from "../../postgres/data-layer.js";
 import {
   TASK_COLUMN_DESCRIPTORS,

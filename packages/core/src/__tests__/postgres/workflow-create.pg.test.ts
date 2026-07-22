@@ -23,7 +23,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../../builtin-coding-workflow-ir.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workflow-ir.js";
 
 const pgTest = pgDescribe;
 

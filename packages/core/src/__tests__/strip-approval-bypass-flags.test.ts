@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { stripApprovalBypassFlags } from "../workflow-ir.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import { stripApprovalBypassFlags } from "../workflows/workflow-ir.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 
 /**
  * P0 security helper: removes the CLI-approval-bypass flags

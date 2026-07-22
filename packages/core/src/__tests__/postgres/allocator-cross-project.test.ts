@@ -23,7 +23,7 @@ import {
   createAsyncDistributedTaskIdAllocator,
   reconcileTaskIdStateAsync,
 } from "../../task-store/async/async-allocator.js";
-import type { DistributedTaskIdAllocator } from "../../distributed-task-id.js";
+import type { DistributedTaskIdAllocator } from "../../tasks/distributed-task-id.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";

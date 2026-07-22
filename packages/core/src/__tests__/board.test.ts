@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canTransition, getValidTransitions, resolveDependencyOrder } from "../board.js";
+import { canTransition, getValidTransitions, resolveDependencyOrder } from "../board/board.js";
 import { VALID_TRANSITIONS, type Task, type Column } from "../types.js";
 
 /**

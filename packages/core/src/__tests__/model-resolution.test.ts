@@ -14,7 +14,7 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
   TEST_MODE_RESOLVED,
-} from "../model-resolution.js";
+} from "../ai/model-resolution.js";
 
 describe("model-resolution", () => {
   it("uses only a complete task merger pair before settings and preserves test mode", () => {

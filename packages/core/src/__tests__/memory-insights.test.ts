@@ -22,8 +22,8 @@ import {
   createInsightExtractionAutomation,
   validatePruneCandidate,
   applyMemoryPruning,
-} from "../memory-insights.js";
-import type { MemoryInsight, InsightExtractionResult } from "../memory-insights.js";
+} from "../memory/memory-insights.js";
+import type { MemoryInsight, InsightExtractionResult } from "../memory/memory-insights.js";
 import type { ProjectSettings } from "../types.js";
 
 describe("memory-insights", () => {
@@ -652,7 +652,7 @@ import {
   MEMORY_AUDIT_PATH,
   readMemoryAudit,
   writeMemoryAudit,
-} from "../memory-insights.js";
+} from "../memory/memory-insights.js";
 
 describe("memory-insights audit file operations", () => {
   let tempDir: string;
@@ -734,7 +734,7 @@ describe("memory-insights audit file operations", () => {
 import {
   processInsightExtractionRun,
   processAndAuditInsightExtraction,
-} from "../memory-insights.js";
+} from "../memory/memory-insights.js";
 
 describe("memory-insights run processing", () => {
   let tempDir: string;
@@ -1078,7 +1078,7 @@ Durable content.`;
 import {
   generateMemoryAudit,
   renderMemoryAuditMarkdown,
-} from "../memory-insights.js";
+} from "../memory/memory-insights.js";
 
 describe("memory-insights audit generation", () => {
   let tempDir: string;

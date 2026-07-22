@@ -26,13 +26,13 @@ import type {
   TaskReviewState,
 } from "./task-review.js";
 import type { WorkflowStepResult } from "../workflow/workflow-steps.js";
-import type { InReviewStallSignal } from "../../in-review-stall.js";
-import type { InReviewStalledSignal } from "../../in-review-stalled.js";
-import type { StalePausedReviewSignal } from "../../stale-paused-review.js";
-import type { StalePausedTodoSignal } from "../../stale-paused-todo.js";
-import type { StalledReviewSignal } from "../../stalled-review-detector.js";
-import type { TaskAgeStalenessSignal } from "../../task-age-staleness.js";
-import type { PlannerOverseerRuntimeSnapshot } from "../../planner-overseer-state.js";
+import type { InReviewStallSignal } from "../../tasks/in-review-stall.js";
+import type { InReviewStalledSignal } from "../../tasks/in-review-stalled.js";
+import type { StalePausedReviewSignal } from "../../tasks/stale-paused-review.js";
+import type { StalePausedTodoSignal } from "../../tasks/stale-paused-todo.js";
+import type { StalledReviewSignal } from "../../tasks/stalled-review-detector.js";
+import type { TaskAgeStalenessSignal } from "../../tasks/task-age-staleness.js";
+import type { PlannerOverseerRuntimeSnapshot } from "../../planner/planner-overseer-state.js";
 import type {
   SteeringComment,
   TaskAttachment,

@@ -60,7 +60,7 @@ describe("searchWithQmd routes through the hardened default executor (unit)", ()
     tempDirs.push(rootDir);
     mkdirSync(join(rootDir, ".fusion", "memory"), { recursive: true });
 
-    const { QmdMemoryBackend } = await import("../memory-backend.js");
+    const { QmdMemoryBackend } = await import("../memory/memory-backend.js");
     const backend = new QmdMemoryBackend();
     const results = await backend.search(rootDir, { query: "unit-test-query", limit: 5 });
 

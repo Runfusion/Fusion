@@ -4,7 +4,7 @@ import {
   SECRET_ACCESS_POLICY_FALLBACK,
   isSecretAccessPolicy,
   resolveSecretAccessPolicy,
-} from "../secret-access-policy.js";
+} from "../secrets/secret-access-policy.js";
 
 describe("secret-access-policy", () => {
   it("isSecretAccessPolicy accepts supported values and rejects invalid values", () => {

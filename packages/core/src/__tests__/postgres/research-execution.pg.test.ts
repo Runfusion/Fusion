@@ -26,13 +26,13 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import type { AsyncResearchStore } from "../../async-research-store.js";
+import type { AsyncResearchStore } from "../../async-stores/async-research-store.js";
 import type {
   ResearchModelSettings,
   ResearchProviderConfig,
   ResearchSource,
   ResearchSynthesisRequest,
-} from "../../research-types.js";
+} from "../../research/research-types.js";
 // Import the orchestrator from engine SOURCE (not the @fusion/engine barrel, which resolves
 // to a possibly-stale dist build) so this test exercises the current await-converted port.
 import {

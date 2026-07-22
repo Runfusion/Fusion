@@ -6,10 +6,10 @@ sets are the R6 contract; the explicit-wins + colliding-id cases lock KTD-11
 use, so a preset id colliding with a legacy template id stays identity-stable).
 */
 import { describe, expect, it } from "vitest";
-import { resolveReviewLevelSteps, applyReviewLevelPreset } from "../review-level-preset.js";
-import { PLAN_REVIEW_GROUP_ID } from "../builtin-plan-review-group.js";
-import { CODE_REVIEW_GROUP_ID } from "../builtin-code-review-group.js";
-import { BROWSER_VERIFICATION_GROUP_ID } from "../builtin-browser-verification-group.js";
+import { resolveReviewLevelSteps, applyReviewLevelPreset } from "../tasks/review-level-preset.js";
+import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
+import { CODE_REVIEW_GROUP_ID } from "../workflows/builtin-code-review-group.js";
+import { BROWSER_VERIFICATION_GROUP_ID } from "../workflows/builtin-browser-verification-group.js";
 
 type PresetInput = { reviewLevel?: number; enabledWorkflowSteps?: string[]; description?: string };
 const preset = (input: PresetInput): PresetInput => applyReviewLevelPreset(input);

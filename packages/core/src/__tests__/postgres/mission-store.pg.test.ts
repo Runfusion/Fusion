@@ -32,7 +32,7 @@ import {
   listMilestones as listMilestoneRows,
   listMissionEvents,
   listMissions as listMissionRows,
-} from "../../async-mission-store.js";
+} from "../../async-stores/async-mission-store.js";
 
 const pgTest = pgDescribe;
 

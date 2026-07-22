@@ -30,7 +30,7 @@ import {
   readTransitionPendingAsync,
   writeTransitionPendingAsync,
 } from "../../task-store/async/async-transition-pending.js";
-import { makeTransitionPending } from "../../transition-types.js";
+import { makeTransitionPending } from "../../tasks/transition-types.js";
 
 const pgTest = pgDescribe;
 

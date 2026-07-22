@@ -40,7 +40,7 @@ import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { recordRunAuditEventWithinTransaction, taskProjectScope } from "../../postgres/data-layer.js";
-import { normalizeTaskPriority } from "../../task-priority.js";
+import { normalizeTaskPriority } from "../../tasks/task-priority.js";
 import type {
   MergeQueueAcquireOptions,
   MergeQueueEnqueueOptions,

@@ -36,7 +36,7 @@ import type {
   GoalCitationSurface,
 } from "../../types.js";
 import type { GoalCitationRow } from "../row-types.js";
-import type { UsageEventInput, UsageEventKind, UsageEventRangeQuery, UsageEvent } from "../../usage-events.js";
+import type { UsageEventInput, UsageEventKind, UsageEventRangeQuery, UsageEvent } from "../../tasks/usage-events.js";
 
 const USAGE_EVENT_META_MAX_BYTES = 16 * 1024;
 

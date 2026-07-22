@@ -12,7 +12,7 @@ vi.mock("node:child_process", () => ({
   execFile: mockExecFile,
 }));
 
-import { GIT_INSTALL_URL, probeGitCliStatus } from "../git-cli-status.js";
+import { GIT_INSTALL_URL, probeGitCliStatus } from "../cli/git-cli-status.js";
 
 function mockChildProcess() {
   return Object.assign(new EventEmitter(), {

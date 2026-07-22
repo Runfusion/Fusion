@@ -4,8 +4,8 @@ import {
   GROK_PROVIDER_REGISTRATION,
   mergeBuiltInGrokProviderModels,
   registerBuiltInGrokProvider,
-} from "../grok-provider.js";
-import { ZAI_PROVIDER_ID, ZAI_PROVIDER_REGISTRATION, registerBuiltInZaiProvider } from "../zai-provider.js";
+} from "../ai/grok-provider.js";
+import { ZAI_PROVIDER_ID, ZAI_PROVIDER_REGISTRATION, registerBuiltInZaiProvider } from "../ai/zai-provider.js";
 
 const EXPECTED_GROK_MODELS = ["grok-4.5", "grok-4", "grok-code-fast-1", "grok-3", "grok-3-mini"];
 

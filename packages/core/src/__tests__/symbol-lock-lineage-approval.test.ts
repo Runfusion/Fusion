@@ -5,7 +5,7 @@ import {
   MISSION_LINEAGE_APPROVAL_REQUIRED,
   type MissionLineageSnapshot,
 } from "../index.js";
-import type { Milestone, Mission, MissionFeature, Slice } from "../mission-types.js";
+import type { Milestone, Mission, MissionFeature, Slice } from "../missions/mission-types.js";
 
 const timestamp = "2026-07-19T14:58:00.000Z";
 

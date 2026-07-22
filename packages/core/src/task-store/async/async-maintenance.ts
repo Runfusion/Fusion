@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
-import { pruneAgentLogFiles as pruneAgentLogFileEntries } from "../../agent-log-file-store.js";
+import { pruneAgentLogFiles as pruneAgentLogFileEntries } from "../../agents/agent-log-file-store.js";
 
 export interface OperationalLogPruneResult {
   deletedByTable: Record<string, number>;

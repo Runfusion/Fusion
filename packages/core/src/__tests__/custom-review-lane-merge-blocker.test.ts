@@ -5,7 +5,7 @@ import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
 } from "../__test-utils__/pg-test-harness.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 
 /*
 FNXC:WorkflowTransitionPolicy 2026-07-19-10:50:

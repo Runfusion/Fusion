@@ -7,7 +7,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
-import { buildBootstrapPrompt } from "../mesh-task-replication.js";
+import { buildBootstrapPrompt } from "../mesh/mesh-task-replication.js";
 
 const pgTest = pgDescribe;
 

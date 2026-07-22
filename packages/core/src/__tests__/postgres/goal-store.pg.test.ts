@@ -17,8 +17,8 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { ACTIVE_GOAL_LIMIT } from "../../goal-types.js";
-import type { AsyncGoalStore } from "../../async-goal-store.js";
+import { ACTIVE_GOAL_LIMIT } from "../../goals/goal-types.js";
+import type { AsyncGoalStore } from "../../async-stores/async-goal-store.js";
 
 const pgTest = pgDescribe;
 

@@ -6,12 +6,12 @@ import {
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
   renderTriagePolicyPlaceholders,
-} from "../builtin-workflow-settings.js";
-import { MOVED_SETTINGS_KEYS } from "../moved-settings.js";
+} from "../workflows/builtin-workflow-settings.js";
+import { MOVED_SETTINGS_KEYS } from "../config/moved-settings.js";
 import {
   resolveEffectiveSettingValues,
   validateSettingValuePatch,
-} from "../workflow-settings.js";
+} from "../workflows/workflow-settings.js";
 
 const expectedDefaults: Record<string, { type: string; default: unknown }> = {
   triageProactiveSubtaskSplittingEnabled: { type: "boolean", default: true },

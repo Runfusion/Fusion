@@ -21,7 +21,7 @@ import {
   runGhJson,
   runGhJsonAsync,
   type GhErrorCode,
-} from "../gh-cli.js";
+} from "../cli/gh-cli.js";
 
 // Tests for pure functions (no child_process dependency)
 describe("classifyGhError", () => {

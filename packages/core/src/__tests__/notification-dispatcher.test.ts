@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NotificationDispatcher } from "../notification/dispatcher.js";
 import type { NotificationProvider } from "../notification/provider.js";
-import { DEFAULT_GLOBAL_SETTINGS } from "../settings-schema.js";
+import { DEFAULT_GLOBAL_SETTINGS } from "../config/settings-schema.js";
 import { NOTIFICATION_EVENTS, type NtfyNotificationEvent, type NotificationPayload } from "../types.js";
 
 function createProvider(overrides: Partial<NotificationProvider> = {}): NotificationProvider {

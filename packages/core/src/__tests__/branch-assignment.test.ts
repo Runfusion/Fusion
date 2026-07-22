@@ -7,7 +7,7 @@ import {
   isValidBranchGroupBranchName,
   validateBranchGroupBranchName,
   filterTasksByBranchGroup,
-} from "../branch-assignment.js";
+} from "../branch/branch-assignment.js";
 
 describe("isValidBranchGroupBranchName (Fix #11)", () => {
   it("accepts legitimate branch names", () => {

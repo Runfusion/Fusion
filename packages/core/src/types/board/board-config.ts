@@ -3,7 +3,7 @@
  * Board config, distributed task-id reservations, autostash, merge result, and column labels peeled from types.ts.
  */
 
-import type { Column } from "./board.js";
+import type { Column } from "../board/board.js";
 import type { Settings } from "../settings/settings-scope.js";
 import type { MergeDetails, Task } from "../task/task-core.js";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isBranchGroupComplete, isBranchGroupMemberLanded } from "../branch-group-completion.js";
+import { isBranchGroupComplete, isBranchGroupMemberLanded } from "../branch/branch-group-completion.js";
 import type { BranchGroup, Task } from "../types.js";
 
 /**

@@ -5,7 +5,7 @@ import {
   FN_INSTALL_NPM,
   FN_NPM_PACKAGE,
   FN_NPX_INVOCATION,
-} from "../fn-binary.js";
+} from "../cli/fn-binary.js";
 
 describe("fn-binary constants", () => {
   it("uses runfusion.ai as the canonical npm package", () => {

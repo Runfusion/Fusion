@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MAX_TITLE_LENGTH } from "../ai-summarize.js";
-import { extractTaskIdTokens, hasTitleIdDrift, normalizeTitleForTaskId } from "../task-title-id-drift.js";
+import { MAX_TITLE_LENGTH } from "../ai/ai-summarize.js";
+import { extractTaskIdTokens, hasTitleIdDrift, normalizeTitleForTaskId } from "../tasks/task-title-id-drift.js";
 
 describe("task-title-id-drift", () => {
   it("extracts uppercase fn ids", () => {

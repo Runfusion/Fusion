@@ -4,7 +4,7 @@ const { getFnAgentMock } = vi.hoisted(() => ({
   getFnAgentMock: vi.fn(),
 }));
 
-vi.mock("../ai-engine-loader.js", () => ({
+vi.mock("../ai/ai-engine-loader.js", () => ({
   getFnAgent: getFnAgentMock,
 }));
 
@@ -36,7 +36,7 @@ import {
   RateLimitError,
   AiServiceError,
   __resetSummarizeState,
-} from "../ai-summarize.js";
+} from "../ai/ai-summarize.js";
 
 describe("ai-summarize", () => {
   beforeEach(() => {

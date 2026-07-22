@@ -4,8 +4,8 @@ import {
   getFnAgent,
   setCreateAiSessionFactory,
   setCreateFnAgent,
-} from "../ai-engine-loader.js";
-import type { CreateAiSessionFactory } from "../plugin-types.js";
+} from "../ai/ai-engine-loader.js";
+import type { CreateAiSessionFactory } from "../plugins/plugin-types.js";
 
 describe("ai-engine-loader", () => {
   beforeEach(() => {

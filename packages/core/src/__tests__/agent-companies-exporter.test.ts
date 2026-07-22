@@ -4,14 +4,14 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { parseYamlFrontmatter } from "../agent-companies-parser.js";
+import { parseYamlFrontmatter } from "../agents/agent-companies-parser.js";
 import {
   agentToCompaniesManifest,
   exportAgentsToDirectory,
   generateAgentMd,
   generateCompanyMd,
   slugify,
-} from "../agent-companies-exporter.js";
+} from "../agents/agent-companies-exporter.js";
 import type { Agent } from "../types.js";
 
 const tempDirs: string[] = [];

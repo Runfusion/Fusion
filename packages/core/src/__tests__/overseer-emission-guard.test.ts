@@ -3,8 +3,8 @@ import {
   normalizeOverseerAdviceNote,
   normalizeOverseerAdviceSeverity,
   overseerAdviceSeverityRank,
-} from "../overseer-advice.js";
-import { OverseerEmissionGuard } from "../overseer-emission-guard.js";
+} from "../planner/overseer-advice.js";
+import { OverseerEmissionGuard } from "../planner/overseer-emission-guard.js";
 
 describe("normalizeOverseerAdviceNote", () => {
   it("folds case, punctuation, and whitespace into one key", () => {

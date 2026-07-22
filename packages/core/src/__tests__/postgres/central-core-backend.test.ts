@@ -24,7 +24,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CentralCore } from "../../central-core.js";
+import { CentralCore } from "../../central/central-core.js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 
 const PG_TEST_URL_BASE =

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import {
   __setTaskMoveDisposalTimeoutForTesting,
   registerTaskMoveDisposer,
-} from "../../task-move-disposer.js";
+} from "../../tasks/task-move-disposer.js";
 import { readTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   createSharedPgTaskStoreTestHarness,

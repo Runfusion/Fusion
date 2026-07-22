@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange } from "../mesh/node-override-guard.js";
 
 describe("validateNodeOverrideChange", () => {
   it("allows when newNodeId is undefined (not being changed)", () => {

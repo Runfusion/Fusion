@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseWorkflowIr,
   serializeWorkflowIr,
-} from "../workflow-ir.js";
-import type { WorkflowIrEdge, WorkflowIrNode, WorkflowIrV2 } from "../workflow-ir-types.js";
+} from "../workflows/workflow-ir.js";
+import type { WorkflowIrEdge, WorkflowIrNode, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 const columns: WorkflowIrV2["columns"] = [{ id: "work", name: "Work", traits: [] }];
 

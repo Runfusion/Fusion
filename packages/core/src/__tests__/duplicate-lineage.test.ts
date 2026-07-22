@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractDuplicateOfReferences,
   getTaskDuplicateLineage,
-} from "../duplicate-lineage.js";
+} from "../duplicates/duplicate-lineage.js";
 
 describe("extractDuplicateOfReferences", () => {
   it("parses supported duplicate-of phrasings", () => {

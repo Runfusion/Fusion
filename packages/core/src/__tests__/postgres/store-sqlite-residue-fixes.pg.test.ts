@@ -23,7 +23,7 @@ import { eq, inArray } from "drizzle-orm";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as schema from "../../postgres/schema/index.js";
-import { AsyncMissionStore } from "../../async-mission-store.js";
+import { AsyncMissionStore } from "../../async-stores/async-mission-store.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

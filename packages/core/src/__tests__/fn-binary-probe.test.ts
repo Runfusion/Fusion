@@ -113,7 +113,7 @@ async function importWithMocks(options: {
     };
   });
 
-  const mod = await import("../fn-binary.js");
+  const mod = await import("../cli/fn-binary.js");
   return { mod, spawnMock, readFileSyncMock };
 }
 
@@ -275,7 +275,7 @@ describe("detectFnBinary", () => {
       };
     });
 
-    const mod = await import("../fn-binary.js");
+    const mod = await import("../cli/fn-binary.js");
     const result = await mod.detectFnBinary();
 
     expect(result).toMatchObject({

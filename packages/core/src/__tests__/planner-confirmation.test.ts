@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classifyPlannerActionSideEffect, requiresPlannerConfirmation } from "../planner-confirmation.js";
-import { decidePlannerRecovery, type PlannerRecoveryObservation } from "../planner-recovery.js";
+import { classifyPlannerActionSideEffect, requiresPlannerConfirmation } from "../planner/planner-confirmation.js";
+import { decidePlannerRecovery, type PlannerRecoveryObservation } from "../planner/planner-recovery.js";
 
 function observation(overrides: Partial<PlannerRecoveryObservation> = {}): PlannerRecoveryObservation {
   return {

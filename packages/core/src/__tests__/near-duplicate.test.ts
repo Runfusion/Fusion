@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractIntentSignature, findNearDuplicates, isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "../near-duplicate.js";
+import { extractIntentSignature, findNearDuplicates, isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "../duplicates/near-duplicate.js";
 
 const fn5144Title = "Create PR dialog missing /pr/options /pr/preflight /pr/generate-metadata routes";
 const fn5144Description =

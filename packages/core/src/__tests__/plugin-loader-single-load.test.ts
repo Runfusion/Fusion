@@ -3,8 +3,8 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PluginLoader } from "../plugin-loader.js";
-import type { PluginInstallation } from "../plugin-types.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
+import type { PluginInstallation } from "../plugins/plugin-types.js";
 
 async function createFixture(onLoadSource: string, onUnloadSource?: string) {
   const root = await mkdtemp(join(tmpdir(), "fusion-plugin-single-load-"));

@@ -4,7 +4,7 @@ import {
   DEFAULT_GLOBAL_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   isGlobalSettingsKey,
-} from "../settings-schema.js";
+} from "../config/settings-schema.js";
 
 describe("useDroidCli global setting", () => {
   it("is included in GLOBAL_SETTINGS_KEYS", () => {

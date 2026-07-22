@@ -20,13 +20,13 @@ import {
   extractEffectiveWriteScopeFromPrompt,
   extractFileScopeTokens,
   isValidFileScopeEntry,
-} from "../file-scope-classification.js";
+} from "../tasks/file-scope-classification.js";
 import {
   isValidFileScopeEntry as storeFileScopeIsValidFileScopeEntry,
   validateFileScopeInPromptContent,
 } from "../task-store/file-scope.js";
 import { isValidFileScopeEntry as storeIsValidFileScopeEntry } from "../store.js";
-import { buildBootstrapPrompt } from "../mesh-task-replication.js";
+import { buildBootstrapPrompt } from "../mesh/mesh-task-replication.js";
 
 describe("isValidFileScopeEntry", () => {
   it("accepts root-level repo files with letter-leading extensions", () => {

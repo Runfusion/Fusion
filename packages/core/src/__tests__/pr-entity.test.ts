@@ -6,7 +6,7 @@ import {
   isPrEntityActive,
   isPrEntityAutoMergeReady,
   summarizePrThreadActivity,
-} from "../pr-entity.js";
+} from "../merge/pr-entity.js";
 import type { PrEntity, PrThreadState } from "../types.js";
 
 function thread(outcome: PrThreadState["outcome"], threadId = "th"): PrThreadState {

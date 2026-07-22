@@ -3,4 +3,4 @@
  * Domain barrel for types/audit.
  */
 export * from "./run-audit.js";
-export * from "./planner-intervention.js";
+export * from "../../planner/planner-intervention.js";

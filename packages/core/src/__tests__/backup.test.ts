@@ -3,7 +3,7 @@ import {
   BackupManager,
   createBackupManager,
   resolveBackendConnectionString,
-} from "../backup.js";
+} from "../backup/backup.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
   getActiveEmbeddedRuntimeUrl,

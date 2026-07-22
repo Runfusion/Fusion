@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeCapacityRisk } from "../capacity.js";
+import { computeCapacityRisk } from "../board/capacity.js";
 
 describe("computeCapacityRisk", () => {
   it("is at risk when todo exceeds threshold and idle non-ephemeral count is zero", () => {

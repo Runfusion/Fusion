@@ -9,8 +9,8 @@ import {
   isGlobalSettingsKey,
   isProjectSettingsKey,
 } from "../types.js";
-import { NON_DEFAULT_PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
-import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
+import { NON_DEFAULT_PROJECT_SETTINGS_KEYS } from "../config/settings-schema.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
 
 function assertExactKeyCoverage(scopeName: string, actual: readonly string[], expected: readonly string[]): void {
   const uniqueActual = [...new Set(actual)];

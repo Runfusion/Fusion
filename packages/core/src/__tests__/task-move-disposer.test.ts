@@ -3,7 +3,7 @@ import {
   __setTaskMoveDisposalTimeoutForTesting,
   disposeTaskBeforeMove,
   registerTaskMoveDisposer,
-} from "../task-move-disposer.js";
+} from "../tasks/task-move-disposer.js";
 
 describe("task move disposer", () => {
   it("does not complete a user in-progress to todo move until cancellation settles", async () => {

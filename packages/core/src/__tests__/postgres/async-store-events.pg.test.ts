@@ -20,9 +20,9 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import type { AsyncMissionStore } from "../../async-mission-store.js";
-import type { AsyncResearchStore } from "../../async-research-store.js";
-import type { AsyncInsightStore } from "../../async-insight-store.js";
+import type { AsyncMissionStore } from "../../async-stores/async-mission-store.js";
+import type { AsyncResearchStore } from "../../async-stores/async-research-store.js";
+import type { AsyncInsightStore } from "../../async-stores/async-insight-store.js";
 
 const pgTest = pgDescribe;
 

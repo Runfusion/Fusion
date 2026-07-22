@@ -8,13 +8,13 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-import { BUILTIN_OVERSIGHT_SETTINGS, BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
+import { BUILTIN_OVERSIGHT_SETTINGS, BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
 import { DEFAULT_PLANNER_OVERSIGHT_LEVEL } from "../types.js";
 import {
   resolveEffectiveSettingsById,
   resolveEffectivePlannerOversightLevel,
   type WorkflowSettingsResolverStore,
-} from "../workflow-settings-resolver.js";
+} from "../workflows/workflow-settings-resolver.js";
 
 const PROJECT = "proj-1";
 

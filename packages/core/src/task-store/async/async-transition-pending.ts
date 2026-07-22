@@ -19,7 +19,7 @@ import {
   type TransitionPending,
   deserializeTransitionPending,
   serializeTransitionPending,
-} from "../../transition-types.js";
+} from "../../tasks/transition-types.js";
 
 type Handle = DrizzleDb | DbTransaction;
 

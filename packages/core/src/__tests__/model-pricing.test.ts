@@ -8,7 +8,7 @@ import {
   pricingAsOf,
   PRICING_STALE_AFTER_MS,
   type ModelPricingOverrides,
-} from "../model-pricing.js";
+} from "../ai/model-pricing.js";
 
 const ZERO = {
   inputTokens: 0,

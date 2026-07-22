@@ -38,7 +38,7 @@ import type {
   DistributedTaskIdReserveInput,
   DistributedTaskIdStateInput,
 } from "../../types.js";
-import type { DistributedTaskIdAllocator } from "../../distributed-task-id.js";
+import type { DistributedTaskIdAllocator } from "../../tasks/distributed-task-id.js";
 
 const TASK_ID_PATTERN = /^([A-Z][A-Z0-9]*)-(\d+)$/u;
 const DEFAULT_RESERVATION_TTL_MS = 15 * 60 * 1000;

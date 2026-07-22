@@ -5,7 +5,7 @@ import {
   DEFAULT_MAX_AUTO_MERGE_RETRIES,
   DEFAULT_STALE_MERGING_MIN_AGE_MS,
   getInReviewStallReason,
-} from "../in-review-stall.js";
+} from "../tasks/in-review-stall.js";
 
 const NOW = Date.parse("2026-05-12T12:00:00.000Z");
 

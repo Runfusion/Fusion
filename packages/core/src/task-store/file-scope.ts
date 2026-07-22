@@ -17,12 +17,12 @@
  * code-block File Scope headings (issue repros) are ignored consistently on create,
  * sanitize, and effective write-scope paths.
  */
-export { isValidFileScopeEntry, extractFileScopeTokens } from "../file-scope-classification.js";
+export { isValidFileScopeEntry, extractFileScopeTokens } from "../tasks/file-scope-classification.js";
 import {
   isValidFileScopeEntry,
   extractFileScopeTokens,
   locateFileScopeSection,
-} from "../file-scope-classification.js";
+} from "../tasks/file-scope-classification.js";
 
 export function validateFileScopeInPromptContent(prompt: string): { valid: string[]; invalid: string[] } {
   const tokens = extractFileScopeTokens(prompt);

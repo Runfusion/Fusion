@@ -7,7 +7,7 @@
  * pre-extraction form. store.ts re-imports these helpers.
  */
 import type { Settings } from "../types.js";
-import { validateWorktrunkSettings } from "../worktrunk-settings.js";
+import { validateWorktrunkSettings } from "../config/worktrunk-settings.js";
 
 /**
  * Canonicalizes a settings object by stripping legacy fields that are no longer valid

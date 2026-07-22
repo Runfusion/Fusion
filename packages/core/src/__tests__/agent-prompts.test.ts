@@ -9,13 +9,13 @@ import {
   getTemplatesForRole,
   FUSION_RUNTIME_SELF_AWARENESS,
   TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
-} from "../agent-prompts.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_SEAM_PROMPTS, builtinSeamPrompt } from "../builtin-workflow-prompts.js";
-import { renderTriagePolicyPlaceholders } from "../builtin-workflow-settings.js";
-import { resolvePlanningPromptFromIr, resolveSeamPromptFromIr } from "../workflow-ir-resolver.js";
+} from "../agents/agent-prompts.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { BUILTIN_SEAM_PROMPTS, builtinSeamPrompt } from "../workflows/builtin-workflow-prompts.js";
+import { renderTriagePolicyPlaceholders } from "../workflows/builtin-workflow-settings.js";
+import { resolvePlanningPromptFromIr, resolveSeamPromptFromIr } from "../workflows/workflow-ir-resolver.js";
 import type { AgentPromptsConfig, AgentPromptTemplate } from "../types.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 
 // ---------------------------------------------------------------------------
 // resolveAgentPrompt

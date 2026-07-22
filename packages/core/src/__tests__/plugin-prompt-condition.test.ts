@@ -5,7 +5,7 @@ import {
   evaluatePromptCondition,
   evaluatePromptConditionDetailed,
   resolveEffectivePluginSettings,
-} from "../plugin-prompt-condition.js";
+} from "../plugins/plugin-prompt-condition.js";
 
 const settings = {
   "api-style": "minimal-apis",

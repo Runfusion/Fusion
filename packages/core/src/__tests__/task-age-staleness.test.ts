@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TASK_AGE_STALENESS_THRESHOLDS,
   getTaskAgeStalenessSignal,
-} from "../task-age-staleness.js";
+} from "../tasks/task-age-staleness.js";
 
 const NOW = Date.parse("2026-05-14T12:00:00.000Z");
 

@@ -3,7 +3,7 @@ import {
   decidePlannerRecovery,
   PLANNER_RECOVERY_MAX_ATTEMPTS,
   type PlannerRecoveryObservation,
-} from "../planner-recovery.js";
+} from "../planner/planner-recovery.js";
 
 function observation(overrides: Partial<PlannerRecoveryObservation> = {}): PlannerRecoveryObservation {
   return {

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReflectionStore } from "../reflection-store.js";
+import { ReflectionStore } from "../agents/reflection-store.js";
 import type { AgentReflection, ReflectionTrigger } from "../types.js";
 
 function makeTmpDir(): string {

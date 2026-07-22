@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconcileClaudeCliPaths } from "../pi-extensions.js";
+import { reconcileClaudeCliPaths } from "../plugins/pi-extensions.js";
 
 const VENDORED = "/repo/packages/pi-claude-cli/index.ts";
 const GLOBAL_NPM = "/opt/homebrew/lib/node_modules/pi-claude-cli/index.ts";

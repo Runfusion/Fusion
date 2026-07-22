@@ -18,8 +18,8 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { InsightLifecycleError } from "../../insight-store.js";
-import type { AsyncInsightStore } from "../../async-insight-store.js";
+import { InsightLifecycleError } from "../../insights/insight-store.js";
+import type { AsyncInsightStore } from "../../async-stores/async-insight-store.js";
 
 const pgTest = pgDescribe;
 

@@ -4,12 +4,12 @@ import {
   importMcpServersJson,
   materializeMcpServerSecrets,
   resolveEffectiveMcpServers,
-} from "../mcp-config.js";
+} from "../config/mcp-config.js";
 import {
   validateMcpServerDefinition,
   validateMcpServerDefinitions,
   validateMcpServerDefinitionsDetailed,
-} from "../settings-validation.js";
+} from "../config/settings-validation.js";
 import type { McpServerDefinition } from "../types.js";
 
 const projectSecret = { secretRef: "project-token", scope: "project" as const };

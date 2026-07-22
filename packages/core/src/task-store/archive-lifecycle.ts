@@ -7,15 +7,15 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MissionStore} from "../mission-store.js";
+import {MissionStore} from "../missions/mission-store.js";
 import {TaskHasDependentsError, TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
 import {isWorkspaceTask, type Task, type Column, type GithubIssueAction} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {toJson} from "../db-helpers.js";
-import {getErrorMessage} from "../error-message.js";
-import {ArchiveWorkspaceDisposalError, ArchiveWorkspaceDisposalIncompleteError, ArchiveWorkspaceWorktreeDisposerMissingError, getArchiveWorkspaceWorktreeDisposer, getArchiveWorktreeDisposer, type ArchiveWorkspaceDisposalResult, type WorkspaceDisposalPlanEntry} from "../archive-worktree-disposer.js";
-import {acquireWorktreePathReservation, canonicalizeWorktreePath} from "../worktree-path-reservation.js";
+import {toJson} from "../db/db-helpers.js";
+import {getErrorMessage} from "../process/error-message.js";
+import {ArchiveWorkspaceDisposalError, ArchiveWorkspaceDisposalIncompleteError, ArchiveWorkspaceWorktreeDisposerMissingError, getArchiveWorkspaceWorktreeDisposer, getArchiveWorktreeDisposer, type ArchiveWorkspaceDisposalResult, type WorkspaceDisposalPlanEntry} from "../db/archive-worktree-disposer.js";
+import {acquireWorktreePathReservation, canonicalizeWorktreePath} from "../tasks/worktree-path-reservation.js";
 import {basename, join, resolve} from "node:path";
 import {homedir} from "node:os";
 

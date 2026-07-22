@@ -3,13 +3,13 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { GlobalSettingsStore } from "../global-settings.js";
+import { GlobalSettingsStore } from "../config/global-settings.js";
 import {
   DaemonTokenManager,
   DAEMON_TOKEN_PREFIX,
   DAEMON_TOKEN_HEX_LENGTH,
   isDaemonTokenFormat,
-} from "../daemon-token.js";
+} from "../cli/daemon-token.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "fn-daemon-token-test-"));

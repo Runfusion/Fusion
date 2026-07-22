@@ -26,7 +26,7 @@ import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import {
   validateBranchGroupBranchName,
-} from "../../branch-assignment.js";
+} from "../../branch/branch-assignment.js";
 import type {
   BranchGroup,
   BranchGroupCreateInput,

@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { isMainThread } from "node:worker_threads";
-import { assertOutsideRealFusionPath } from "../test-safety.js";
+import { assertOutsideRealFusionPath } from "../process/test-safety.js";
 import {
   resolveReservedPortsFromEnv,
   shouldRunPortProbe,

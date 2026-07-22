@@ -8,15 +8,15 @@
  */
 import {TaskStore} from "../store.js";
 import type {Settings} from "../types.js";
-import {parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
-import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflow-reconciliation.js";
-import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
-import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
+import {parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure} from "../workflows/workflow-ir.js";
+import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
+import {BUILTIN_CODING_WORKFLOW_IR} from "../workflows/builtin-coding-workflow-ir.js";
+import type {WorkflowFieldDefinition} from "../workflows/workflow-ir-types.js";
 import "../builtin-traits.js";
-import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflow-definition-types.js";
-import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
-import {isBuiltinWorkflowId} from "../builtin-workflows.js";
-import {fromJson} from "../db.js";
+import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflows/workflow-definition-types.js";
+import {resolveDefaultOnOptionalGroupIds} from "../workflows/workflow-optional-steps.js";
+import {isBuiltinWorkflowId} from "../workflows/builtin-workflows.js";
+import {fromJson} from "../db/db.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import * as schema from "../postgres/schema/index.js";
 import {readProjectConfig, writeProjectConfig} from "../task-store/async/async-settings.js";

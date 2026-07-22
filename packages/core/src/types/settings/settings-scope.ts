@@ -40,9 +40,9 @@ import type {
   NotificationProviderConfig,
   NtfyNotificationEvent,
 } from "../workflow/workflow-steps.js";
-import type { UpdateChannel } from "../../app-version.js";
-import type { ModelPricing } from "../../model-pricing.js";
-import type { SecretScope } from "../../secrets-store.js";
+import type { UpdateChannel } from "../../i18n/app-version.js";
+import type { ModelPricing } from "../../ai/model-pricing.js";
+import type { SecretScope } from "../../secrets/secrets-store.js";
 // Structural deps still defined in types.ts — import type-only (cycle is type-only).
 import type { AgentPromptsConfig, ArchiveAgentLogMode, TaskTokenBudget } from "../../types.js";
 
@@ -2283,5 +2283,5 @@ export {
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,
-} from "../../settings-schema.js";
+} from "../../config/settings-schema.js";
 

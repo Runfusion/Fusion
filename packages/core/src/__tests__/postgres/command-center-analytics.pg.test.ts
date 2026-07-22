@@ -26,10 +26,10 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateProductivityAnalytics } from "../../productivity-analytics.js";
-import { aggregateTeamAnalytics } from "../../team-analytics.js";
-import { aggregateTokenAnalytics } from "../../token-analytics.js";
-import { aggregateToolAnalytics } from "../../tool-analytics.js";
+import { aggregateProductivityAnalytics } from "../../board/productivity-analytics.js";
+import { aggregateTeamAnalytics } from "../../board/team-analytics.js";
+import { aggregateTokenAnalytics } from "../../board/token-analytics.js";
+import { aggregateToolAnalytics } from "../../board/tool-analytics.js";
 
 const pgTest = pgDescribe;
 

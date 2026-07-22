@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { getProjectRootFromWorktree, resolvePiExtensionProjectRoot } from "../pi-extensions.js";
+import { getProjectRootFromWorktree, resolvePiExtensionProjectRoot } from "../plugins/pi-extensions.js";
 
 function git(cwd: string, args: string): string {
   return execSync(`git ${args}`, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -120,7 +120,7 @@ describe("getProjectRootFromWorktree", () => {
       writeFileSync(join(worktreeGitDir, "commondir"), "../..\n");
       writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
 
-      const { getProjectRootFromWorktree: fresh } = await import("../pi-extensions.js");
+      const { getProjectRootFromWorktree: fresh } = await import("../plugins/pi-extensions.js");
       expect(fresh(worktreeDir)).toBe(expectedRoot);
       expect(fresh(join(worktreeDir, "subdir", "file.ts"))).toBe(expectedRoot);
     } finally {
@@ -161,7 +161,7 @@ describe("getProjectRootFromWorktree", () => {
       // own local `.fusion` directory as a hydration/decoy target.
       mkdirSync(join(worktreeDir, ".fusion"), { recursive: true });
 
-      const { resolvePiExtensionProjectRoot: fresh } = await import("../pi-extensions.js");
+      const { resolvePiExtensionProjectRoot: fresh } = await import("../plugins/pi-extensions.js");
       expect(fresh(worktreeDir)).toBe(expectedRoot);
       expect(fresh(worktreeDir)).not.toBe(resolve(worktreeDir));
     } finally {

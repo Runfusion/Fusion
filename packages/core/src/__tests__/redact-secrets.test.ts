@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets } from "../redact-secrets.js";
+import { redactSecrets } from "../secrets/redact-secrets.js";
 
 // Parity fixtures mirror the original ACP plugin's process-manager tests so the
 // shared implementation produces identical behavior (Risk S8).

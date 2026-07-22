@@ -11,7 +11,7 @@
  */
 
 import { TaskStore } from "../store.js";
-import { normalizeTaskCommitAssociation } from "../task-lineage.js";
+import { normalizeTaskCommitAssociation } from "../tasks/task-lineage.js";
 import { TaskCommitAssociationRow } from "./row-types.js";
 import { TaskCommitAssociation } from "../types.js";
 import { and, desc, eq, inArray } from "drizzle-orm";

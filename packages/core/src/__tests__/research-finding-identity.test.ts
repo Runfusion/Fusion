@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveResearchFindingId } from "../research-types.js";
+import { resolveResearchFindingId } from "../research/research-types.js";
 
 describe("resolveResearchFindingId", () => {
   it("is independent of result ordering and source ordering", () => {

@@ -5,15 +5,15 @@ import {
   downgradeIrToV1IfPure,
   WorkflowIrError,
   DEFAULT_WORKFLOW_COLUMN_IDS,
-} from "../workflow-ir.js";
+} from "../workflows/workflow-ir.js";
 import type {
   WorkflowIr,
   WorkflowIrV1,
   WorkflowIrV2,
   WorkflowIrNode,
   WorkflowIrEdge,
-} from "../workflow-ir-types.js";
-import { BUILTIN_WORKFLOWS } from "../builtin-workflows.js";
+} from "../workflows/workflow-ir-types.js";
+import { BUILTIN_WORKFLOWS } from "../workflows/builtin-workflows.js";
 
 function v2(
   columns: WorkflowIrV2["columns"],

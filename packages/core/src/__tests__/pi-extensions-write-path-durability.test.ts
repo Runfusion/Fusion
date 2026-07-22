@@ -64,7 +64,7 @@ describe("write-path durability across a non-standard-location worktree (FN-7730
     // naive fallback walk would have matched).
     mkdirSync(join(worktreeDir, ".fusion"), { recursive: true });
 
-    const { resolvePiExtensionProjectRoot } = await import("../pi-extensions.js");
+    const { resolvePiExtensionProjectRoot } = await import("../plugins/pi-extensions.js");
 
     /*
      * FNXC:PostgresCutover 2026-07-10:

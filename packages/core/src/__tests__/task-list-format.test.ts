@@ -7,7 +7,7 @@ import {
   formatTaskListText as sourceBarrelFormatTaskListText,
 } from "../index.js";
 import { hasBuiltCoreDistBarrel } from "@fusion/test-utils";
-import { clampTaskListText, formatTaskListText, MAX_TASK_LIST_TEXT_CHARS } from "../task-list-format.js";
+import { clampTaskListText, formatTaskListText, MAX_TASK_LIST_TEXT_CHARS } from "../tasks/task-list-format.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

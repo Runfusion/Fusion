@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, GlobalSettings } from "../types.js";
-import { resolveAgentMemoryInclusionMode } from "../agent-memory-mode.js";
+import { resolveAgentMemoryInclusionMode } from "../agents/agent-memory-mode.js";
 
 function makeAgent(mode?: unknown): Agent {
   return {

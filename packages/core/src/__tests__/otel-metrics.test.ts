@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-import { mapAnalyticsToOtlp, OTEL_METRIC_PREFIX } from "../otel-metrics.js";
-import type { TokenAnalytics } from "../token-analytics.js";
-import type { ActivityAnalytics } from "../activity-analytics.js";
+import { mapAnalyticsToOtlp, OTEL_METRIC_PREFIX } from "../process/otel-metrics.js";
+import type { TokenAnalytics } from "../board/token-analytics.js";
+import type { ActivityAnalytics } from "../board/activity-analytics.js";
 
 const TIME_NANO = "1700000000000000000";
 

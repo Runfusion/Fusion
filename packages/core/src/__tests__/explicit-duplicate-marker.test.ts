@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseExplicitDuplicateMarker } from "../explicit-duplicate-marker.js";
+import { parseExplicitDuplicateMarker } from "../duplicates/explicit-duplicate-marker.js";
 
 const FULL_PROMPT = `# Task: FN-5211 - Example
 

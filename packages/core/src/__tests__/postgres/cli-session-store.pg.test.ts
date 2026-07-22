@@ -4,7 +4,7 @@
  * lifecycle through PostgreSQL; no SQLite database is available at runtime.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { CliSessionStore } from "../../cli-session-store.js";
+import { CliSessionStore } from "../../cli/cli-session-store.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

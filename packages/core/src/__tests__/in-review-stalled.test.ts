@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS, getInReviewStalledSignal } from "../in-review-stalled.js";
+import { DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS, getInReviewStalledSignal } from "../tasks/in-review-stalled.js";
 
 const NOW = Date.parse("2026-05-19T12:00:00.000Z");
 

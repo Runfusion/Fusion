@@ -162,7 +162,7 @@ pgTest("TaskStore.listTasks facade (PostgreSQL)", () => {
     } as unknown as import("../../types.js").ArchivedTaskEntry);
 
     const { upsertArchivedTaskEntry } = await import("../../task-store/async/async-archive-lineage.js");
-    const { listArchivedTaskEntriesPage, getArchivedRowCount, filterArchived, searchArchivedTasks } = await import("../../async-archive-db.js");
+    const { listArchivedTaskEntriesPage, getArchivedRowCount, filterArchived, searchArchivedTasks } = await import("../../async-stores/async-archive-db.js");
 
     await upsertArchivedTaskEntry(db, makeEntry("FN-901"), "proj-a");
     await upsertArchivedTaskEntry(db, makeEntry("FN-902"), "proj-b");

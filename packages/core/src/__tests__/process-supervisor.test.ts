@@ -7,7 +7,7 @@ import {
   __resetProcessSupervisorForTests,
   __terminateSupervisedChildrenForTests,
   superviseSpawn,
-} from "../process-supervisor.js";
+} from "../process/process-supervisor.js";
 
 const fixturePath = join(import.meta.dirname, "fixtures", "process-supervisor-child.mjs");
 

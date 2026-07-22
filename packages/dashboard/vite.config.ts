@@ -134,7 +134,7 @@ export default defineConfig({
       The dashboard core-import scanner enforces this alias boundary for both relative core/src and package-subpath value imports.
       Add a new browser leaf only after its full dependency graph is reviewed and it has a dated entry in scripts/lib/dashboard-browser-safe-core-modules.json.
       */
-      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
+      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/i18n/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
       // FNXC:PluginBuild 2026-06-22-03:50: Bundled plugin source can import the dashboard's shared ViewHeader through the package export; Vite needs the same source alias during dashboard builds so plugin UI normalization does not fail only in CI merge builds.

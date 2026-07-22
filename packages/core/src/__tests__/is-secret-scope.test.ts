@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSecretScope } from "../secrets-store.js";
+import { isSecretScope } from "../secrets/secrets-store.js";
 
 describe("isSecretScope", () => {
   it("accepts project and global", () => {

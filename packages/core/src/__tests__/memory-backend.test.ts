@@ -34,8 +34,8 @@ import {
   listAgentMemoryFiles,
   readAgentMemoryFile,
   writeAgentMemoryFile,
-} from "../memory-backend.js";
-import type { MemoryBackend } from "../memory-backend.js";
+} from "../memory/memory-backend.js";
+import type { MemoryBackend } from "../memory/memory-backend.js";
 
 describe("memory-backend", () => {
   let tempDir: string;

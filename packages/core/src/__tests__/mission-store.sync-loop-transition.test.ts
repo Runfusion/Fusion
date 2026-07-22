@@ -6,9 +6,9 @@ feature-loop table cannot drift from AsyncMissionStore recovery behavior.
 */
 
 import { describe, expect, it, vi } from "vitest";
-import type { Database } from "../db.js";
-import { MissionStore } from "../mission-store.js";
-import type { MissionFeature } from "../mission-types.js";
+import type { Database } from "../db/db.js";
+import { MissionStore } from "../missions/mission-store.js";
+import type { MissionFeature } from "../missions/mission-types.js";
 
 describe("MissionStore synchronous loop transitions", () => {
   it("allows startup recovery to move an interrupted validation back to implementing", () => {

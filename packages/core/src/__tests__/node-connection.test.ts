@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NodeConnection } from "../node-connection.js";
-import type { CentralCore } from "../central-core.js";
+import { NodeConnection } from "../mesh/node-connection.js";
+import type { CentralCore } from "../central/central-core.js";
 import type { NodeConfig } from "../types.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
