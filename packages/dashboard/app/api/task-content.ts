@@ -278,7 +278,12 @@ export function putTaskDocument(
   taskId: string,
   key: string,
   content: string,
-  opts?: { author?: string; metadata?: Record<string, unknown> },
+  opts?: {
+    author?: string;
+    metadata?: Record<string, unknown>;
+    expectedRevision?: number;
+    expectedContentHash?: string;
+  },
   projectId?: string,
 ): Promise<TaskDocument> {
   return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${encodeURIComponent(key)}`, projectId), {
@@ -287,6 +292,8 @@ export function putTaskDocument(
       content,
       author: opts?.author,
       metadata: opts?.metadata,
+      expectedRevision: opts?.expectedRevision,
+      expectedContentHash: opts?.expectedContentHash,
     }),
   });
 }

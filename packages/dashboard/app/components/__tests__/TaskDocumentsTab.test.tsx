@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocument } from "@fusion/core";
 import { TaskDocumentsTab } from "../TaskDocumentsTab";
-import { artifactMediaUrlWithToken, fetchTaskDocuments, fetchTaskDocumentRevisions } from "../../api";
+import { artifactMediaUrlWithToken, fetchTaskDocuments, fetchTaskDocumentRevisions, putTaskDocument } from "../../api";
 import { useArtifacts } from "../../hooks/useArtifacts";
 
 vi.mock("../../api", () => ({
@@ -25,6 +25,7 @@ vi.mock("../../hooks/useArtifacts", () => ({
 const mockFetchTaskDocuments = vi.mocked(fetchTaskDocuments);
 const mockFetchTaskDocumentRevisions = vi.mocked(fetchTaskDocumentRevisions);
 const mockArtifactMediaUrlWithToken = vi.mocked(artifactMediaUrlWithToken);
+const mockPutTaskDocument = vi.mocked(putTaskDocument);
 const mockUseArtifacts = vi.mocked(useArtifacts);
 
 function getDocumentCard(key: string): HTMLElement {
@@ -86,6 +87,7 @@ const mockDocuments: TaskDocument[] = [
     key: "plan",
     content: "This is the **plan** content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T12:00:00.000Z",
@@ -96,6 +98,7 @@ const mockDocuments: TaskDocument[] = [
     key: "notes",
     content: "# Notes\n\n- Item 1\n- Item 2",
     revision: 2,
+    contentHash: `sha256:${"b".repeat(64)}`,
     author: "user",
     createdAt: "2026-04-19T09:00:00.000Z",
     updatedAt: "2026-04-19T11:00:00.000Z",
@@ -117,6 +120,40 @@ describe("TaskDocumentsTab", () => {
       error: null,
       refresh: vi.fn().mockResolvedValue(undefined),
     });
+  });
+
+  it("explicitly rebases a preserved conflict draft before saving with the refreshed baseline", async () => {
+    const refreshedDocuments = mockDocuments.map((doc) => doc.key === "plan" ? {
+      ...doc,
+      content: "Concurrent server content",
+      revision: 2,
+      contentHash: `sha256:${"c".repeat(64)}`,
+    } : doc);
+    mockFetchTaskDocuments
+      .mockResolvedValueOnce(mockDocuments)
+      .mockResolvedValue(refreshedDocuments);
+    mockPutTaskDocument
+      .mockRejectedValueOnce(Object.assign(new Error("stale"), { status: 409 }))
+      .mockResolvedValueOnce(refreshedDocuments[0]);
+    render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} projectId="project-1" canEdit />);
+
+    const card = await waitFor(() => getDocumentCard("plan"));
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    const editor = within(card).getByRole("textbox");
+    fireEvent.change(editor, { target: { value: "My preserved draft" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+    const rebaseButton = await within(card).findByRole("button", { name: "Rebase draft" });
+    expect(editor).toHaveValue("My preserved draft");
+    expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(rebaseButton);
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutTaskDocument).toHaveBeenNthCalledWith(2, "KB-001", "plan", "My preserved draft", {
+      expectedRevision: 2,
+      expectedContentHash: `sha256:${"c".repeat(64)}`,
+    }, "project-1"));
+    await waitFor(() => expect(within(card).queryByRole("textbox")).not.toBeInTheDocument());
   });
 
   it("renders the renamed Artifacts heading with document list", async () => {

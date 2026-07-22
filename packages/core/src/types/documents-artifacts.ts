@@ -16,6 +16,8 @@ export interface TaskDocument {
   content: string;
   /** Monotonically increasing revision number (starts at 1) */
   revision: number;
+  /** SHA-256 of exact UTF-8 content, formatted `sha256:<64 lowercase hex>`. */
+  contentHash: string;
   /** Who created/last-edited this revision: "user" | "agent" | "system" */
   author: string;
   /** Optional extensible metadata (JSON object) */
@@ -54,6 +56,36 @@ export interface TaskDocumentCreateInput {
   author?: string;
   /** Optional extensible metadata */
   metadata?: Record<string, unknown>;
+  /** CAS expectation. Zero requires absence; positive values require an existing matching revision. */
+  expectedRevision?: number;
+  /** CAS expectation requiring an existing document with this canonical SHA-256 content hash. */
+  expectedContentHash?: string;
+}
+
+/**
+ * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
+ * Archived evidence can only gain an operator-attributed correction through a dedicated additive contract. The caller supplies no replacement content or parent metadata, and both exact-current CAS expectations plus a non-empty audit reason are mandatory. This contract is intentionally absent from agent document-write tools.
+ */
+export interface ArchivedTaskDocumentAdditionInput {
+  /** Existing document key. Must match the ordinary task-document key grammar. */
+  key: string;
+  /** Non-empty bytes appended after the canonical archived-addition boundary. */
+  appendContent: string;
+  /** Existing positive revision that must still be current under the transaction lock. */
+  expectedRevision: number;
+  /** Canonical SHA-256 hash of the exact current UTF-8 content. */
+  expectedContentHash: string;
+  /** Non-empty operator attribution persisted on the new current revision. */
+  author: string;
+  /** Non-empty operator justification used only in ids/outcomes-only audit metadata. */
+  reason: string;
+}
+
+export interface ArchivedTaskDocumentAdditionResult {
+  document: TaskDocument;
+  previousRevision: number;
+  previousContentHash: string;
+  appendedContentHash: string;
 }
 
 /**

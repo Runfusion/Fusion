@@ -49,6 +49,7 @@ import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, se
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
+import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "./effective-settings.js";
 import {
   extractConcurrentSoftDeleteRaceDetails,
   isConcurrentSoftDeleteRaceError,
@@ -2867,6 +2868,10 @@ export class HeartbeatMonitor {
           }
         }
 
+        const heartbeatBaseSettings = heartbeatModelSettings ?? ({} as Settings);
+        heartbeatModelSettings = taskDetail
+          ? await mergeEffectiveSettings(taskStore, taskDetail, heartbeatBaseSettings)
+          : await mergeProjectWorkflowModelLaneBaseline(taskStore, heartbeatBaseSettings);
         const heartbeatSessionModels = resolveHeartbeatSessionModels(heartbeatModelSettings, agent.runtimeConfig);
         /*
          * FNXC:McpConfig 2026-06-26-00:00:

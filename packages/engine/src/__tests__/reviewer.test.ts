@@ -213,6 +213,51 @@ describe("reviewStep — model settings threading", () => {
     expect(result.verdict).toBe("APPROVE");
   });
 
+  it("uses the selected workflow reviewer lane after project and global lanes fall through", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nWorkflow reviewer honored."),
+    );
+    const task = { id: "FN-100", column: "in-review", steps: [] } as any;
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({
+        defaultProvider: "default-provider",
+        defaultModelId: "default-model",
+      }),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-custom", stepIds: [] })),
+      getDefaultWorkflowId: vi.fn(async () => "builtin:coding"),
+      getWorkflowDefinition: vi.fn(async (workflowId: string) => workflowId === "wf-custom"
+        ? {
+            ir: {
+              version: "v2",
+              name: "Custom",
+              columns: [],
+              nodes: [],
+              edges: [],
+              settings: [
+                { id: "validatorProvider", name: "Validator provider", type: "string" },
+                { id: "validatorModelId", name: "Validator model", type: "string" },
+              ],
+            },
+          }
+        : undefined),
+      getWorkflowSettingValues: vi.fn((workflowId: string) => workflowId === "wf-custom"
+        ? { validatorProvider: "workflow-provider", validatorModelId: "workflow-model" }
+        : {}),
+      getWorkflowSettingsProjectId: vi.fn(() => "project-1"),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "code", "# prompt", "abc123",
+      { store: store as any, taskId: task.id, task },
+    );
+
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("workflow-provider");
+    expect(opts.defaultModelId).toBe("workflow-model");
+  });
+
   it("logs reviewer model rows with default thinking effort", async () => {
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
@@ -789,7 +834,11 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
 
     const task = { id: "FN-4092", column: "in-progress", description: "d", dependencies: [], steps: [], currentStep: 0, log: [], prompt: "# prompt", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", reviewerFallbackRetryCount: 0 };
     const store = {
-      getSettings: vi.fn().mockResolvedValue({ maxReviewerFallbackRetries: 2, maxTotalRetriesBeforeFail: 25 }),
+      getSettings: vi.fn().mockResolvedValue({
+        maxReviewerFallbackRetries: 2,
+        maxTotalRetriesBeforeFail: 25,
+        validatorFallbackThinkingLevel: "xhigh",
+      }),
       getTask: vi.fn().mockImplementation(async () => task),
       updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
       logEntry: vi.fn().mockResolvedValue(undefined),
@@ -808,6 +857,7 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
 
     expect(result.verdict).toBe("APPROVE");
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(mockedCreateFnAgent.mock.calls.every(([options]) => options.fallbackThinkingLevel === "xhigh")).toBe(true);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4092",
       expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"),

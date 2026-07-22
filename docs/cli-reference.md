@@ -30,6 +30,55 @@ The published `@runfusion/fusion` CLI bundle also exposes the pi extension tool 
 
 Agents should still use `fn_workflow_select` only when the user explicitly requested that workflow or when assigning a workflow to a task they created; they must not reroute arbitrary existing tasks just because another workflow appears more suitable. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create` / `fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags.
 
+## Runtime task-document publication
+
+`fn_task_document_write` is an agent-extension/runtime tool, not an `fn task` binary subcommand. Task-bound lanes supply `key`, `content`, optional `author`, and optional `expected_revision` / `expected_content_hash`; dashboard chat and planning use the same fields plus required `task_id` for explicit cross-task publication.
+
+For safe publication, first call `fn_task_document_read`, then write with the returned revision and hash:
+
+```json
+{
+  "task_id": "FX-002",
+  "key": "evidence",
+  "content": "rebased evidence",
+  "expected_revision": 3,
+  "expected_content_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+Revision zero means create only if absent. On success the tool returns the new revision and content hash. A stale expectation returns an error result with code `TASK_DOCUMENT_PRECONDITION_FAILED` and current revision/hash; re-read, reconcile the newer content, and submit a deliberate rebased write. The tool never retries or overwrites automatically. Omitting both expectations retains the legacy unconditional contract. These ordinary tools reject archived parents; there is no `allowArchived` tool parameter.
+
+### Operator API: append to a retained archived document
+
+Archived correction publication is an authenticated HTTP API, not an `fn` binary subcommand or agent tool. It requires active daemon bearer authentication; Fusion launched with `--no-auth` returns `403`. First read the exact current revision/hash, then submit only the suffix:
+
+```bash
+BASE=http://127.0.0.1:4040/api
+TASK=FX-DISPOSABLE
+KEY=docs
+TOKEN="$FUSION_DAEMON_TOKEN"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/tasks/$TASK/documents/$KEY" > /tmp/fusion-current-document.json
+
+REVISION=$(jq -r .revision /tmp/fusion-current-document.json)
+CONTENT_HASH=$(jq -r .contentHash /tmp/fusion-current-document.json)
+
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  "$BASE/tasks/$TASK/documents/$KEY/archived-publications" \
+  --data "$(jq -n \
+    --arg appendContent 'Correction text' \
+    --arg expectedContentHash "$CONTENT_HASH" \
+    --arg author 'operator' \
+    --arg reason 'Correct retained evidence' \
+    --argjson expectedRevision "$REVISION" \
+    '{appendContent, expectedRevision, expectedContentHash, author, reason}')"
+```
+
+Fusion constructs `existing content + "\n\n" + appendContent`; callers cannot send replacement `content` or metadata. Responses are `201` on committed append, `400` for malformed/unknown fields, `403` when the privileged capability is unavailable, `404` for a missing archived parent/document, and `409` for non-archived/inconsistent state or stale CAS. On `409 TASK_DOCUMENT_PRECONDITION_FAILED`, re-read current content/revision/hash, verify whether the correction is still needed, and submit a newly rebased append; never retry the stale body unchanged. In multi-project operation, use the same project selector as other task APIs so every read and publication resolves within one project.
+
 ## Workflow commands
 
 ```bash

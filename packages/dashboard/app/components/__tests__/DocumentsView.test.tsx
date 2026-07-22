@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import { DocumentsView } from "../DocumentsView";
-import { fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, updateArtifact } from "../../api";
+import { fetchArtifact, fetchTaskDetail, fetchTaskDocument, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, updateArtifact } from "../../api";
 import { useArtifacts } from "../../hooks/useArtifacts";
 import { useDocuments } from "../../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../../hooks/useProjectMarkdownFiles";
@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
   fetchAllDocuments: vi.fn(),
   fetchWorkspaceFileContent: vi.fn(),
   fetchTaskDetail: vi.fn(),
+  fetchTaskDocument: vi.fn(),
   fetchArtifacts: vi.fn(),
   fetchArtifact: vi.fn(),
   updateArtifact: vi.fn(),
@@ -48,6 +49,7 @@ const mockUseArtifacts = vi.mocked(useArtifacts);
 const mockUseProjectMarkdownFiles = vi.mocked(useProjectMarkdownFiles);
 const mockFetchWorkspaceFileContent = vi.mocked(fetchWorkspaceFileContent);
 const mockFetchTaskDetail = vi.mocked(fetchTaskDetail);
+const mockFetchTaskDocument = vi.mocked(fetchTaskDocument);
 const mockFetchArtifact = vi.mocked(fetchArtifact);
 const mockUpdateArtifact = vi.mocked(updateArtifact);
 const mockPutTaskDocument = vi.mocked(putTaskDocument);
@@ -81,6 +83,7 @@ const mockTaskDocuments: TaskDocumentWithTask[] = [
     key: "plan",
     content: "Alpha document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T12:00:00.000Z",
@@ -93,6 +96,7 @@ const mockTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Beta document content",
     revision: 2,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T09:00:00.000Z",
     updatedAt: "2026-04-19T11:00:00.000Z",
@@ -108,6 +112,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "plan",
     content: "Done document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T16:00:00.000Z",
@@ -120,6 +125,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Todo document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T15:00:00.000Z",
@@ -132,6 +138,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "summary",
     content: "Archived document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T14:00:00.000Z",
@@ -144,6 +151,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "handoff",
     content: "Custom column document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T13:00:00.000Z",
@@ -156,6 +164,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "legacy",
     content: "Legacy document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T12:00:00.000Z",
@@ -167,6 +176,7 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     key: "notes",
     content: "Second done document content",
     revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
     author: "agent",
     createdAt: "2026-04-19T10:00:00.000Z",
     updatedAt: "2026-04-19T11:00:00.000Z",
@@ -418,6 +428,7 @@ describe("DocumentsView", () => {
       size: 18,
     });
     mockFetchTaskDetail.mockResolvedValue({ id: "KB-001" } as TaskDetail);
+    mockFetchTaskDocument.mockResolvedValue(mockTaskDocuments[0]);
   });
 
   afterEach(() => {
@@ -573,6 +584,7 @@ describe("DocumentsView", () => {
         key: index === 0 ? "plan" : "notes",
         content: `Document content ${taskNumber}`,
         revision: index + 1,
+        contentHash: `sha256:${"a".repeat(64)}`,
         author: "agent",
         createdAt: `2026-04-19T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
         updatedAt: `2026-04-19T12:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -586,6 +598,7 @@ describe("DocumentsView", () => {
       key: "notes",
       content: "Second document content",
       revision: 2,
+      contentHash: `sha256:${"a".repeat(64)}`,
       author: "agent",
       createdAt: "2026-04-19T09:00:00.000Z",
       updatedAt: "2026-04-19T11:59:00.000Z",
@@ -1385,12 +1398,47 @@ describe("DocumentsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(mockPutTaskDocument).toHaveBeenCalledWith("KB-001", "plan", "Updated document content", {}, undefined);
+      expect(mockPutTaskDocument).toHaveBeenCalledWith("KB-001", "plan", "Updated document content", {
+        expectedRevision: 1,
+        expectedContentHash: `sha256:${"a".repeat(64)}`,
+      }, undefined);
     });
     await waitFor(() => {
       expect(screen.queryByLabelText("file editor")).not.toBeInTheDocument();
     });
     expect(addToast).toHaveBeenCalledWith("Document saved", "success");
+  });
+
+  it("explicitly rebases a preserved conflict draft before saving with the refreshed baseline", async () => {
+    const refreshed = {
+      ...mockTaskDocuments[0],
+      content: "Concurrent server content",
+      revision: 2,
+      contentHash: `sha256:${"b".repeat(64)}`,
+    };
+    mockFetchTaskDocument.mockResolvedValue(refreshed);
+    mockPutTaskDocument
+      .mockRejectedValueOnce(Object.assign(new Error("stale"), { status: 409 }))
+      .mockResolvedValueOnce({ ...refreshed, content: "Preserved stale draft", revision: 3 });
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    fireEvent.click(screen.getByRole("button", { name: /edit task document/i }));
+    fireEvent.change(screen.getByLabelText("file editor"), { target: { value: "Preserved stale draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const rebaseButton = await screen.findByRole("button", { name: "Rebase draft" });
+    expect(screen.getByLabelText("file editor")).toHaveValue("Preserved stale draft");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(rebaseButton);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutTaskDocument).toHaveBeenNthCalledWith(2, "KB-001", "plan", "Preserved stale draft", {
+      expectedRevision: 2,
+      expectedContentHash: `sha256:${"b".repeat(64)}`,
+    }, undefined));
+    await waitFor(() => expect(screen.queryByLabelText("file editor")).not.toBeInTheDocument());
   });
 
   it("cancels task document editing without saving and suppresses select-to-comment while editing", async () => {

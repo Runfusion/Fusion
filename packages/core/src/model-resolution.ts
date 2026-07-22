@@ -68,9 +68,49 @@ function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined 
   return undefined;
 }
 
+export function resolveSelectedWorkflowModelLane(
+  settings: Partial<Settings> | undefined,
+  key: string,
+): string | undefined {
+  /*
+   * FNXC:WorkflowModelLaneLookup 2026-07-22-00:00:
+   * Selected-workflow model lanes are stored as a dynamic key/value overlay. Keep lookup centralized: only a trimmed, non-empty string is a configured lane value; every other stored shape preserves inheritance by resolving to undefined.
+   */
+  const value = settings?.selectedWorkflowModelLanes?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function hasConfiguredFallbackLane(
+  settings: Partial<Settings> | undefined,
+  phase: ModelThinkingPhase,
+): boolean {
+  const laneProvider = phase === "execution"
+    ? settings?.executionFallbackProvider
+    : phase === "planning"
+      ? settings?.planningFallbackProvider
+      : settings?.validatorFallbackProvider;
+  const laneModelId = phase === "execution"
+    ? settings?.executionFallbackModelId
+    : phase === "planning"
+      ? settings?.planningFallbackModelId
+      : settings?.validatorFallbackModelId;
+  const workflowPrefix = phase === "execution"
+    ? "executionFallback"
+    : phase === "planning"
+      ? "planningFallback"
+      : "validatorFallback";
+
+  return Boolean(
+    (laneProvider && laneModelId)
+    || (settings?.fallbackProvider && settings?.fallbackModelId)
+    || (resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}Provider`)
+      && resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}ModelId`)),
+  );
+}
+
 /**
  * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
- * Workflow model-lane thinking companions are workflow-declared settings whose unset state means inherit. Resolve them centrally so executor, reviewer, triage, step sessions, and merger-adjacent validation agree on precedence: node/step override > task thinking > workflow lane > global lane > project default thinking override > global default thinking level.
+ * Workflow model-lane thinking companions are workflow-declared settings whose unset state means inherit. Resolve them centrally so executor, reviewer, triage, step sessions, and merger-adjacent validation agree on precedence: node/step override > task thinking > project lane > global lane > selected-workflow lane > project default thinking override > global default thinking level.
  */
 export function resolveSettingsLaneThinkingLevel(
   phase: ModelThinkingPhase,
@@ -95,6 +135,11 @@ export function resolvePhaseThinkingLevel(
     nodeOrTaskThinkingLevel,
     resolveSettingsLaneThinkingLevel(phase, settings),
     globalLane,
+    resolveSelectedWorkflowModelLane(settings, phase === "execution"
+      ? "executionThinkingLevel"
+      : phase === "planning"
+        ? "planningThinkingLevel"
+        : "validatorThinkingLevel"),
     settings?.defaultThinkingLevelOverride,
     settings?.defaultThinkingLevel,
   );
@@ -127,6 +172,10 @@ export function resolveExecutionSettingsModel(settings?: Partial<Settings>): Res
         provider: settings?.executionGlobalProvider,
         modelId: settings?.executionGlobalModelId,
       },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "executionProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "executionModelId"),
+      },
       resolveProjectDefaultModel(settings),
     ),
     settings,
@@ -144,6 +193,10 @@ export function resolvePlanningSettingsModel(settings?: Partial<Settings>): Reso
         provider: settings?.planningGlobalProvider,
         modelId: settings?.planningGlobalModelId,
       },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "planningProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "planningModelId"),
+      },
       resolveProjectDefaultModel(settings),
     ),
     settings,
@@ -160,6 +213,10 @@ export function resolveValidatorSettingsModel(settings?: Partial<Settings>): Res
       {
         provider: settings?.validatorGlobalProvider,
         modelId: settings?.validatorGlobalModelId,
+      },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "validatorProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "validatorModelId"),
       },
       resolveProjectDefaultModel(settings),
     ),
@@ -279,6 +336,50 @@ export function resolveExecutorFallbackModel(settings?: Partial<Settings>): Reso
       {
         provider: settings?.fallbackProvider,
         modelId: settings?.fallbackModelId,
+      },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "executionFallbackProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "executionFallbackModelId"),
+      },
+    ),
+    settings,
+  );
+}
+
+export function resolvePlanningFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.planningFallbackProvider,
+        modelId: settings?.planningFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId"),
+      },
+    ),
+    settings,
+  );
+}
+
+export function resolveValidatorFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.validatorFallbackProvider,
+        modelId: settings?.validatorFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "validatorFallbackProvider"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackModelId"),
       },
     ),
     settings,

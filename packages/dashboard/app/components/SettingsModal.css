@@ -346,11 +346,17 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
 
   FNXC:Settings 2026-07-10-00:00:
   FN-7773 fixes the observed mobile overlap by centering every footer sub-region on the rail and making the Version text a non-wrapping inline box. Keep these selectors under the mobile media query so desktop/tablet footer flow remains unchanged.
+
+  FNXC:Settings 2026-07-22-12:00:
+  Mobile Settings bottom buttons must read as one centered control cluster with even token spacing, not the desktop edge-split layout. Override the base `.modal-actions` flex-end + `.modal-actions-left { margin-right: auto }` push so Help/Version, Import/Export/Reset, and Close sit together in the middle of the rail. Use `safe center` so an overflowing update-result/control row still starts at the scroll origin instead of clipping the leading buttons. Gap is `var(--space-sm)` between groups and `var(--space-xs)` inside groups for consistent breathing room on narrow screens. Applies to both standalone modal and embedded SettingsView (shared `.settings-modal .modal-actions`).
   */
   .settings-modal .modal-actions {
     flex-wrap: nowrap;
     align-items: center;
-    gap: var(--space-xs);
+    /* Fallback first: older engines that drop `safe center` still center when content fits. */
+    justify-content: center;
+    justify-content: safe center;
+    gap: var(--space-sm);
     overflow-x: auto;
     overflow-y: hidden;
   }
@@ -359,12 +365,14 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
     align-items: center;
     flex-shrink: 0;
     gap: var(--space-xs);
+    margin-right: 0;
   }
 
   .settings-modal .modal-actions-right {
     align-items: center;
     flex-shrink: 0;
     gap: var(--space-xs);
+    margin-left: 0;
   }
 
   .settings-modal .settings-modal-footer-version {

@@ -783,12 +783,21 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-modal .modal-actions", "padding-block: var(--space-xs);");
     expectMobileRule(css, ".settings-modal .modal-actions", "flex-wrap: nowrap;");
     expectMobileRule(css, ".settings-modal .modal-actions", "align-items: center;");
+    // Mobile footer is a centered button cluster (not the desktop left/right edge split).
+    expectMobileRule(css, ".settings-modal .modal-actions", "justify-content: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "justify-content: safe center;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "gap: var(--space-sm);");
     expectMobileRule(css, ".settings-modal .modal-actions", "overflow-x: auto;");
     expectMobileRule(css, ".settings-modal .modal-actions-left", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions-left", "margin-right: 0;");
+    expectMobileRule(css, ".settings-modal .modal-actions-left", "gap: var(--space-xs);");
     expectMobileRule(css, ".settings-modal .modal-actions-right", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions-right", "margin-left: 0;");
+    expectMobileRule(css, ".settings-modal .modal-actions-right", "gap: var(--space-xs);");
     expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "align-self: center;");
     expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "flex: 0 0 auto;");
     expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "min-width: max-content;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "margin-right: 0;");
     expectMobileRule(css, ".settings-modal .settings-update-check", "align-items: center;");
     expectMobileRule(css, ".settings-modal .settings-update-check", "flex-wrap: wrap;");
     expectMobileRule(css, ".settings-modal .settings-version-check-btn", "line-height: 1;");
