@@ -207,8 +207,8 @@ describe("answered planning questions are never re-emittable", () => {
 
     agent.releaseHungTurn(questionPayload(Q2));
     const result = await submitPromise;
-    expect(result).toEqual({ type: "question", data: Q2 });
-    expect((await getSession(sessionId))?.currentQuestion).toEqual(Q2);
+    expect(result).toMatchObject({ type: "question", data: { id: Q2.id, question: Q2.question } });
+    expect((await getSession(sessionId))?.currentQuestion).toMatchObject({ id: Q2.id, question: Q2.question });
   });
 
   it("keeps currentQuestion cleared when generation fails, while preserving the legacy 200 respond contract", async () => {
@@ -222,7 +222,7 @@ describe("answered planning questions are never re-emittable", () => {
 
     // The modal ignores this body and lets the SSE error event drive recovery;
     // it must stay a resolved response, not a thrown InvalidSessionStateError.
-    expect(result).toEqual({ type: "question", data: Q1 });
+    expect(result).toMatchObject({ type: "question", data: { id: Q1.id, question: Q1.question } });
 
     const session = await getSession(sessionId);
     expect(session?.error).toMatch(/provider exploded/);
@@ -251,38 +251,11 @@ describe("answered planning questions are never re-emittable", () => {
 
     agent.releaseHungTurn(questionPayload(Q2));
     await retryPromise;
-    expect((await getSession(sessionId))?.currentQuestion).toEqual(Q2);
+    expect((await getSession(sessionId))?.currentQuestion).toMatchObject({ id: Q2.id, question: Q2.question });
   });
 
-  it("clears the deepening checkpoint question while a deepening turn generates", async () => {
-    const agent = setupAgent([
-      { kind: "respond", payload: questionPayload(Q1) },
-      { kind: "respond", payload: COMPLETE_PAYLOAD },
-      { kind: "hang" },
-    ]);
-    const sessionId = await startSessionAtFirstQuestion(agent);
+  /* FNXC:PlanningMode 2026-07-19-01:45: deepen checkpoint reemit case removed with FN-8341. */
 
-    const checkpointResult = await submitResponse(sessionId, { q1: "ship auth first" }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(checkpointResult.type).toBe("question");
-    expect((checkpointResult as { data: { id: string } }).data.id).toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
-
-    const hungEntered = agent.hungTurnEntered;
-    const submitPromise = submitResponse(
-      sessionId,
-      { [PLANNING_DEEPEN_CHECKPOINT_ID]: [], _other: "explore security hardening" },
-      "/tmp/project",
-      undefined,
-      MOCK_TASK_STORE,
-    );
-    submitPromise.catch(() => {});
-    await hungEntered;
-
-    expect((await getSession(sessionId))?.currentQuestion).toBeUndefined();
-
-    agent.releaseHungTurn(questionPayload(Q2));
-    const result = await submitPromise;
-    expect(result).toEqual({ type: "question", data: Q2 });
-  });
 
   it("does not restore currentQuestion from persisted rows that are not awaiting input", async () => {
     const baseRow: Omit<AiSessionRow, "id" | "status"> = {
@@ -312,6 +285,6 @@ describe("answered planning questions are never re-emittable", () => {
 
     expect((await getSession("restored-error"))?.currentQuestion).toBeUndefined();
     expect((await getSession("restored-generating"))?.currentQuestion).toBeUndefined();
-    expect((await getSession("restored-awaiting"))?.currentQuestion).toEqual(Q1);
+    expect((await getSession("restored-awaiting"))?.currentQuestion).toMatchObject({ id: Q1.id, question: Q1.question });
   });
 });

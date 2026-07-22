@@ -62,7 +62,7 @@ describe("executor dependency dispatch gate", () => {
       task({ id: "FN-DEP", column: "todo" }),
     ]);
     const executor = new TaskExecutor(store, "/tmp/test-project", {});
-    const graphDispatch = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphDispatch = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await executor.execute(dependent);
 

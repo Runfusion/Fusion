@@ -26,6 +26,7 @@ import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
+import { isPostgresUniqueError } from "../postgres-errors.js";
 import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
@@ -180,21 +181,59 @@ export function resolvePluginWorkflowStepImpl(store: TaskStore, id: string): imp
     };
 }
 
+/** Return the greatest numeric WF sequence while ignoring unrelated custom ids. */
+export function maxWorkflowDefinitionSequence(ids: readonly string[]): number {
+  let max = 0;
+  for (const id of ids) {
+    const match = /^WF-(\d+)$/.exec(id);
+    if (!match) continue;
+    const value = Number.parseInt(match[1], 10);
+    if (Number.isSafeInteger(value)) max = Math.max(max, value);
+  }
+  return max;
+}
+
+function errorMessages(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    const value = current as { message?: unknown; constraint?: unknown; detail?: unknown; cause?: unknown };
+    for (const candidate of [value.message, value.constraint, value.detail]) {
+      if (typeof candidate === "string") messages.push(candidate);
+    }
+    current = value.cause;
+  }
+  return messages.join(" ");
+}
+
 /**
- * FNXC:SqliteFinalRemoval 2026-06-28:
- * Backend-mode (PG) sibling of nextWorkflowDefinitionIdImpl. SQLite stored the
- * WF-id counter in a __meta row read+incremented inside a transactionImmediate;
- * PG has no __meta table so the counter lives in project.config
- * (next_workflow_definition_id). The read+increment is serialized by the
- * caller's withConfigLock (mirrors createWorkflowStepImpl's WS-id counter port),
- * preserving the WF-### format and the never-reuse-across-deletes intent. The
- * existing settings are passed back through writeProjectConfig so bumping the
- * counter never clobbers the project settings object.
+ * Return true only for the global `workflows.id` primary-key target. A bare
+ * unique violation is deliberately insufficient because future workflow-table
+ * unique constraints must still reach callers unchanged.
+ */
+export function isWorkflowDefinitionIdPrimaryKeyCollision(error: unknown): boolean {
+  const message = errorMessages(error);
+  const targetsWorkflowId = /(?:project\.)?workflows_pkey\b|(?:project\.)?workflows\.id\b|(?:UNIQUE|PRIMARY KEY) constraint failed:\s*(?:project\.)?workflows\.id\b/i.test(message);
+  return targetsWorkflowId && (isPostgresUniqueError(error) || /SQLITE_CONSTRAINT|UNIQUE constraint failed|PRIMARY KEY constraint failed/i.test(message));
+}
+
+/**
+ * FNXC:WorkflowDefinitionIdAllocator 2026-07-21-12:00:
+ * `project.workflows.id` is global while `config.next_workflow_definition_id`
+ * belongs to one project. Allocate above the full unscoped workflows table as
+ * well as the monotonic local counter, otherwise a stale second-project counter
+ * can reissue an id owned by another project. The create path separately retries
+ * an id-PK race because this scan and withConfigLock are process-local.
  */
 export async function nextWorkflowDefinitionIdAsyncImpl(store: TaskStore): Promise<string> {
   const layer = store.asyncLayer!;
-  const configRow = await readProjectConfig(layer);
-  const next = configRow.nextWorkflowDefinitionId ?? 1;
+  const [configRow, workflows] = await Promise.all([
+    readProjectConfig(layer),
+    // listWorkflowRows deliberately has no project_id filter: workflow ids are global PKs.
+    listWorkflowRows(layer),
+  ]);
+  const counter = configRow.nextWorkflowDefinitionId ?? 1;
+  const next = Math.max(counter, maxWorkflowDefinitionSequence(workflows.map(({ id }) => id)) + 1);
   await writeProjectConfig(layer, configRow.settings ?? {}, {
     nextWorkflowDefinitionId: next + 1,
   });
@@ -209,7 +248,9 @@ export function nextWorkflowDefinitionIdImpl(store: TaskStore): string {
       const row = store.db.prepare("SELECT value FROM __meta WHERE key = 'nextWorkflowDefinitionId'").get() as
         | { value: string }
         | undefined;
-      const next = row ? parseInt(row.value, 10) || 1 : 1;
+      const counter = row ? parseInt(row.value, 10) || 1 : 1;
+      const workflowRows = store.db.prepare("SELECT id FROM workflows").all() as Array<{ id: string }>;
+      const next = Math.max(counter, maxWorkflowDefinitionSequence(workflowRows.map(({ id }) => id)) + 1);
       store.db
         .prepare(
           "INSERT INTO __meta (key, value) VALUES ('nextWorkflowDefinitionId', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -355,36 +396,43 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
     store.assertWorkflowIrTraitsValid(ir);
     const layout = input.layout ?? {};
     const now = new Date().toISOString();
-    const id = store.nextWorkflowDefinitionId();
-    const definition: WorkflowDefinition = {
-      id,
-      name,
-      description: input.description ?? "",
-      icon: normalizeWorkflowIcon(input.icon),
-      kind: input.kind === "fragment" ? "fragment" : "workflow",
-      ir,
-      layout,
-      createdAt: now,
-      updatedAt: now,
-    };
-    store.db
-      .prepare(
-        `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        definition.id,
-        definition.name,
-        definition.description,
-        definition.icon ?? null,
-        serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
-        JSON.stringify(definition.layout),
-        definition.kind,
-        definition.createdAt,
-        definition.updatedAt,
-      );
-    store.workflowDefinitionsCache = null;
-    return definition;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const definition: WorkflowDefinition = {
+        id: store.nextWorkflowDefinitionId(),
+        name,
+        description: input.description ?? "",
+        icon: normalizeWorkflowIcon(input.icon),
+        kind: input.kind === "fragment" ? "fragment" : "workflow",
+        ir,
+        layout,
+        createdAt: now,
+        updatedAt: now,
+      };
+      try {
+        store.db
+          .prepare(
+            `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            definition.id,
+            definition.name,
+            definition.description,
+            definition.icon ?? null,
+            serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+            JSON.stringify(definition.layout),
+            definition.kind,
+            definition.createdAt,
+            definition.updatedAt,
+          );
+      } catch (error) {
+        if (!isWorkflowDefinitionIdPrimaryKeyCollision(error)) throw error;
+        continue;
+      }
+      store.workflowDefinitionsCache = null;
+      return definition;
+    }
+    throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
 }
 
 export async function isWorkflowCliCommandApprovedImpl(store: TaskStore, command: string): Promise<boolean> {

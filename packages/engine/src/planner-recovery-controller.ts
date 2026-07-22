@@ -74,7 +74,13 @@ export interface PlannerRecoveryContext {
  */
 export interface PlannerRecoveryHandlers {
   injectGuidance?: (task: Task, decision: PlannerRecoveryDecision, ctx: PlannerRecoveryContext) => Promise<void>;
-  retryStep?: (task: Task, decision: PlannerRecoveryDecision, ctx: PlannerRecoveryContext) => Promise<void>;
+  /**
+   * FNXC:PlannerOversight 2026-07-21-22:56:
+   * Return `false` when the bounce was intentionally skipped (e.g. live executor
+   * session) so `tick()` does not burn the bounded recovery attempt budget.
+   * Void/`true`/undefined still counts as dispatched.
+   */
+  retryStep?: (task: Task, decision: PlannerRecoveryDecision, ctx: PlannerRecoveryContext) => Promise<boolean | void>;
   requestTargetedFix?: (task: Task, decision: PlannerRecoveryDecision, ctx: PlannerRecoveryContext) => Promise<void>;
   /**
    * FN-7513: records/surfaces a pending `PlannerConfirmationRequest` for a
@@ -333,8 +339,9 @@ export class PlannerRecoveryController {
       }
       if (decision.action === "retry_step") {
         if (!this.handlers.retryStep) return false;
-        await this.handlers.retryStep(task, decision, ctx);
-        return true;
+        const result = await this.handlers.retryStep(task, decision, ctx);
+        // Explicit false = intentional skip (live session); do not burn budget.
+        return result !== false;
       }
       if (decision.action === "request_targeted_fix") {
         if (!this.handlers.requestTargetedFix) return false;

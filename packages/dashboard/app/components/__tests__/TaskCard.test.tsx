@@ -2295,7 +2295,8 @@ describe("TaskCard", () => {
   it.each([
     { column: "todo" as const, status: "planning" },
     { column: "in-progress" as const, status: "planning" },
-  ])("FN-8170 suppresses stale planning status and its empty header wrapper on $column cards", ({ column, status }) => {
+    { column: "triage" as const, status: "planning" },
+  ])("FN-8475 renders real planning status and a non-empty header wrapper on $column cards", ({ column, status }) => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column, status })}
@@ -2304,11 +2305,12 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.queryByText("planning")).toBeNull();
-    expect(container.querySelector(".card-header-badges")).toBeNull();
+    const badge = screen.getByText("planning");
+    expect(badge).toHaveClass("card-status-badge");
+    expect(container.querySelector(".card-header-badges")).toContainElement(badge);
   });
 
-  it("FN-8170 preserves triage planning and non-planning status badges", () => {
+  it("FN-8475 preserves non-planning status badges", () => {
     const { rerender } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "planning" })}
@@ -2439,6 +2441,159 @@ describe("TaskCard", () => {
 
     expect(container.querySelector(".card")?.className).not.toContain("agent-active");
     expect(container.querySelector('[data-testid="card-reviewing-FN-8055-queued"]')).toBeNull();
+  });
+
+  /*
+  FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+  Code Review and Browser Verification surface as header badges on In-review cards while running — not as progress bullet rows.
+  */
+  it.each([
+    {
+      id: "FN-CR",
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      testId: "card-code-review-FN-CR",
+      label: "Code Review",
+    },
+    {
+      id: "FN-BV",
+      workflowStepId: "browser-verification",
+      workflowStepName: "Browser Verification",
+      testId: "card-browser-verification-FN-BV",
+      label: "Browser Verification",
+    },
+  ])("renders a $label badge while that optional gate is running in In-review", ({ id, workflowStepId, workflowStepName, testId, label }) => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id,
+          column: "in-review",
+          status: null as any,
+          steps: [{ name: "Step 0", status: "done" }],
+          enabledWorkflowSteps: [workflowStepId],
+          workflowStepResults: [{
+            workflowStepId,
+            workflowStepName,
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const badge = container.querySelector(`[data-testid="${testId}"]`);
+    expect(badge).toHaveTextContent(label);
+    expect(badge?.className).toContain("pulsing");
+    expect(container.querySelector(".card-progress")).toBeNull();
+    expect(container.querySelector(".card-steps-list")).toBeNull();
+  });
+
+  it("does not badge Code Review while the card is still in-progress", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-CR-WIP",
+          column: "in-progress",
+          status: "executing" as any,
+          steps: [{ name: "Step 0", status: "done" }],
+          enabledWorkflowSteps: ["code-review"],
+          workflowStepResults: [{
+            workflowStepId: "code-review",
+            workflowStepName: "Code Review",
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="card-code-review-FN-CR-WIP"]')).toBeNull();
+    expect(screen.getByText("1/1")).toBeDefined();
+  });
+
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-21-22:18:
+  Coding (Ideas) Todo shows Ready for idle planned cards (steps present, status null). Plan Review also runs in Todo after finalize clears status, so Ready must not stack with the Reviewing badge while plan-review is running.
+  */
+  it("renders Ready on an idle planned Todo card", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-READY-IDLE",
+          column: "todo",
+          status: null as any,
+          steps: [{ id: "s1", title: "Step 1", status: "pending" }] as Task["steps"],
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "passed",
+            startedAt: "2026-07-11T12:00:00.000Z",
+            completedAt: "2026-07-11T12:01:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="card-ready-FN-READY-IDLE"]')).toHaveTextContent("Ready");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-IDLE"]')).toBeNull();
+  });
+
+  it("does not render Ready while Plan Review is running on a status-null Todo card", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-READY-REVIEW",
+          column: "todo",
+          status: null as any,
+          steps: [{ id: "s1", title: "Step 1", status: "pending" }] as Task["steps"],
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="card-ready-FN-READY-REVIEW"]')).toBeNull();
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Reviewing");
+  });
+
+  it("does not render Ready while Plan Review is running even when the queue gate hides Reviewing", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-READY-QUEUED",
+          column: "todo",
+          status: null as any,
+          steps: [{ id: "s1", title: "Step 1", status: "pending" }] as Task["steps"],
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
+        })}
+        queued
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-QUEUED"]')).toBeNull();
+    expect(container.querySelector('[data-testid="card-ready-FN-READY-QUEUED"]')).toBeNull();
   });
 
   it("renders the status badge after the card ID in DOM order", () => {
@@ -3491,7 +3646,7 @@ describe("TaskCard", () => {
     });
   });
 
-  it("renders unified progress counts for task steps + workflow checks", () => {
+  it("renders unified progress counts for task steps + non-lane workflow checks", () => {
     render(
       <TaskCard
         task={makeTask({
@@ -3520,6 +3675,48 @@ describe("TaskCard", () => {
 
     expect(screen.getByText("2/5")).toBeDefined();
     expect(screen.getByText("5 steps")).toBeDefined();
+  });
+
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
+  In-progress progress is WIP-only. Plan Review (Todo) and Code Review (In-review) must not appear in the card checklist or completed/total counts.
+  */
+  it("excludes Plan Review and Code Review from in-progress progress counts", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          status: "executing" as any,
+          steps: [
+            { name: "Step 0", status: "done" },
+            { name: "Step 1", status: "pending" },
+          ],
+          enabledWorkflowSteps: ["plan-review", "code-review"],
+          workflowStepResults: [
+            {
+              workflowStepId: "plan-review",
+              workflowStepName: "Plan Review",
+              status: "passed",
+              startedAt: "2026-07-11T12:00:00.000Z",
+              completedAt: "2026-07-11T12:01:00.000Z",
+            },
+            {
+              workflowStepId: "code-review",
+              workflowStepName: "Code Review",
+              status: "pending",
+            },
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("1/2")).toBeDefined();
+    expect(screen.getByText("2 steps")).toBeDefined();
+    expect(screen.queryByText("1/4")).toBeNull();
+    expect(screen.queryByText("Plan Review")).toBeNull();
+    expect(screen.queryByText("Code Review")).toBeNull();
   });
 
   it("surfaces in-progress implementation steps on the collapsed card", () => {

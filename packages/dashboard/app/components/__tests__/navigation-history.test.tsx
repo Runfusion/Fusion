@@ -196,7 +196,7 @@ vi.mock("../../components/TaskDetailModal", () => ({
     onBackToBoard?: () => void;
     initialTab?: string;
   }) => (
-    <div data-testid="task-detail-main-panel-content">
+    <div data-testid={onBackToBoard ? "task-detail-main-panel-content" : "task-detail-popup-content"}>
       {onBackToBoard && (
         <button type="button" onClick={onBackToBoard}>
           Back to board
@@ -392,6 +392,7 @@ describe("Navigation history integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    defaultSettings.openMobileTasksInPopup = false;
     mockSubscribeSse.mockReset();
     mockSubscribeSse.mockReturnValue(vi.fn());
     mockCreateTask.mockReset();
@@ -803,6 +804,28 @@ describe("Navigation history integration", () => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
       expect(screen.getByTestId("board-view")).toBeTruthy();
     });
+  });
+
+  it("opens board files-changed in the popup Changes tab when task popups are enabled", async () => {
+    defaultSettings.openMobileTasksInPopup = true;
+    const task = {
+      ...makeTask("FN-popup", "Popup Changes Detail"),
+      modifiedFiles: ["packages/dashboard/app/App.tsx"],
+    };
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task], createTask: mockCreateTask, moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(),
+      retryTask: vi.fn(), updateTask: vi.fn(), duplicateTask: vi.fn(), archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(), archiveAllDone: vi.fn(), refreshTasks: vi.fn(),
+    }));
+
+    await renderMobileAppAndWait();
+    fireEvent.click(screen.getByTestId("open-task-changes-FN-popup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("floating-window-task-detail-FN-popup-board")).toBeTruthy();
+      expect(screen.getByTestId("task-detail-popup-content")).toHaveTextContent("tab:changes");
+    });
+    expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
   });
 
   // 5. Verify useNavigationHistory is called with enabled=true on mobile

@@ -14,7 +14,7 @@
  *   const store = await getOrCreateProjectStore(projectId);
  */
 
-import { countRunningAgentTasks, type TaskStore } from "@fusion/core";
+import { countRunningAgentTasks, enrichRunningAgentTaskShape, resolveWorkflowIrForTask, type TaskStore } from "@fusion/core";
 
 /**
  * Internal cache: projectId → TaskStore instance.
@@ -277,7 +277,17 @@ export function listRegisteredProjectStores(): Array<{ projectId: string; store:
  */
 export async function countRunningAgentsInStore(store: TaskStore): Promise<number> {
   const tasks = await store.listTasks({ slim: true });
-  return countRunningAgentTasks(tasks);
+  const irCache = new Map();
+  /*
+  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FN-8453 requires dashboard store counts to enrich custom workflow traits before
+  the pure predicate runs; otherwise a custom complete card with stale session
+  metadata would falsely consume displayed/global top-level concurrency.
+  */
+  const enriched = await Promise.all(tasks.map(async (task) =>
+    enrichRunningAgentTaskShape(task, await resolveWorkflowIrForTask(store, task.id, irCache)),
+  ));
+  return countRunningAgentTasks(enriched);
 }
 
 /**

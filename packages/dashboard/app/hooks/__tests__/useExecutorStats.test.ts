@@ -781,8 +781,8 @@ describe("useExecutorStats", () => {
         await vi.advanceTimersByTimeAsync(100);
       });
 
-      expect(result.current.stats.queuedTaskCount).toBe(10); // triage/planning + todo, no done/archived/non-planning custom
-      expect(result.current.stats.runningTaskCount).toBe(2); // in-progress only
+      expect(result.current.stats.queuedTaskCount).toBe(8); // waiting intake/hold only; live planners are Running
+      expect(result.current.stats.runningTaskCount).toBe(4); // live execute plus planning in any lane
       expect(result.current.stats.stuckTaskCount).toBe(1); // stuck is an in-progress subset
       expect(result.current.stats.blockedTaskCount).toBe(2); // actionable string/array blockedBy only
       expect(result.current.stats.inReviewCount).toBe(1); // in-review only
@@ -790,7 +790,7 @@ describe("useExecutorStats", () => {
       expect(result.current.stats.executorState).toBe("running");
     });
 
-    it("counts planning/triage as queued but excludes done, archived, and unknown columns", async () => {
+    it("counts intake waiting separately from live planning and excludes terminal/unknown columns", async () => {
       const tasks: Task[] = [
         createMockTask("FN-001", "triage"),
         { ...createMockTask("FN-002", "triage"), status: "planning" } as Task,
@@ -806,8 +806,8 @@ describe("useExecutorStats", () => {
         await vi.advanceTimersByTimeAsync(100);
       });
 
-      expect(result.current.stats.runningTaskCount).toBe(0);
-      expect(result.current.stats.queuedTaskCount).toBe(3);
+      expect(result.current.stats.runningTaskCount).toBe(2);
+      expect(result.current.stats.queuedTaskCount).toBe(1);
       expect(result.current.stats.inReviewCount).toBe(0);
       expect(result.current.stats.blockedTaskCount).toBe(0);
       expect(result.current.stats.stuckTaskCount).toBe(0);

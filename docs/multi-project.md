@@ -160,6 +160,7 @@ Operationally:
 - `install` / `uninstall` are global actions
 - `enable` / `disable` and runtime state/error are project-scoped
 - A single global plugin install can be enabled in one project and disabled in another
+- The Plugin Manager list/toggle, lifecycle SSE stream, and every loader for a project resolve the same normalized project root key. An enable or disable response is reflected immediately; a daemon launch directory never substitutes its state when an explicit project is selected.
 
 ## Isolation Modes
 

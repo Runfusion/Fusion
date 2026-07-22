@@ -161,6 +161,29 @@ function taskHasApprovedAiMergeReview(task: Task | undefined): boolean {
   );
 }
 
+function getOutstandingBlockingMergeReasons(task: Task | undefined): string[] {
+  const actions = task?.log?.map((entry) => entry.action).filter((action): action is string => typeof action === "string") ?? [];
+  const reasons: string[] = [];
+  const addReasons = (value: string): void => {
+    for (const reason of value.split(/;\s*/).map((part) => part.trim()).filter(Boolean)) {
+      if (!reasons.includes(reason)) reasons.push(reason);
+    }
+  };
+  for (let index = actions.length - 1; index >= 0; index--) {
+    const action = actions[index];
+    if (/AI merge: (?:landed|finalized).*task → done/i.test(action)) return [];
+    if (/AI merge review \(pass \d+\): approved/i.test(action)) return [];
+    const blocked = action.match(/AI merge BLOCKED .*?unresolved correctness concern:\s*(.+)$/i);
+    if (blocked?.[1]) {
+      addReasons(blocked[1]);
+      return reasons;
+    }
+    const rejected = action.match(/AI merge review \(pass \d+\): rejected \(blocking\) —\s*(.+)$/i);
+    if (rejected?.[1]) addReasons(rejected[1]);
+  }
+  return reasons;
+}
+
 function matchesApprovedAiMergeSha(squashSha: string, approvedShas: Set<string>): boolean {
   if (approvedShas.size === 0) return true;
   const normalized = squashSha.toLowerCase();
@@ -795,6 +818,8 @@ export async function landOneRepo(
     await log(`AI merge: pre-merge prune failed: ${getErrorMessage(err)}`);
   }
   let advanceRetries = 0;
+  const taskAtStart = await store.getTask(taskId);
+  let outstandingReviewReasons = getOutstandingBlockingMergeReasons(taskAtStart);
   while (true) {
     throwIfAborted(signal, taskId);
     const tipSha = await git(["rev-parse", "--verify", `refs/heads/${integrationBranch}`], repoRootDir);
@@ -807,7 +832,11 @@ export async function landOneRepo(
     // exhaustion and the card is parked failed. Only short-circuit on a CONFIDENT
     // 0: a git failure yields "" → parseInt → NaN (≠ 0) and falls through.
     const aheadRaw = await git(["rev-list", "--count", `${integrationBranch}..${branch}`], repoRootDir).catch(() => "");
-    if (Number.parseInt(aheadRaw.trim(), 10) === 0) {
+    /*
+    FNXC:MergeReviewBlockers 2026-07-21-21:45:
+    Zero commits ahead is only an unconditional no-op when no durable blocker remains. A retry after reset, rebase, or prior integration must still review the complete integration tree before clearing previously rejected correctness concerns.
+    */
+    if (Number.parseInt(aheadRaw.trim(), 10) === 0 && outstandingReviewReasons.length === 0) {
       await audit.git({ type: "merge:ai-empty", target: integrationBranch, metadata: { taskId, tipSha } });
       return { outcome: "empty", tipSha, integrationBranch };
     }
@@ -906,10 +935,13 @@ export async function landOneRepo(
       await log(`[timing] AI merge dependency sync completed in ${Date.now() - depsSyncStartedAt}ms${depsSyncResult ? (depsSyncResult.installCommand ? ` (${depsSyncResult.skipped ? "skipped" : "ran"}: ${depsSyncResult.installCommand})` : " (no command)") : " (failed — non-fatal, deps unavailable)"}`);
 
       // 2 + 3. Merge + review loop (corrective passes).
-      const squashSha = await mergeAndReview({
+      const reviewResult = await mergeAndReview({
         mergeRoot, branch, integrationBranch, tipSha, taskTitle, includeTaskId, trailers, taskId,
         maxPasses, mergeAgent, reviewAgent, audit, log, setStatus, store, signal,
+        initialPriorReasons: outstandingReviewReasons,
       });
+      const squashSha = reviewResult.squashSha;
+      outstandingReviewReasons = reviewResult.priorReasons;
 
       if (!squashSha) {
         // Branch had no net changes vs the tip — nothing to land. The caller
@@ -1993,9 +2025,10 @@ async function mergeAndReview(input: {
   setStatus: (status: string | null) => Promise<unknown>;
   store: TaskStore;
   signal?: AbortSignal;
-}): Promise<string | null> {
+  initialPriorReasons?: string[];
+}): Promise<{ squashSha: string | null; priorReasons: string[] }> {
   const { mergeRoot, branch, integrationBranch, tipSha, taskTitle, includeTaskId, trailers, taskId, maxPasses, mergeAgent, reviewAgent, audit, log, setStatus, store, signal } = input;
-  let priorReasons: string[] = [];
+  let priorReasons = [...(input.initialPriorReasons ?? [])];
 
   for (let attempt = 0; ; attempt++) {
     throwIfAborted(signal, taskId);
@@ -2017,13 +2050,16 @@ async function mergeAndReview(input: {
     }));
 
     let head = await git(["rev-parse", "HEAD"], mergeRoot);
-    if (head === tipSha) return null; // empty merge — nothing landed
+    const emptyMerge = head === tipSha;
+    if (emptyMerge && priorReasons.length === 0) return { squashSha: null, priorReasons }; // empty initial merge — nothing landed
 
     // Guarantee the squash's task metadata (task-id subject prefix + board
     // association trailers) even if the agent omitted it — this amends HEAD, so
     // re-read the sha afterwards.
-    await ensureCommitTaskMetadata(mergeRoot, taskId, includeTaskId, trailers);
-    head = await git(["rev-parse", "HEAD"], mergeRoot);
+    if (!emptyMerge) {
+      await ensureCommitTaskMetadata(mergeRoot, taskId, includeTaskId, trailers);
+      head = await git(["rev-parse", "HEAD"], mergeRoot);
+    }
 
     await setStatus("reviewing");
     const diffStat = await git(["diff", "--stat", `${tipSha}..${head}`], mergeRoot);
@@ -2041,24 +2077,32 @@ async function mergeAndReview(input: {
 
     if (verdict.verdict === "approve") {
       await log(`AI merge review (pass ${attempt + 1}): approved squash ${head}`);
-      return head;
+      return { squashSha: emptyMerge ? null : head, priorReasons };
     }
 
+    /*
+    FNXC:MergeReviewBlockers 2026-07-21-21:30:
+    Every rejected blocker remains part of the corrective contract until a reviewer approves the complete result. Review an empty corrective rebuild instead of treating it as an unreviewed no-op, and accumulate newly discovered blockers so a later pass cannot regress an earlier concern.
+
+    FNXC:MergeReviewBlockers 2026-07-21-21:45:
+    Persist the accumulated set in every rejection log so crash recovery restores all outstanding concerns rather than only the latest pass.
+    */
+    const unresolvedReasons = [...new Set([...priorReasons, ...verdict.reasons])];
     const budgetExhausted = attempt >= maxPasses;
     if (budgetExhausted) {
       if (verdict.severity === "blocking") {
-        await audit.git({ type: "merge:ai-review-blocked", target: integrationBranch, metadata: { taskId, attempt, reasons: verdict.reasons } });
-        await log(`AI merge BLOCKED after ${attempt} corrective pass(es) — unresolved correctness concern: ${verdict.reasons.join("; ")}`);
-        throw new AiMergeBlockedError(taskId, verdict.reasons);
+        await audit.git({ type: "merge:ai-review-blocked", target: integrationBranch, metadata: { taskId, attempt, reasons: unresolvedReasons } });
+        await log(`AI merge BLOCKED after ${attempt} corrective pass(es) — unresolved correctness concern: ${unresolvedReasons.join("; ")}`);
+        throw new AiMergeBlockedError(taskId, unresolvedReasons);
       }
       // Advisory: land the squash with the concern logged.
-      await audit.git({ type: "merge:ai-review-landed-with-concerns", target: integrationBranch, metadata: { taskId, attempt, reasons: verdict.reasons, squashSha: head } });
-      await log(`AI merge: landing with unresolved advisory concern(s): ${verdict.reasons.join("; ")}`);
-      return head;
+      await audit.git({ type: "merge:ai-review-landed-with-concerns", target: integrationBranch, metadata: { taskId, attempt, reasons: unresolvedReasons, squashSha: head } });
+      await log(`AI merge: landing with unresolved advisory concern(s): ${unresolvedReasons.join("; ")}`);
+      return { squashSha: emptyMerge ? null : head, priorReasons: unresolvedReasons };
     }
 
-    priorReasons = verdict.reasons;
-    await log(`AI merge review (pass ${attempt + 1}): rejected (${verdict.severity}) — ${verdict.reasons.join("; ")}`);
+    priorReasons = unresolvedReasons;
+    await log(`AI merge review (pass ${attempt + 1}): rejected (${verdict.severity}) — ${unresolvedReasons.join("; ")}`);
   }
 }
 

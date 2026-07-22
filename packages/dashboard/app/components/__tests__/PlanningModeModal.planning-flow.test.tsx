@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { PlanningModeModal } from "../PlanningModeModal";
 import { mockCreatePlanningDraft, mockFetchAiSession, mockFetchAiSessions, mockRespondToPlanning, mockRetryPlanningSession, mockStartPlanningStreaming, mockStopPlanningGeneration, mockValidatePlanningSession, mockCreateTaskFromPlanning, mockTasks, mockSummary } from "./PlanningModeModal.test-helpers";
 
-const mockViewportMode = vi.hoisted(() => vi.fn(() => "desktop" as "desktop" | "mobile"));
+const mockViewportMode = vi.hoisted(() => vi.fn(() => "desktop" as "desktop" | "tablet" | "mobile"));
 const mockConnectPlanningStream = vi.hoisted(() => vi.fn());
 const mockPlanningSse = vi.hoisted(() => ({ events: null as Record<string, (event: MessageEvent) => void> | null }));
 
@@ -263,7 +263,7 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.queryByRole("checkbox", { name: "Security boundaries" })).toBeNull();
     expect(screen.getByRole("button", { name: "Refine" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sessions" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
     const scrollRegion = screen.getByTestId("planning-plan-scroll");
     const actionBar = screen.getByTestId("planning-plan-actions");
     expect(scrollRegion).not.toContainElement(actionBar);
@@ -301,7 +301,7 @@ describe("PlanningModeModal sequential flow", () => {
     expect(mockConnectPlanningStream).not.toHaveBeenCalled();
   });
 
-  it("opens question, answer, and collapsed AI reasoning history beside Sessions", async () => {
+  it("opens question, answer, and collapsed AI reasoning history without a Sessions toggle", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
       status: "awaiting_input",
@@ -321,9 +321,8 @@ describe("PlanningModeModal sequential flow", () => {
     });
     renderSession();
 
-    const sessionsButton = await screen.findByRole("button", { name: "Sessions" });
-    const historyButton = screen.getByRole("button", { name: "History" });
-    expect(sessionsButton.parentElement).toContainElement(historyButton);
+    const historyButton = await screen.findByRole("button", { name: "History" });
+    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
     fireEvent.click(historyButton);
 
     expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
@@ -341,6 +340,55 @@ describe("PlanningModeModal sequential flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
     expect(screen.queryByRole("region", { name: "Question and answer history" })).toBeNull();
     await waitFor(() => expect(historyButton).toHaveFocus());
+  });
+
+  /*
+  FNXC:PlanningSessionBack 2026-07-21-11:15:
+  Session detail navigation has one invariant across desktop and compact layouts: Back is the
+  only route to the saved-session list. The former Sessions toggle must not survive as a second
+  affordance, and list mode must not retain an orphaned Back target.
+  */
+  it.each(["desktop", "tablet", "mobile"] as const)("uses only Back to return to sessions on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-current", type: "text", question: "What should happen next?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    const backButton = await screen.findByRole("button", { name: "Back to sessions" });
+    const modalBody = document.querySelector(".planning-modal-body");
+    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
+    fireEvent.click(backButton);
+
+    expect(modalBody).toHaveClass("planning-modal-body--show-list");
+    expect(screen.queryByRole("button", { name: "Back to sessions" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Question and answer history" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBeInTheDocument();
+  });
+
+  it.each(["desktop", "tablet", "mobile"] as const)("keeps Back available from a new-session draft with saved sessions on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    mockFetchAiSessions.mockResolvedValue([{
+      ...base,
+      type: "planning",
+      status: "awaiting_input",
+      preview: "Saved plan",
+    }]);
+
+    render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" />);
+
+    if (viewport !== "desktop") {
+      fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+    }
+    expect(await screen.findByRole("button", { name: "Back to sessions" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
   });
 
   it("creates the task directly and offers task and session-list handoffs", async () => {

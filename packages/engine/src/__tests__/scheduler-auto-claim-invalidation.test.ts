@@ -95,6 +95,7 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
   it.each([
     ["column", { column: "in-progress" }],
     ["paused", { paused: true }],
+    ["userPaused", { userPaused: true }],
     ["assignedAgentId", { assignedAgentId: "agent-1" }],
     ["checkedOutBy", { checkedOutBy: "agent-2" }],
     ["deletedAt", { deletedAt: "2026-01-02T00:00:00.000Z" }],
@@ -111,6 +112,18 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
     expect(invalidate).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenNthCalledWith(1, "task:created");
     expect(invalidate).toHaveBeenNthCalledWith(2, "task:updated");
+  });
+
+  it("triggers immediate scheduling when a userPaused-only task is unpaused", () => {
+    const { store, emit } = createStore();
+    const scheduler = new Scheduler(store, {});
+    const schedule = vi.spyOn(scheduler, "schedule").mockResolvedValue(undefined);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    emit("task:updated", createTask({ userPaused: true }));
+    emit("task:updated", createTask({ userPaused: false }));
+
+    expect(schedule).toHaveBeenCalledTimes(1);
   });
 
   it("invalidates on first-sighting task:updated with no stored fingerprint", () => {

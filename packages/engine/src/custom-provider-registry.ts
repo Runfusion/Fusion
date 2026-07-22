@@ -6,8 +6,9 @@ custom-provider registration implementation. packages/cli/src/commands/custom-pr
 is now a thin re-export shim of this module; its observable behavior is unchanged.
 */
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
+import { refreshFusionModelRegistry, type RefreshableModelRegistry } from "./model-registry-refresh.js";
 
-interface ModelRegistryLike {
+interface ModelRegistryLike extends RefreshableModelRegistry {
   registerProvider: (name: string, config: {
     baseUrl: string;
     api: string;
@@ -26,7 +27,7 @@ interface ModelRegistryLike {
       };
     }>;
   }) => void;
-  refresh: () => Promise<void>;
+  refresh: () => unknown;
 }
 
 /*
@@ -138,7 +139,13 @@ export async function registerCustomProviders(
     }
   }
 
-  await modelRegistry.refresh();
+  /*
+  FNXC:ModelRegistry 2026-07-21-17:15:
+  Unbounded modelRegistry.refresh() hung dashboard startup on "Loading extensions…" when a
+  provider catalog fetch never completed. Use the shared bounded refresh so custom-provider
+  registration cannot block boot.
+  */
+  await refreshFusionModelRegistry(modelRegistry, { log: logFn });
 }
 
 export async function reregisterCustomProviders(
@@ -166,5 +173,5 @@ export async function reregisterCustomProviders(
     }
   }
 
-  await modelRegistry.refresh();
+  await refreshFusionModelRegistry(modelRegistry, { log: logFn });
 }

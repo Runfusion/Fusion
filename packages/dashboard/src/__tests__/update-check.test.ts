@@ -502,6 +502,25 @@ describe("update-check", () => {
       expect(result.channel).toBe("beta");
     });
 
+    /*
+    FNXC:UpdateChannels 2026-07-21-20:33:
+    Regression for Settings "Check for updates" while on beta: a user already on
+    0.73.0-beta.0 must see 0.73.0-beta.1 as available. The legacy /updates/check
+    path only queried npm `latest` (0.72.0) and never surfaced this.
+    */
+    it("beta channel surfaces a newer beta.N over the currently installed beta", async () => {
+      stubTags({ latest: "0.72.0", beta: "0.73.0-beta.1" });
+
+      const result = await performUpdateCheck(fusionDir, "0.73.0-beta.0", {
+        channel: "beta",
+        force: true,
+      });
+
+      expect(result.latestVersion).toBe("0.73.0-beta.1");
+      expect(result.updateAvailable).toBe(true);
+      expect(result.channel).toBe("beta");
+    });
+
     it("beta channel offers a promoted stable once it overtakes the beta", async () => {
       stubTags({ latest: "0.73.0", beta: "0.73.0-beta.4" });
 

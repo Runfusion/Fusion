@@ -26,26 +26,22 @@ type AsyncState<T> =
 
 type ConcurrencyValues = {
   maxConcurrent: number;
-  maxTriageConcurrent: number;
   maxWorktrees: number;
 };
 
 const CONCURRENCY_SAVE_DEBOUNCE_MS = 500;
 const DEFAULT_CONCURRENCY_VALUES: ConcurrencyValues = {
   maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-  maxTriageConcurrent: DEFAULT_PROJECT_SETTINGS.maxTriageConcurrent,
   maxWorktrees: DEFAULT_PROJECT_SETTINGS.maxWorktrees,
 };
 
 const CONCURRENCY_SLIDER_LIMITS: Record<keyof ConcurrencyValues, { min: number; max: number }> = {
   maxConcurrent: { min: 1, max: 50 },
-  maxTriageConcurrent: { min: 1, max: 50 },
   maxWorktrees: { min: 1, max: 50 },
 };
 
 const CONCURRENCY_SETTING_LABEL_KEYS: Record<keyof ConcurrencyValues, { key: string; defaultValue: string }> = {
   maxConcurrent: { key: "commandCenter.controls.concurrency.maxConcurrent", defaultValue: "Max concurrent tasks" },
-  maxTriageConcurrent: { key: "commandCenter.controls.concurrency.maxTriageConcurrent", defaultValue: "Max triage concurrent" },
   maxWorktrees: { key: "commandCenter.controls.concurrency.maxWorktrees", defaultValue: "Max worktrees" },
 };
 
@@ -218,7 +214,6 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
         if (!cancelled) {
           const persistedValues = {
             maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
-            maxTriageConcurrent: settings.maxTriageConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxTriageConcurrent,
             maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
           };
           persistedProjectConcurrencyRef.current = persistedValues;
@@ -562,27 +557,6 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
                   />
                 ) : null}
               </span>
-            </label>
-            <label className="engine-control-menu__slider" htmlFor="engine-control-max-triage-concurrent">
-              <span className="engine-control-menu__slider-label">
-                {t("commandCenter.controls.concurrency.maxTriageConcurrent", "Max triage concurrent")}
-                <strong>{concurrencyValues.maxTriageConcurrent}</strong>
-              </span>
-              <input
-                id="engine-control-max-triage-concurrent"
-                className="engine-control-menu__range input"
-                type="range"
-                min={CONCURRENCY_SLIDER_LIMITS.maxTriageConcurrent.min}
-                max={getConcurrencySliderMax("maxTriageConcurrent", concurrencyValues.maxTriageConcurrent)}
-                value={concurrencyValues.maxTriageConcurrent}
-                disabled={concurrencyState.status === "loading"}
-                onChange={(event) => updateConcurrencyValue(
-                  "maxTriageConcurrent",
-                  event.target.value,
-                  CONCURRENCY_SLIDER_LIMITS.maxTriageConcurrent.min,
-                  getConcurrencySliderMax("maxTriageConcurrent", concurrencyValues.maxTriageConcurrent),
-                )}
-              />
             </label>
             <label className="engine-control-menu__slider" htmlFor="engine-control-max-worktrees">
               <span className="engine-control-menu__slider-label">

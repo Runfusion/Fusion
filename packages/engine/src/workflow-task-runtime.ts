@@ -21,6 +21,7 @@ import {
 } from "./workflow-node-handlers.js";
 import type { WorkflowRuntimePrimitives } from "./runtime-primitives.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
+import { requiresNonEmptyWorkflowArtifact } from "./required-workflow-artifacts.js";
 
 export type WorkflowTaskRuntimeDisposition = "completed" | "failed" | "manual-required";
 
@@ -270,7 +271,7 @@ export class WorkflowTaskRuntime {
 
   /**
    * FNXC:WorkflowGates 2026-06-17-18:20:
-   * Custom workflow success criteria require every declared task-document artifact key to exist before terminal success. Evaluate this at the runtime terminal seam so graph paths cannot falsely complete after nodes pass while required deliverables are absent. Empty document content still satisfies the requirement because the IR contract currently requires key existence, not non-empty content.
+   * Custom workflow success criteria require every declared task-document artifact key to exist before terminal success. Planning-owned and step-source artifacts must also be non-empty because they are executable inputs, not presence-only context.
    */
   private async findMissingRequiredArtifacts(taskId: string, ir: WorkflowIr): Promise<string[]> {
     const declaredArtifacts: WorkflowIrArtifact[] = "artifacts" in ir && Array.isArray(ir.artifacts) ? ir.artifacts : [];
@@ -282,7 +283,12 @@ export class WorkflowTaskRuntime {
     const missing: string[] = [];
     for (const artifact of declaredArtifacts) {
       const document = await this.deps.store.getTaskDocument(taskId, artifact.key);
-      if (!document) missing.push(artifact.key);
+      const content = document && typeof (document as { content?: unknown }).content === "string"
+        ? (document as { content: string }).content
+        : undefined;
+      if (!document || (requiresNonEmptyWorkflowArtifact(artifact) && !content?.trim())) {
+        missing.push(artifact.key);
+      }
     }
     return missing;
   }

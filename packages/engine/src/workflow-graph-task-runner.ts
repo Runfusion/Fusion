@@ -35,6 +35,7 @@ import type { PrNodeDeps } from "./pr-nodes.js";
 import type { WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "./runtime-primitives.js";
 import {
   type WorkflowColumnBoundary,
+  type WorkflowColumnBoundaryDeps,
   type WorkflowColumnBoundaryAuditEvent,
   type WorkflowColumnMove,
   createWorkflowColumnBoundary,
@@ -49,7 +50,7 @@ import type { WorkflowIrPin } from "@fusion/core";
  * - "fell-back"  — the interpreter did not (or could not) own this task;
  *                  the caller must run the legacy pipeline instead.
  */
-export type WorkflowGraphRunDisposition = "completed" | "failed" | "fell-back";
+export type WorkflowGraphRunDisposition = "completed" | "failed" | "fell-back" | "suspended";
 
 export interface WorkflowGraphTaskRunResult {
   disposition: WorkflowGraphRunDisposition;
@@ -63,6 +64,7 @@ export interface WorkflowGraphTaskRunResult {
   interruptedNodeId?: string;
   /** Typed abort provenance for the interrupted node; absent for genuine node failures. */
   interruptedAbortKind?: WorkflowNodeAbortKind;
+  suspension?: NonNullable<import("./workflow-graph-executor.js").WorkflowGraphExecutorResult["suspended"]>;
 }
 
 /** The minimal store surface the runner needs — keeps tests fake-friendly. */
@@ -167,6 +169,7 @@ export interface WorkflowColumnBoundaryHooks {
    *  fields when detectDrift fires so a requeue re-resolves the current IR. */
   clearPin?: () => void | Promise<void>;
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
+  onSuspend?: WorkflowColumnBoundaryDeps["onSuspend"];
 }
 
 /**
@@ -210,6 +213,7 @@ export class WorkflowGraphTaskRunner {
   public async run(
     task: TaskDetail,
     settings: Pick<Settings, "experimentalFeatures"> | undefined,
+    startNodeId?: string,
   ): Promise<WorkflowGraphTaskRunResult> {
     let selection: { workflowId: string; stepIds: string[] } | undefined;
     try {
@@ -270,6 +274,7 @@ export class WorkflowGraphTaskRunner {
         priorPin,
         clearPin: hooks.clearPin,
         onWarn: hooks.onWarn,
+        onSuspend: hooks.onSuspend,
       });
     }
 
@@ -403,9 +408,19 @@ export class WorkflowGraphTaskRunner {
           }
         },
       });
-      const result = await executor.run(task, settings, validatedIr);
+      const result = await executor.run(task, settings, validatedIr, startNodeId);
       if (!result.executed) {
         return this.fallBack(task.id, "not-executed");
+      }
+      if (result.suspended) {
+        this.emit("terminal", task.id, `${definition.id}:suspended`);
+        return {
+          disposition: "suspended",
+          outcome: result.outcome,
+          visitedNodeIds: result.visitedNodeIds,
+          context: result.context,
+          suspension: result.suspended,
+        };
       }
       const disposition: WorkflowGraphRunDisposition = result.outcome === "success" ? "completed" : "failed";
       this.emit("terminal", task.id, `${definition.id}:${disposition}`);

@@ -317,6 +317,45 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect((await m.getFeature(fix.id))?.loopState).toBe("needs_fix");
   });
 
+  it("allows startup recovery to move an interrupted validation back to implementing", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Interrupted validation" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+
+    await m.transitionLoopState(feature.id, "implementing");
+    const interruptedRun = await m.startValidatorRun(feature.id, "scheduled");
+    expect((await m.getFeature(feature.id))?.loopState).toBe("validating");
+
+    await expect(m.transitionLoopState(feature.id, "implementing")).resolves.toMatchObject({
+      id: feature.id,
+      loopState: "implementing",
+      lastValidatorStatus: "error",
+    });
+    await expect(m.getValidatorRun(interruptedRun.id)).resolves.toMatchObject({
+      status: "error",
+      summary: "Interrupted validation was superseded by loop-state recovery",
+    });
+    expect((await m.listStaleRunningValidatorRuns(-1)).map((run) => run.id)).not.toContain(interruptedRun.id);
+  });
+
+  it("rejects an unknown persisted loop state with the normal transition error", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Legacy state" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+    await h.layer().db
+      .update(schema.project.missionFeatures)
+      .set({ loopState: "legacy_state" as never })
+      .where(sql`${schema.project.missionFeatures.id} = ${feature.id}`);
+
+    await expect(m.transitionLoopState(feature.id, "implementing")).rejects.toThrow(
+      "Invalid loop state transition from 'legacy_state' to 'implementing'. Allowed transitions from 'legacy_state': none",
+    );
+  });
+
   it("allows exactly one terminal validator transition when completion races the stale reaper", async () => {
     const primary = missions();
     const competing = new AsyncMissionStore(h.layer(), h.store());

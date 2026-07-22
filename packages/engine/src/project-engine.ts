@@ -65,7 +65,7 @@ import type { RoutineRunner } from "./routine-runner.js";
 import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
-import { PRIORITY_MERGE } from "./concurrency.js";
+import { computeTopLevelConcurrencyClaimedFromStore, projectAdmissionCoordinator } from "./concurrency.js";
 import { canStartNextMergeBody } from "./merge-reclaim-policy.js";
 import {
   registerProjectVerificationLimit,
@@ -421,6 +421,12 @@ export class ProjectEngine {
    * subsequent polls emits exactly one `escalate` entry, not one per poll.
    */
   private readonly plannerEscalationEmitDedup = new Set<string>();
+  /**
+   * FNXC:PlannerOversight 2026-07-21-22:56:
+   * Dedup keys for durable "retry_step skipped — live session" task-log lines so
+   * the 45s overseer poll does not flood FN-8471-class live-skip conditions.
+   */
+  private readonly plannerLiveRetrySkipLogDedup = new Set<string>();
   private prReconciler?: PrReconciler;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
@@ -457,6 +463,9 @@ export class ProjectEngine {
   // ── Auto-merge state ──
   private mergeQueue: string[] = [];
   private mergeActive = new Set<string>();
+  /** Merge ids selected by the shared coordinator but not yet handed to rawMerge. */
+  private readonly coordinatorAdmittedMergeTaskIds = new Set<string>();
+  private unregisterMergeAdmissionProvider?: () => void;
   private pausedReviewTaskIds = new Set<string>();
   private mergeRunning = false;
   private activeMergeSession: { dispose: () => void } | null = null;
@@ -627,6 +636,50 @@ export class ProjectEngine {
     // eligibility gate (requestInterpreterMerge), NOT the human "merge now"
     // bypass, so a graph merge node can't override an autoMerge-off project.
     this.runtime.setMergeRequester?.((taskId, options) => this.requestInterpreterMerge(taskId, options));
+
+    /*
+    FNXC:ConcurrencyAdmission 2026-07-21-17:35:
+    FN-8453 registered merge admission in the constructor using
+    runtime.getTaskStore(), but the TaskStore is only created in runtime.start().
+    That threw "TaskStore not initialized" during ensureEngine, left the singleton
+    lock held, and every later start failed with "blocked by lockfile". Use the
+    constructor config id (store is still read later inside refresh once started).
+    */
+    const projectId = this.config.projectId || this.config.workingDirectory;
+    /*
+    FNXC:ConcurrencyAdmission 2026-08-06-16:20:
+    FN-8453/#2359 requires the actual durable merge queue to refresh on every
+    project admission pass. A one-shot candidate only exists after this pump
+    dequeues it, which lets a newer planning/execute candidate overtake an older
+    queued merge. Keep at most one selected merge reservation because this pump
+    remains intentionally single-flight.
+    */
+    this.unregisterMergeAdmissionProvider = projectAdmissionCoordinator.registerProvider(`merge:${projectId}`, {
+      projectId,
+      refresh: async () => {
+        if (this.shuttingDown || !this.started || this.coordinatorAdmittedMergeTaskIds.size > 0) return [];
+        const store = this.runtime.getTaskStore();
+        const queuedTaskIds = [...this.mergeQueue];
+        const tasks = await Promise.all(queuedTaskIds.map(async (taskId) => await store.getTask(taskId).catch(() => null)));
+        return tasks.flatMap((task) => {
+          if (!task || task.paused || task.userPaused || task.column !== "in-review") return [];
+          return [{
+            taskId: task.id,
+            projectId,
+            createdAt: task.createdAt,
+            start: async () => {
+              // Do not run merge work in the coordinator; hand the exact queued
+              // id back to the single-flight pump, which will consume this marker.
+              if (!this.mergeQueue.includes(task.id) || this.shuttingDown) return false;
+              this.coordinatorAdmittedMergeTaskIds.add(task.id);
+              void this.drainMergeQueue().catch((error: unknown) => {
+                runtimeLog.error(`Coordinator-admitted merge drain failed: ${error instanceof Error ? error.message : String(error)}`);
+              });
+            },
+          }];
+        });
+      },
+    });
   }
 
   getActiveMergeTaskId(): string | null {
@@ -1235,6 +1288,8 @@ export class ProjectEngine {
 
     // FNXC:VerificationConcurrency 2026-07-15-09:05: Drop this project's cap so it no longer pins process min.
     unregisterProjectVerificationLimit(this.config.projectId);
+    this.unregisterMergeAdmissionProvider?.();
+    this.unregisterMergeAdmissionProvider = undefined;
     // Stop merge retry timer
     if (this.mergeRetryTimer) {
       clearTimeout(this.mergeRetryTimer);
@@ -1593,6 +1648,7 @@ export class ProjectEngine {
       // dedup keys from before the stop.
       this.plannerObservationEmitDedup.delete(taskId);
       this.clearPlannerEscalationDedup(taskId);
+      this.clearPlannerLiveRetrySkipLogDedup(taskId);
 
       return { applied: true, reason: "stopped", task: updatedTask };
     } catch (err) {
@@ -1730,6 +1786,22 @@ export class ProjectEngine {
   }
 
   /**
+   * FNXC:PlannerOversight 2026-07-21-23:20:
+   * Clear live-retry skip-log dedup keys when oversight stops, is disabled, or the
+   * task leaves the in-flight set — same lifetime as observation/escalation dedup.
+   * Without this, a later live-skip episode on the same (taskId, stage) would never
+   * emit its durable log (Greptile/CodeRabbit on #2393).
+   */
+  private clearPlannerLiveRetrySkipLogDedup(taskId: string): void {
+    const prefix = `${taskId}::`;
+    for (const key of [...this.plannerLiveRetrySkipLogDedup]) {
+      if (key.startsWith(prefix)) {
+        this.plannerLiveRetrySkipLogDedup.delete(key);
+      }
+    }
+  }
+
+  /**
    * FNXC:PlannerOversight 2026-07-04-12:00:
    * Concrete FN-7512 handler wiring — ONLY reuses existing mechanisms:
    * `injectGuidance`/`requestTargetedFix` post a planner-authored steering
@@ -1761,6 +1833,33 @@ export class ProjectEngine {
         );
       },
       retryStep: async (task, decision) => {
+        /*
+        FNXC:PlannerOversight 2026-07-21-22:56:
+        Never hard-cancel a live executor to "retry" incomplete work (FN-8471).
+        moveTask(in-progress→todo) aborts agent/graph sessions via task:moved.
+        When a coding/step/CLI session or graph claim is still live, skip the bounce
+        and return false so PlannerRecoveryController does not burn the attempt
+        budget. Mirror self-healing FN-7566 live-session refusal before reclaim.
+        Durable skip log is deduped per (taskId, stage) so 45s polls do not flood the task log.
+        */
+        const executor = this.runtime.getExecutor?.();
+        if (executor?.isTaskLiveForOverseerRetry?.(task.id) === true) {
+          const stage = (decision.watchedStage ?? "executor") as string;
+          const skipKey = `${task.id}::${stage}`;
+          if (!this.plannerLiveRetrySkipLogDedup.has(skipKey)) {
+            this.plannerLiveRetrySkipLogDedup.add(skipKey);
+            runtimeLog.log(
+              `[planner-oversight] retry_step skipped for ${task.id} — live executor/session still active (refusing hard-cancel thrash)`,
+            );
+            await store.logEntry(
+              task.id,
+              `[planner] stage=${stage} signal=retry-skipped: live session active — not bouncing to todo`,
+            ).catch(() => undefined);
+          }
+          return false;
+        }
+        // Live surface cleared — allow a fresh skip log if work goes live again later.
+        this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
@@ -1775,6 +1874,7 @@ export class ProjectEngine {
             sourceLinks: this.toInterventionSourceLinks(decision.sourceLinks),
           }),
         );
+        return true;
       },
       requestTargetedFix: async (task, decision) => {
         const sourceRef = decision.sourceLinks[0]?.ref;
@@ -2548,6 +2648,11 @@ export class ProjectEngine {
    */
   private async pickNextMergeTaskId(store: TaskStore): Promise<string | undefined> {
     if (this.mergeQueue.length === 0) return undefined;
+    // A coordinator-selected merge must be dispatched before this queue's local
+    // priority policy; otherwise the provider would reserve the old task but
+    // this pump could start a newer one first.
+    const admittedIndex = this.mergeQueue.findIndex((taskId) => this.coordinatorAdmittedMergeTaskIds.has(taskId));
+    if (admittedIndex !== -1) return this.mergeQueue.splice(admittedIndex, 1)[0];
     // Fast path: with a single queued task there's nothing to reorder. Avoid an
     // extra getTask round-trip (and keep callers that mock getTask once happy).
     if (this.mergeQueue.length === 1) {
@@ -2835,6 +2940,7 @@ export class ProjectEngine {
             this.sessionAdvisorLogCursor.delete(task.id);
             this.plannerObservationEmitDedup.delete(task.id);
             this.clearPlannerEscalationDedup(task.id);
+            this.clearPlannerLiveRetrySkipLogDedup(task.id);
             continue;
           }
           // FN-7743: resolve the executor-stall threshold from the task's
@@ -2897,6 +3003,7 @@ export class ProjectEngine {
           this.sessionAdvisorLogCursor.delete(taskId);
           this.plannerObservationEmitDedup.delete(taskId);
           this.clearPlannerEscalationDedup(taskId);
+          this.clearPlannerLiveRetrySkipLogDedup(taskId);
         }
       }
     } catch {
@@ -3639,24 +3746,79 @@ export class ProjectEngine {
           // FNXC:MergeQueue 2026-07-15-10:05: Wait for any orphan body from a prior abort race before claiming the next generation.
           await this.awaitPriorMergeBodySettle();
 
+          const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
+          const coordinatorReservedMerge = this.coordinatorAdmittedMergeTaskIds.delete(taskId);
+          /*
+          FNXC:ConcurrencyAdmission 2026-08-07-10:30:
+          FN-8453/#2359 applies the same top-level slot reservation to direct and
+          pull-request merge bodies. The current queue item is passed as a
+          one-shot candidate after dequeue because durable merge providers only
+          see remaining queue entries; without it a sole merge endlessly defers.
+          */
+          const runWithMergeAdmission = async <T>(start: () => Promise<T>): Promise<T | undefined> => {
+            if (!semaphore) return await start();
+            if (coordinatorReservedMerge) {
+              try {
+                return await start();
+              } finally {
+                projectAdmissionCoordinator.releaseReservation(taskId);
+                semaphore.release();
+              }
+            }
+            let selected = false;
+            let value: T | undefined;
+            await projectAdmissionCoordinator.admitOldest({
+              projectId: cwd,
+              maxConcurrent: (await store.getSettings()).maxConcurrent ?? 2,
+              semaphore,
+              claimed: async () => computeTopLevelConcurrencyClaimedFromStore({
+                store,
+                tasks: await store.listTasks({ slim: true, includeArchived: false }),
+              }),
+              refresh: async () => [{
+                taskId,
+                projectId: cwd,
+                createdAt: mergeCandidate?.createdAt,
+                start: async () => {
+                  selected = true;
+                  value = await start();
+                  return true;
+                },
+              }],
+            });
+            if (!selected) return undefined;
+            projectAdmissionCoordinator.releaseReservation(taskId);
+            semaphore.release();
+            return value;
+          };
+
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge && !routeWorkspaceDirect) {
             /*
             FNXC:MergeQueue 2026-07-15-10:05:
             PR merge dispatch shares the single-flight pump. Race the PR body with abort so pause/reclaim unblocks drainMergeQueue even when processPullRequestMerge ignores cooperative abort.
             */
-            const abortSignal = this.claimActiveMerge(taskId);
-            runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
-            const result = await this.runAbortableMergeBody(
-              () =>
-                this.options.processPullRequestMerge!(
-                  store,
-                  cwd,
-                  taskId,
-                  (this.runtime as any).worktreePool,
-                ),
-              abortSignal,
-              taskId,
-            );
+            const result = await runWithMergeAdmission(async () => {
+              const abortSignal = this.claimActiveMerge(taskId);
+              runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
+              return await this.runAbortableMergeBody(
+                () =>
+                  this.options.processPullRequestMerge!(
+                    store,
+                    cwd,
+                    taskId,
+                    (this.runtime as any).worktreePool,
+                  ),
+                abortSignal,
+                taskId,
+              );
+            });
+            if (result === undefined) {
+              // Another older lane won the shared capacity pass. Re-queue rather
+              // than treating this deferral as a pull-request merge failure.
+              this.mergeActive.delete(taskId);
+              this.internalEnqueueMerge(taskId);
+              continue;
+            }
             if (result === "merged") {
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
               const mergedTask = await store.getTask(taskId).catch(() => null);
@@ -3691,8 +3853,6 @@ export class ProjectEngine {
           } else {
             // Direct merge via AI agent, gated by semaphore
             runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge merging ${taskId}...`);
-
-            const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
 
             const pool = (this.runtime as any).worktreePool;
 
@@ -3810,11 +3970,14 @@ export class ProjectEngine {
               }, abortSignal, taskId);
             };
 
-            let result: MergeResult;
-            if (semaphore) {
-              result = await semaphore.run(rawMerge, PRIORITY_MERGE);
-            } else {
-              result = await rawMerge();
+            const result = await runWithMergeAdmission(rawMerge);
+
+            if (!result) {
+              // An older lane won this admission pass. Keep this merge queued;
+              // treating the deferral as a merge failure would consume retries.
+              this.mergeActive.delete(taskId);
+              this.internalEnqueueMerge(taskId);
+              continue;
             }
 
             this.activeMergeSession = null;
@@ -4591,6 +4754,13 @@ export class ProjectEngine {
             }
           }
         } finally {
+          // A selected queue entry can fail eligibility before reaching rawMerge.
+          // Return its coordinator reservation rather than pinning a top-level slot.
+          if (this.coordinatorAdmittedMergeTaskIds.delete(taskId)) {
+            projectAdmissionCoordinator.releaseReservation(taskId);
+            const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
+            semaphore?.release();
+          }
           this.clearActiveMergeClaim(taskId);
           this.mergeAbortController = null;
           this.mergeActive.delete(taskId);

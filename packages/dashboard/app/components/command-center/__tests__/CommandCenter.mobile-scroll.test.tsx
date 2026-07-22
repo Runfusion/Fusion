@@ -381,7 +381,12 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     await screen.findByTestId("command-center-empty");
     expect(screen.getByTestId("command-center-controls")).toBeTruthy();
     expect(screen.getByTestId("cc-controls-concurrency")).toBeTruthy();
-    expect(screen.getByTestId("cc-controls-org-portability")).toBeTruthy();
+    /*
+    FNXC:DashboardTests 2026-07-19-01:20:
+    FN-8351 moved org portability from overview controls into the Team area.
+    Overview must not still require cc-controls-org-portability; Team owns it.
+    */
+    expect(screen.queryByTestId("cc-controls-org-portability")).toBeNull();
     expect(screen.queryByTestId("cc-controls-config-versions")).toBeNull();
     expect(screen.queryByTestId("cc-controls-org-chart")).toBeNull();
     expect(screen.queryByTestId("cc-controls-heartbeat")).toBeNull();
@@ -397,6 +402,7 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     expect(teamPanel).toBe(screen.getByRole("tabpanel"));
     expect(screen.getByTestId("cc-team-org-chart")).toBeTruthy();
     expect(screen.getByTestId("cc-team-heartbeat")).toBeTruthy();
+    expect(screen.getByTestId("cc-controls-org-portability")).toBeTruthy();
     assertScrollOwnerContract(teamPanel);
 
     fireEvent.click(screen.getByTestId("command-center-tab-github"));

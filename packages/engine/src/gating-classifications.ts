@@ -169,6 +169,11 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_task_get",
   "fn_task_document_write",
   "fn_task_document_read",
+  /*
+  FNXC:TriagePromptPersistence 2026-07-21-18:02:
+  fn_task_prompt_write is the only durable PROMPT.md create/repair path for triage, replan, and Plan Review. It must be positively recognized as coordination-class (not an unknown tool) so permanent-agent policies cannot require approval for the planned-spec write that unblocks the board.
+  */
+  "fn_task_prompt_write",
   "fn_task_import_github",
   "fn_task_import_github_issue",
   "fn_task_import_gitlab_project_issues",
@@ -232,6 +237,11 @@ export const COORDINATION_EXEMPT_TOOLS = [
   "fn_artifact_view",
   "fn_task_document_write",
   "fn_task_document_read",
+  /*
+  FNXC:TriagePromptPersistence 2026-07-21-18:02:
+  Unrecognized tools fail safe to require-approval in the permanent-agent gate. fn_task_prompt_write must stay coordination-exempt (same class as fn_task_document_write) so planning and Plan Review can persist PROMPT.md without an operator approval gate. It is intentionally not a task_agent_mutation — the writer is scoped to the current task's authoritative plan artifact via TaskStore.
+  */
+  "fn_task_prompt_write",
   /**
    * FNXC:ToolGovernance 2026-06-27-15:22:
    * Task list/show/search tools are read-only discovery tools. Put them on the action-gate exempt registry, not only READONLY_FN_TOOLS, because evaluateAgentActionGate recognizes coordination exemptions directly and otherwise unknown fn_task_* reads silently fall through to exempt allow.

@@ -155,8 +155,8 @@ Structured runtime metadata is authoritative in PostgreSQL. A retained `fusion.d
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxConcurrent` | 2 | Concurrent task execution lanes (executor + merge). Triage/specification is controlled by `maxTriageConcurrent`. |
-| `maxTriageConcurrent` | 2 | Concurrent triage/specification agents. Falls back to `maxConcurrent` when undefined. |
+| `maxConcurrent` | 2 | Per-project cap for top-level working agents across planning, execution, and review/merge. Free slots admit the oldest eligible task; nested helpers are parent-internal. |
+| `maxWorktrees` | 4 | Separate cap for execution worktree holders; it does not define the live Running count. |
 | `autoMerge` | true | Auto-merge completed tasks |
 | `requirePlanApproval` | false | Manual approval for specs |
 | `prCompletionMode` | direct | Completion mode: direct/pr-first |

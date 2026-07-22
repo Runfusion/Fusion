@@ -230,6 +230,12 @@ export function rowToWorkflowWorkItemImpl(store: TaskStore, row: WorkflowWorkIte
       leaseExpiresAt: row.leaseExpiresAt,
       lastError: row.lastError,
       blockedReason: row.blockedReason,
+      stableWorkflowRunId: row.stableWorkflowRunId,
+      continuationSequence: row.continuationSequence,
+      waitReason: row.waitReason === "planning" || row.waitReason === "capacity" ? row.waitReason : null,
+      sourceColumn: row.sourceColumn,
+      targetColumn: row.targetColumn,
+      irHash: row.irHash,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

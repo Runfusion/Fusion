@@ -5974,7 +5974,7 @@
       "reportRoadmapDedup": "Check roadmap before filing reports",
       "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off.",
       "reportTarget": "Default report target",
-      "reportTargetHelp": "Optional Issue or Discussion target. When unset, Feedback and Help use Discussions while Bug and Idea use Issues.",
+      "reportTargetHelp": "Optional Issue or Discussion target. When unset, Feedback and Help use Discussions while Bug and Idea use Issues. No default — unset.",
       "reportTargetInherit": "Preserve action default",
       "reportTargetIssue": "GitHub Issue",
       "reportTargetDiscussion": "GitHub Discussion",
@@ -5985,10 +5985,11 @@
         "help": "Help target override"
       },
       "reportDiscussionCategory": "Discussion category",
-      "reportDiscussionCategoryHelp": "Required when filing to GitHub Discussions. Categories are loaded from the configured repository.",
+      "reportDiscussionCategoryHelp": "Required when filing to GitHub Discussions. Categories are loaded from the configured repository. No default — unset until a category is selected.",
       "reportDiscussionCategorySelect": "Select a Discussion category",
       "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
-      "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository."
+      "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository.",
+      "reportTargetByActionHelp": "Optional per-action override of the default report target for bug, feedback, idea, or help. No default — unset actions inherit reportTarget / action defaults."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
@@ -6034,7 +6035,11 @@
       "gitLabAuthTokenHint": "Projects inherit this fallback only when they do not set a project GitLab token. Read-only operations need read_api or api; write actions need api; project/group tokens remain limited by resource membership. No default — unset.",
       "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. ",
       "skipConfirmationDialogs": " Skip confirmation dialogs for critical actions ",
-      "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled"
+      "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled",
+      "releaseChannel": "Release channel",
+      "releaseChannelHelp": "Stable follows official releases. Beta follows pre-releases cut from main and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades. Default: stable.",
+      "channelStable": "Stable (recommended)",
+      "channelBeta": "Beta — early builds from main"
     },
     "globalModels": {
       "allow": "allow",

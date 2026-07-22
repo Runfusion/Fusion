@@ -158,6 +158,7 @@ describe("gating-classifications parity", () => {
         "fn_task_list",
         "fn_task_log",
         "fn_task_logs_read",
+        "fn_task_prompt_write",
         "fn_task_search",
         "fn_task_show",
         "fn_task_verification_status",
@@ -176,6 +177,22 @@ describe("gating-classifications parity", () => {
   it("classifies fn_ask_question in both gate source sets", () => {
     expect(READONLY_FN_TOOLS.has("fn_ask_question")).toBe(true);
     expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes("fn_ask_question")).toBe(true);
+  });
+
+  it("classifies fn_task_prompt_write as coordination-exempt so plan persistence is not approval-gated", () => {
+    expect(READONLY_FN_TOOLS.has("fn_task_prompt_write")).toBe(true);
+    expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes("fn_task_prompt_write")).toBe(true);
+    expect(classifyPermanentAgentToolCall("fn_task_prompt_write")).toEqual({ category: "none", recognized: true });
+    expect(resolvePermanentAgentToolDecision({
+      toolName: "fn_task_prompt_write",
+      gating: { permissionPolicy: approvalRequiredPolicy },
+    })).toMatchObject({ category: "none", disposition: "allow", recognized: true });
+    expect(evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "fn_task_prompt_write",
+      args: { content: "# Plan" },
+      permissionPolicy: approvalRequiredPolicy,
+    })).toMatchObject({ category: "exempt", disposition: "allow" });
   });
 
   it("ensures coordination exempt tools are recognized and allowed in permanent gating", () => {

@@ -617,14 +617,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const isCompactInterview = viewportMode !== "desktop" || isShortViewport();
   /*
   FNXC:PlanningModeMobile 2026-07-20-10:30:
-  FN-8427 makes the saved-session list a real compact destination. Both Back and Sessions
-  enter this one mode, which must unmount the active interview plan so it cannot consume
-  flex height beneath session rows. Desktop preserves its three-pane interview until its
-  explicit Sessions toggle requests the same list destination.
+  FN-8427 makes the saved-session list a real destination. Back enters this mode and unmounts
+  the active interview plan so it cannot consume flex height beneath session rows.
   */
   const isSessionListMode = showSessionList || (isCompactInterview && !mobileShowDetail);
-  // FNXC:PlanningModeMobile 2026-07-20-10:30: Empty mobile state opens the composer because no saved destination exists; once sessions exist, every compact detail surface gets this single Back-to-list escape.
-  const canReturnToSessionList = isCompactInterview && mobileShowDetail && planningSessions.length > 0;
+  // FNXC:PlanningSessionBack 2026-07-21-11:15: Back covers selected details on every viewport and drafts whenever saved sessions exist; list mode removes it instead of leaving an orphaned control.
+  const canReturnToSessionList = !isSessionListMode
+    && (selectedSessionId !== null || planningSessions.length > 0);
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"question" | "plan">("question");
   /*
@@ -1918,6 +1917,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [projectId, resetDetailState, resumeSessionId, selectedSessionId]);
 
   const handleBackToList = useCallback(() => {
+    setIsHistoryOpen(false);
     setShowSessionList(true);
     setMobileShowDetail(false);
   }, []);
@@ -2832,13 +2832,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       <div className={isEmbedded ? "modal modal-lg planning-modal planning-modal--embedded" : "modal modal-lg planning-modal"} ref={modalRef}>
         {/*
         FNXC:PlanningMode 2026-06-22-00:00:
-        Embedded planning is a main-content destination, not a dialog: it drops the modal close button and renders a plain common title (modal-header--embedded) matching other embedded views like Command Center. The mobile back affordance stays because it navigates the session list, not the view.
+        Embedded planning is a main-content destination, not a dialog: it drops the modal close button and renders a plain common title (modal-header--embedded) matching other embedded views like Command Center. The session-list Back affordance stays because it navigates within Planning, not away from the view.
         */}
         <div className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}>
           <div className="detail-title-row">
             {canReturnToSessionList && (
               <button
-                className="modal-back planning-mobile-back"
+                className="modal-back planning-session-back"
                 onClick={handleBackToList}
                 aria-label={t("planning.backToSessions", "Back to sessions")}
                 title={t("planning.backToSessions", "Back to sessions")}
@@ -2867,26 +2867,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             )}
           </div>
           {/*
-          FNXC:PlanningModeMobileTablet 2026-07-20-09:12:
-          When the viewport cannot fit three interview panes, operators must still be able to return
-          to the session list and then back to the active question. Keep the list and detail state
-          synchronized on both transitions so a second Sessions press cannot leave the question pane
-          hidden by the mobile list CSS.
+          FNXC:PlanningSessionBack 2026-07-21-11:15:
+          History remains the only detail action in this group. Session-list navigation lives in the
+          title-row Back control on every viewport, avoiding a duplicate Sessions toggle and keeping
+          compact list/detail state synchronized through one handler.
           */}
           {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") && (
             <div className="planning-header-controls">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  const showList = !isSessionListMode;
-                  setIsHistoryOpen(false);
-                  setShowSessionList(showList);
-                  if (isCompactInterview) setMobileShowDetail(!showList);
-                }}
-              >
-                {t("planning.sessions", "Sessions")}
-              </button>
               <button
                 ref={historyTriggerRef}
                 type="button"

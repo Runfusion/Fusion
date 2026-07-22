@@ -14,6 +14,7 @@ const FN_3548_COORDINATION_TOOLS = [
   "fn_task_log",
   "fn_task_document_write",
   "fn_task_document_read",
+  "fn_task_prompt_write",
   "fn_artifact_register",
   "fn_artifact_list",
   "fn_artifact_view",

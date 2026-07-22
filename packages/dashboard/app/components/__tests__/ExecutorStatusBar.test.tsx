@@ -143,8 +143,8 @@ describe("ExecutorStatusBar", () => {
       const statusBar = screen.getByRole("status");
       expect(statusBar).toHaveTextContent("Running");
       expect(statusBar).toHaveTextContent("Blocked");
-      expect(statusBar).toHaveTextContent("Queued");
-      expect(statusBar).toHaveTextContent("In Review");
+      expect(statusBar).toHaveTextContent("Waiting");
+      expect(statusBar).not.toHaveTextContent("In Review");
       expect(statusBar).not.toHaveTextContent("Done");
       expect(statusBar).not.toHaveTextContent("Escalated");
     });
@@ -190,12 +190,12 @@ describe("ExecutorStatusBar", () => {
       );
 
       const statusBar = screen.getByRole("status");
-      expectSegmentCount("Queued", "9");
+      expectSegmentCount("Waiting", "9");
       expectSegmentCount("Running", "2");
       expect(within(getSegmentByLabel("Running")).getByText("4")).toHaveClass("executor-status-bar__max");
       expectSegmentCount("Stuck", "1");
       expectSegmentCount("Blocked", "2");
-      expectSegmentCount("In Review", "1");
+      expect(statusBar).not.toHaveTextContent("In Review");
       expect(statusBar).toHaveTextContent("Overlap queue");
       expect(statusBar).toHaveTextContent("FN-010 · 5 todo");
       expect(statusBar).not.toHaveTextContent("Done");
@@ -274,11 +274,10 @@ describe("ExecutorStatusBar", () => {
       expect(statusBar).toHaveTextContent("5");
     });
 
-    it("displays in-review count", () => {
+    it("does not display the removed in-review footer segment", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
-      const statusBar = screen.getByRole("status");
-      expect(statusBar).toHaveTextContent("3");
+      expect(screen.getByRole("status")).not.toHaveTextContent("In Review");
     });
 
     it("renders the terminal launcher in the footer on desktop and opens terminal from the preserved toggle test id", async () => {
@@ -477,17 +476,16 @@ describe("ExecutorStatusBar", () => {
   });
 
   describe("mobile stat tooltips", () => {
-    const mobileStatIds = ["queued", "running", "blocked", "review"] as const;
+    const mobileStatIds = ["queued", "running", "blocked"] as const;
 
     beforeEach(() => {
       viewportModeMock.value = "mobile";
     });
 
     it.each([
-      ["queued", "Queued"],
+      ["queued", "Waiting"],
       ["running", "Running"],
       ["blocked", "Blocked"],
-      ["review", "In Review"],
     ] as const)("reveals the %s stat name on tap", async (id, label) => {
       const user = userEvent.setup();
       render(<ExecutorStatusBar tasks={emptyTasks} />);
@@ -578,7 +576,7 @@ describe("ExecutorStatusBar", () => {
 
       const desktopStatus = screen.getByRole("status");
       expect(desktopStatus).not.toHaveClass("executor-status-bar--mobile");
-      expect(getSegmentByLabel("Queued").tagName).toBe("DIV");
+      expect(getSegmentByLabel("Waiting").tagName).toBe("DIV");
       expect(desktopStatus.querySelectorAll("button.executor-status-bar__segment--stat")).toHaveLength(0);
 
       viewportModeMock.value = "tablet";
@@ -756,7 +754,7 @@ describe("ExecutorStatusBar", () => {
 
       const statusBar = screen.getByRole("status");
       expect(statusBar).toHaveTextContent("Idle");
-      expect(statusBar).toHaveTextContent("Queued");
+      expect(statusBar).toHaveTextContent("Waiting");
       expect(statusBar).not.toHaveClass("executor-status-bar--loading");
       expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
       expect(screen.getByTestId("engine-control-menu-trigger")).toBeInTheDocument();
@@ -853,10 +851,10 @@ describe("ExecutorStatusBar", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
       const statusBar = screen.getByRole("status");
-      expect(statusBar).toHaveTextContent("Queued");
+      expect(statusBar).toHaveTextContent("Waiting");
       expect(statusBar).toHaveTextContent("Running");
       expect(statusBar).toHaveTextContent("Blocked");
-      expect(statusBar).toHaveTextContent("In Review");
+      expect(statusBar).not.toHaveTextContent("In Review");
       expect(statusBar).not.toHaveClass("executor-status-bar--connecting");
       expect(statusBar.querySelector(".executor-status-bar--connecting")).toBeNull();
       expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
@@ -984,13 +982,13 @@ describe("ExecutorStatusBar", () => {
       const tasks: any[] = [{ id: "FN-001" }];
       render(<ExecutorStatusBar tasks={tasks} projectId="proj_abc123" />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123", undefined, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123", undefined, undefined, undefined);
     });
 
     it("passes tasks and undefined to useExecutorStats when projectId not provided", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined, undefined, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined, undefined, undefined, undefined);
     });
   });
 
@@ -1072,7 +1070,7 @@ describe("ExecutorStatusBar", () => {
       render(<ExecutorStatusBar tasks={tasks} />);
 
       // useExecutorStats receives the tasks array as first argument
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined, undefined, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined, undefined, undefined, undefined);
     });
 
     it("renders stuck segment with correct count when stuck tasks detected", () => {

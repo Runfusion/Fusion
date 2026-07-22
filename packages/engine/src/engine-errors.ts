@@ -181,12 +181,12 @@ export class ValidationError extends PermanentError {
   }
 }
 
-// ── Rate Limit Error (special — global pause, not local retry) ──────────
+// ── Rate Limit Error (special — provider-scoped park, not local retry) ──
 
 /**
  * Rate-limit / usage-limit error. Unlike transient errors, these should
- * NOT be retried locally — instead they trigger a global pause via
- * UsageLimitPauser so all agents back off simultaneously.
+ * NOT be retried indefinitely — after bounded backoff they park only the
+ * affected provider-routed task via UsageLimitPauser.
  */
 export class RateLimitError extends EngineError {
   /** Suggested retry-after in milliseconds (from Retry-After header or heuristic). */
@@ -224,7 +224,7 @@ export function classifyThrownError(err: unknown): EngineError {
 
   const message = err instanceof Error ? err.message : String(err ?? "");
 
-  // Rate-limit (triggers global pause)
+  // Rate-limit (triggers a provider-scoped task park)
   if (isUsageLimitError(message)) {
     return new RateLimitError(message, undefined, undefined, err instanceof Error ? err : undefined);
   }

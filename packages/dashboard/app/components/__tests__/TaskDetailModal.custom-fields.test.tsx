@@ -69,7 +69,7 @@ describe("TaskDetailModal custom fields (U13/KTD-14)", () => {
     expect((screen.getByLabelText("Owner") as HTMLInputElement).value).toBe("alice");
   });
 
-  it("uses workflowFieldDefs prop directly and skips the board-workflows fetch", async () => {
+  it("uses workflowFieldDefs prop directly while resolving independent move metadata", async () => {
     const fetchSpy = vi.spyOn(dashboardApi, "fetchBoardWorkflows");
     const defs: WorkflowFieldDefinition[] = [
       { id: "owner", name: "Owner", type: "string", render: { placement: "detail" } },
@@ -90,8 +90,8 @@ describe("TaskDetailModal custom fields (U13/KTD-14)", () => {
     );
     await waitFor(() => expect(screen.getByTestId("task-fields-section")).toBeTruthy());
     expect((screen.getByLabelText("Owner") as HTMLInputElement).value).toBe("bob");
-    // The fetch must NOT have been triggered since the prop was provided.
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Supplied fields remain authoritative; the one fetch resolves move columns independently.
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
   });
 
   it("renders no fields section when workflowFieldDefs prop is an empty array", async () => {
@@ -113,6 +113,7 @@ describe("TaskDetailModal custom fields (U13/KTD-14)", () => {
     // Give React a tick to settle; no section should appear.
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId("task-fields-section")).toBeNull();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Empty supplied fields still avoid replacement; the lookup is only for move metadata.
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
   });
 });

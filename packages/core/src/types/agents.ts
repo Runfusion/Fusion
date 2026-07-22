@@ -186,6 +186,8 @@ export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [
   "fn_heartbeat_done",
   "fn_task_document_write",
   "fn_task_document_read",
+  /* FNXC:TriagePromptPersistence 2026-07-21-18:02: Dashboard policy examples must list fn_task_prompt_write as exempt so operators see that plan/spec persistence is not approval-gated. Must stay a subset of COORDINATION_EXEMPT_TOOLS. */
+  "fn_task_prompt_write",
   "fn_workflow_list",
   "fn_workflow_get",
   "fn_trait_list",

@@ -1,5 +1,7 @@
 /**
- * remaining-ops-4 operations.
+ * FNXC:CodeOrganization 2026-07-21-12:00:
+ * Domain rename from remaining-ops-4: distributed task create, workflow step materialization,
+ * custom fields, work items, and goal-citation helpers.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure

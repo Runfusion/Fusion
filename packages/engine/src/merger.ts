@@ -4928,7 +4928,7 @@ export interface MergerOptions {
   /** Worktree pool — when provided and `recycleWorktrees` is enabled,
    *  worktrees are released to the pool instead of being removed. */
   pool?: WorktreePool;
-  /** Usage limit pauser — triggers global pause when API limits are detected. */
+  /** Usage limit pauser — parks only the affected provider-routed task. */
   usageLimitPauser?: UsageLimitPauser;
   /** Called with the agent session immediately after creation. Enables the
    *  caller (e.g. dashboard.ts) to track and externally dispose the session
@@ -11023,7 +11023,12 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     mergerLog.error(`Agent failed: ${err.message}`);
 
     if (options.usageLimitPauser && isUsageLimitError(err.message)) {
-      await options.usageLimitPauser.onUsageLimitHit("merger", taskId, err.message);
+      await options.usageLimitPauser.onUsageLimitHit(
+        "merger",
+        taskId,
+        err.message,
+        session.state?.model?.provider ?? mergerSessionModel.provider,
+      );
     }
 
     throw err;

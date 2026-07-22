@@ -11,10 +11,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   runTaskStep,
   resetStepToBaseline,
   makeAncestryBlastRadiusGuard,
+  isUsableWorktreeDirectory,
   type StepRunnerTask,
   type SessionRef,
 } from "../step-runner.js";
@@ -158,6 +162,41 @@ describe("runTaskStep", () => {
     expect(result.checkpointId).toBe("leaf");
   });
 
+  it("defers default baseline capture for missing and non-directory worktree paths", async () => {
+    const missingPath = join(tmpdir(), `fn-8464-missing-${Date.now()}`);
+    const filePath = join(tmpdir(), `fn-8464-file-${Date.now()}`);
+    await writeFile(filePath, "not a directory");
+    try {
+      for (const worktreePath of [missingPath, filePath]) {
+        const result = await runTaskStep(
+          { store: makeStore(), worktreePath, runStep: async () => ({ success: true }) },
+          makeTask([{ status: "pending" }]),
+          0,
+        );
+        expect(result).toMatchObject({ outcome: "success", baselineSha: undefined });
+      }
+    } finally {
+      await rm(filePath, { force: true });
+    }
+  });
+
+  it("keeps pre-step baseline capture for a usable worktree directory", async () => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "fn-8464-directory-"));
+    const gitRevParse = vi.fn().mockResolvedValue("pre-step-sha");
+    const runStep = vi.fn().mockResolvedValue({ success: true });
+    try {
+      const result = await runTaskStep(
+        { store: makeStore(), worktreePath, runStep, gitRevParse },
+        makeTask([{ status: "pending" }]),
+        0,
+      );
+      expect(result.baselineSha).toBe("pre-step-sha");
+      expect(gitRevParse.mock.invocationCallOrder[0]).toBeLessThan(runStep.mock.invocationCallOrder[0]);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it("uses the default checkpoint capture from the session ref when none injected", async () => {
     const store = makeStore();
     const sessionRef = makeSessionRef({ leafId: "leaf-xyz" });
@@ -173,6 +212,29 @@ describe("runTaskStep", () => {
       { sessionRef },
     );
     expect(result.checkpointId).toBe("leaf-xyz");
+  });
+});
+
+describe("isUsableWorktreeDirectory", () => {
+  it("returns false for empty, missing, and non-directory candidates", async () => {
+    const filePath = join(tmpdir(), `fn-8464-helper-file-${Date.now()}`);
+    await writeFile(filePath, "not a directory");
+    try {
+      expect(isUsableWorktreeDirectory(undefined)).toBe(false);
+      expect(isUsableWorktreeDirectory(join(tmpdir(), `fn-8464-helper-missing-${Date.now()}`))).toBe(false);
+      expect(isUsableWorktreeDirectory(filePath)).toBe(false);
+    } finally {
+      await rm(filePath, { force: true });
+    }
+  });
+
+  it("returns true for an existing directory", async () => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "fn-8464-helper-directory-"));
+    try {
+      expect(isUsableWorktreeDirectory(worktreePath)).toBe(true);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
   });
 });
 

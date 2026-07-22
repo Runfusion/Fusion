@@ -350,7 +350,8 @@ export function buildReviewPrompt(input: {
     lines.push(
       "",
       "A prior pass rejected an earlier attempt for these reasons — confirm they",
-      "are now resolved:",
+      "are now resolved in the complete resulting tree, including code outside",
+      "this squash diff. Do not approve merely because the rebuilt diff became smaller:",
       ...input.priorReasons.map((r) => `  - ${r}`)
     );
   }
