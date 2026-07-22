@@ -2094,8 +2094,10 @@ The merge-advance notice includes an explicit **Push to origin** action for the 
 - Standard push is `git push origin refs/heads/<branch>:refs/heads/<branch>` with no plain `--force` path.
 - Advanced mode enables opt-in `--force-with-lease=refs/heads/<branch>:<localSha>` only.
 - Non-fast-forward and lease-stale failures surface actionable messaging with Smart Pull.
-- Every attempt records `mutationType: "push:origin"` run-audit metadata: `integrationBranch`, `remote`, `localSha`, `remoteSha`, `aheadCount`, `behindCount`, `forceWithLease`, `outcome`, optional `stderrPreview`, and `durationMs`.
-- Push remains explicit user authorization only through dashboard HTTP routes (no scheduler/heartbeat auto-push).
+- Every dashboard Smart Push attempt records `mutationType: "push:origin"` run-audit metadata: `integrationBranch`, `remote`, `localSha`, `remoteSha`, `aheadCount`, `behindCount`, `forceWithLease`, `outcome`, optional `stderrPreview`, and `durationMs`.
+- Automatic post-merge pushes also emit `push:origin`; failed and shutdown-aborted attempts use `outcome: "failed"` and `outcome: "aborted"`, respectively, while leaving the already-finalized task done.
+- When post-merge push detects remote divergence, `push:recovery-branch` records the remote safety-ref lifecycle with IDs/outcomes-only metadata: `taskId`, `remote`, `recoveryBranch`, `sha`, and `outcome` (`success`, `failed`, `deleted`, or `delete-failed`). The `fusion/<task-id>-stranded` ref is deleted after a successful target push and retained after failure or abort.
+- Dashboard Push remains explicit user authorization only through dashboard HTTP routes; the separate `pushAfterMerge` project setting controls automatic post-merge pushes.
 
 ## Shared branch groups
 

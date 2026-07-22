@@ -53,7 +53,7 @@ export {
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   computeLockfileHash,
   getConfiguredWorktreeInitCommand,
@@ -5749,13 +5749,21 @@ export function isNonFastForwardPushError(message: string): boolean {
     || normalized.includes("failed to push some refs");
 }
 
-function isRebaseInProgress(rootDir: string): boolean {
+/*
+FNXC:MergePush 2026-07-22-18:48:
+Tchori-Labs/Fusion#5 exposed that `REBASE_HEAD` can remain resolvable after `git rebase --continue` completed. Rebase state is defined by Git's worktree-specific state directories; checking those directories prevents a completed conflicting rebase from receiving a spurious second `--continue` and being reported as a failed push.
+*/
+export function isRebaseInProgress(rootDir: string): boolean {
   try {
-    execSync("git rev-parse --verify REBASE_HEAD", {
-      cwd: rootDir,
-      stdio: "pipe",
-    });
-    return true;
+    const gitPath = (name: "rebase-merge" | "rebase-apply") => {
+      const output = String(execSync(`git rev-parse --git-path ${name}`, {
+        cwd: rootDir,
+        encoding: "utf-8",
+        stdio: "pipe",
+      })).trim();
+      return resolve(rootDir, output);
+    };
+    return existsSync(gitPath("rebase-merge")) || existsSync(gitPath("rebase-apply"));
   } catch {
     return false;
   }

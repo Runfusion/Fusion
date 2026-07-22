@@ -415,6 +415,11 @@ export type GitMutationType =
    * ```
    */
   | "push:origin"
+  /*
+   * FNXC:MergePush 2026-07-22-18:55:
+   * Tchori-Labs/Fusion#5 records the best-effort lifecycle of the remote pre-rebase safety ref. Metadata is ids/outcomes-only: `{ taskId, remote, recoveryBranch, sha, outcome }`, where outcome is `success`, `failed`, `deleted`, or `delete-failed`.
+   */
+  | "push:recovery-branch"
   /**
    * Metadata shape:
    * ```ts
