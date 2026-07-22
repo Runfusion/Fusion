@@ -146,12 +146,16 @@ const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
  * FNXC:StuckDetector 2026-07-22-18:05:
  * Build a stable fingerprint from tool name + primary arg so repeated identical actions
  * collapse while distinct edit/test/debug actions stay unique.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:20:
+ * Return null when detail is missing. Bare tool-name fingerprints collapse every call to the
+ * same custom tool into one value and false-positive productive structured-arg work as a loop
+ * (Greptile P1 on PR #2404). Name-only activity still refreshes liveness; it is not thrash evidence.
  */
-export function buildToolFingerprint(toolName: string, toolDetail?: string): string {
+export function buildToolFingerprint(toolName: string, toolDetail?: string): string | null {
   const name = toolName.trim().toLowerCase() || "tool";
-  if (!toolDetail) return name;
-  const detail = toolDetail.trim().replace(/\s+/g, " ").slice(0, TOOL_DETAIL_FINGERPRINT_MAX);
-  if (!detail) return name;
+  const detail = toolDetail?.trim().replace(/\s+/g, " ").slice(0, TOOL_DETAIL_FINGERPRINT_MAX);
+  if (!detail) return null;
   return `${name}:${detail}`;
 }
 
@@ -350,9 +354,9 @@ export class StuckTaskDetector {
    * Called on text deltas and tool calls only (NOT step transitions).
    * Increments `activitySinceProgress` counter.
    *
-   * When `signal` includes a tool name, appends a fingerprint to the novelty ring buffer
-   * used by loop classification. Text/heartbeat-only calls refresh liveness without
-   * contributing loop-thrash evidence.
+   * When `signal` includes a tool name **and** a non-empty toolDetail, appends a fingerprint
+   * to the novelty ring buffer used by loop classification. Text/heartbeat-only calls and
+   * name-only tool calls refresh liveness without contributing loop-thrash evidence.
    *
    * In step-session mode, called with step-scoped keys (e.g., "FN-200-step-0").
    */
@@ -363,7 +367,10 @@ export class StuckTaskDetector {
       entry.activitySinceProgress++;
       const toolName = signal?.toolName?.trim();
       if (toolName) {
-        this.pushToolFingerprint(entry, buildToolFingerprint(toolName, signal?.toolDetail));
+        const fingerprint = buildToolFingerprint(toolName, signal?.toolDetail);
+        if (fingerprint) {
+          this.pushToolFingerprint(entry, fingerprint);
+        }
       }
       if (entry.activitySinceProgress <= 3 || entry.activitySinceProgress % 50 === 0) {
         stuckLog.log(

@@ -108,10 +108,18 @@ function summarizeToolResultDetail(result: unknown): string | undefined {
   }
 }
 
+/** Bound structured-arg fallback summaries so agent-log detail stays dashboard-safe. */
+const STRUCTURED_ARG_SUMMARY_MAX = 240;
+
 /**
  * Produce a human-readable summary from tool arguments.
- * Returns the full argument value without truncation.
- * Returns `undefined` for unknown tools or when no meaningful arg is found.
+ * Returns the full argument value without truncation for common string primaries.
+ * Returns `undefined` when no args or only empty objects.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:20:
+ * Prefer a compact JSON fallback for custom tools whose args are only numbers/bools/objects.
+ * Without that, every call collapses to a bare tool name and the stuck detector can false-positive
+ * productive structured-arg work as a loop (Greptile P1 on PR #2404).
  */
 export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
   if (!args) return undefined;
@@ -132,7 +140,18 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
     if (typeof val === "string") return val;
   }
 
-  return undefined;
+  // Structured-arg fallback: distinct non-string payloads stay distinguishable.
+  const keys = Object.keys(args);
+  if (keys.length === 0) return undefined;
+  try {
+    const json = JSON.stringify(args);
+    if (!json || json === "{}" || json === "[]") return undefined;
+    return json.length > STRUCTURED_ARG_SUMMARY_MAX
+      ? `${json.slice(0, STRUCTURED_ARG_SUMMARY_MAX)}…`
+      : json;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

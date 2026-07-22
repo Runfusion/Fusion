@@ -433,6 +433,44 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
+    it("returns null for high-volume name-only tool calls without detail", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-20:20:
+      Greptile P1: bare tool-name fingerprints collapse distinct structured custom-tool calls.
+      Name-only activity must refresh liveness without counting as thrash evidence.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", { toolName: "fn_custom_tool" });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns null for same custom tool with distinct structured details", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: `{"step":${i},"ok":true}`,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
     it("returns null for high text/heartbeat volume without tool thrash evidence", () => {
       const session = createMockSession();
       vi.useFakeTimers({ shouldAdvanceTime: true });

@@ -731,8 +731,9 @@ describe("summarizeToolArgs", () => {
     expect(summarizeToolArgs("Bash", {})).toBeUndefined();
   });
 
-  it("returns undefined when no string args found", () => {
-    expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBeUndefined();
+  it("returns compact JSON when only non-string args are present", () => {
+    // FNXC:StuckDetector 2026-07-22-20:20: structured custom-tool args need a distinct summary.
+    expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBe('{"count":42,"flag":true}');
   });
 });
 
