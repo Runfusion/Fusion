@@ -60,6 +60,8 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     await store.archiveTask(task.id, { cleanup: false });
 
     await expect(store.logEntry(task.id, "must reject")).rejects.toThrow(/archived.*read-only/);
+    await expect(store.moveTask(task.id, "todo")).rejects.toThrow(/archived|soft-deleted|not found/);
+    await expect(store.updateTask(task.id, { priority: "high" })).rejects.toThrow(/archived|soft-deleted|not found/);
     await expect(store.addComment(task.id, "must reject", "user")).rejects.toThrow(/archived.*read-only/);
     await expect(store.updateTaskComment(task.id, commentId!, "must reject")).rejects.toThrow(/archived.*read-only/);
     await expect(store.deleteTaskComment(task.id, commentId!)).rejects.toThrow(/archived.*read-only/);
@@ -76,6 +78,28 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     })).rejects.toThrow(/archived.*read-only/);
     expect(await store.getTaskDocuments(task.id)).toEqual([]);
     expect(await store.getArtifacts(task.id)).toEqual([]);
+
+    const retained = await store.getTaskDocument(task.id, "spec");
+    expect(retained).toMatchObject({ content: "before archive", revision: 1 });
+    expect(await store.getTaskDocumentRevisions(task.id, "spec")).toEqual([]);
+    const published = await store.publishArchivedTaskDocumentAddition(task.id, {
+      key: "spec",
+      appendContent: "operator correction",
+      expectedRevision: retained!.revision,
+      expectedContentHash: retained!.contentHash,
+      author: "operator",
+      reason: "Correct retained evidence",
+    });
+    expect(published.document).toMatchObject({
+      content: "before archive\n\noperator correction",
+      revision: 2,
+      author: "operator",
+    });
+    expect(await store.getTaskDocumentRevisions(task.id, "spec")).toMatchObject([
+      { content: "before archive", revision: 1 },
+    ]);
+    expect(await store.getTaskDocuments(task.id)).toEqual([]);
+    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "still rejected" })).rejects.toThrow(/archived.*read-only/);
   });
 
   it("runs plugin schema initialization through the PostgreSQL executor without opening SQLite", async () => {

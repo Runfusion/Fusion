@@ -21,8 +21,10 @@ overrides:
   # FNXC:ModelCatalog 2026-07-16-18:15: Keep floating @fusion/droid-cli and
   # @fusion/pi-llama-cpp imports on the ModelRuntime-capable pi SDK so the
   # workspace cannot resolve conflicting pi type surfaces.
-  '@earendil-works/pi-ai': 0.80.10
-  '@earendil-works/pi-coding-agent': 0.80.10
+  # FNXC:ModelCatalog 2026-07-22-12:00: Bumped workspace override pin 0.80.10 → 0.81.1
+  # to match guarded package manifests (cli/core/engine/dashboard/pi-claude-cli).
+  '@earendil-works/pi-ai': 0.81.1
+  '@earendil-works/pi-coding-agent': 0.81.1
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each

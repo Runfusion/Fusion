@@ -2292,6 +2292,19 @@ describe("TaskCard", () => {
     expect(screen.getByText("executing")).toBeDefined();
   });
 
+  it("FN-8493 renders Revising, not Replan, for a bare needs-replan Board card", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "needs-replan" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Revising")).toHaveClass("card-status-badge");
+    expect(screen.queryByText("Replan")).not.toBeInTheDocument();
+  });
+
   it.each([
     { column: "todo" as const, status: "planning" },
     { column: "in-progress" as const, status: "planning" },

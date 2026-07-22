@@ -63,7 +63,7 @@ export type RunSingleStep = (stepIndex: number) => Promise<{ success: boolean; e
 /** Dependencies for {@link runTaskStep}. */
 export interface RunTaskStepDeps {
   /** Step-state projection sink (KTD-7). */
-  store: Pick<TaskStore, "updateStep" | "logEntry">;
+  store: Pick<TaskStore, "startStep" | "updateStep" | "logEntry">;
   /** Absolute path to the task's worktree (where `git rev-parse HEAD` runs). */
   worktreePath: string;
   /** Run exactly step `i` (step-session physics). */
@@ -135,17 +135,27 @@ export async function runTaskStep(
   const captureCheckpointId =
     deps.captureCheckpointId ?? (() => defaultCaptureCheckpointId(opts.sessionRef));
 
-  // 1. Projection: step → in-progress (KTD-7). updateStep's own guards apply.
+  /*
+   * FNXC:StepLifecycle 2026-07-22-10:30:
+   * The atomic start verdict, rather than the returned status alone, distinguishes a valid
+   * in-progress restart resume from a blocked legacy-corruption state. Never run step work
+   * after the authoritative dependency guard rejects its projection.
+   */
   try {
-    if (opts.projectionSource) {
-      await store.updateStep(task.id, stepIndex, "in-progress", { source: opts.projectionSource });
-    } else {
-      await store.updateStep(task.id, stepIndex, "in-progress");
+    const startResult = opts.projectionSource
+      ? await store.startStep(task.id, stepIndex, { source: opts.projectionSource })
+      : await store.startStep(task.id, stepIndex);
+    if (!startResult.accepted) {
+      executorLog.warn(
+        `${task.id}: runTaskStep rejected step ${stepIndex} start (${startResult.disposition})`,
+      );
+      return { outcome: "failure" };
     }
   } catch (err) {
     executorLog.warn(
       `${task.id}: runTaskStep failed to mark step ${stepIndex} in-progress: ${errMsg(err)}`,
     );
+    return { outcome: "failure" };
   }
 
   // 2. Baseline capture at instance start, before step work (KTD-2).

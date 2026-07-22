@@ -74,14 +74,41 @@ describe("ProviderIcon", () => {
     expect(document.querySelector('[data-provider="cursor"] svg:not([data-testid])')).not.toBeInTheDocument();
   });
 
-  it("renders the OMP brand icon, auth label, and tokenized color for omp-cli", () => {
+  it("renders the OMP brand icon, auth label, and official tokenized gradient for omp-cli", () => {
     render(<ProviderIcon provider="omp-cli" />);
     const svg = screen.getByTestId("omp-icon");
+    const gradient = svg.querySelector("linearGradient");
+    const path = svg.querySelector("path");
+
     expect(svg).toBeInTheDocument();
     expect(screen.getByLabelText("Oh My Pi — via omp ACP")).toBeInTheDocument();
     expect(svg.parentElement).toHaveAttribute("data-provider", "omp-cli");
     expect(svg.parentElement).toHaveStyle({ color: "var(--provider-omp)" });
-    expect(svg.querySelector("path")).toHaveAttribute("fill", "var(--provider-omp)");
+    expect(path).toHaveAttribute("fill", `url(#${gradient?.id})`);
+    expect(gradient).toHaveAttribute("x1", "0");
+    expect(gradient).toHaveAttribute("y1", "0");
+    expect(gradient).toHaveAttribute("x2", "1");
+    expect(gradient).toHaveAttribute("y2", "1");
+    expect(Array.from(gradient?.querySelectorAll("stop") ?? []).map((stop) => stop.getAttribute("stop-color"))).toEqual([
+      "var(--provider-omp-gradient-start)",
+      "var(--provider-omp-gradient-mid)",
+      "var(--provider-omp-gradient-end)",
+    ]);
+  });
+
+  it("assigns unique gradient ids to simultaneous OMP icons", () => {
+    const { container } = render(
+      <>
+        <ProviderIcon provider="omp-cli" />
+        <ProviderIcon provider="omp" />
+      </>,
+    );
+    const gradients = Array.from(container.querySelectorAll("[data-testid='omp-icon'] linearGradient"));
+    const paths = Array.from(container.querySelectorAll("[data-testid='omp-icon'] path"));
+
+    expect(gradients).toHaveLength(2);
+    expect(new Set(gradients.map((gradient) => gradient.id)).size).toBe(2);
+    expect(paths.map((path) => path.getAttribute("fill"))).toEqual(gradients.map((gradient) => `url(#${gradient.id})`));
   });
 
   it.each(["omp", "oh-my-pi"])("renders the OMP brand icon for the %s alias", (provider) => {

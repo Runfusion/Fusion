@@ -3414,14 +3414,50 @@ describe("TaskDetailModal inline action row parity (FN-8194)", () => {
     expect(toggle).toHaveClass("btn-primary");
   });
 
-  it("hides the GitHub toggle for non-editable and GitLab-tracked tasks", () => {
+  it("enables GitHub tracking for Ideas intake tasks after workflow metadata fails", async () => {
+    const { updateTask, fetchBoardWorkflows } = await import("../../api");
+    const mockUpdate = vi.mocked(updateTask);
+    vi.mocked(fetchBoardWorkflows).mockRejectedValueOnce(new Error("workflow metadata unavailable"));
+    mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-ideas", column: "ideas", githubTracking: { enabled: true } }) as Task);
+
+    renderDetail(makeTask({ id: "FN-ideas", column: "ideas", githubTracking: { enabled: false } }));
+
+    const toggle = screen.getByTestId("detail-inline-github-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith("FN-ideas", { githubTracking: { enabled: true } }, undefined);
+    });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the GitHub toggle after Coding (Ideas) workflow metadata resolves", async () => {
+    const { fetchBoardWorkflows } = await import("../../api");
+    vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [{ id: "done", name: "Done", flags: {} }] },
+        { id: "builtin:coding-ideas", name: "Coding (Ideas)", columns: [{ id: "done", name: "Done", flags: {} }] },
+      ],
+      taskWorkflowIds: { "FN-ideas-workflow": "builtin:coding-ideas" },
+    });
+
+    renderDetail(makeTask({ id: "FN-ideas-workflow", column: "done", githubTracking: { enabled: false } }));
+
+    expect(screen.queryByTestId("detail-inline-github-toggle")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("detail-inline-github-toggle")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("hides the GitHub toggle for unrelated and GitLab-tracked tasks", () => {
     const { unmount } = renderDetail(makeTask({ id: "FN-8194", column: "done", githubTracking: { enabled: true } }));
     expect(screen.queryByTestId("detail-inline-github-toggle")).not.toBeInTheDocument();
     unmount();
 
     renderDetail(makeTask({
       id: "FN-8195",
-      column: "todo",
+      column: "ideas",
       gitlabTracking: {
         item: {
           kind: "project_issue",

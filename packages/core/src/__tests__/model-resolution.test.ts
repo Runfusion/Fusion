@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTestModeOverrides,
+  hasConfiguredFallbackLane,
   resolveExecutionSettingsModel,
   resolveExecutorFallbackModel,
+  resolvePlanningFallbackModel,
+  resolveValidatorFallbackModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
@@ -17,6 +20,27 @@ import {
 } from "../ai/model-resolution.js";
 
 describe("model-resolution", () => {
+  it("detects complete fallback pairs at the lane, global, and selected-workflow tiers", () => {
+    expect(hasConfiguredFallbackLane({
+      planningFallbackProvider: "project-provider",
+      planningFallbackModelId: "project-model",
+    }, "planning")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      fallbackProvider: "global-provider",
+      fallbackModelId: "global-model",
+    }, "validation")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      selectedWorkflowModelLanes: {
+        executionFallbackProvider: "workflow-provider",
+        executionFallbackModelId: "workflow-model",
+      },
+    }, "execution")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      planningFallbackProvider: "incomplete-provider",
+      selectedWorkflowModelLanes: { planningFallbackModelId: "incomplete-model" },
+    }, "planning")).toBe(false);
+  });
+
   it("uses only a complete task merger pair before settings and preserves test mode", () => {
     const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
     expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });
@@ -165,6 +189,49 @@ describe("model-resolution", () => {
       defaultProviderOverride: "project-default-provider",
       defaultModelIdOverride: "project-default-model",
     })).toEqual({ provider: "project-merger-provider", modelId: "project-merger-model" });
+  });
+
+  it.each([
+    ["execution", resolveExecutionSettingsModel, resolveTaskExecutionModel, "executionProvider", "executionModelId", "executionGlobalProvider", "executionGlobalModelId", "modelProvider", "modelId"],
+    ["planning", resolvePlanningSettingsModel, resolveTaskPlanningModel, "planningProvider", "planningModelId", "planningGlobalProvider", "planningGlobalModelId", "planningModelProvider", "planningModelId"],
+    ["validation", resolveValidatorSettingsModel, resolveTaskValidatorModel, "validatorProvider", "validatorModelId", "validatorGlobalProvider", "validatorGlobalModelId", "validatorModelProvider", "validatorModelId"],
+  ] as const)("resolves %s as task → project → global → selected workflow", (_lane, resolveSettings, resolveTask, projectProviderKey, projectModelKey, globalProviderKey, globalModelKey, taskProviderKey, taskModelKey) => {
+    const settings = {
+      [projectProviderKey]: "project-provider",
+      [projectModelKey]: "project-model",
+      [globalProviderKey]: "global-provider",
+      [globalModelKey]: "global-model",
+      selectedWorkflowModelLanes: {
+        [projectProviderKey]: "workflow-provider",
+        [projectModelKey]: "workflow-model",
+      },
+    };
+
+    expect(resolveTask({ [taskProviderKey]: "task-provider", [taskModelKey]: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });
+    expect(resolveSettings(settings)).toEqual({ provider: "project-provider", modelId: "project-model" });
+    expect(resolveSettings({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
+    expect(resolveSettings({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined, [globalProviderKey]: undefined, [globalModelKey]: undefined })).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
+  });
+
+  it.each([
+    ["execution", resolveExecutorFallbackModel, "executionFallbackProvider", "executionFallbackModelId"],
+    ["planning", resolvePlanningFallbackModel, "planningFallbackProvider", "planningFallbackModelId"],
+    ["validation", resolveValidatorFallbackModel, "validatorFallbackProvider", "validatorFallbackModelId"],
+  ] as const)("resolves %s fallback as project → global → selected workflow", (_lane, resolveFallback, projectProviderKey, projectModelKey) => {
+    const settings = {
+      [projectProviderKey]: "project-provider",
+      [projectModelKey]: "project-model",
+      fallbackProvider: "global-provider",
+      fallbackModelId: "global-model",
+      selectedWorkflowModelLanes: {
+        [projectProviderKey]: "workflow-provider",
+        [projectModelKey]: "workflow-model",
+      },
+    };
+
+    expect(resolveFallback(settings)).toEqual({ provider: "project-provider", modelId: "project-model" });
+    expect(resolveFallback({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
+    expect(resolveFallback({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined, fallbackProvider: undefined, fallbackModelId: undefined })).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
   });
 
   it("resolves merger fallback project pair, global fallback, partial pairs, and test mode", () => {

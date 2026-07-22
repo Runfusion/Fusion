@@ -452,7 +452,7 @@ describe("SettingsModal", () => {
       const onOpenWorkflowSettings = vi.fn();
       await setupWorkflowModelLaneTest({ renderProps: { onOpenWorkflowSettings } });
 
-      const workflowHeading = screen.getByRole("heading", { name: "Default workflow model lanes" });
+      const workflowHeading = screen.getByRole("heading", { name: "Project workflow model lanes" });
       const advancedButton = screen.getByRole("button", { name: "Advanced workflow policy" });
       const actionRow = advancedButton.closest(".settings-model-lane-actions");
       const presetsHeading = screen.getByRole("heading", { name: "Model Presets" });
@@ -528,7 +528,7 @@ describe("SettingsModal", () => {
       await setupWorkflowModelLaneTest({ stored: expectedPatch, effective: expectedPatch });
 
       const lane = screen.getByTestId("workflow-model-lane-planning");
-      expect(within(lane).getByText("Override (Project)")).toBeInTheDocument();
+      expect(within(lane).getByText("Project baseline")).toBeInTheDocument();
       expect(within(lane).getByText("GPT-4o")).toBeInTheDocument();
       expect(screen.getByTestId("workflow-model-lane-execution")).toHaveTextContent("Inherited (Workflow)");
     });
@@ -583,7 +583,7 @@ describe("SettingsModal", () => {
       });
 
       const lane = screen.getByTestId("workflow-model-lane-validator-fallback");
-      expect(within(lane).getByText("Override (Project)")).toBeInTheDocument();
+      expect(within(lane).getByText("Project baseline")).toBeInTheDocument();
       await settingsModalUser.click(within(lane).getByRole("button", { name: "Reset" }));
 
       await waitFor(() => {
@@ -1860,4 +1860,3 @@ describe("SettingsModal", () => {
     });
   });
 });
-

@@ -648,10 +648,13 @@ Behavior:
 - Dashboard delete confirmations for live tasks include an **Archive Instead** action so users can preserve history without soft-deleting the task.
 - Archived tasks can also be deleted from the dashboard/API/CLI. Deleting an archived task removes the archived snapshot from lists and search, but first materializes the normal soft-delete tombstone so the task ID remains reserved unless the operator explicitly chooses allow-resurrection behavior.
 - Cleanup mode can persist compact metadata and remove the task directory
-- Archived tasks are read-only for task log/document writes:
+- Archived tasks remain read-only for ordinary task log/document writes:
   - `logEntry()` throws `Task <id> is archived — logging is read-only`
-  - `upsertTaskDocument()` throws `Task <id> is archived — documents are read-only`
+  - `upsertTaskDocument()` and `deleteTaskDocument()` reject archived parents
   - `fn_task_log` returns `ERROR: Cannot log to archived task — this task is read-only`
+  - task-bound and chat/planning `fn_task_document_write` continue to use ordinary upsert and cannot publish archived corrections
+- Direct reads of a retained named document and its revisions remain available for historical evidence, while list/global document registries stay live-only.
+- The sole immutability exception is authenticated operator HTTP `POST /api/tasks/:id/documents/:key/archived-publications`. It can only append `"\n\n" + appendContent` after matching mandatory revision/hash CAS against a consistent PostgreSQL tombstone plus archive snapshot. It cannot replace content or metadata, restore/move/update the task, change archive/mission/link state, emit citations/task events, or wake execution. Fusion launched with `--no-auth` rejects this capability.
 
 ### Cleanup behavior
 

@@ -1280,6 +1280,32 @@ describe("CronRunner", () => {
       expect(mockExecutor).toHaveBeenNthCalledWith(2, "Use default", "anthropic", "claude-sonnet-4-5", undefined, undefined);
     });
 
+    it("inherits scheduled AI prompt thinking from the execution lane hierarchy", async () => {
+      const store = createMockStore({
+        executionThinkingLevel: "medium",
+        executionGlobalThinkingLevel: "high",
+        selectedWorkflowModelLanes: { executionThinkingLevel: "low" },
+        defaultThinkingLevel: "xhigh",
+      });
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeStep({ type: "ai-prompt", name: "Inherited thinking", prompt: "Think", command: undefined })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        "Think",
+        "anthropic",
+        "claude-sonnet-4-5",
+        undefined,
+        "medium",
+      );
+    });
+
     it("passes step model provider and model ID to executor", async () => {
       const store = createMockStore();
       const mockExecutor = createAiMockExecutor("response");

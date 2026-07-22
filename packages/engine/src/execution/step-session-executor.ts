@@ -36,7 +36,7 @@ import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
-import { AgentLogger } from "../agents/agent-logger.js";
+import { AgentLogger, summarizeToolArgs } from "../agents/agent-logger.js";
 import { createLogger } from "../logger.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
@@ -122,8 +122,12 @@ export interface StepSessionExecutorOptions {
   runtimeHint?: string;
   /** Optional assigned-agent runtime config for model override precedence. */
   assignedAgentRuntimeConfig?: Record<string, unknown>;
-  /** Callback invoked when a step starts executing. */
-  onStepStart?: (stepIndex: number) => void;
+  /**
+   * FNXC:StepLifecycle 2026-07-22-09:53: This awaitable pre-start contract lets the
+   * authoritative lifecycle projection reject execution before session allocation;
+   * `void` preserves the legacy notification-only contract.
+   */
+  onStepStart?: (stepIndex: number) => void | boolean | Promise<void | boolean>;
   /** Callback invoked when a step completes (success or failure). */
   onStepComplete?: (stepIndex: number, result: StepResult) => void;
   /** Optional skill selection context for session creation. */
@@ -1227,8 +1231,23 @@ export class StepSessionExecutor {
       return { stepIndex, success: false, error: "Execution aborted", retries: 0 };
     }
 
-    // Notify caller that this step is starting
-    this.options.onStepStart?.(stepIndex);
+    // FNXC:StepLifecycle 2026-07-22-09:53: Project the start before allocating session
+    // resources; a store-rejected out-of-order transition must not execute while pending.
+    if (this.options.onStepStart) {
+      try {
+        const startAccepted = await this.options.onStepStart(stepIndex);
+        if (startAccepted === false) {
+          const error = `Step ${stepIndex} start was rejected by the task lifecycle projection`;
+          stepExecLog.warn(`${error} for task ${taskDetail.id}`);
+          return { stepIndex, success: false, error, retries: 0 };
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const error = `Step ${stepIndex} start projection failed: ${reason}`;
+        stepExecLog.warn(`${error} for task ${taskDetail.id}`);
+        return { stepIndex, success: false, error, retries: 0 };
+      }
+    }
 
     // Build step prompt
     const promptTaskDetail = this.consumeTaskDetailForStepPrompt();
@@ -1406,7 +1425,15 @@ Follow instructions precisely and avoid unrelated changes.`,
               onToolStart: (name, args) => {
                 const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
                 telemetry.agentLogger.onToolStart(name, args);
-                stuckTaskDetector?.recordActivity(telemetry.trackingKey);
+                /*
+                FNXC:StuckDetector 2026-07-22-18:05:
+                Fingerprint step-session tool starts for loop novelty. Detail comes from the same
+                summarizeToolArgs path AgentLogger uses so detector and logs stay aligned.
+                */
+                stuckTaskDetector?.recordActivity(telemetry.trackingKey, {
+                  toolName: name,
+                  toolDetail: summarizeToolArgs(name, args),
+                });
               },
               onToolEnd: (name, isError, result) => {
                 const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;

@@ -20,6 +20,47 @@ function createMockSession(): { dispose: ReturnType<typeof vi.fn> } {
   };
 }
 
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Helpers for loop classification tests. Loop now requires thrash evidence
+ * (repetitive tool fingerprints), not mere activity volume without step progress.
+ */
+function recordRepetitiveLoopActivity(
+  d: StuckTaskDetector,
+  taskId: string,
+  count = 80,
+): void {
+  for (let i = 0; i < count; i++) {
+    d.recordActivity(taskId, {
+      toolName: "bash",
+      toolDetail: "pnpm test packages/foo --run",
+    });
+  }
+}
+
+function recordDiverseIterativeActivity(
+  d: StuckTaskDetector,
+  taskId: string,
+  count = 80,
+): void {
+  for (let i = 0; i < count; i++) {
+    const kind = i % 5;
+    if (kind === 0) {
+      d.recordActivity(taskId, { toolName: "bash", toolDetail: `pnpm test e2e suite-${i}` });
+    } else if (kind === 1) {
+      d.recordActivity(taskId, { toolName: "edit", toolDetail: `src/file-${i}.ts` });
+    } else if (kind === 2) {
+      d.recordActivity(taskId, { toolName: "read", toolDetail: `packages/app/src/component-${i}.tsx` });
+    } else if (kind === 3) {
+      d.recordActivity(taskId, { toolName: "write", toolDetail: `vite.config.${i}.ts` });
+    } else {
+      d.recordActivity(taskId);
+    }
+  }
+}
+
+
 describe("StuckTaskDetector", () => {
   let store: TaskStore;
   let detector: StuckTaskDetector;
@@ -334,13 +375,174 @@ describe("StuckTaskDetector", () => {
       // Simulate time passing with lots of activity but no progress
       vi.advanceTimersByTime(61000); // 61 seconds
 
-      // Simulate many activity heartbeats (agent is working but not advancing steps)
-      for (let i = 0; i < 60; i++) {
+      // Simulate thrashy tool heartbeats (same command repeated without step progress)
+      recordRepetitiveLoopActivity(detector, "FN-001", 60);
+
+      // Inactivity is near-zero because we just called recordActivity, but
+      // noProgress is 61s. With activity >= 60 + repetitive fingerprints, this is a loop.
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
+
+    it("returns null for high-volume diverse iterative work without step transitions", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-18:05:
+      Regression for false-positive loop kills during legitimate E2E/debug cycles:
+      many distinct tool actions on one step with continuous activity must not classify as loop.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      recordDiverseIterativeActivity(detector, "FN-001", 174);
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns null when a stable test command alternates with unique edits", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-19:15:
+      Greptile P1 on PR #2404: one unchanged test fingerprint interleaved with unique edits can fill
+      half the window. Unique-ratio thrash detection must not treat that productive fix/test cycle as a loop.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        if (i % 2 === 0) {
+          detector.recordActivity("FN-001", {
+            toolName: "bash",
+            toolDetail: "pnpm test e2e --run",
+          });
+        } else {
+          detector.recordActivity("FN-001", {
+            toolName: "edit",
+            toolDetail: `src/feature/file-${i}.ts`,
+          });
+        }
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns null for high-volume name-only tool calls without detail", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-20:20:
+      Greptile P1: bare tool-name fingerprints collapse distinct structured custom-tool calls.
+      Name-only activity must refresh liveness without counting as thrash evidence.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", { toolName: "fn_custom_tool" });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns null for same custom tool with distinct structured details", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: `{"step":${i},"ok":true}`,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns null when long tool details share a prefix but differ late", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-20:25:
+      Greptile P1: prefix truncation of long args collapsed distinct late-diverging payloads.
+      Full-detail hashing must keep those calls novel.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      const sharedPrefix = "x".repeat(200);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: `${sharedPrefix},"path":"/src/file-${i}.ts"}`,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns 'loop' when the same long tool detail is repeated", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      const longSame = `${"y".repeat(200)},"path":"/src/same.ts"}`;
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: longSame,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
+
+    it("returns null for high text/heartbeat volume without tool thrash evidence", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 174; i++) {
         detector.recordActivity("FN-001");
       }
 
-      // Inactivity is near-zero because we just called recordActivity, but
-      // noProgress is 61s. With activity >= 60, this should be a loop.
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns 'loop' when ignored step-update rebuffs show thrash without tool fingerprints", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      // 50 text heartbeats + 10 ignored rebuffs → volume + thrash evidence, no tools needed
+      for (let i = 0; i < 50; i++) {
+        detector.recordActivity("FN-001");
+      }
+      for (let i = 0; i < 10; i++) {
+        detector.recordIgnoredStepUpdate("FN-001");
+      }
+
       expect(detector.classifyStuckReason("FN-001", 60000)).toBe("loop");
 
       vi.useRealTimers();
@@ -398,9 +600,7 @@ describe("StuckTaskDetector", () => {
 
       // Simulate time passing with lots of activity
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        detector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-001", 80);
 
       // This would be a loop...
       expect(detector.classifyStuckReason("FN-001", 60000)).toBe("loop");
@@ -422,9 +622,7 @@ describe("StuckTaskDetector", () => {
       customDetector.beginVerification("FN-6598", 120_000);
 
       vi.advanceTimersByTime(61_000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-6598");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-6598", 80);
 
       expect(customDetector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
       await customDetector.checkNow();
@@ -441,17 +639,13 @@ describe("StuckTaskDetector", () => {
       detector.beginVerification("FN-6598", 120_000);
 
       vi.advanceTimersByTime(61_000);
-      for (let i = 0; i < 80; i++) {
-        detector.recordActivity("FN-6598");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-6598", 80);
       expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
 
       detector.endVerification("FN-6598");
       expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
 
-      for (let i = 0; i < 60; i++) {
-        detector.recordActivity("FN-6598");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-6598", 60);
       expect(detector.classifyStuckReason("FN-6598", 60_000)).toBe("loop");
 
       vi.useRealTimers();
@@ -463,9 +657,7 @@ describe("StuckTaskDetector", () => {
       detector.beginVerification("FN-6598", 60_000);
 
       vi.advanceTimersByTime(61_000);
-      for (let i = 0; i < 80; i++) {
-        detector.recordActivity("FN-6598");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-6598", 80);
       expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
 
       vi.advanceTimersByTime(5_001);
@@ -507,9 +699,7 @@ describe("StuckTaskDetector", () => {
       customDetector.trackTask("FN-6598", session);
 
       vi.advanceTimersByTime(61_000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-6598");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-6598", 80);
 
       expect(customDetector.classifyStuckReason("FN-6598", 60_000)).toBe("loop");
       await customDetector.checkNow();
@@ -534,15 +724,11 @@ describe("StuckTaskDetector", () => {
       detector.beginVerification("FN-6598", 120_000);
 
       vi.advanceTimersByTime(61_000);
-      for (let i = 0; i < 80; i++) {
-        detector.recordActivity("FN-6598-step-2");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-6598-step-2", 80);
 
       expect(detector.classifyStuckReason("FN-6598-step-2", 60_000)).toBeNull();
       detector.endVerification("FN-6598");
-      for (let i = 0; i < 60; i++) {
-        detector.recordActivity("FN-6598-step-2");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-6598-step-2", 60);
       expect(detector.classifyStuckReason("FN-6598-step-2", 60_000)).toBe("loop");
 
       vi.useRealTimers();
@@ -608,9 +794,7 @@ describe("StuckTaskDetector", () => {
       vi.advanceTimersByTime(61000);
 
       // Simulate lots of activity (loop behavior)
-      for (let i = 0; i < 80; i++) {
-        detector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(detector, "FN-001", 80);
 
       await detector.killAndRetry("FN-001", 60000);
 
@@ -699,9 +883,7 @@ describe("StuckTaskDetector", () => {
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
 
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1120,9 +1302,7 @@ describe("StuckTaskDetector", () => {
       vi.advanceTimersByTime(61000);
 
       // Agent is actively generating text/tool calls but not advancing steps
-      for (let i = 0; i < 100; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 100);
 
       await customDetector.checkNow();
 
@@ -1180,9 +1360,7 @@ describe("StuckTaskDetector", () => {
 
       // Advance past timeout and generate lots of activity
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 100; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 100);
 
       // This would be a loop...
       await customDetector.checkNow();
@@ -1205,9 +1383,7 @@ describe("StuckTaskDetector", () => {
       vi.advanceTimersByTime(61000);
 
       // Even with lots of activity
-      for (let i = 0; i < 100; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 100);
 
       await customDetector.checkNow();
 
@@ -1230,9 +1406,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       const firstDetection = customDetector.killAndRetry("FN-001", 60000);
       await Promise.resolve();
@@ -1262,9 +1436,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1287,9 +1459,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1310,9 +1480,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-200-step-0", session, "FN-200");
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-200-step-0");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-200-step-0", 80);
 
       await customDetector.killAndRetry("FN-200-step-0", 60000);
       customDetector.markLoopObserved("FN-200");
@@ -1336,9 +1504,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-201", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-201");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-201", 80);
 
       expect(customDetector.classifyStuckReason("FN-201", 60000)).toBe("loop");
       await customDetector.killAndRetry("FN-201", 60000);
@@ -1391,9 +1557,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1415,9 +1579,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1438,9 +1600,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 
@@ -1460,9 +1620,7 @@ describe("StuckTaskDetector", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       customDetector.trackTask("FN-001", session);
       vi.advanceTimersByTime(61000);
-      for (let i = 0; i < 80; i++) {
-        customDetector.recordActivity("FN-001");
-      }
+      recordRepetitiveLoopActivity(customDetector, "FN-001", 80);
 
       await customDetector.killAndRetry("FN-001", 60000);
 

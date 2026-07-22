@@ -49,7 +49,7 @@ describe("non-pi custom tool wrapping", () => {
 });
 
 describe("resolve model-lane thinking levels", () => {
-  it("applies node/task > workflow execution lane > global lane > project default lane > global default precedence", () => {
+  it("applies node/task > project execution lane > global lane > selected-workflow lane > project default > global default precedence", () => {
     const settings = {
       defaultThinkingLevel: "low",
       defaultThinkingLevelOverride: "medium",
@@ -96,6 +96,31 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveValidatorThinkingLevel(nodeThinkingLevel ?? task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("minimal");
   });
 
+  it("resolves primary thinking as task → project → global → selected workflow", () => {
+    const settings = {
+      executionThinkingLevel: "minimal",
+      executionGlobalThinkingLevel: "low",
+      planningThinkingLevel: "minimal",
+      planningGlobalThinkingLevel: "low",
+      validatorThinkingLevel: "minimal",
+      validatorGlobalThinkingLevel: "low",
+      selectedWorkflowModelLanes: {
+        executionThinkingLevel: "high",
+        planningThinkingLevel: "high",
+        validatorThinkingLevel: "high",
+      },
+    } as const;
+
+    expect(resolveExecutorThinkingLevel("xhigh", settings)).toBe("xhigh");
+    expect(resolveExecutorThinkingLevel(undefined, settings)).toBe("minimal");
+    expect(resolvePlanningThinkingLevel({ ...settings, planningThinkingLevel: undefined })).toBe("low");
+    expect(resolveValidatorThinkingLevel(undefined, {
+      ...settings,
+      validatorThinkingLevel: undefined,
+      validatorGlobalThinkingLevel: undefined,
+    })).toBe("high");
+  });
+
   it("resolves fallback thinking through fallback key then executor lane then defaults", () => {
     expect(resolveExecutorFallbackThinkingLevel("task", { fallbackThinkingLevel: "high", executionThinkingLevel: "low" })).toBe("high");
     expect(resolveExecutorFallbackThinkingLevel(undefined, { executionThinkingLevel: "minimal", defaultThinkingLevel: "low" })).toBe("minimal");
@@ -103,7 +128,7 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
   });
 
-  it("resolves workflow fallback thinking before global fallback then lane defaults", () => {
+  it("resolves project fallback thinking before global fallback then selected-workflow and lane defaults", () => {
     expect(resolvePlanningFallbackThinkingLevel({ planningFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("xhigh");
     expect(resolvePlanningFallbackThinkingLevel({ fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("high");
     expect(resolvePlanningFallbackThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
@@ -115,6 +140,18 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
     expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
     expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "minimal" })).toBe("minimal");
+
+    const selectedWorkflowFallbacks = {
+      fallbackThinkingLevel: "high",
+      selectedWorkflowModelLanes: {
+        planningFallbackThinkingLevel: "low",
+        validatorFallbackThinkingLevel: "low",
+      },
+    } as const;
+    expect(resolvePlanningFallbackThinkingLevel(selectedWorkflowFallbacks)).toBe("high");
+    expect(resolvePlanningFallbackThinkingLevel({ ...selectedWorkflowFallbacks, fallbackThinkingLevel: undefined })).toBe("low");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, selectedWorkflowFallbacks)).toBe("high");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { ...selectedWorkflowFallbacks, fallbackThinkingLevel: undefined })).toBe("low");
   });
 
   it("resolves title summarizer and merger fallback thinking through fallback and default chains", () => {

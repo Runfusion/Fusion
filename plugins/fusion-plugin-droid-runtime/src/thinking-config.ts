@@ -6,7 +6,7 @@
  * becomes high and high becomes max, leveraging their superior reasoning capability.
  *
  * FNXC:DroidThinking 2026-07-16-18:20:
- * Fusion now resolves pi 0.80.10 workspace-wide, whose ThinkingLevel adds `max`.
+ * Fusion now resolves pi 0.81.1 workspace-wide, whose ThinkingLevel includes `max`.
  * Keep both exhaustive mappings explicit: non-Opus must still avoid the CLI's max
  * effort, while Opus may use it.
  *

@@ -2534,9 +2534,15 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     }
     /*
     FNXC:ModelCatalog 2026-07-16-18:00:
-    pi 0.80.10's createAgentSession accepts an optional options parameter, but Fusion
-    constructs and augments an options object before dispatch. Narrow away undefined so
-    the ModelRuntime-capable SDK contract remains type-safe as tool allowlists are added.
+    createAgentSession accepts an optional options parameter; Fusion constructs and augments
+    an options object before dispatch. Narrow away undefined so the ModelRuntime-capable SDK
+    contract remains type-safe as tool allowlists are added.
+
+    FNXC:ModelCatalog 2026-07-22-12:00:
+    Bumped @earendil-works/pi-ai and pi-coding-agent from 0.80.10 to 0.81.1 (exact matched pin).
+    0.81 adds full provider extensions, expanded usage accounting, Qwen Token Plan, llama.cpp
+    router management, and resilient compaction retries; Fusion session creation stays on the
+    ModelRuntime path already adopted in 0.80.8.
     */
     const createSessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]> = {
       cwd: options.cwd,

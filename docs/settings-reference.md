@@ -268,12 +268,15 @@ Some knobs that used to live in this Settings reference as project settings are 
 *how* tasks execute, so the timeouts, review gates, and per-phase model lanes that
 govern that execution belong to the workflow.
 
-**Where to set them.** The common model lanes for a project's default workflow are
-available directly in **Settings → Project Models → Default workflow model lanes**:
-Plan/Triage, Executor, Reviewer, and the Planning/Reviewer fallback lanes declared
+**Where to set them.** The common model lanes for every workflow in a project are
+available directly in **Settings → Project Models → Project workflow model lanes**:
+Plan/Triage, Executor, Reviewer, and their fallback lanes declared
 by the default workflow. Primary Plan/Triage, Executor, Reviewer, and declared fallback rows show an inline Thinking Level control when the workflow declares the companion `*ThinkingLevel` setting; unset means inherit. Those dropdown controls use the shared model picker and are auto-saved by the Settings modal after an edit, which writes
-workflow setting values for the active project's default workflow; they do not
-restore the old project settings keys. The global **Fallback Model** remains in
+workflow setting values on the active project's default workflow. Those stored
+values are the project model baseline inherited by every selected workflow. The
+baseline wins over global and per-workflow values; task-specific selections win
+over the baseline. They do
+not restore the old project settings keys. The global **Fallback Model** remains in
 Settings → General Models and includes its own inline Thinking Level selector for `fallbackThinkingLevel`; workflow-specific fallbacks are also editable from
 the workflow editor Values tab. Title summarization is separate: set it in
 **Settings → Project Models → AI Title and Git Commit Message Summarization**,
@@ -313,16 +316,19 @@ Actions. It has two tabs:
   heartbeat patrol task creation separately and defaults to `true`. Edits batch
   and commit through a single **Save** in the Values tab.
 
-**How values resolve.** The engine resolves *effective settings* per task as
-`stored value ?? declaration default`. The task-detail Workflow, Chat, and Agent
-Log model displays use the same per-task effective workflow values, so configured
-Plan/Triage, Executor, Reviewer, and fallback lanes match what task execution
-will use instead of falling back to the ambient project settings response. A
-built-in workflow with no stored value falls back to the declaration default,
+**How values resolve.** For non-model workflow settings, the engine resolves
+*effective settings* per task as `stored value ?? declaration default`. A built-in
+workflow with no stored non-model value falls back to the declaration default,
 which is byte-equal to the legacy project default — so an untuned project behaves
-exactly as before. Switching a project to a **new** custom workflow starts that
-workflow from its own declaration defaults, not the project's prior customized
-values.
+exactly as before. Switching a project to a **new** custom workflow starts those
+non-model settings from that workflow's own declaration defaults.
+
+Model lanes use the cross-workflow hierarchy instead: task-specific selection →
+project workflow-lane baseline stored on the active default workflow → global lane
+→ selected-workflow lane → project default override → global default. The
+task-detail Workflow, Chat, and Agent Log displays use this same effective model
+resolution, so their Plan/Triage, Executor, Reviewer, and fallback lanes match the
+sessions that actually run.
 
 **Built-in prompt overrides.** Built-in workflow prompt/gate node text has a similar project-scoped persistence model, but it is separate from workflow settings: prompt overrides are stored per `(workflowId, nodeId, projectId)` and resolve as `stored prompt ?? shipped prompt`. Resetting a prompt deletes the stored node override and restores the built-in IR text; graph structure and setting declarations remain read-only for built-ins. See [Workflow Steps → Overriding built-in workflow prompts](./workflow-steps.md#overriding-built-in-workflow-prompts).
 
@@ -398,10 +404,12 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 
 When `triageProactiveSubtaskSplittingEnabled` is `true` (the default), triage may proactively replace a large task with 2-5 child tasks when the size, step-count, package breadth, file-scope, or remediation-batch signals justify the coordination overhead. When it is `false`, those automatic oversized-task signals are advisory only for writing a realistic single-task spec; triage must not split solely because the task is large. The per-task `breakIntoSubtasks: true` flag is separate and remains mandatory: if a user explicitly asks for subtask breakdown, triage still evaluates and creates child tasks when the work is meaningfully decomposable.
 
-In the dashboard Settings modal, Project Models exposes Plan/Triage, Executor,
-Reviewer, and declared fallback dropdown controls for the default workflow. The
-Settings modal auto-save persists pending default-workflow model lane
-overrides; there is no separate workflow-model save button. The workflow editor's
+In the dashboard Settings modal, Project Models exposes project-baseline
+Plan/Triage, Executor, Reviewer, and declared fallback dropdown controls. The
+Settings modal auto-save persists pending model lane values on the active default
+workflow, and every workflow inherits those values. Task-specific selections win,
+while global and per-workflow values are lower-priority fallbacks; there is no
+separate workflow-model save button. The workflow editor's
 Settings → Values tab uses the same dropdown picker for declared provider/model
 pairs, including fallbacks. Former locations for advanced workflow policy still
 show a short redirect stub linking to the workflow editor (for one release).
@@ -1028,11 +1036,11 @@ Short-lived token bounds are enforced server-side:
 
 ## Model Selection Hierarchy
 
-Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes (auto-saved by the Settings modal) or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks. General-scope fallback selection remains the global Fallback Model picker in Settings -> General Models.
+Fusion resolves task models as task-specific selection -> project workflow-model baseline -> global lane -> selected-workflow value -> project/global default model. The project baseline is stored as setting values on the project's active default workflow and can be edited from Settings -> Project Models -> Project workflow model lanes (auto-saved by the Settings modal). Lower-priority per-workflow values remain editable from Workflow editor -> Settings -> Values for declared workflow lanes and fallbacks. General-scope fallback selection remains the global Fallback Model picker in Settings -> General Models.
 
 Direct-chat defaults are project-scoped and independent of task workflow lanes. Configure them in **Settings -> Project Models -> Chat**. `chatDefaultKind: "agent"` resolves only when `chatDefaultAgentId` is set; `chatDefaultKind: "model"` resolves only when both `chatDefaultModelProvider` and `chatDefaultModelId` are set, with optional `chatDefaultThinkingLevel`. If `chatNewSessionMode` is `"always-default"` and that target resolves, every New Chat entry point creates the session directly. If the target is incomplete, or the mode is unset/`"prompt"`, Fusion opens the New Chat dialog instead and preselects the resolved default when one exists. Chat Rooms additionally support a per-room `thinkingLevel` default that applies to every room responder; clearing it inherits the resolved project/global default.
 
-Settings model lanes can also carry optional thinking/reasoning effort overrides in the same model dropdown. Primary workflow lanes declare `executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel` per `(workflow, project)`; executor/planning/reviewer fallback lanes declare `executionFallbackThinkingLevel`, `planningFallbackThinkingLevel`, and `validatorFallbackThinkingLevel`; global fallback uses `fallbackThinkingLevel`; and project title summarization fallback uses `titleSummarizerFallbackThinkingLevel`. Empty thinking values inherit through the lane/global/default chain and explicit values are cleared by the lane reset action. Runtime thinking precedence for task/workflow execution is node/step `config.thinkingLevel` > lane-specific task override (`planningThinkingLevel` or `validatorThinkingLevel`) > shared task `thinkingLevel` > workflow lane thinking override > global lane thinking override > project default thinking override > global `defaultThinkingLevel`; executor sessions continue to use shared task `thinkingLevel` directly. Model-mode Chat sessions use the same executor-lane resolver with session `thinkingLevel` in the task slot, so an empty chat-session value inherits project/global defaults while a concrete New Chat selection wins for that session. The resolved value still flows through pi.ts' existing thinking/reasoning-conflict fallback (Fusion retries without the explicit level when a provider rejects conflicting thinking parameters).
+Settings model lanes can also carry optional thinking/reasoning effort overrides in the same model dropdown. Primary workflow lanes declare `executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel` per `(workflow, project)`; executor/planning/reviewer fallback lanes declare `executionFallbackThinkingLevel`, `planningFallbackThinkingLevel`, and `validatorFallbackThinkingLevel`; global fallback uses `fallbackThinkingLevel`; and project title summarization fallback uses `titleSummarizerFallbackThinkingLevel`. Empty thinking values inherit through the lane/global/default chain and explicit values are cleared by the lane reset action. Runtime thinking precedence for task/workflow execution is node/step `config.thinkingLevel` > lane-specific task override (`planningThinkingLevel` or `validatorThinkingLevel`) > shared task `thinkingLevel` > project workflow-lane baseline > global lane thinking override > selected-workflow lane > project default thinking override > global `defaultThinkingLevel`; executor sessions continue to use shared task `thinkingLevel` directly. Model-mode Chat sessions use the same executor-lane resolver with session `thinkingLevel` in the task slot, so an empty chat-session value inherits project/global defaults while a concrete New Chat selection wins for that session. The resolved value still flows through pi.ts' existing thinking/reasoning-conflict fallback (Fusion retries without the explicit level when a provider rejects conflicting thinking parameters).
 
 Executor sessions, including workflow-step timeout/malformed-output recovery and durable heartbeats, resolve `executionFallbackProvider`/`executionFallbackModelId` first and otherwise inherit the global `fallbackProvider`/`fallbackModelId` pair. For a distinct complete fallback pair, model-selection recovery is bounded to **primary → fallback → primary**. If all three attempts fail, Fusion raises an operator-actionable terminal failure with the standard retry affordance; missing, incomplete, or equal fallback pairs remain terminal after the initial primary failure.
 
@@ -1057,21 +1065,23 @@ The three GPT-5.6 codenamed OpenAI Codex variants (`gpt-5.6-luna`, `gpt-5.6-sol`
 ### Planning model
 
 1. Per-task `planningModelProvider` + `planningModelId`
-2. Default workflow lane value `planningProvider` + `planningModelId`
+2. Project workflow-lane baseline `planningProvider` + `planningModelId` stored on the active default workflow
 3. Global `planningGlobalProvider` + `planningGlobalModelId`
-4. Project `defaultProviderOverride` + `defaultModelIdOverride`
-5. Global `defaultProvider` + `defaultModelId`
-6. Automatic provider/model resolution
+4. Selected-workflow lane value `planningProvider` + `planningModelId`
+5. Project `defaultProviderOverride` + `defaultModelIdOverride`
+6. Global `defaultProvider` + `defaultModelId`
+7. Automatic provider/model resolution
 
 ### Executor model
 
 1. Per-task `modelProvider` + `modelId`
-2. Default workflow lane value `executionProvider` + `executionModelId`
+2. Project workflow-lane baseline `executionProvider` + `executionModelId` stored on the active default workflow
 3. Global `executionGlobalProvider` + `executionGlobalModelId`
-4. Project `defaultProviderOverride` + `defaultModelIdOverride`
-5. Global `defaultProvider` + `defaultModelId`
-6. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set and no task/lane/default pair is configured
-7. Automatic provider/model resolution
+4. Selected-workflow lane value `executionProvider` + `executionModelId`
+5. Project `defaultProviderOverride` + `defaultModelIdOverride`
+6. Global `defaultProvider` + `defaultModelId`
+7. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set and no task/lane/default pair is configured
+8. Automatic provider/model resolution
 
 Workflow prompt steps and scheduled/manual AI-prompt automation steps use the same executor lane before falling back to project/global defaults; explicit step-level `modelProvider` + `modelId` values still take precedence for that individual step. Automation AI Prompt steps also apply an explicit step `thinkingLevel` at session creation, while Create Task automation steps copy that reasoning-effort value onto the spawned task; leaving it empty preserves the lane/default thinking-level inheritance. If a non-mock, non-test-mode session still reaches runtime creation without a complete provider/model pair, Fusion logs a warning and records `noModelResolved` plus `runtimeBuiltInFallbackModel` on `session:runtime-resolved` so the runtime's built-in fallback model is observable.
 
@@ -1079,23 +1089,25 @@ Workflow prompt steps and scheduled/manual AI-prompt automation steps use the sa
 
 Heartbeat sessions for durable agents use this order:
 
-1. Default workflow lane value `executionProvider` + `executionModelId`
+1. Project workflow-lane baseline `executionProvider` + `executionModelId` stored on the active default workflow
 2. Global `executionGlobalProvider` + `executionGlobalModelId`
-3. Project `defaultProviderOverride` + `defaultModelIdOverride`
-4. Global `defaultProvider` + `defaultModelId`
-5. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set and no execution/default pair is configured
-6. Automatic provider/model resolution
+3. Selected-workflow lane value `executionProvider` + `executionModelId`
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set and no execution/default pair is configured
+7. Automatic provider/model resolution
 
 On timer-triggered runs, unrecoverable missing-provider credential/registry failures complete as `heartbeat_model_unavailable` instead of permanently setting the durable agent to `state=error`.
 
 ### Reviewer model
 
 1. Per-task `validatorModelProvider` + `validatorModelId`
-2. Default workflow lane value `validatorProvider` + `validatorModelId`
+2. Project workflow-lane baseline `validatorProvider` + `validatorModelId` stored on the active default workflow
 3. Global `validatorGlobalProvider` + `validatorGlobalModelId`
-4. Project `defaultProviderOverride` + `defaultModelIdOverride`
-5. Global `defaultProvider` + `defaultModelId`
-6. Automatic provider/model resolution
+4. Selected-workflow lane value `validatorProvider` + `validatorModelId`
+5. Project `defaultProviderOverride` + `defaultModelIdOverride`
+6. Global `defaultProvider` + `defaultModelId`
+7. Automatic provider/model resolution
 
 Mission validation sessions use this same validator lane; assigned durable agent runtime models are only used as a fallback when no complete validator/default pair is configured.
 
@@ -1731,13 +1743,14 @@ Project-scoped policy for ephemeral/runtime-managed task workers calling `fn_tas
 
 ## Model selection hierarchy
 
-All three lanes (planning / executor / reviewer) follow the same 5-tier precedence:
+All three lanes (planning / executor / reviewer) follow the same precedence:
 
 1. Per-task override (`planningModelProvider`/`Id`, `modelProvider`/`Id`, `validatorModelProvider`/`Id`)
-2. Default workflow lane value (`planningProvider`/`Id`, `executionProvider`/`Id`, `validatorProvider`/`Id`)
+2. Project workflow-lane baseline (`planningProvider`/`Id`, `executionProvider`/`Id`, `validatorProvider`/`Id`) stored on the active default workflow
 3. Global lane (`planningGlobalProvider`/`Id`, `executionGlobalProvider`/`Id`, `validatorGlobalProvider`/`Id`)
-4. Project `defaultProviderOverride` / `defaultModelIdOverride`
-5. Global `defaultProvider` / `defaultModelId` → automatic resolution
+4. Selected-workflow lane (`planningProvider`/`Id`, `executionProvider`/`Id`, `validatorProvider`/`Id`)
+5. Project `defaultProviderOverride` / `defaultModelIdOverride`
+6. Global `defaultProvider` / `defaultModelId` → automatic resolution
 
 ## Mock provider (test mode)
 

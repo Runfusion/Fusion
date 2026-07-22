@@ -28,13 +28,22 @@
 import { and, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
+import { recordRunAuditEventWithinTransaction, type AsyncDataLayer, type DbTransaction } from "../../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
 import { projectPartition } from "./async-lifecycle.js";
+import {
+  ARCHIVED_TASK_DOCUMENT_ADDITION_BOUNDARY,
+  ArchivedTaskDocumentPublicationRejectedError,
+  assertTaskDocumentPreconditions,
+  taskDocumentContentHash,
+  validateArchivedTaskDocumentAddition,
+} from "../task-document-concurrency.js";
 import type {
   Artifact,
   ArtifactCreateInput,
   ArtifactWithTask,
+  ArchivedTaskDocumentAdditionInput,
+  ArchivedTaskDocumentAdditionResult,
   TaskDocument,
   TaskDocumentCreateInput,
   TaskDocumentWithTask,
@@ -60,6 +69,7 @@ function rowToTaskDocument(row: TaskDocumentRow): TaskDocument {
     key: row.key,
     content: row.content,
     revision: row.revision,
+    contentHash: taskDocumentContentHash(row.content),
     author: row.author,
     metadata: metadata ?? undefined,
     createdAt: row.createdAt,
@@ -137,10 +147,9 @@ export async function getLiveTaskColumn(
 
 /**
  * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:40:
- * Read a task document by (taskId, key). Returns `null` if not found or if the
- * parent task is archived/soft-deleted (documents are read-only on archived
- * tasks and hidden from live views). This is the async equivalent of
- * `getTaskDocument`.
+ * Read a task document by (taskId, key). Direct named reads include retained
+ * archived documents; missing parents and keys return `null`. Editable list
+ * surfaces remain live-only through `listTaskDocuments`.
  */
 export async function getTaskDocument(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -148,15 +157,15 @@ export async function getTaskDocument(
   key: string,
   projectId?: string,
 ): Promise<TaskDocument | null> {
-  // Gate on the parent task being live.
   const column = await getLiveTaskColumn(db, taskId, projectId);
-  if (column === null || column === "archived") return null;
+  if (column === null) return null;
 
   const rows = await db
     .select()
     .from(schema.project.taskDocuments)
     .where(
       and(
+        eq(schema.project.taskDocuments.projectId, projectPartition(projectId)),
         eq(schema.project.taskDocuments.taskId, taskId),
         eq(schema.project.taskDocuments.key, key),
       ),
@@ -186,24 +195,36 @@ export async function upsertTaskDocument(
   input: TaskDocumentCreateInput,
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
-    // Gate: reject writes against archived/soft-deleted/absent tasks.
-    const column = await getLiveTaskColumn(tx, taskId, layer.projectId);
-    if (column === "archived") {
+    const projectId = projectPartition(layer.projectId);
+    /*
+    FNXC:TaskDocumentCAS 2026-07-20-11:06:
+    Every writer locks the active project's parent task row before reading a document. This serializes both existing-row updates and absent-row creates for every (project_id, task_id, key), so a precondition check, prior-snapshot archive, and replacement are one PostgreSQL transaction. A mismatch throws before history/current mutation; the facade consequently emits no task update and performs no citation scan.
+    */
+    const taskRows = await tx
+      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
+      .from(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, taskId),
+      ))
+      .limit(1)
+      .for("update");
+    const task = taskRows[0];
+    if (task?.column === "archived" || task?.deletedAt != null) {
       throw new Error(`Task ${taskId} is archived — documents are read-only`);
     }
-    if (column === null) {
-      throw new Error(`Task ${taskId} not found`);
-    }
+    if (!task) throw new Error(`Task ${taskId} not found`);
 
     const now = new Date().toISOString();
     const author = input.author ?? "user";
 
-    // Read the existing document (if any).
+    // Read after taking the parent lock, then compare before any mutation.
     const existingRows = await tx
       .select()
       .from(schema.project.taskDocuments)
       .where(
         and(
+          eq(schema.project.taskDocuments.projectId, projectId),
           eq(schema.project.taskDocuments.taskId, taskId),
           eq(schema.project.taskDocuments.key, input.key),
         ),
@@ -211,9 +232,16 @@ export async function upsertTaskDocument(
       .limit(1);
     const existing = existingRows[0] as TaskDocumentRow | undefined;
 
+    assertTaskDocumentPreconditions(
+      { projectId, taskId, key: input.key },
+      { expectedRevision: input.expectedRevision, expectedContentHash: input.expectedContentHash },
+      existing ? { revision: existing.revision, content: existing.content } : null,
+    );
+
     if (existing) {
       // Archive the previous revision.
       await tx.insert(schema.project.taskDocumentRevisions).values({
+        projectId,
         taskId,
         key: input.key,
         content: existing.content,
@@ -235,6 +263,7 @@ export async function upsertTaskDocument(
         })
         .where(
           and(
+            eq(schema.project.taskDocuments.projectId, projectId),
             eq(schema.project.taskDocuments.taskId, taskId),
             eq(schema.project.taskDocuments.key, input.key),
           ),
@@ -242,6 +271,7 @@ export async function upsertTaskDocument(
     } else {
       // Insert a new document.
       await tx.insert(schema.project.taskDocuments).values({
+        projectId,
         id: randomUUID(),
         taskId,
         key: input.key,
@@ -260,6 +290,7 @@ export async function upsertTaskDocument(
       .from(schema.project.taskDocuments)
       .where(
         and(
+          eq(schema.project.taskDocuments.projectId, projectId),
           eq(schema.project.taskDocuments.taskId, taskId),
           eq(schema.project.taskDocuments.key, input.key),
         ),
@@ -270,6 +301,127 @@ export async function upsertTaskDocument(
       throw new Error(`Failed to upsert document ${input.key} for task ${taskId}`);
     }
     return rowToTaskDocument(row);
+  });
+}
+
+/**
+ * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
+ * This is the sole PostgreSQL mutation allowed for a retained archived document. It locks the project-scoped parent and current document, requires the tombstone and cold archive snapshot to agree, checks both FX-004 CAS values before writing, archives the exact prior current row, and appends a fixed two-newline boundary plus caller bytes. Audit commits in the same transaction and stores no correction or reason prose. No task, archive, mission, citation, event, or scheduler row is touched.
+ */
+export async function publishArchivedTaskDocumentAddition(
+  layer: AsyncDataLayer,
+  taskId: string,
+  input: ArchivedTaskDocumentAdditionInput,
+): Promise<ArchivedTaskDocumentAdditionResult> {
+  validateArchivedTaskDocumentAddition(input);
+  return layer.transactionImmediate(async (tx) => {
+    const projectId = projectPartition(layer.projectId);
+    const taskRows = await tx
+      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
+      .from(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, taskId),
+      ))
+      .limit(1)
+      .for("update");
+    const task = taskRows[0];
+    if (!task) {
+      throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-found", projectId, taskId, input.key);
+    }
+    if (task.column !== "archived" && task.deletedAt == null) {
+      throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-archived", projectId, taskId, input.key);
+    }
+
+    const archiveRows = await tx
+      .select({ id: schema.archive.archivedTasks.id })
+      .from(schema.archive.archivedTasks)
+      .where(and(
+        eq(schema.archive.archivedTasks.projectId, projectId),
+        eq(schema.archive.archivedTasks.id, taskId),
+      ))
+      .limit(1)
+      .for("key share");
+    if (task.column !== "archived" || task.deletedAt == null || !archiveRows[0]) {
+      throw new ArchivedTaskDocumentPublicationRejectedError("archived-state-inconsistent", projectId, taskId, input.key);
+    }
+
+    const existingRows = await tx
+      .select()
+      .from(schema.project.taskDocuments)
+      .where(and(
+        eq(schema.project.taskDocuments.projectId, projectId),
+        eq(schema.project.taskDocuments.taskId, taskId),
+        eq(schema.project.taskDocuments.key, input.key),
+      ))
+      .limit(1)
+      .for("update");
+    const existing = existingRows[0] as TaskDocumentRow | undefined;
+    if (!existing) {
+      throw new ArchivedTaskDocumentPublicationRejectedError("document-not-found", projectId, taskId, input.key);
+    }
+
+    assertTaskDocumentPreconditions(
+      { projectId, taskId, key: input.key },
+      { expectedRevision: input.expectedRevision, expectedContentHash: input.expectedContentHash },
+      { revision: existing.revision, content: existing.content },
+    );
+
+    const now = new Date().toISOString();
+    const content = existing.content + ARCHIVED_TASK_DOCUMENT_ADDITION_BOUNDARY + input.appendContent;
+    const nextRevision = existing.revision + 1;
+    await tx.insert(schema.project.taskDocumentRevisions).values({
+      projectId,
+      taskId,
+      key: input.key,
+      content: existing.content,
+      revision: existing.revision,
+      author: existing.author,
+      metadata: existing.metadata ?? null,
+      createdAt: now,
+    });
+    await tx
+      .update(schema.project.taskDocuments)
+      .set({ content, revision: nextRevision, author: input.author, updatedAt: now })
+      .where(and(
+        eq(schema.project.taskDocuments.projectId, projectId),
+        eq(schema.project.taskDocuments.taskId, taskId),
+        eq(schema.project.taskDocuments.key, input.key),
+      ));
+    await recordRunAuditEventWithinTransaction(tx, {
+      taskId,
+      agentId: input.author,
+      runId: `archived-document-publication:${randomUUID()}`,
+      domain: "database",
+      mutationType: "task-document:archived-addition-published",
+      target: `${taskId}:${input.key}`,
+      metadata: {
+        projectId,
+        key: input.key,
+        previousRevision: existing.revision,
+        revision: nextRevision,
+        reasonProvided: true,
+        outcome: "published",
+      },
+    });
+
+    const rows = await tx
+      .select()
+      .from(schema.project.taskDocuments)
+      .where(and(
+        eq(schema.project.taskDocuments.projectId, projectId),
+        eq(schema.project.taskDocuments.taskId, taskId),
+        eq(schema.project.taskDocuments.key, input.key),
+      ))
+      .limit(1);
+    const row = rows[0] as TaskDocumentRow | undefined;
+    if (!row) throw new Error(`Failed to publish archived document addition for ${taskId}/${input.key}`);
+    return {
+      document: rowToTaskDocument(row),
+      previousRevision: existing.revision,
+      previousContentHash: taskDocumentContentHash(existing.content),
+      appendedContentHash: taskDocumentContentHash(content),
+    };
   });
 }
 
@@ -289,13 +441,16 @@ export async function listTaskDocuments(
   const rows = await db
     .select()
     .from(schema.project.taskDocuments)
-    .where(eq(schema.project.taskDocuments.taskId, taskId));
+    .where(and(
+      eq(schema.project.taskDocuments.projectId, projectPartition(projectId)),
+      eq(schema.project.taskDocuments.taskId, taskId),
+    ));
   return (rows as TaskDocumentRow[]).map((row) => rowToTaskDocument(row));
 }
 
 /**
- * List archived revisions for a task document, newest first. Only returns
- * revisions for a LIVE parent task.
+ * List archived revisions for a task document, newest first. Direct history
+ * reads include retained archived parents while missing parents remain empty.
  */
 export async function getTaskDocumentRevisions(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -304,13 +459,14 @@ export async function getTaskDocumentRevisions(
   projectId?: string,
 ): Promise<TaskDocumentRevisionRow[]> {
   const column = await getLiveTaskColumn(db, taskId, projectId);
-  if (column === null || column === "archived") return [];
+  if (column === null) return [];
 
   const rows = await db
     .select()
     .from(schema.project.taskDocumentRevisions)
     .where(
       and(
+        eq(schema.project.taskDocumentRevisions.projectId, projectPartition(projectId)),
         eq(schema.project.taskDocumentRevisions.taskId, taskId),
         eq(schema.project.taskDocumentRevisions.key, key),
       ),

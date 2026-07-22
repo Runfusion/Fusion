@@ -4495,6 +4495,7 @@ describe("taskCreate tool model inheritance", () => {
             defaultModelId: "gpt-4o",
             planningFallbackProvider: "anthropic",
             planningFallbackModelId: "claude-3-5-haiku-20241022",
+            planningFallbackThinkingLevel: "xhigh",
           } as Settings),
         });
         mockCreateFnAgent.mockResolvedValue({ session: baseSession() });
@@ -4513,6 +4514,7 @@ describe("taskCreate tool model inheritance", () => {
             defaultModelId: "nvidia/moonshotai/kimi-k2.6",
             fallbackProvider: "anthropic",
             fallbackModelId: "claude-3-5-haiku-20241022",
+            fallbackThinkingLevel: "xhigh",
           }),
         );
       });

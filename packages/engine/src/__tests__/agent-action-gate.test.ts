@@ -536,10 +536,16 @@ describe("agent-action-gate", () => {
     "fn_task_import_gitlab_group_issues",
     "fn_task_import_gitlab_merge_requests",
   ] as const)("governs task creation/import tool %s as task_agent_mutation", (toolName) => {
-    const args = toolName === "fn_task_create" || toolName === "fn_delegate_task"
-      ? { mission_lineage: { mission_id: "M-1", slice_id: "SL-1", feature_id: "F-1" } }
-      : {};
-    for (const argsValue of [args, args]) {
+    /*
+    FNXC:EngineTests 2026-07-22-13:07:
+    Freeform creates omit mission_lineage and still follow policy disposition
+    (require-approval / block) rather than a hard mission-admission pre-block.
+    */
+    const argVariants =
+      toolName === "fn_task_create" || toolName === "fn_delegate_task"
+        ? [{}, { mission_lineage: { mission_id: "M-1", slice_id: "SL-1", feature_id: "F-1" } }]
+        : [{}];
+    for (const argsValue of argVariants) {
       expect(evaluateAgentActionGate({ agentId: "a1", toolName, args: argsValue, permissionPolicy: approvalPolicy })).toMatchObject({
         category: "task_agent_mutation",
         disposition: "require-approval",

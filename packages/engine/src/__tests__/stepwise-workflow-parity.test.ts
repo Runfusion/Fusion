@@ -67,6 +67,20 @@ function makeFakeStore(steps: TaskStep[]) {
   return {
     trajectory,
     steps,
+    startStep: async (
+      _id: string,
+      stepIndex: number,
+      options?: { source?: "graph" },
+    ) => {
+      const priorStatus = steps[stepIndex]?.status;
+      trajectory.push({ step: stepIndex, status: "in-progress", ...(options?.source ? { source: options.source } : {}) });
+      if (steps[stepIndex]) steps[stepIndex] = { ...steps[stepIndex], status: "in-progress" };
+      return {
+        task: { steps } as never,
+        accepted: true,
+        disposition: priorStatus === "in-progress" ? "resumed" as const : "started" as const,
+      };
+    },
     updateStep: async (
       _id: string,
       stepIndex: number,

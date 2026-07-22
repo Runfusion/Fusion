@@ -224,9 +224,9 @@ plus a per-provider read-modify-merge (FileAuthStorageBackend.persistProviderCha
 refreshOAuthTokenWithLock re-read the file under a lock and spread
 {...currentData, [provider]: credential} rather than flushing a whole-file in-memory
 snapshot). packages/engine/package.json already floors this at
-"@earendil-works/pi-coding-agent": "^0.80.3" (caret bounds it to >=0.80.3 <0.81.0, which is
-where this locked per-provider merge landed) — do not downgrade below 0.80.x, and re-verify
-this comment against dist/core/auth-storage.js if the range is ever widened. See
+"@earendil-works/pi-coding-agent": "0.81.1" (exact pin; locked per-provider merge requires
+>=0.80.3) — do not downgrade below 0.80.x, and re-verify this comment against
+dist/core/auth-storage.js if the pin is ever lowered. See
 packages/engine/src/__tests__/auth-storage-concurrency.test.ts for the regression coverage.
 */
 

@@ -7,7 +7,7 @@ export interface WorkflowSettingsOverlayInput {
 
 /**
  * FNXC:ModelResolution 2026-06-27-10:52:
- * Per-task workflow setting values are where the moved model lanes now live, so the engine execution path and dashboard task-detail display must share one overlay rule. Stored workflow values override base settings while declaration defaults only fill missing base keys, ensuring the Workflow tab shows the same model the engine runs for FN-7123.
+ * Per-task workflow setting values and the project workflow-lane baseline share one overlay rule. The resolver presents project model lanes as stored flat values and retains lower-precedence selected-workflow lanes in `selectedWorkflowModelLanes`; other stored workflow values remain flat. Stored flat values override base settings while declaration defaults only fill missing base keys.
  */
 export function applyWorkflowSettingsOverlay<T extends Partial<Settings>>(
   base: T,

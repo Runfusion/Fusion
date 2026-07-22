@@ -38,8 +38,8 @@
     "test:watch": "vitest src/__tests__/executor-*.test.ts --watch"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.80.10",
-    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-ai": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.81.1",
     "@fusion/core": "workspace:*",
     "@fusion/pi-claude-cli": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -37,11 +37,25 @@ import { validateCodeNodeSources } from "./execution/code-node-runner.js";
 
 const TASK_CREATE_PRIORITY_VALUES = ["low", "normal", "high", "urgent"] as const;
 
-const missionLineageParams = Type.Object({
-  mission_id: Type.String({ description: "Approved mission ID for this implementation task" }),
-  slice_id: Type.String({ description: "Approved slice ID under the mission" }),
-  feature_id: Type.String({ description: "Approved feature ID under the slice" }),
-});
+/*
+FNXC:MissionAdmission 2026-07-22-13:07:
+Chat/user-directed freeform intake may omit mission_lineage (same as board Quick Entry).
+Autonomous heartbeat surfaces pass requireMissionLineage and hard-require an approved chain.
+When supplied, the full Feature → Slice → Milestone → Mission chain is always validated.
+*/
+const missionLineageParams = Type.Object(
+  {
+    mission_id: Type.String({ description: "Approved mission ID for this implementation task" }),
+    slice_id: Type.String({ description: "Approved slice ID under the mission" }),
+    feature_id: Type.String({ description: "Approved feature ID under the slice" }),
+  },
+  {
+    description:
+      "Optional approved Feature → Slice → Mission linkage. Omit for freeform intake (chat/board). " +
+      "Required only on autonomous heartbeat patrol creates. When omitted on a follow-up, may inherit " +
+      "from a mission-linked parent task. When supplied, the full active chain is validated.",
+  },
+);
 
 export const taskCreateParams = Type.Object({
   description: Type.String({ description: "What needs to be done" }),
@@ -118,6 +132,8 @@ export const taskDocumentWriteParams = Type.Object({
   }),
   content: Type.String({ description: "Document content to store" }),
   author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
+  expected_revision: Type.Optional(Type.Integer({ minimum: 0, description: "CAS precondition: 0 requires absence; a positive value must match the current revision." })),
+  expected_content_hash: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$", description: "CAS precondition: current exact-content SHA-256 (`sha256:<64 lowercase hex>`) must match." })),
 });
 
 export const taskDocumentReadParams = Type.Object({
@@ -150,6 +166,8 @@ export const chatTaskDocumentWriteParams = Type.Object({
   }),
   content: Type.String({ description: "Document content to store" }),
   author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
+  expected_revision: Type.Optional(Type.Integer({ minimum: 0, description: "CAS precondition: 0 requires absence; a positive value must match the current revision." })),
+  expected_content_hash: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$", description: "CAS precondition: current exact-content SHA-256 (`sha256:<64 lowercase hex>`) must match." })),
 });
 
 export const chatTaskDocumentReadParams = Type.Object({
@@ -391,6 +409,11 @@ export const delegateTaskParams = Type.Object({
         "Omit to inherit the project default workflow. Use fn_workflow_list to discover valid IDs.",
     }),
   ),
+  /*
+  FNXC:MissionAdmission 2026-07-22-13:07:
+  Same freeform-vs-autonomous contract as fn_task_create: optional for user-directed
+  delegation; required when the tool factory is registered with requireMissionLineage.
+  */
   mission_lineage: Type.Optional(missionLineageParams),
   override: Type.Optional(Type.Boolean({ description: "Set true to bypass executor-role assignment policy" })),
 });
@@ -960,22 +983,29 @@ type MissionLineageReference = {
 
 /**
  * FNXC:MissionAdmission 2026-07-30-00:00:
- * FN-8307 requires every autonomous implementation create/delegate operation to
+ * FN-8307 requires autonomous implementation create/delegate (heartbeat patrol) to
  * prove an active Feature → Slice → Milestone → Mission chain before persistence.
  * Decision A records that proof on the new task without calling linkFeatureToTask:
  * a feature's scalar taskId remains owned by its source task and cannot be stolen
  * by a follow-up task.
+ *
+ * FNXC:MissionAdmission 2026-07-22-13:07:
+ * User-directed freeform intake (chat, board-equivalent agent creates) must remain
+ * allowed without mission_lineage. Only surfaces that pass `required: true` (idle
+ * heartbeat with requireMissionLineage) hard-fail on a missing lineage. When a
+ * lineage is supplied on any surface, the full approved chain is still validated.
+ * Missing lineage with inheritance disabled returns null so callers omit mission fields.
  */
 async function resolveApprovedMissionLineage(
   store: TaskStore,
   requested: { mission_id: string; slice_id: string; feature_id: string } | undefined,
   sourceTaskId: string | undefined,
-): Promise<MissionLineageReference | { error: string }> {
+  options?: { required?: boolean },
+): Promise<MissionLineageReference | null | { error: string }> {
   const missionStore = store.getMissionStore?.();
-  if (!missionStore) return { error: "Mission lineage is unavailable; no task was created." };
 
   let requestedLineage = requested;
-  if (!requestedLineage && sourceTaskId) {
+  if (!requestedLineage && sourceTaskId && missionStore) {
     const sourceFeature = await missionStore.getFeatureByTaskId(sourceTaskId);
     if (sourceFeature) {
       const sourceSlice = await missionStore.getSlice(sourceFeature.sliceId);
@@ -989,7 +1019,13 @@ async function resolveApprovedMissionLineage(
       }
     }
   }
-  if (!requestedLineage) return { error: "Approved mission_lineage is required; no task was created." };
+  if (!requestedLineage) {
+    if (options?.required) {
+      return { error: "Approved mission_lineage is required; no task was created." };
+    }
+    return null;
+  }
+  if (!missionStore) return { error: "Mission lineage is unavailable; no task was created." };
 
   const [feature, slice, mission] = await Promise.all([
     missionStore.getFeature(requestedLineage.feature_id),
@@ -1220,7 +1256,8 @@ export function createTaskCreateTool(
     name: "fn_task_create",
     label: "Create Task",
     description:
-      "Create a new task for out-of-scope work discovered during execution. " +
+      "Create a new task for out-of-scope work discovered during execution, or freeform " +
+      "intake from chat. " +
       "The task enters the selected-or-default workflow's intake/planning column " +
       "where it will be specified by the AI (a custom workflow with a non-triage " +
       "intake column, e.g. Inbox, lands the card there instead and it stays inert " +
@@ -1230,7 +1267,9 @@ export function createTaskCreateTool(
       "Optionally set dependencies (e.g., the new task depends on the current one, " +
       "or the current task should wait for the new one). " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
-      "fn_workflow_list to discover valid IDs.",
+      "fn_workflow_list to discover valid IDs. " +
+      "mission_lineage is optional for freeform intake; pass it only when linking to an " +
+      "approved Feature → Slice → Mission (required on autonomous heartbeat patrol).",
     parameters: taskCreateParams,
     execute: async (_id: string, params: Static<typeof taskCreateParams>) => {
       try {
@@ -1262,12 +1301,19 @@ export function createTaskCreateTool(
           }
         }
         const workflowId = params.workflow_id?.trim() || undefined;
+        /*
+        FNXC:MissionAdmission 2026-07-22-13:07:
+        Freeform chat/user-directed creates omit mission_lineage and must succeed.
+        Only requireMissionLineage (idle heartbeat patrol) hard-requires an approved chain.
+        Supplied lineage is always validated; parent inheritance still applies when not required.
+        */
         const lineage = await resolveApprovedMissionLineage(
           store,
           params.mission_lineage,
           options?.requireMissionLineage ? undefined : options?.sourceTaskId ?? provenance?.sourceParentTaskId,
+          { required: options?.requireMissionLineage === true },
         );
-        if ("error" in lineage) {
+        if (lineage && "error" in lineage) {
           return { content: [{ type: "text" as const, text: `ERROR: ${lineage.error}` }], details: { rule: "mission-lineage-required" }, isError: true };
         }
         /*
@@ -1287,15 +1333,14 @@ export function createTaskCreateTool(
           dependencies: params.dependencies,
           priority: params.priority,
           ...(workflowId ? { workflowId } : {}),
-          missionId: lineage.missionId,
-          sliceId: lineage.sliceId,
+          ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
           source: {
             sourceType: provenance?.sourceType ?? "api",
             sourceAgentId: provenance?.sourceAgentId,
             sourceRunId: provenance?.sourceRunId,
             sourceParentTaskId: provenance?.sourceParentTaskId ?? options?.sourceTaskId,
             // Decision A: lineage metadata is deliberately distinct from feature.taskId.
-            sourceMetadata: { missionLineage: lineage },
+            ...(lineage ? { sourceMetadata: { missionLineage: lineage } } : {}),
           },
         }, options);
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
@@ -1626,6 +1671,32 @@ export function createChatTaskLogsReadTool(store: TaskStore): ToolDefinition {
   };
 }
 
+/*
+FNXC:TaskDocumentCAS 2026-07-20-11:06:
+Task-bound and explicit cross-task publishers share one read-then-CAS contract. They forward optional snake_case expectations without inventing defaults, return revision/hash on success, and expose stale state as a typed error result. Agents must re-read and explicitly rebase; the tool never retries or converts a conflict into success text.
+*/
+function taskDocumentWriteResult(document: TaskDocument) {
+  return {
+    content: [{ type: "text" as const, text: `Saved document "${document.key}" (revision ${document.revision}, ${document.contentHash}).` }],
+    details: { key: document.key, revision: document.revision, contentHash: document.contentHash },
+  };
+}
+
+function taskDocumentWriteError(error: unknown, key: string, taskId?: string) {
+  if (error instanceof fusionCore.TaskDocumentPreconditionFailedError) {
+    return {
+      content: [{ type: "text" as const, text: `ERROR: Document "${key}" changed; re-read it and explicitly rebase before writing.` }],
+      details: { ...error.toDetails() },
+      isError: true,
+    };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    content: [{ type: "text" as const, text: `ERROR: Failed to save document "${key}"${taskId ? ` for task ${taskId}` : ""}: ${message}` }],
+    details: {},
+  };
+}
+
 /**
  * Create a `fn_task_document_write` tool that stores a named task document.
  *
@@ -1638,34 +1709,22 @@ export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): T
     name: "fn_task_document_write",
     label: "Write Document",
     description:
-      "Save a named document for this task (for example plan, notes, or research). " +
-      "Each write creates a new revision so you can update documents over time.",
+      "Save a named document for this task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase.",
     parameters: taskDocumentWriteParams,
     execute: async (_id: string, params: Static<typeof taskDocumentWriteParams>) => {
       const input: TaskDocumentCreateInput = {
         key: params.key,
         content: params.content,
         author: params.author || "agent",
+        ...(params.expected_revision !== undefined ? { expectedRevision: params.expected_revision } : {}),
+        ...(params.expected_content_hash !== undefined ? { expectedContentHash: params.expected_content_hash } : {}),
       };
 
       try {
         const document: TaskDocument = await store.upsertTaskDocument(taskId, input);
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Saved document "${document.key}" (revision ${document.revision}).`,
-          }],
-          details: {},
-        };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `ERROR: Failed to save document "${params.key}": ${err.message}`,
-          }],
-          details: {},
-        };
+        return taskDocumentWriteResult(document);
+      } catch (error: unknown) {
+        return taskDocumentWriteError(error, params.key);
       }
     },
   };
@@ -1810,34 +1869,22 @@ export function createChatTaskDocumentTools(store: TaskStore): ToolDefinition[] 
       name: "fn_task_document_write",
       label: "Write Document",
       description:
-        "Save a named document for a task (for example plan, notes, or research). " +
-        "Each write creates a new revision so you can update documents over time. Requires task_id.",
+        "Save a named document for an explicit task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase. Requires task_id.",
       parameters: chatTaskDocumentWriteParams,
       execute: async (_id: string, params: Static<typeof chatTaskDocumentWriteParams>) => {
         const input: TaskDocumentCreateInput = {
           key: params.key,
           content: params.content,
           author: params.author || "agent",
+          ...(params.expected_revision !== undefined ? { expectedRevision: params.expected_revision } : {}),
+          ...(params.expected_content_hash !== undefined ? { expectedContentHash: params.expected_content_hash } : {}),
         };
 
         try {
           const document: TaskDocument = await store.upsertTaskDocument(params.task_id, input);
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Saved document "${document.key}" (revision ${document.revision}).`,
-            }],
-            details: {},
-          };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (err: any) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `ERROR: Failed to save document "${params.key}" for task ${params.task_id}: ${err.message}`,
-            }],
-            details: {},
-          };
+          return taskDocumentWriteResult(document);
+        } catch (error: unknown) {
+          return taskDocumentWriteError(error, params.key, params.task_id);
         }
       },
     },
@@ -4513,8 +4560,18 @@ export function createDelegateTaskTool(
 
       try {
         const workflowId = params.workflow_id?.trim() || undefined;
-        const lineage = await resolveApprovedMissionLineage(taskStore, params.mission_lineage, options?.sourceTaskId);
-        if ("error" in lineage) {
+        /*
+        FNXC:MissionAdmission 2026-07-22-13:07:
+        Freeform chat/user-directed delegation may omit mission_lineage.
+        requireMissionLineage (idle heartbeat patrol) still hard-requires an approved chain.
+        */
+        const lineage = await resolveApprovedMissionLineage(
+          taskStore,
+          params.mission_lineage,
+          options?.requireMissionLineage ? undefined : options?.sourceTaskId,
+          { required: options?.requireMissionLineage === true },
+        );
+        if (lineage && "error" in lineage) {
           return { content: [{ type: "text" as const, text: `ERROR: ${lineage.error}` }], details: { rule: "mission-lineage-required" }, isError: true };
         }
         // Create task assigned to the target agent
@@ -4524,14 +4581,13 @@ export function createDelegateTaskTool(
           column: "todo",
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
-          missionId: lineage.missionId,
-          sliceId: lineage.sliceId,
+          ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
           source: {
             sourceType: "api",
             sourceParentTaskId: options?.sourceTaskId,
             sourceAgentId: options?.sourceAgentId,
             sourceMetadata: {
-              missionLineage: lineage,
+              ...(lineage ? { missionLineage: lineage } : {}),
               ...(override ? { executorRoleOverride: true } : {}),
             },
           },

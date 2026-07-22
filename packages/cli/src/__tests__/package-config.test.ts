@@ -56,7 +56,7 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "0.80.10",
+      "0.81.1",
     );
     expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
       EXACT_SEMVER,
@@ -156,6 +156,23 @@ describe("CLI package.json publishing config", () => {
   it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
     expect(deps).toContain("ioredis");
+  });
+
+  /*
+  FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+  Keep this unit test scoped to publish-manifest wiring. The cross-platform
+  agent-browser install workflow is authoritative for packed consumer installs,
+  npm-generated platform launchers, and native executable invariants.
+  */
+  it("preserves agent-browser publish-manifest wiring", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.dependencies?.["agent-browser"]).toBe("0.26.0");
+    expect(publishedPkg.dependencies?.["agent-browser"]).toBe(pkg.dependencies["agent-browser"]);
+    expect(pkg.bin?.["agent-browser"]).toBe("./agent-browser.mjs");
+    expect(publishedPkg.bin?.["agent-browser"]).toBe(pkg.bin["agent-browser"]);
+    expect(pkg.files).toContain("agent-browser.mjs");
+    expect(publishedPkg.files).toContain("agent-browser.mjs");
   });
 
   /**

@@ -1525,6 +1525,63 @@ describe("StepSessionExecutor", () => {
       expect(onStepStart).toHaveBeenNthCalledWith(3, 2);
     });
 
+    it("does not create or complete a step session when the persisted start is rejected", async () => {
+      const prompt = makeStepPrompt("FN-8490", 1);
+      const task = makeTaskDetail({
+        id: "FN-8490",
+        prompt,
+        steps: [{ name: "Ordered step", status: "pending" }],
+      });
+      const onStepStart = vi.fn().mockResolvedValue(false);
+      const onStepComplete = vi.fn();
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings: makeSettings({ maxParallelSteps: 1 }),
+        onStepStart,
+        onStepComplete,
+      });
+
+      const results = await executor.executeAll();
+
+      expect(results).toEqual([
+        expect.objectContaining({
+          stepIndex: 0,
+          success: false,
+          error: expect.stringContaining("start was rejected"),
+          retries: 0,
+        }),
+      ]);
+      expect(onStepStart).toHaveBeenCalledWith(0);
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      expect(onStepComplete).not.toHaveBeenCalled();
+    });
+
+    it("preserves notification-only start callbacks that return void", async () => {
+      const task = makeTaskDetail({
+        prompt: makeStepPrompt("FN-8490-LEGACY", 1),
+        steps: [{ name: "Legacy callback step", status: "pending" }],
+      });
+      const session = makeMockSession();
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+      const onStepStart = vi.fn(() => undefined);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings: makeSettings({ maxParallelSteps: 1 }),
+        onStepStart,
+      });
+
+      const results = await executor.executeAll();
+
+      expect(results[0]?.success).toBe(true);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    });
+
     it("skips live-terminal steps before starting resumed sessions", async () => {
       const prompt = makeStepPrompt("FN-7248", 2);
       const task = makeTaskDetail({
