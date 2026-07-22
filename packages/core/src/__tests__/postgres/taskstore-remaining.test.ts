@@ -30,7 +30,7 @@ import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
-import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   upsertArchivedTaskEntry,
   findArchivedTaskEntry,
@@ -39,7 +39,7 @@ import {
   listLiveTaskDocuments,
   listLiveArtifacts,
   listAllTaskDocuments,
-} from "../../task-store/async-archive-lineage.js";
+} from "../../task-store/async/async-archive-lineage.js";
 import {
   createBranchGroup,
   getBranchGroup,
@@ -53,7 +53,7 @@ import {
   listActivePrEntities,
   recordPrThreadOutcome,
   getPrThreadState,
-} from "../../task-store/async-branch-groups.js";
+} from "../../task-store/async/async-branch-groups.js";
 import {
   upsertWorkflowWorkItem,
   transitionWorkflowWorkItem,
@@ -61,12 +61,12 @@ import {
   listDueWorkflowWorkItems,
   recordCompletionHandoff,
   getCompletionHandoffMarker,
-} from "../../task-store/async-workflow-workitems.js";
+} from "../../task-store/async/async-workflow-workitems.js";
 import {
   recordActivityLogEntry,
   getActivityLog,
   queryRunAuditEvents,
-} from "../../task-store/async-audit.js";
+} from "../../task-store/async/async-audit.js";
 import {
   getTaskDocument,
   upsertTaskDocument,
@@ -74,19 +74,19 @@ import {
   insertArtifactRow,
   getArtifact,
   getArtifacts,
-} from "../../task-store/async-comments-attachments.js";
+} from "../../task-store/async/async-comments-attachments.js";
 import {
   recordGoalCitations,
   listGoalCitations,
   emitUsageEvent,
   queryUsageEvents,
   recordPluginActivation,
-} from "../../task-store/async-events.js";
+} from "../../task-store/async/async-events.js";
 import {
   sanitizeSearchTokens,
   searchTasksLike,
   countSearchTasksLike,
-} from "../../task-store/async-search.js";
+} from "../../task-store/async/async-search.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";

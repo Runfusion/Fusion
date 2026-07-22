@@ -512,7 +512,7 @@ export default defineConfig({
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
       "@fusion/dashboard/app/components/ViewHeader": resolve(__dirname, "app/components/ViewHeader.tsx"),
       // FNXC:Quality 2026-07-19-12:00: Keep the Quality plugin's tokenized artifact-media bridge resolvable under host Vitest just as it is in the production dashboard bundle.
-      "@fusion/dashboard/app/api/task-content": resolve(__dirname, "app/api/task-content.ts"),
+      "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
       "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),

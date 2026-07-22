@@ -19,7 +19,7 @@ import {isBuiltinWorkflowId} from "../builtin-workflows.js";
 import {fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import * as schema from "../postgres/schema/index.js";
-import {readProjectConfig, writeProjectConfig} from "../task-store/async-settings.js";
+import {readProjectConfig, writeProjectConfig} from "../task-store/async/async-settings.js";
 import {eq, inArray} from "drizzle-orm";
 import type {AsyncDataLayer} from "../postgres/data-layer.js";
 

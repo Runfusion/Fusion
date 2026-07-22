@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
-import { pruneOperationalLogsAsync } from "../../task-store/async-maintenance.js";
+import { pruneOperationalLogsAsync } from "../../task-store/async/async-maintenance.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

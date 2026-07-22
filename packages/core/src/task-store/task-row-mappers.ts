@@ -21,8 +21,8 @@ import {fromJson} from "../db.js";
 import {generateTaskLineageId} from "../task-lineage.js";
 import {type TaskRow, type TaskPersistSerializationContext, type TaskColumnDescriptor, TASK_COLUMN_DESCRIPTORS, TASK_COLUMN_DESCRIPTOR_BY_COLUMN} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow as readTaskRowAsync} from "../task-store/async-persistence.js";
-import {findArchivedTaskEntry} from "../task-store/async-archive-lineage.js";
+import {readTaskRow as readTaskRowAsync} from "../task-store/async/async-persistence.js";
+import {findArchivedTaskEntry} from "../task-store/async/async-archive-lineage.js";
 import type {PrEntityRow, RunAuditEventRow, MergeQueueRow, MergeRequestRow, CompletionHandoffMarkerRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
 
 export function getTaskSelectClauseImpl2(store: TaskStore, slim: boolean, tableAlias?: string): string {

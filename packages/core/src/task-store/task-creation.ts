@@ -27,8 +27,8 @@ import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {resolveCreateDeclaredSymbols} from "../task-symbol-resolution.js";
-import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
-import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async-audit.js";
+import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async/async-persistence.js";
+import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async/async-audit.js";
 
 function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   /*

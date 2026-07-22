@@ -3,7 +3,7 @@ FNXC:DashboardBanners 2026-06-24-00:00:
 DashboardBanners is the conditional banner cluster rendered above the dashboard-project-shell, extracted verbatim from AppInner's main return JSX. It is a pure render of the same gated banners (every condition, prop, FNXC comment, and the TaskIdIntegrityBanner setDashboardHealth updater preserved byte-for-byte); the banner components are imported directly from their siblings.
 */
 import type { DashboardBannersProps } from "./types";
-import type { DashboardHealthResponse } from "../../api/health";
+import type { DashboardHealthResponse } from "../../api/client/health";
 import type { SectionId } from "../SettingsModal";
 import { TestModeBanner } from "../TestModeBanner";
 import { MigrationInProgressBanner } from "../MigrationInProgressBanner";

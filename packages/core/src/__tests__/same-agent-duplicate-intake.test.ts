@@ -5,12 +5,12 @@ const { recordRunAuditEventAsync, softDeleteTaskRowAsync } = vi.hoisted(() => ({
   softDeleteTaskRowAsync: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../task-store/async-audit.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../task-store/async-audit.js")>()),
+vi.mock("../task-store/async/async-audit.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../task-store/async/async-audit.js")>()),
   recordRunAuditEvent: recordRunAuditEventAsync,
 }));
-vi.mock("../task-store/async-persistence.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../task-store/async-persistence.js")>()),
+vi.mock("../task-store/async/async-persistence.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../task-store/async/async-persistence.js")>()),
   softDeleteTaskRow: softDeleteTaskRowAsync,
 }));
 

@@ -95,8 +95,8 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow, readLiveTaskRows} from "../task-store/async-persistence.js";
-import {searchTasksTsvector, searchTasksLike} from "../task-store/async-search.js";
+import {readTaskRow, readLiveTaskRows} from "../task-store/async/async-persistence.js";
+import {searchTasksTsvector, searchTasksLike} from "../task-store/async/async-search.js";
 import {
   getArchivedTask,
   listArchivedTasks as listArchivedTaskEntries,

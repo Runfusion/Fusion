@@ -19,7 +19,7 @@ import {hasSyncPassphraseConfigured} from "../secrets-sync-passphrase.js";
 import {ensureMemoryFileWithBackend} from "../project-memory.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isPlainObject, deepMergeWithNullDelete} from "../task-store/settings-helpers.js";
-import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async-settings.js";
+import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async/async-settings.js";
 import {appendConfigurationRevision, createConfigurationRevision} from "../async-configuration-revision-store.js";
 
 /** Publish committed setting snapshots and run the normal post-commit effects. */

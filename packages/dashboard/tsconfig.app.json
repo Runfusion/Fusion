@@ -11,7 +11,7 @@
       "node-pty": ["./src/types/node-pty/index.d.ts"],
       "@fusion/dashboard/app/components/TaskCard": ["./app/components/TaskCard.tsx"],
       "@fusion/dashboard/app/components/ViewHeader": ["./app/components/ViewHeader.tsx"],
-      "@fusion/dashboard/app/api/task-content": ["./app/api/task-content.ts"],
+      "@fusion/dashboard/app/api/tasks/task-content": ["./app/api/tasks/task-content.ts"],
       "@fusion/dashboard/app/plugins/types": ["./app/plugins/types.ts"],
       "@fusion/dashboard/app/utils/projectStorage": ["./app/utils/projectStorage.ts"],
       "@fusion/dashboard/app/utils/taskStuck": ["./app/utils/taskStuck.ts"]

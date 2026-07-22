@@ -1235,7 +1235,7 @@ export async function createTaskStoreForBackend(
   */
   if (autoMigrationNotice) {
     try {
-      const { patchProjectSettings } = await import("../task-store/async-settings.js");
+      const { patchProjectSettings } = await import("../task-store/async/async-settings.js");
       await patchProjectSettings(asyncLayer, {
         sqliteMigrationNotice: { ...autoMigrationNotice, dismissed: false },
       });

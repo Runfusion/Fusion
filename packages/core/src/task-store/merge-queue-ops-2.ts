@@ -12,7 +12,7 @@ import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOption
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
+import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeRequestState, to: MergeRequestState): boolean {

@@ -20,7 +20,7 @@ import {
   PG_AVAILABLE,
   type PgTestHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { writeProjectConfig } from "../../task-store/async-settings.js";
+import { writeProjectConfig } from "../../task-store/async/async-settings.js";
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 

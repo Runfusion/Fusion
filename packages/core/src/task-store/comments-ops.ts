@@ -16,7 +16,7 @@ import {validateDocumentKey} from "../types.js";
 import "../builtin-traits.js";
 import {toJsonNullable} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
-import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
+import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async/async-comments-attachments.js";
 import type {TaskDocumentRow} from "../task-store/row-types.js";
 
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {

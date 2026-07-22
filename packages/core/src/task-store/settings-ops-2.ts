@@ -16,7 +16,7 @@ import {fromJson} from "../db.js";
 import {hasSyncPassphraseConfigured} from "../secrets-sync-passphrase.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {canonicalizeSettings} from "../task-store/settings-helpers.js";
-import {readProjectConfig as readProjectConfigAsync, readProjectSettings as readProjectSettingsAsync} from "../task-store/async-settings.js";
+import {readProjectConfig as readProjectConfigAsync, readProjectSettings as readProjectSettingsAsync} from "../task-store/async/async-settings.js";
 
 export async function getSettingsImpl(store: TaskStore): Promise<Settings> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:20:

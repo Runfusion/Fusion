@@ -24,7 +24,7 @@ import {stepsToWorkflowIr, stepToFragmentIr, layoutForIr} from "../workflow-step
 import {getTraitRegistry} from "../trait-registry.js";
 import {registerDefaultWorkflowHooks} from "../default-workflow-hooks.js";
 import {clearTransitionPending, readTransitionPending, reconcileHooksRemaining} from "../transition-pending.js";
-import {clearTransitionPendingAsync, listTransitionPendingTaskIdsAsync, readTransitionPendingAsync} from "./async-transition-pending.js";
+import {clearTransitionPendingAsync, listTransitionPendingTaskIdsAsync, readTransitionPendingAsync} from "./async/async-transition-pending.js";
 import type {WorkflowSettingDefinition} from "../workflow-ir-types.js";
 import {validateSettingValuePatch} from "../workflow-settings.js";
 import "../builtin-traits.js";
@@ -34,7 +34,7 @@ import {appendAgentLogEntriesSync} from "../agent-log-file-store.js";
 import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
+import {reconcileTaskIdStateAsync} from "../task-store/async/async-allocator.js";
 
 export async function initImpl(store: TaskStore): Promise<void> {
     store.closing = false;

@@ -3,7 +3,7 @@ import {
   __setTaskMoveDisposalTimeoutForTesting,
   registerTaskMoveDisposer,
 } from "../../task-move-disposer.js";
-import { readTaskRow } from "../../task-store/async-persistence.js";
+import { readTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

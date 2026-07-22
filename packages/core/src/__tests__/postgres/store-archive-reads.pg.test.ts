@@ -10,7 +10,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
-import { findArchivedTaskEntry } from "../../task-store/async-archive-lineage.js";
+import { findArchivedTaskEntry } from "../../task-store/async/async-archive-lineage.js";
 
 pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({

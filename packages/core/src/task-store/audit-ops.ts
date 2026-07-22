@@ -12,13 +12,13 @@ import {findWorkflowColumn} from "../plugin-gate-verdict.js";
 import {getTraitRegistry} from "../trait-registry.js";
 import {makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPending} from "../transition-pending.js";
-import {writeTransitionPendingAsync} from "./async-transition-pending.js";
+import {writeTransitionPendingAsync} from "./async/async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 import {toJson, fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
-import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
-import { getLiveTaskColumn } from "./async-comments-attachments.js";
+import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persistence.js";
+import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();

@@ -11,7 +11,7 @@ import {
   PG_AVAILABLE,
   type PgTestHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { insertTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow } from "../../task-store/async/async-persistence.js";
 
 const testDescribe = PG_AVAILABLE ? describe : describe.skip;
 

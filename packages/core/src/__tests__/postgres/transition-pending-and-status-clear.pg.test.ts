@@ -29,7 +29,7 @@ import {
   listTransitionPendingTaskIdsAsync,
   readTransitionPendingAsync,
   writeTransitionPendingAsync,
-} from "../../task-store/async-transition-pending.js";
+} from "../../task-store/async/async-transition-pending.js";
 import { makeTransitionPending } from "../../transition-types.js";
 
 const pgTest = pgDescribe;

@@ -2530,8 +2530,8 @@ export {
   claimIncidentForFixTaskAsync,
   attachFixTaskAsync,
   releaseIncidentFixTaskClaimAsync,
-} from "./task-store/async-monitor.js";
-export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from "./task-store/async-monitor.js";
+} from "./task-store/async/async-monitor.js";
+export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from "./task-store/async/async-monitor.js";
 
 // FNXC:RuntimeSatelliteCompletion 2026-06-24-23:40:
 // Async AiSessionStore helpers exported for the dashboard AiSessionStore dual-path.
@@ -2599,7 +2599,7 @@ export {
 } from "./workflow-step-results.js";
 // FNXC:SqliteRemoval 2026-07-14: Export async audit reader so engine tests can
 // query run-audit events in backend mode (sync getRunAuditEvents returns [] in PG mode).
-export { queryRunAuditEvents } from "./task-store/async-audit.js";
+export { queryRunAuditEvents } from "./task-store/async/async-audit.js";
 
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:

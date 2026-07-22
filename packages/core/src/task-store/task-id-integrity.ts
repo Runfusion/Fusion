@@ -22,10 +22,10 @@ import { buildSnippet, extractGoalCitations } from "../goal-citation-extractor.j
 import * as schema from "../postgres/schema/index.js";
 import { getTaskCreatedHook } from "../task-creation-hooks.js";
 import { type TaskIdIntegrityReport, detectTaskIdIntegrityAnomalies } from "../task-id-integrity.js";
-import { createBranchGroup as createBranchGroupAsync } from "./async-branch-groups.js";
-import { findLiveLineageChildren as findLiveLineageChildrenAsync } from "./async-lifecycle.js";
-import { recordRunAuditEvent as recordRunAuditEventAsync } from "./async-audit.js";
-import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async-persistence.js";
+import { createBranchGroup as createBranchGroupAsync } from "./async/async-branch-groups.js";
+import { findLiveLineageChildren as findLiveLineageChildrenAsync } from "./async/async-lifecycle.js";
+import { recordRunAuditEvent as recordRunAuditEventAsync } from "./async/async-audit.js";
+import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async/async-persistence.js";
 import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } from "./persistence.js";
 import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.js";
 import { ConfigRow } from "./row-types.js";

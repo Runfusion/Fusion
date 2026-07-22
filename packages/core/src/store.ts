@@ -69,7 +69,7 @@ import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import { MissionStore } from "./mission-store.js";
 import { AsyncMissionStore } from "./async-mission-store.js";
 import { AsyncIdeationStore } from "./async-ideation-store.js";
-import { reconcileSoftDeletedColumnDriftAsync } from "./task-store/async-self-healing.js";
+import { reconcileSoftDeletedColumnDriftAsync } from "./task-store/async/async-self-healing.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -111,12 +111,12 @@ import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWi
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, deleteTaskIfBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
-import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
-import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async-phantom-reservations.js";
+import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async/async-maintenance.js";
+import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async/async-phantom-reservations.js";
 import { resolveTaskSymbolsForTask, type TaskSymbolResolution } from "./task-symbol-resolution.js";
 import { acquireSymbolLocksAsync, inspectSymbolLockConflictsAsync, reconcileStaleSymbolLocksAsync, releaseSymbolLocksAsync, renewSymbolLocksAsync } from "./task-store/symbol-locks.js";
 import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./symbol-lock-types.js";
-import { queryRunAuditEvents } from "./task-store/async-audit.js";
+import { queryRunAuditEvents } from "./task-store/async/async-audit.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
@@ -740,7 +740,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
   /** Work items own no symbol column; their taskId is the sole declaration source. */
-  async resolveTaskSymbolsForWorkItem(workItem: Pick<import("./types/merge-queue.js").WorkflowWorkItem, "taskId">): Promise<TaskSymbolResolution> {
+  async resolveTaskSymbolsForWorkItem(workItem: Pick<import("./types/merge/merge-queue.js").WorkflowWorkItem, "taskId">): Promise<TaskSymbolResolution> {
     return this.resolveTaskSymbols(workItem.taskId);
   }
   async setTaskDeclaredSymbols(taskId: string, symbols: readonly string[]): Promise<Task> {

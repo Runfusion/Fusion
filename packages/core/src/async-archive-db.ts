@@ -43,7 +43,7 @@ import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-o
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import type { ArchivedTaskEntry } from "./types.js";
-import { buildTsqueryFragment, sanitizeSearchTokens } from "./task-store/async-search.js";
+import { buildTsqueryFragment, sanitizeSearchTokens } from "./task-store/async/async-search.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;

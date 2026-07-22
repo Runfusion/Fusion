@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import type { TaskStore } from "../../store.js";
 import * as schema from "../../postgres/schema/index.js";
-import { writeProjectConfig } from "../../task-store/async-settings.js";
+import { writeProjectConfig } from "../../task-store/async/async-settings.js";
 import { __setWorkflowDefinitionBeforeInsertForTesting } from "../../task-store/project-store-ops.js";
 
 import {

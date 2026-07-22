@@ -37,19 +37,19 @@ import {
   countLiveTasks,
   softDeleteTaskRow,
   isTaskIdConflictError,
-} from "../../task-store/async-persistence.js";
+} from "../../task-store/async/async-persistence.js";
 import {
   reconcileTaskIdStateAsync,
   computeNextSequenceFloor,
   getKnownPrefixes,
   parseTaskIdForAllocator,
-} from "../../task-store/async-allocator.js";
+} from "../../task-store/async/async-allocator.js";
 import {
   readProjectConfig,
   readProjectSettings,
   writeProjectConfig,
   patchProjectSettings,
-} from "../../task-store/async-settings.js";
+} from "../../task-store/async/async-settings.js";
 import type { WorkflowTransitionNotificationMarker } from "../../types.js";
 
 const PG_TEST_URL_BASE =

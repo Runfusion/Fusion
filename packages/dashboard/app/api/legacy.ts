@@ -11,8 +11,8 @@ export {
   buildApiUrl,
   withNodeId,
   proxyApi,
-} from "./client.js";
-export type { FetchOptions } from "./client.js";
+} from "./client/client.js";
+export type { FetchOptions } from "./client/client.js";
 export {
   fetchDashboardHealth,
   refreshDashboardHealth,
@@ -20,12 +20,12 @@ export {
   startEngine,
   checkForUpdates,
   withProjectId,
-} from "./health.js";
+} from "./client/health.js";
 import type {
   DashboardHealthResponse,
   EngineStatusResponse,
   UpdateCheckResponse,
-} from "./health.js";
+} from "./client/health.js";
 export type {
   DashboardHealthResponse,
   EngineStatusResponse,
@@ -44,7 +44,7 @@ export {
   batchUpdateTaskModels,
   moveTask,
   DuplicateCandidatesError,
-} from "./tasks.js";
+} from "./tasks/tasks.js";
 import type {
   DeleteTaskOptions,
   ArchiveTaskOptions,
@@ -60,7 +60,7 @@ import type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
-} from "./tasks.js";
+} from "./tasks/tasks.js";
 export type {
   DeleteTaskOptions,
   ArchiveTaskOptions,
@@ -110,7 +110,7 @@ export {
   archiveAllDone,
   approvePlan,
   rejectPlan,
-} from "./tasks-lifecycle.js";
+} from "./tasks/tasks-lifecycle.js";
 export type {
   BranchGroupMemberSummary,
   BranchGroupSummary,
@@ -122,7 +122,7 @@ export type {
   RevertTaskAiResult,
   RevertTaskResult,
   RevertTaskOptions,
-} from "./tasks-lifecycle.js";
+} from "./tasks/tasks-lifecycle.js";
 
 export {
   fetchConfig,
@@ -132,8 +132,8 @@ export {
   checkForUpdate,
   refreshUpdateCheck,
   installUpdate,
-} from "./settings.js";
-export type { UpdateInstallResponse } from "./settings.js";
+} from "./settings/settings.js";
+export type { UpdateInstallResponse } from "./settings/settings.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-17-12:00:
@@ -151,12 +151,12 @@ export {
   updatePiSettings,
   installPiPackage,
   reinstallFusionPiPackage,
-} from "./global-and-pi-settings.js";
+} from "./settings/global-and-pi-settings.js";
 export type {
   PiExtensionEntry,
   PiExtensionSettings,
   PiSettings,
-} from "./global-and-pi-settings.js";
+} from "./settings/global-and-pi-settings.js";
 
 export {
   uploadAttachment,
@@ -182,7 +182,7 @@ export {
   fetchProjectMarkdownFiles,
   putTaskDocument,
   deleteTaskDocument,
-} from "./task-content.js";
+} from "./tasks/task-content.js";
 export type {
   FetchAllDocumentsOptions,
   MarkdownFileEntry,
@@ -190,7 +190,7 @@ export type {
   FetchArtifactsOptions,
   FetchProjectMarkdownFilesOptions,
   UpdateArtifactInput,
-} from "./task-content.js";
+} from "./tasks/task-content.js";
 // Artifact types still re-exported from core for callers of legacy barrel
 export type { Artifact, ArtifactType, ArtifactWithTask } from "@fusion/core";
 
@@ -202,7 +202,7 @@ export type { Artifact, ArtifactType, ArtifactWithTask } from "@fusion/core";
 export {
   updateTaskCustomFields,
   fetchBoardWorkflows,
-} from "./board-workflows.js";
+} from "./projects/board-workflows.js";
 export type {
   BoardWorkflowColumnFlags,
   BoardWorkflowColumn,
@@ -218,7 +218,7 @@ export type {
   WorkflowSettingOption,
   WorkflowSettingRender,
   WorkflowSettingRejection,
-} from "./board-workflows.js";
+} from "./projects/board-workflows.js";
 
 export {
   fetchRemoteSettings,
@@ -233,11 +233,11 @@ export {
   generateShortLivedRemoteToken,
   fetchRemoteUrl,
   fetchRemoteQr,
-} from "./remote.js";
+} from "./projects/remote.js";
 export type {
   RemoteSettings,
   RemoteStatus,
-} from "./remote.js";
+} from "./projects/remote.js";
 
 export {
   fetchMemory,
@@ -255,7 +255,7 @@ export {
   fetchMemoryBackendStatus,
   installQmd,
   testMemoryRetrieval,
-} from "./memory.js";
+} from "./system/memory.js";
 export type {
   MemoryFileInfo,
   MemoryAuditReport,
@@ -264,7 +264,7 @@ export type {
   MemorySearchResult,
   MemoryRetrievalTestResult,
   QmdInstallResult,
-} from "./memory.js";
+} from "./system/memory.js";
 
 
 // Re-export skills types so hooks/components keep stable import paths via this barrel.
@@ -296,7 +296,7 @@ export {
   requestSpecRevision,
   rebuildTaskSpec,
   refineTask,
-} from "./task-steer.js";
+} from "./tasks/task-steer.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-14:00:
@@ -305,14 +305,14 @@ export {
 export {
   fetchModels,
   fetchUsageData,
-} from "./models-usage.js";
+} from "./planning/models-usage.js";
 export type {
   ModelInfo,
   ModelsResponse,
   UsagePace,
   UsageWindow,
   ProviderUsage,
-} from "./models-usage.js";
+} from "./planning/models-usage.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -361,7 +361,7 @@ export {
   setOmpCliEnabled,
   submitProviderManualCode,
   updateCustomProvider,
-} from "./provider-status.js";
+} from "./settings/provider-status.js";
 export type {
   AuthProvider,
   ClaudeCliStatus,
@@ -396,7 +396,7 @@ export type {
   ProbeModelsResponse,
   RefreshProviderModelsResponse,
   RuntimeBinaryStatus,
-} from "./provider-status.js";
+} from "./settings/provider-status.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -413,7 +413,7 @@ export {
   apiImportGitHubComment,
   apiImportGitHubIssue,
   apiImportGitHubPull,
-} from "./github-import.js";
+} from "./git/github-import.js";
 export type {
   BatchImportResult,
   GitHubCommentDetail,
@@ -421,7 +421,7 @@ export type {
   GitHubIssueDetail,
   GitHubPull,
   GitHubPullDetail,
-} from "./github-import.js";
+} from "./git/github-import.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -435,10 +435,10 @@ export {
   apiImportGitLabGroupIssue,
   apiImportGitLabMergeRequest,
   apiImportGitLabProjectIssue,
-} from "./gitlab-import.js";
+} from "./git/gitlab-import.js";
 export type {
   GitLabImportItem,
-} from "./gitlab-import.js";
+} from "./git/gitlab-import.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -502,7 +502,7 @@ export {
   unlinkPr,
   unstageFiles,
   updateGitRemoteUrl,
-} from "./git.js";
+} from "./git/git.js";
 export type {
   BatchStatusEntry,
   BatchStatusResult,
@@ -545,7 +545,7 @@ export type {
   TerminalExitEvent,
   TerminalOutputEvent,
   TerminalSession,
-} from "./git.js";
+} from "./git/git.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -569,7 +569,7 @@ export {
   saveFileContent,
   saveWorkspaceFileContent,
   searchFiles,
-} from "./workspace-files.js";
+} from "./projects/workspace-files.js";
 export type {
   FileContentResponse,
   FileListResponse,
@@ -580,7 +580,7 @@ export type {
   SaveFileResponse,
   WorkspaceListResponse,
   WorkspaceTaskInfo,
-} from "./workspace-files.js";
+} from "./projects/workspace-files.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-14:00:
@@ -609,7 +609,7 @@ export {
   getAgentOnboardingStreamUrl,
   connectAgentOnboardingStream,
   connectPlanningStream,
-} from "./planning.js";
+} from "./planning/planning.js";
 export type {
   PlanningSession,
   PlanningResponse,
@@ -619,11 +619,11 @@ export type {
   ThinkingLevel,
   ExistingAgentOnboardingConfig,
   AgentOnboardingStreamEvent,
-} from "./planning.js";
+} from "./planning/planning.js";
 
 // FNXC:CodeOrganization 2026-07-19-12:00: SSE reconnect lives in event-source.ts.
-export type { StreamConnectionState, ResilientEventSourceOptions, ResilientEventHandlers } from "./event-source.js";
-export { createResilientEventSource } from "./event-source.js";
+export type { StreamConnectionState, ResilientEventSourceOptions, ResilientEventHandlers } from "./client/event-source.js";
+export { createResilientEventSource } from "./client/event-source.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-14:00:
@@ -653,7 +653,7 @@ export {
   setDevServerPreviewUrlById,
   detectDevServerCommands,
   getDevServerSessionLogsStreamUrl,
-} from "./dev-server.js";
+} from "./planning/dev-server.js";
 export type {
   DevServerCandidate,
   DetectedCandidate,
@@ -671,7 +671,7 @@ export type {
   DevServerSessionConfig,
   DevServerSession,
   FetchDevServerLogsOptions,
-} from "./dev-server.js";
+} from "./planning/dev-server.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -699,7 +699,7 @@ export {
   triggerRoutineWebhook,
   updateAutomation,
   updateRoutine,
-} from "./scheduling.js";
+} from "./system/scheduling.js";
 export type {
   ActivityEventType,
   ActivityLogEntry,
@@ -708,7 +708,7 @@ export type {
   RoutineRunStreamEvent,
   RoutineRunStreamHandlers,
   SchedulingScopeOptions,
-} from "./scheduling.js";
+} from "./system/scheduling.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -742,7 +742,7 @@ export {
   updateWorkflow,
   updateWorkflowPromptOverrides,
   updateWorkflowSettingValues,
-} from "./workflows.js";
+} from "./system/workflows.js";
 export type {
   DesignWorkflowResult,
   ImportWorkflowResult,
@@ -757,7 +757,7 @@ export type {
   WorkflowPromptOverridesPayload,
   WorkflowSettingValuesPayload,
   WorkflowStepTemplate,
-} from "./workflows.js";
+} from "./system/workflows.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -778,7 +778,7 @@ export {
   retrySubtaskSession,
   startSubtaskBreakdown,
   translateImportContent,
-} from "./ai-text.js";
+} from "./planning/ai-text.js";
 export type {
   AutoTranslateImportItem,
   AutoTranslateImportResponse,
@@ -789,7 +789,7 @@ export type {
   SubtaskItem,
   TranslateImportContentResponse,
   TranslateImportFields,
-} from "./ai-text.js";
+} from "./planning/ai-text.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -822,7 +822,7 @@ export {
   updateAgentState,
   upgradeAgentHeartbeatProcedure,
   uploadAgentAvatar,
-} from "./agents.js";
+} from "./agents/agents.js";
 export type {
   Agent,
   AgentBudgetStatus,
@@ -841,7 +841,7 @@ export type {
   HeartbeatInvocationSource,
   OrgTreeNode,
   ReflectionTrigger,
-} from "./agents.js";
+} from "./agents/agents.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -867,7 +867,7 @@ export {
   resolveAgent,
   returnTaskToAgent,
   reviseTaskReviewItems,
-} from "./run-audit.js";
+} from "./agents/run-audit.js";
 export type {
   NormalizedRunAuditEvent,
   RunAuditDomainFilter,
@@ -875,7 +875,7 @@ export type {
   RunAuditResponse,
   RunTimelineResponse,
   TimelineEntry,
-} from "./run-audit.js";
+} from "./agents/run-audit.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -892,7 +892,7 @@ export {
   importAgents,
   importSettings,
   startAgentGeneration,
-} from "./agent-import-generation.js";
+} from "./agents/agent-import-generation.js";
 export type {
   AgentGenerationSession,
   AgentGenerationSpec,
@@ -904,7 +904,7 @@ export type {
   CompanyEntry,
   SettingsExportData,
   SettingsImportResponse,
-} from "./agent-import-generation.js";
+} from "./agents/agent-import-generation.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-14:00:
@@ -912,10 +912,10 @@ export type {
  */
 export {
   summarizeTitle,
-} from "./ai-summarize.js";
+} from "./planning/ai-summarize.js";
 export type {
   SummarizeTitleResponse,
-} from "./ai-summarize.js";
+} from "./planning/ai-summarize.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -980,7 +980,7 @@ export {
   updateNode,
   updateProject,
   upsertProjectPathMapping,
-} from "./projects.js";
+} from "./projects/projects.js";
 export type {
   ActivityFeedEntry,
   BrowseDirectoryResult,
@@ -1021,7 +1021,7 @@ export type {
   SystemStatsResponse,
   SystemStatsSnapshot,
   TaskStatsSnapshot,
-} from "./projects.js";
+} from "./projects/projects.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-20-10:00:
@@ -1031,13 +1031,13 @@ export {
   fetchTaskCommitAssociations,
   fetchTaskDiff,
   fetchTaskFileDiffs,
-} from "./task-diff.js";
+} from "./tasks/task-diff.js";
 export type {
   TaskCommitAssociationRow,
   TaskCommitAssociationsResponse,
   TaskDiff,
   TaskFileDiff,
-} from "./task-diff.js";
+} from "./tasks/task-diff.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1095,7 +1095,7 @@ export {
   updateMission,
   updateMissionAutopilot,
   updateSlice,
-} from "./missions.js";
+} from "./missions/missions.js";
 export type {
   AutopilotState,
   AutopilotStatus,
@@ -1125,7 +1125,7 @@ export type {
   SliceStatus,
   SliceWithFeatures,
   ValidationRunsResponse,
-} from "./missions.js";
+} from "./missions/missions.js";
 /*
  * FNXC:CodeOrganization 2026-07-20-14:00:
  * Preserve legacy `mission-interview` imports while implementations live in mission-interview.js.
@@ -1150,7 +1150,7 @@ export {
   applySliceInterview,
   skipSliceInterview,
   previewEnrichedDescription,
-} from "./mission-interview.js";
+} from "./missions/mission-interview.js";
 export type {
   MissionPlanFeature,
   MissionPlanSlice,
@@ -1159,7 +1159,7 @@ export type {
   MissionInterviewResponse,
   TargetInterviewSummary,
   TargetInterviewResponse,
-} from "./mission-interview.js";
+} from "./missions/mission-interview.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1174,7 +1174,7 @@ export {
   reorderTodoItems,
   updateTodoItem,
   updateTodoList,
-} from "./todo.js";
+} from "./system/todo.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -1190,13 +1190,13 @@ export {
   summarizePlanningDraftTitle,
   unarchiveAiSession,
   updatePlanningSessionDraft,
-} from "./ai-sessions.js";
+} from "./planning/ai-sessions.js";
 export type {
   AiSessionDetail,
   AiSessionSummary,
   CliNeedsAttentionVariant,
   ConversationHistoryEntry,
-} from "./ai-sessions.js";
+} from "./planning/ai-sessions.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -1231,7 +1231,7 @@ export {
   updateChatRoom,
   updateChatSession,
   uploadChatRoomAttachment,
-} from "./chat.js";
+} from "./chat/chat.js";
 export type {
   ChatFailureInfo,
   ChatFailureReference,
@@ -1248,7 +1248,7 @@ export type {
   ChatStreamHandlers,
   FetchChatSessionsOptions,
   TaskPlannerChatSessionInput,
-} from "./chat.js";
+} from "./chat/chat.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-19-12:00:
@@ -1268,14 +1268,14 @@ export {
   listEvals,
   listResearchRuns,
   retryResearchRun,
-} from "./research.js";
+} from "./system/research.js";
 export type {
   CreateResearchRunInput,
   EvalsListOptions,
   ResearchActionError,
   ResearchActionErrorCode,
   ResearchStatsResponse,
-} from "./research.js";
+} from "./system/research.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1307,7 +1307,7 @@ export {
   resetAgentBudget,
   sendMessage,
   triggerAgentReflection,
-} from "./messaging.js";
+} from "./chat/messaging.js";
 export type {
   AgentMailboxResponse,
   AllAgentsMailboxResponse,
@@ -1319,7 +1319,7 @@ export type {
   OutboxResponse,
   SendMessageInput,
   UnreadCountResponse,
-} from "./messaging.js";
+} from "./chat/messaging.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1350,7 +1350,7 @@ export {
   uninstallPlugin,
   updatePlugin,
   updatePluginSettings,
-} from "./plugins-and-skills.js";
+} from "./system/plugins-and-skills.js";
 export type {
   PluginDashboardViewEntry,
   PluginRuntimeInfo,
@@ -1358,7 +1358,7 @@ export type {
   PluginUiContributionEntry,
   PluginUiSlotEntry,
   RegistryPluginEntry,
-} from "./plugins-and-skills.js";
+} from "./system/plugins-and-skills.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1376,11 +1376,11 @@ export {
   triggerInsightRun,
   unarchiveInsight,
   updateInsight,
-} from "./insights.js";
+} from "./system/insights.js";
 export type {
   InsightsListResponse,
   RunsListResponse,
-} from "./insights.js";
+} from "./system/insights.js";
 
 /*
  * FNXC:CodeOrganization 2026-07-18-14:00:
@@ -1398,11 +1398,11 @@ export {
   startFnBinaryLinkLocal,
   startFnBinaryUseGlobal,
   startSystemRebuild,
-} from "./system-panel.js";
+} from "./system/system-panel.js";
 export type {
   ResearchFindingPromotionInput,
   SystemInfoResponse,
   SystemLogEntryDto,
   SystemRebuildJobLine,
   SystemRebuildJobSnapshot,
-} from "./system-panel.js";
+} from "./system/system-panel.js";

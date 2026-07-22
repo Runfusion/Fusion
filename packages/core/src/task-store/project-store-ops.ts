@@ -37,12 +37,12 @@ import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
-import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
-import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
-import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";
+import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
+import {readTaskRowInTransaction} from "../task-store/async/async-persistence.js";
+import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async/async-audit.js";
 import {applyOriginalDescription} from "../original-description-policy.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
-import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async-events.js";
+import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async/async-events.js";
 import type {GoalCitationRow, RunAuditEventRow} from "../task-store/row-types.js";
 
 export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer,): Promise<TaskStore> {

@@ -27,13 +27,13 @@ import {
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../default-workflow-hooks.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPending, clearTransitionPending} from "../transition-pending.js";
-import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
+import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async/async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async/async-persistence.js";
 import {disposeTaskBeforeMove} from "../task-move-disposer.js";
 import {resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
 
@@ -66,7 +66,7 @@ async function resolveTaskWorkflowIrForMove(store: TaskStore, id: string): Promi
     return resolveDefaultWorkflowIr();
   }
 }
-import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async-merge-coordination.js";
+import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async/async-merge-coordination.js";
 
 /*
 FNXC:WorkflowTransitionPolicy 2026-07-18-19:52:

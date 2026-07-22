@@ -6,4 +6,4 @@
  */
 export * from "./api/legacy";
 export * from "./api-node";
-export * from "./api/report";
+export * from "./api/system/report";

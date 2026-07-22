@@ -15,7 +15,7 @@ import {isNearDuplicateCanonicalInactive} from "../near-duplicate-canonical.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import type {ArtifactRow} from "../task-store/row-types.js";
-import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
+import {listArtifacts as listArtifactsAsync} from "./async/async-comments-attachments.js";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 
