@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TaskStore, AgentLogEntry, AgentRole } from "@fusion/core";
 import { categorizeToolName } from "@fusion/core";
 import { createLogger } from "./logger.js";
@@ -110,6 +111,8 @@ function summarizeToolResultDetail(result: unknown): string | undefined {
 
 /** Bound structured-arg fallback summaries so agent-log detail stays dashboard-safe. */
 const STRUCTURED_ARG_SUMMARY_MAX = 240;
+/** Hex prefix of sha256 of the full structured JSON when the log summary is truncated. */
+const STRUCTURED_ARG_HASH_HEX_LEN = 12;
 
 /**
  * Produce a human-readable summary from tool arguments.
@@ -120,6 +123,10 @@ const STRUCTURED_ARG_SUMMARY_MAX = 240;
  * Prefer a compact JSON fallback for custom tools whose args are only numbers/bools/objects.
  * Without that, every call collapses to a bare tool name and the stuck detector can false-positive
  * productive structured-arg work as a loop (Greptile P1 on PR #2404).
+ *
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * When truncating long structured JSON for logs, append a short hash of the FULL payload so
+ * differences past the visible prefix remain distinct for stuck-loop fingerprints.
  */
 export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
   if (!args) return undefined;
@@ -146,9 +153,12 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
   try {
     const json = JSON.stringify(args);
     if (!json || json === "{}" || json === "[]") return undefined;
-    return json.length > STRUCTURED_ARG_SUMMARY_MAX
-      ? `${json.slice(0, STRUCTURED_ARG_SUMMARY_MAX)}…`
-      : json;
+    if (json.length <= STRUCTURED_ARG_SUMMARY_MAX) return json;
+    const hash = createHash("sha256").update(json).digest("hex").slice(0, STRUCTURED_ARG_HASH_HEX_LEN);
+    // Reserve room for "…#" + hash so the suffix always survives.
+    const suffix = `…#${hash}`;
+    const keep = Math.max(0, STRUCTURED_ARG_SUMMARY_MAX - suffix.length);
+    return `${json.slice(0, keep)}${suffix}`;
   } catch {
     return undefined;
   }

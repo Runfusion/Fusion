@@ -18,6 +18,7 @@
  * default while keeping workflow-step execution timeouts independent.
  */
 
+import { createHash } from "node:crypto";
 import type { TaskStore, Settings } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
@@ -131,8 +132,8 @@ const TOOL_FINGERPRINT_WINDOW = 40;
 const LOOP_MIN_TOOL_SAMPLES = 20;
 /** Unique fingerprints / samples at or below this ratio counts as repetitive. */
 const LOOP_MAX_UNIQUE_RATIO = 0.25;
-/** Max chars of tool detail kept in a fingerprint (after whitespace collapse). */
-const TOOL_DETAIL_FINGERPRINT_MAX = 120;
+/** Hex chars kept from the detail content hash (sha256 prefix). */
+const TOOL_DETAIL_HASH_HEX_LEN = 16;
 
 /**
  * FN-5168 root cause: once compact-and-resume has already fired, repeated
@@ -143,6 +144,16 @@ const NO_PROGRESS_CHURN_THRESHOLD = 25;
 const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
 
 /**
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Stable short hash of the full (whitespace-collapsed) tool detail so long arguments that
+ * differ only after a shared prefix remain distinct. Prefix truncation alone was a false-loop path
+ * (Greptile P1 on PR #2404).
+ */
+export function hashToolDetail(detail: string): string {
+  return createHash("sha256").update(detail).digest("hex").slice(0, TOOL_DETAIL_HASH_HEX_LEN);
+}
+
+/**
  * FNXC:StuckDetector 2026-07-22-18:05:
  * Build a stable fingerprint from tool name + primary arg so repeated identical actions
  * collapse while distinct edit/test/debug actions stay unique.
@@ -151,12 +162,16 @@ const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
  * Return null when detail is missing. Bare tool-name fingerprints collapse every call to the
  * same custom tool into one value and false-positive productive structured-arg work as a loop
  * (Greptile P1 on PR #2404). Name-only activity still refreshes liveness; it is not thrash evidence.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Hash the full detail body instead of a fixed character prefix so long structured/string args
+ * that diverge late still fingerprint as novel.
  */
 export function buildToolFingerprint(toolName: string, toolDetail?: string): string | null {
   const name = toolName.trim().toLowerCase() || "tool";
-  const detail = toolDetail?.trim().replace(/\s+/g, " ").slice(0, TOOL_DETAIL_FINGERPRINT_MAX);
+  const detail = toolDetail?.trim().replace(/\s+/g, " ");
   if (!detail) return null;
-  return `${name}:${detail}`;
+  return `${name}:${hashToolDetail(detail)}`;
 }
 
 function emptyTrackedTask(

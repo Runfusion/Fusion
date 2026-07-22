@@ -471,6 +471,49 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
+    it("returns null when long tool details share a prefix but differ late", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-20:25:
+      Greptile P1: prefix truncation of long args collapsed distinct late-diverging payloads.
+      Full-detail hashing must keep those calls novel.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      const sharedPrefix = "x".repeat(200);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: `${sharedPrefix},"path":"/src/file-${i}.ts"}`,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("returns 'loop' when the same long tool detail is repeated", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      const longSame = `${"y".repeat(200)},"path":"/src/same.ts"}`;
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-001", {
+          toolName: "fn_custom_tool",
+          toolDetail: longSame,
+        });
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
+
     it("returns null for high text/heartbeat volume without tool thrash evidence", () => {
       const session = createMockSession();
       vi.useFakeTimers({ shouldAdvanceTime: true });

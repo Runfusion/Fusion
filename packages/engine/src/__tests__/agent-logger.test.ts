@@ -50,6 +50,17 @@ describe("summarizeToolArgs", () => {
     // FNXC:StuckDetector 2026-07-22-20:20: structured custom-tool args need a distinct summary.
     expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBe('{"count":42,"flag":true}');
   });
+
+  it("appends a full-payload hash when structured JSON is truncated", () => {
+    // FNXC:StuckDetector 2026-07-22-20:25: late-diverging long structured args stay distinct via hash suffix.
+    // Use non-string values only so the structured JSON path is exercised (not first-string-arg).
+    const a = summarizeToolArgs("unknown", { pad: Array(200).fill(1), id: 1 });
+    const b = summarizeToolArgs("unknown", { pad: Array(200).fill(1), id: 2 });
+    expect(a!.length).toBeLessThanOrEqual(240);
+    expect(a).toMatch(/…#[0-9a-f]{12}$/);
+    expect(b).toMatch(/…#[0-9a-f]{12}$/);
+    expect(a).not.toBe(b);
+  });
 });
 
 // ── AgentLogger tests ────────────────────────────────────────────────
