@@ -647,7 +647,10 @@ describe("Windows agent-browser install workflow", () => {
 
   it("runs a packed consumer install on Windows for relevant pull requests", () => {
     expect(workflow.on?.pull_request?.branches).toContain("main");
+    expect(workflow.on?.pull_request?.paths).toContain(".github/workflows/windows-agent-browser-install.yml");
+    expect(workflow.on?.pull_request?.paths).toContain("packages/cli/agent-browser.mjs");
     expect(workflow.on?.pull_request?.paths).toContain("packages/cli/package.json");
+    expect(workflow.on?.pull_request?.paths).toContain("packages/cli/scripts/prepare-publish-manifest.mjs");
     expect(workflow.jobs?.["install-smoke"]?.["runs-on"]).toBe("windows-latest");
     expect(findCompositeSetupStep(workflow.jobs?.["install-smoke"]?.steps ?? [])).toBeDefined();
   });
