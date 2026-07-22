@@ -5752,6 +5752,9 @@ export function isNonFastForwardPushError(message: string): boolean {
 /*
 FNXC:MergePush 2026-07-22-18:48:
 Tchori-Labs/Fusion#5 exposed that `REBASE_HEAD` can remain resolvable after `git rebase --continue` completed. Rebase state is defined by Git's worktree-specific state directories; checking those directories prevents a completed conflicting rebase from receiving a spurious second `--continue` and being reported as a failed push.
+
+FNXC:MergePush 2026-07-22-21:20:
+Resolved via `git rev-parse --git-path rebase-merge|rebase-apply` (worktree-specific, so it is correct for the linked clean-room worktree, not just the main root). Executed with the package-standard async exec + timeout rather than `execSync` since every caller awaits inside an async merge/finalize flow. Detection is fail-safe: any error (spawn failure, timeout) is swallowed to `false` — callers treat "no rebase in progress" as the safe default, skipping `--continue`/`--abort` cleanup rather than risking a spurious continue on an indeterminate state.
 */
 export async function isRebaseInProgress(rootDir: string): Promise<boolean> {
   try {
