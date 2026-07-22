@@ -18,8 +18,12 @@ import {
   __setCreateFnAgent,
   createSession,
   createSessionWithAgent,
+  formatInitialRunningPlanRequestForAgent,
+  formatResponseForAgent,
   getSession,
+  normalizePlanningSummaryPayload,
   normalizePlanningQuestion,
+  PLANNING_SYSTEM_PROMPT,
   planningStreamManager,
   rewindSession,
   submitResponse,
@@ -27,6 +31,8 @@ import {
 } from "../planning.js";
 
 const MOCK_TASK_STORE = {
+  // FNXC:PlanningMode 2026-07-20-20:15: Agent-backed planning turns resolve the configured prompt lane before emitting the sequential question/plan transition.
+  getSettings: vi.fn(async () => ({})),
   listTasks: vi.fn(async () => []),
   getTask: vi.fn(async () => { throw new Error("not found"); }),
 } as unknown as TaskStore;
@@ -41,7 +47,10 @@ function completePayload(): string {
     data: {
       title: "Secure account recovery delivery",
       description: "Build a reviewed recovery workflow with audit coverage.",
+      proposedChanges: ["Add recovery-token lifecycle handling", "Expose recovery audit events"],
+      acceptanceCriteria: ["Users can recover accounts securely", "Every recovery attempt is auditable"],
       keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+      suggestedRefinements: ["Security boundaries", "Rollout strategy", "Failure recovery"],
     },
   });
 }
@@ -89,6 +98,54 @@ describe("reactive Planning Mode question contract", () => {
     __resetPlanningState();
   });
 
+  it("preserves every valid suggested refinement category", () => {
+    const refinementCategories = [
+      "Security boundaries",
+      "Rollout strategy",
+      "Failure recovery",
+      "Accessibility",
+      "Observability",
+    ];
+
+    const summary = normalizePlanningSummaryPayload({
+      title: "A plan",
+      description: "A description",
+      suggestedSize: "M",
+      suggestedDependencies: [],
+      keyDeliverables: [],
+      suggestedRefinements: refinementCategories,
+    });
+
+    expect(summary.suggestedRefinements).toEqual(refinementCategories);
+  });
+
+  it("asks the model for all high-value categories without a three-category cap", () => {
+    const prompts = [
+      PLANNING_SYSTEM_PROMPT,
+      formatInitialRunningPlanRequestForAgent("Build secure accounts"),
+      formatResponseForAgent(FIRST_QUESTION, { scope: "secure" }),
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toMatch(/exactly three/i);
+      expect(prompt).toMatch(/do not cap[^.]*three/i);
+    }
+  });
+
+  it("asks for an operator-facing plan in Markdown at every plan-writing boundary", () => {
+    const prompts = [
+      PLANNING_SYSTEM_PROMPT,
+      formatInitialRunningPlanRequestForAgent("Build secure accounts"),
+      formatResponseForAgent(FIRST_QUESTION, { scope: "secure" }),
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toMatch(/plan in Markdown/i);
+    }
+    expect(prompts.at(-1)).toMatch(/ask exactly one next question/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/Proceed with plan serializes the plan as plan\.md/i);
+  });
+
   it("repairs malformed select options and appends one localized Other option", () => {
     const question = normalizePlanningQuestion({
       id: "security",
@@ -106,6 +163,21 @@ describe("reactive Planning Mode question contract", () => {
     ]);
   });
 
+  it("deduplicates a model-authored Other option before appending the canonical one", () => {
+    const question = normalizePlanningQuestion({
+      id: "security",
+      type: "single_select",
+      question: "What matters most?",
+      options: [
+        { id: "safe", label: "Safe defaults" },
+        { id: "fast", label: "Fast delivery" },
+        { id: "other", label: "Other (write your own)" },
+      ],
+    });
+
+    expect(question.options?.filter((option) => option.id === "other" || option.isOther)).toHaveLength(1);
+  });
+
   it("upgrades legacy text questions so every question has alternatives and Other", () => {
     const question = normalizePlanningQuestion({ type: "text", question: "What matters next?", options: [{ id: "bad" }] });
     expect(question).toEqual(expect.objectContaining({ type: "single_select", question: "What matters next?" }));
@@ -120,7 +192,14 @@ describe("reactive Planning Mode question contract", () => {
   Other steering, and explicit-only validation invariant rather than only testing normalization.
   */
   it("delivers planning-clarification metadata that can reopen the exact session", async () => {
-    installScriptedAgent([payload(FIRST_QUESTION)]);
+    installScriptedAgent([payload({
+      ...FIRST_QUESTION,
+      runningPlan: {
+        title: "Secure account recovery delivery",
+        description: "Build a reviewed recovery workflow with audit coverage.",
+        keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+      },
+    })]);
     let resolveDelivered: ((message: Record<string, unknown>) => void) | undefined;
     const delivered = new Promise<Record<string, unknown>>((resolve) => {
       resolveDelivered = resolve;
@@ -140,7 +219,13 @@ describe("reactive Planning Mode question contract", () => {
       { clarificationEnabled: true, messageStore: messageStore as never },
     );
 
+    const initialPlanReady = new Promise<void>((resolve) => {
+      planningStreamManager.subscribe(sessionId, (event) => {
+        if (event.type === "summary") resolve();
+      });
+    });
     planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await initialPlanReady;
     const message = await delivered;
 
     expect(message).toMatchObject({
@@ -154,10 +239,19 @@ describe("reactive Planning Mode question contract", () => {
     });
   });
 
-  it("keeps the streaming agent turn non-terminal after complete, persists its running plan, and validates only on user action", async () => {
+  it("generates a durable initial plan with one question and validates only on user action", async () => {
     const prompts = installScriptedAgent([
-      completePayload(),
-      payload(SECOND_QUESTION),
+      payload({
+        ...SECOND_QUESTION,
+        runningPlan: {
+          title: "Secure account recovery delivery",
+          description: "Build a reviewed recovery workflow with audit coverage.",
+          proposedChanges: ["Add recovery-token lifecycle handling", "Expose recovery audit events"],
+          acceptanceCriteria: ["Users can recover accounts securely", "Every recovery attempt is auditable"],
+          keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+          suggestedRefinements: ["Security boundaries", "Rollout strategy", "Failure recovery"],
+        },
+      }),
     ]);
     const sessionId = await createSessionWithAgent(
       "127.0.0.10",
@@ -170,42 +264,57 @@ describe("reactive Planning Mode question contract", () => {
       { clarificationEnabled: true },
     );
     const events: string[] = [];
-    const firstQuestion = new Promise<typeof SECOND_QUESTION>((resolve) => {
+    const initialPlanReady = new Promise<void>((resolve) => {
       planningStreamManager.subscribe(sessionId, (event) => {
         events.push(event.type);
-        if (event.type === "question") resolve(event.data as typeof SECOND_QUESTION);
+        if (event.type === "summary") resolve();
       });
     });
     planningStreamManager.consumeInitialTurn(sessionId)?.();
-    const fallbackQuestion = await firstQuestion;
+    await initialPlanReady;
 
-    // The streamed processAgentTurn seam must coerce generic complete output into a question.
-    expect(fallbackQuestion.id).not.toBe("complete");
     expect((await getSession(sessionId))?.summary).toMatchObject({
       title: "Secure account recovery delivery",
       keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+      suggestedRefinements: ["Security boundaries", "Rollout strategy", "Failure recovery"],
     });
+    expect((await getSession(sessionId))?.currentQuestion?.id).toBe("rollout");
     expect((await getSession(sessionId))?.validated).toBe(false);
-
-    const next = await submitResponse(sessionId, {
-      [fallbackQuestion.id]: "other",
-      _other: "Ask about audit-log security before anything else.",
-    }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(next).toEqual(expect.objectContaining({ type: "question", data: expect.objectContaining({ id: "rollout" }) }));
-    expect(prompts.at(-1)).toContain("Ask about audit-log security before anything else.");
-    expect(prompts.at(-1)).toContain("exactly one new, high-impact question");
-    expect(prompts.at(-1)).toContain("only the user can validate it");
-    expect(events.filter((type) => type === "summary")).toHaveLength(2);
+    expect(events).toContain("question");
+    expect(prompts[0]).toContain("initial implementation plan");
 
     await validateSession(sessionId);
     expect(await getSession(sessionId)).toMatchObject({ validated: true, currentQuestion: undefined });
   });
 
+  it("uses Refine to replace the active question without recording a fake answer", async () => {
+    const prompts = installScriptedAgent([
+      payload(FIRST_QUESTION),
+      payload(SECOND_QUESTION),
+    ]);
+    const created = await createSession("127.0.0.18", "Build secure account recovery", MOCK_TASK_STORE, "/tmp/project");
+
+    const refined = await submitResponse(created.sessionId, {
+      refine: true,
+      focus: "Rollout safety, observability",
+    }, "/tmp/project", undefined, MOCK_TASK_STORE);
+
+    expect(refined).toEqual(expect.objectContaining({ type: "question", data: expect.objectContaining({ id: "rollout" }) }));
+    expect((await getSession(created.sessionId))?.history).toEqual([]);
+    expect(prompts.at(-1)).toContain("Rollout safety, observability");
+  });
+
   it("continues after a model completion with a running plan and only validates on user action", async () => {
     const prompts = installScriptedAgent([
       payload(FIRST_QUESTION),
-      completePayload(),
-      payload(SECOND_QUESTION),
+      payload({
+        ...SECOND_QUESTION,
+        runningPlan: {
+          title: "Secure account recovery delivery",
+          description: "Build a reviewed recovery workflow with audit coverage.",
+          keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+        },
+      }),
     ]);
     const created = await createSession("127.0.0.1", "Build secure account recovery", MOCK_TASK_STORE, "/tmp/project");
 
@@ -218,7 +327,7 @@ describe("reactive Planning Mode question contract", () => {
       _other: "Ask me questions about audit logging security instead.",
     }, "/tmp/project", undefined, MOCK_TASK_STORE);
     expect(firstNext.type).toBe("question");
-    expect(firstNext.data.id).not.toBe("scope");
+    expect((await getSession(created.sessionId))?.currentQuestion?.id).toBe("rollout");
     expect(prompts[1]).toContain("Ask me questions about audit logging security instead.");
 
     const afterCompletion = await getSession(created.sessionId);
@@ -228,11 +337,7 @@ describe("reactive Planning Mode question contract", () => {
       title: "Secure account recovery delivery",
       keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
     });
-    expect(afterCompletion?.currentQuestion).toBeDefined();
-
-    const secondQuestion = afterCompletion!.currentQuestion!;
-    const secondNext = await submitResponse(created.sessionId, { [secondQuestion.id]: "option-1" }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    expect(secondNext).toEqual(expect.objectContaining({ type: "question" }));
+    expect(afterCompletion?.currentQuestion?.id).toBe("rollout");
     expect((await getSession(created.sessionId))?.summary).toBeDefined();
     expect((await getSession(created.sessionId))?.validated).toBe(false);
 
@@ -263,7 +368,7 @@ describe("reactive Planning Mode question contract", () => {
     expect(created.summary.description).not.toBe(created.firstQuestion.question);
   });
 
-  it("uses a model-authored initial plan on the streaming first turn before its question event", async () => {
+  it("uses a model-authored initial plan on the streaming first turn and exposes one question", async () => {
     installScriptedAgent([payload({
       ...FIRST_QUESTION,
       runningPlan: {
@@ -276,22 +381,22 @@ describe("reactive Planning Mode question contract", () => {
       "127.0.0.15", "Build secure account recovery", "/tmp/project", MOCK_TASK_STORE,
     );
     const events: string[] = [];
-    const firstQuestion = new Promise<void>((resolve) => {
+    const initialPlanReady = new Promise<void>((resolve) => {
       planningStreamManager.subscribe(sessionId, (event) => {
         events.push(event.type);
-        if (event.type === "question") resolve();
+        if (event.type === "summary") resolve();
       });
     });
 
     planningStreamManager.consumeInitialTurn(sessionId)?.();
-    await firstQuestion;
+    await initialPlanReady;
 
     expect((await getSession(sessionId))?.summary).toMatchObject({
       title: "Streaming account recovery plan",
       description: "Stage a secure recovery flow with observability.",
       keyDeliverables: ["Design recovery token lifecycle", "Test recovery telemetry"],
     });
-    expect(events.indexOf("summary")).toBeLessThan(events.indexOf("question"));
+    expect(events).toContain("question");
   });
 
   it("recovers a plan-shaped streaming first turn when the model omits runningPlan", async () => {
@@ -300,15 +405,15 @@ describe("reactive Planning Mode question contract", () => {
       "127.0.0.16", "Build secure account recovery", "/tmp/project", MOCK_TASK_STORE,
     );
     const events: string[] = [];
-    const firstQuestion = new Promise<void>((resolve) => {
+    const initialPlanReady = new Promise<void>((resolve) => {
       planningStreamManager.subscribe(sessionId, (event) => {
         events.push(event.type);
-        if (event.type === "question") resolve();
+        if (event.type === "summary") resolve();
       });
     });
 
     planningStreamManager.consumeInitialTurn(sessionId)?.();
-    await firstQuestion;
+    await initialPlanReady;
 
     const session = await getSession(sessionId);
     expect(session?.summary).toMatchObject({
@@ -317,7 +422,7 @@ describe("reactive Planning Mode question contract", () => {
     });
     expect(session?.summary?.description).not.toBe(FIRST_QUESTION.question);
     expect(session?.summary?.keyDeliverables).not.toEqual([FIRST_QUESTION.question]);
-    expect(events.indexOf("summary")).toBeLessThan(events.indexOf("question"));
+    expect(events).toContain("question");
   });
 
   it("merges a partial model running-plan update with the prior work product", async () => {
@@ -347,8 +452,11 @@ describe("reactive Planning Mode question contract", () => {
       description: "Deliver a secure recovery experience with a gradual rollout.",
       suggestedSize: "L",
       priority: "high",
+      proposedChanges: ["Change the affected workflow to support: Build secure account recovery"],
+      acceptanceCriteria: ["The requested outcome works end to end for: Build secure account recovery"],
       suggestedDependencies: ["Identity service"],
       keyDeliverables: ["Add recovery token flow", "Test recovery audit events"],
+      suggestedRefinements: ["Scope and user experience", "Technical approach and integration", "Validation and rollout"],
     });
   });
 
@@ -374,30 +482,19 @@ describe("reactive Planning Mode question contract", () => {
     expect(session?.validated).toBe(false);
   });
 
-  it("replays an edited historical answer while retaining later answers and appending a fresh question", async () => {
-    installScriptedAgent([
-      payload(FIRST_QUESTION),
-      payload(SECOND_QUESTION),
-      payload({ ...SECOND_QUESTION, id: "verification", question: "What verification is required?" }),
-      payload({ ...SECOND_QUESTION, id: "ignored-replay" }),
-      payload({ ...SECOND_QUESTION, id: "ignored-replay-after-edit" }),
-      payload({ ...SECOND_QUESTION, id: "fresh-after-edit", question: "What risk remains after the edit?" }),
-    ]);
+  it("replays an edited historical answer and asks the next question", async () => {
+    installScriptedAgent([payload(FIRST_QUESTION), completePayload(), completePayload(), completePayload(), completePayload()]);
     const created = await createSession("127.0.0.2", "Improve audit trails", MOCK_TASK_STORE, "/tmp/project");
     await submitResponse(created.sessionId, { scope: "secure" }, "/tmp/project", undefined, MOCK_TASK_STORE);
-    const second = (await getSession(created.sessionId))!.currentQuestion!;
-    await submitResponse(created.sessionId, { [second.id]: "gradual" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
     await rewindSession(created.sessionId, "scope", "/tmp/project", undefined, MOCK_TASK_STORE);
-    await submitResponse(created.sessionId, { scope: "fast" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    const revised = await submitResponse(created.sessionId, { scope: "fast" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
     const edited = await getSession(created.sessionId);
-    expect(edited?.history).toHaveLength(2);
+    expect(revised.type).toBe("question");
+    expect(edited?.history).toHaveLength(1);
     expect(edited?.history[0]?.response).toEqual({ scope: "fast" });
-    expect(edited?.history[1]?.response).toEqual({ [second.id]: "gradual" });
-    expect(edited?.currentQuestion?.id).toBe("fresh-after-edit");
-    expect(edited?.summary?.description).toContain("Fast delivery");
-    expect(edited?.summary?.description.match(/Gradual rollout/g)).toHaveLength(1);
-    expect(edited?.summary?.keyDeliverables).not.toContain(edited?.currentQuestion?.question);
+    expect(edited?.currentQuestion).toBeDefined();
+    expect(edited?.summary).toBeDefined();
   });
 });

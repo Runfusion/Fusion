@@ -114,6 +114,20 @@ export function getActiveRuntimeMs(
   return null;
 }
 
+/** FNXC:TaskTiming 2026-08-01-10:00: rendered task totals include planning AI
+ * segments while getActiveRuntimeMs intentionally remains execution-only. */
+export function getTotalAgentActiveMs(
+  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
+  nowMs: number,
+): number | null {
+  const execution = getActiveRuntimeMs(task, nowMs) ?? 0;
+  const planningStart = parseTimestampToMs(task.planningStartedAt);
+  const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
+  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (task.column === "in-progress" && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
+    ? execution + planning
+    : null;
+}
+
 export function getWallClockSinceFirstExecutionMs(
   firstExecutionAt: string | undefined,
   executionCompletedAt: string | undefined,

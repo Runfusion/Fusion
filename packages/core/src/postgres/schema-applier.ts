@@ -37,11 +37,12 @@ FNXC:PostgresBigintCounters 2026-07-19-12:00:
 SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
 Per-migration identities above stay fixed; only this latest-version marker moves.
 
-FNXC:MissionTaskPrefix 2026-07-19-12:55:
-Advances to 0029 for the mission task-prefix override after main claimed 0026/0027/0028.
-Per-migration identities above stay fixed; only this latest-version marker moves.
+FNXC:MigrationStatusRuntimeRead 2026-07-20:
+SCHEMA_BASELINE_VERSION advances to 0031 for the per-mission task prefix.
+Version 0030 provides project-scoped runtime reads of
+the SQLite cutover ledger.
 */
-export const SCHEMA_BASELINE_VERSION = "0029";
+export const SCHEMA_BASELINE_VERSION = "0031";
 /** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -128,6 +129,12 @@ export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
 export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
 /** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
 export const BIGINT_COUNTERS_VERSION = "0026";
+/** FNXC:TaskTiming 2026-08-01-10:00: existing clusters need planning-session timing columns. */
+export const PLANNING_ACTIVE_TIMING_VERSION = "0029";
+/** Dashboard health needs project-scoped, read-only runtime access to the SQLite cutover ledger. */
+export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
+/** FNXC:MissionTaskPrefix 2026-07-21-18:55: upgraded projects need the optional mission prefix before mission reads and triage task creation use it. */
+export const MISSION_TASK_PREFIX_VERSION = "0031";
 
 /**
  * Thrown when the database was migrated by a NEWER Fusion binary than the one now
@@ -181,9 +188,6 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
     throw new StaleBinarySchemaError(highestRaw, SCHEMA_BASELINE_VERSION);
   }
 }
-
-/** FNXC:MissionTaskPrefix 2026-07-20-12:00: upgraded projects need the optional mission prefix before mission reads and triage task creation use it. Identity 0029 after main claimed 0026/0027/0028. */
-export const MISSION_TASK_PREFIX_VERSION = "0029";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -319,9 +323,11 @@ const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH = join(
   MIGRATIONS_DIR,
   "0027_workflow_ir_pin_and_legacy_adoption.sql",
 );
+
+const PLANNING_ACTIVE_TIMING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0029_planning_active_timing.sql");
 const TASK_DECLARED_SYMBOLS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0028_task_declared_symbols.sql");
-/** FNXC:MissionTaskPrefix 2026-07-20-12:00: renumbered 0028→0029 after main claimed 0028. */
-const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0029_mission_task_prefix.sql");
+const SQLITE_MIGRATION_RUNTIME_READ_PATH = join(MIGRATIONS_DIR, "0030_sqlite_migration_runtime_read.sql");
+const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0031_mission_task_prefix.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -418,6 +424,8 @@ export async function applySchemaBaseline(
     const symbolLocksAlreadyApplied = applied.includes(SYMBOL_LOCKS_SCHEMA_VERSION);
     const bigintCountersAlreadyApplied = applied.includes(BIGINT_COUNTERS_VERSION);
     const workflowIrPinAndLegacyAdoptionAlreadyApplied = applied.includes(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION);
+    const planningActiveTimingAlreadyApplied = applied.includes(PLANNING_ACTIVE_TIMING_VERSION);
+    const sqliteMigrationRuntimeReadAlreadyApplied = applied.includes(SQLITE_MIGRATION_RUNTIME_READ_VERSION);
     const missionTaskPrefixAlreadyApplied = applied.includes(MISSION_TASK_PREFIX_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -840,12 +848,20 @@ export async function applySchemaBaseline(
     baseline so databases that already recorded 0000 gain the IR-pin and adoption columns;
     without the forward migration those clusters crash on the first slim TaskStore SELECT.
     */
+    if (!planningActiveTimingAlreadyApplied) {
+      const migrationSql = await readFile(PLANNING_ACTIVE_TIMING_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PLANNING_ACTIVE_TIMING_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     if (!workflowIrPinAndLegacyAdoptionAlreadyApplied) {
       const migrationSql = await readFile(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+
     if (!applied.includes(TASK_DECLARED_SYMBOLS_VERSION)) {
       const migrationSql = await readFile(TASK_DECLARED_SYMBOLS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
@@ -853,16 +869,22 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
+    if (!sqliteMigrationRuntimeReadAlreadyApplied) {
+      const migrationSql = await readFile(SQLITE_MIGRATION_RUNTIME_READ_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SQLITE_MIGRATION_RUNTIME_READ_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     /*
-    FNXC:MissionTaskPrefix 2026-07-20-12:00:
-    Apply missions.task_prefix independently so databases that already recorded 0028 gain the optional mission namespace before AsyncMissionStore reads or triage uses it (PR #1930 / #2334). Renumbered to 0029 after main claimed 0028.
+    FNXC:MissionTaskPrefix 2026-07-21-18:55:
+    Apply missions.task_prefix independently so databases that already recorded
+    0030 gain the optional mission namespace before mission reads or task minting.
     */
     if (!missionTaskPrefixAlreadyApplied) {
       const migrationSql = await readFile(MISSION_TASK_PREFIX_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.execute(
-        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_TASK_PREFIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
-      );
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_TASK_PREFIX_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

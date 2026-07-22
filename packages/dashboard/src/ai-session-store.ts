@@ -15,6 +15,10 @@ import { THINKING_LEVELS, type AsyncDataLayer, type ThinkingLevel } from "@fusio
 import {
   upsertAiSession,
   getAiSession,
+  claimPlanningSessionTaskCreation,
+  finalizePlanningSessionTaskCreation,
+  reconcilePlanningSessionTaskCreation,
+  releasePlanningSessionTaskCreation,
   listActiveAiSessions,
   listAllAiSessions,
   listRecoverableAiSessions,
@@ -145,6 +149,35 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     const row = await upsertAiSession(this.dbAsync, session as import("@fusion/core").AsyncAiSessionRow);
     this.emit("ai_session:updated", toSummary(row as AiSessionRow, row.updatedAt));
     return;
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-20-20:15:
+  Planning creation claims must use one conditional database update, not a read then an
+  upsert, so competing dashboard processes cannot both become the creator.
+  */
+  async claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string): Promise<AiSessionRow | null> {
+    const row = await claimPlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, startedAt) as AiSessionRow | null;
+    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    return row;
+  }
+
+  async finalizePlanningTaskCreation(sessionId: string, ownerToken: string, taskId: string): Promise<AiSessionRow | null> {
+    const row = await finalizePlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, taskId) as AiSessionRow | null;
+    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    return row;
+  }
+
+  async reconcilePlanningTaskCreation(sessionId: string, taskId: string): Promise<AiSessionRow | null> {
+    const row = await reconcilePlanningSessionTaskCreation(this.dbAsync, sessionId, taskId) as AiSessionRow | null;
+    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    return row;
+  }
+
+  async releasePlanningTaskCreation(sessionId: string, ownerToken: string): Promise<AiSessionRow | null> {
+    const row = await releasePlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken) as AiSessionRow | null;
+    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    return row;
   }
 
   /**

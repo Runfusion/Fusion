@@ -70,10 +70,11 @@ import {
   SQLITE_SCHEMA_PARITY_VERSION,
   SYMBOL_LOCKS_SCHEMA_VERSION,
   BIGINT_COUNTERS_VERSION,
-  MISSION_TASK_PREFIX_VERSION,
-
   TASK_VERIFICATION_REQUEST_VERSION,
   TASK_DECLARED_SYMBOLS_VERSION,
+  PLANNING_ACTIVE_TIMING_VERSION,
+  SQLITE_MIGRATION_RUNTIME_READ_VERSION,
+  MISSION_TASK_PREFIX_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -205,19 +206,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(applierSource).toMatch(/applied\.includes\(\s*BIGINT_COUNTERS_VERSION\s*\)/);
   });
 
-  /*
-  FNXC:MissionTaskPrefix 2026-07-20-12:00:
-  0029 is the mission task-prefix migration after main claimed 0026/0027/0028.
-  */
-  it("registers mission task prefix at migration version 0029", () => {
-    expect(MISSION_TASK_PREFIX_VERSION).toBe("0029");
+  it("registers mission task prefix at migration version 0031", () => {
+    expect(MISSION_TASK_PREFIX_VERSION).toBe("0031");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(MISSION_TASK_PREFIX_VERSION));
     const applierSource = readFileSync(
       fileURLToPath(new URL("../../postgres/schema-applier.ts", import.meta.url)),
       "utf8",
     );
-    expect(applierSource).toContain("0029_mission_task_prefix.sql");
-    expect(applierSource).toContain("MISSION_TASK_PREFIX_VERSION");
+    expect(applierSource).toContain("0031_mission_task_prefix.sql");
     expect(applierSource).toMatch(/applied\.includes\(\s*MISSION_TASK_PREFIX_VERSION\s*\)/);
   });
 
@@ -859,6 +855,26 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect(await getAppliedMigrations(ctx.db)).toContain(TASK_DECLARED_SYMBOLS_VERSION);
   });
 
+  it("upgrades a pre-0031 database with missions.task_prefix", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0031';
+      ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'missions'
+        AND column_name = 'task_prefix'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns).toEqual([{ column_name: "task_prefix" }]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(MISSION_TASK_PREFIX_VERSION);
+  });
+
   it("refuses to open a database migrated by a newer binary (stale-binary guard)", () => {
     const future = String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0");
     expect(() => assertBinaryNotOlderThanDatabase([SCHEMA_BASELINE_VERSION, future]))
@@ -936,30 +952,6 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
     expect(await getAppliedMigrations(ctx.db)).toContain(SYMBOL_LOCKS_SCHEMA_VERSION);
     await assertSymbolLocksOwnershipContract(ctx);
-  });
-
-  /*
-  FNXC:MissionTaskPrefix 2026-07-19-12:53:
-  A target that already recorded 0000–0028 must still receive missions.task_prefix before mission reads and triage task creation use the optional override (PR #1930 / #2334).
-
-  FNXC:MissionTaskPrefix 2026-07-19-13:05:
-  Delete bookkeeping version 0029 so missionTaskPrefixAlreadyApplied is false and applySchemaBaseline re-runs 0029_mission_task_prefix.sql. Leaving 0029 recorded would skip the migration and leave the dropped column missing (greptile P1 on #2347).
-  */
-  it("upgrades a pre-0029 database with missions.task_prefix", async () => {
-    ctx = await setupFreshDb();
-    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
-    await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0029';
-      ALTER TABLE project.missions DROP COLUMN IF EXISTS task_prefix;
-    `));
-
-    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
-    const columns = (await ctx.db.execute(sql`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_schema = 'project' AND table_name = 'missions' AND column_name = 'task_prefix'
-    `)) as unknown as Array<{ column_name: string }>;
-    expect(columns).toEqual([{ column_name: "task_prefix" }]);
-    expect(await getAppliedMigrations(ctx.db)).toContain(MISSION_TASK_PREFIX_VERSION);
   });
 
   /*
@@ -1618,6 +1610,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
       TASK_DECLARED_SYMBOLS_VERSION,
+      PLANNING_ACTIVE_TIMING_VERSION,
+      SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1673,6 +1667,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
       TASK_DECLARED_SYMBOLS_VERSION,
+      PLANNING_ACTIVE_TIMING_VERSION,
+      SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1861,6 +1857,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
       TASK_DECLARED_SYMBOLS_VERSION,
+      PLANNING_ACTIVE_TIMING_VERSION,
+      SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1930,6 +1928,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
       TASK_DECLARED_SYMBOLS_VERSION,
+      PLANNING_ACTIVE_TIMING_VERSION,
+      SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });
@@ -1999,6 +1999,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       BIGINT_COUNTERS_VERSION,
       WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
       TASK_DECLARED_SYMBOLS_VERSION,
+      PLANNING_ACTIVE_TIMING_VERSION,
+      SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       MISSION_TASK_PREFIX_VERSION,
     ]);
   });

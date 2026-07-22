@@ -94,7 +94,11 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
       id: "parse",
       kind: "parse-steps",
       column: "in-progress",
-      config: { artifact: "PROMPT.md", parser: "step-headings" },
+      config: {
+        artifact: "PROMPT.md",
+        parser: "step-headings",
+        requireStepsUnlessNoCommits: true,
+      },
     },
     // KTD-3: runtime-expanding per-step region. Sequential + shared isolation is
     // the default baseline physics (one step at a time in the task's worktree).
@@ -194,11 +198,12 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "plan-review", to: "plan-replan", condition: "failure" },
     { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
     { from: "parse", to: "steps", condition: "success" },
-    // parse-steps no-steps defaults to success; route it explicitly to the foreach
-    // (zero steps → foreach no-ops through its success edge, KTD-8/R8).
+    // Only explicitly authorized no-commit tasks return no-steps; they may no-op
+    // through foreach. Missing implementation steps fail before execution/review.
     { from: "parse", to: "steps", condition: "outcome:no-steps" },
     { from: "parse", to: "end", condition: "failure" },
     { from: "parse", to: "end", condition: "outcome:parse-error" },
+    { from: "parse", to: "end", condition: "outcome:missing-implementation-steps" },
     // Implementation complete → pre-merge browser-verification optional-group →
     // review. Both the normal foreach-success path and the rework-exhausted
     // manual-release path flow through the group so an enabled task runs the step

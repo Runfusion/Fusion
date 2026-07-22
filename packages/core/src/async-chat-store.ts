@@ -19,6 +19,7 @@
 import { and, asc, desc, eq, gt, ilike, inArray, isNull, lte, ne, or as orFn, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { sanitizeTextValue, sanitizeJsonbValue } from "./postgres/nul-sanitize.js";
 import type {
   ChatAttachment,
   ChatInFlightGenerationState,
@@ -190,21 +191,37 @@ export async function addChatMessage(
   handle: QueryHandle,
   message: ChatMessage,
 ): Promise<ChatMessage> {
+  // FNXC:PostgresMigrationNulSanitize 2026-07-20: agent/tool output persisted
+  // here can contain a raw NUL byte (e.g. piped-through Windows CLI dumps),
+  // which Postgres text/jsonb columns reject outright. Sanitize before
+  // insert instead of letting the write throw mid-conversation, and return
+  // the sanitized value so the in-memory result matches what was persisted
+  // (the original unsanitized `message` object must not be handed back).
+  const sanitizedAttachments = message.attachments === undefined
+    ? undefined
+    : sanitizeJsonbValue(message.attachments);
+  const sanitized: ChatMessage = {
+    ...message,
+    content: sanitizeTextValue(message.content),
+    thinkingOutput: sanitizeTextValue(message.thinkingOutput),
+    metadata: sanitizeJsonbValue(message.metadata),
+    attachments: sanitizedAttachments,
+  };
   await handle.insert(schema.project.chatMessages).values({
-    id: message.id,
-    sessionId: message.sessionId,
-    role: message.role,
-    content: message.content,
-    thinkingOutput: message.thinkingOutput,
-    metadata: message.metadata,
-    attachments: message.attachments ?? null,
-    createdAt: message.createdAt,
+    id: sanitized.id,
+    sessionId: sanitized.sessionId,
+    role: sanitized.role,
+    content: sanitized.content,
+    thinkingOutput: sanitized.thinkingOutput,
+    metadata: sanitized.metadata,
+    attachments: sanitizedAttachments ?? null,
+    createdAt: sanitized.createdAt,
   });
   await handle
     .update(schema.project.chatSessions)
-    .set({ updatedAt: message.createdAt })
-    .where(eq(schema.project.chatSessions.id, message.sessionId));
-  return message;
+    .set({ updatedAt: sanitized.createdAt })
+    .where(eq(schema.project.chatSessions.id, sanitized.sessionId));
+  return sanitized;
 }
 
 /**
@@ -432,23 +449,36 @@ export async function addChatRoomMessage(
   handle: QueryHandle,
   message: ChatRoomMessage,
 ): Promise<ChatRoomMessage> {
+  // FNXC:PostgresMigrationNulSanitize 2026-07-20: same NUL-byte hazard as
+  // addChatMessage above — sanitize before insert, and return the sanitized
+  // value so the in-memory result matches what was persisted.
+  const sanitizedAttachments = message.attachments === undefined
+    ? undefined
+    : sanitizeJsonbValue(message.attachments);
+  const sanitized: ChatRoomMessage = {
+    ...message,
+    content: sanitizeTextValue(message.content),
+    thinkingOutput: sanitizeTextValue(message.thinkingOutput),
+    metadata: sanitizeJsonbValue(message.metadata),
+    attachments: sanitizedAttachments,
+  };
   await handle.insert(schema.project.chatRoomMessages).values({
-    id: message.id,
-    roomId: message.roomId,
-    role: message.role,
-    content: message.content,
-    thinkingOutput: message.thinkingOutput,
-    metadata: message.metadata,
-    attachments: message.attachments ?? null,
-    senderAgentId: message.senderAgentId,
-    mentions: message.mentions,
-    createdAt: message.createdAt,
+    id: sanitized.id,
+    roomId: sanitized.roomId,
+    role: sanitized.role,
+    content: sanitized.content,
+    thinkingOutput: sanitized.thinkingOutput,
+    metadata: sanitized.metadata,
+    attachments: sanitizedAttachments ?? null,
+    senderAgentId: sanitized.senderAgentId,
+    mentions: sanitized.mentions,
+    createdAt: sanitized.createdAt,
   });
   await handle
     .update(schema.project.chatRooms)
-    .set({ updatedAt: message.createdAt })
-    .where(eq(schema.project.chatRooms.id, message.roomId));
-  return message;
+    .set({ updatedAt: sanitized.createdAt })
+    .where(eq(schema.project.chatRooms.id, sanitized.roomId));
+  return sanitized;
 }
 
 /**

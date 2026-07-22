@@ -7,6 +7,7 @@ import "./OAuthReloginBanner.css";
 
 const DISMISS_STORAGE_KEY = "fusion:oauth-relogin-dismissed";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
+const GITHUB_COPILOT_PROVIDER_ID = "github-copilot";
 const ANTHROPIC_FALLBACK_PROVIDER_IDS = new Set(["anthropic-api-key"]);
 
 type ExpiredBannerProvider = { id: string; name: string };
@@ -69,17 +70,6 @@ export function OAuthReloginBanner({
       const nextExpiredProviders = getVisibleExpiredOAuthProvidersForGlobalBanner(providers);
 
       setExpiredProviders(nextExpiredProviders);
-      setDismissedProviderIds((currentDismissed) => {
-        const expiredProviderIds = new Set(nextExpiredProviders.map((provider) => provider.id));
-        const filteredDismissed = new Set(
-          Array.from(currentDismissed).filter((providerId) => expiredProviderIds.has(providerId)),
-        );
-        if (filteredDismissed.size === currentDismissed.size) {
-          return currentDismissed;
-        }
-        persistDismissedProviderIds(filteredDismissed);
-        return filteredDismissed;
-      });
     } catch {
       // Non-blocking banner; ignore transient status fetch failures.
     }
@@ -97,8 +87,30 @@ export function OAuthReloginBanner({
   useEffect(() => {
     const handleOAuthReloginSuccess = (event: Event) => {
       const { detail } = event as CustomEvent<{ providerId?: string }>;
-      if (detail?.providerId) {
-        setExpiredProviders((current) => current.filter((provider) => provider.id !== detail.providerId));
+      const providerId = detail?.providerId;
+      if (providerId) {
+        setExpiredProviders((current) => current.filter((provider) => provider.id !== providerId));
+        setDismissedProviderIds((currentDismissed) => {
+          /*
+          FNXC:ProviderAuth 2026-07-20-12:00:
+          FN-8446 — Polling a healthy status must never prune a browser's
+          dismissal preference. GitHub Copilot remains dismissed permanently
+          because its short-lived session can repeatedly trigger successful-login
+          events; other providers re-arm after an explicit successful re-login.
+          */
+          if (providerId === GITHUB_COPILOT_PROVIDER_ID) {
+            return currentDismissed;
+          }
+
+          if (!currentDismissed.has(providerId)) {
+            return currentDismissed;
+          }
+
+          const nextDismissed = new Set(currentDismissed);
+          nextDismissed.delete(providerId);
+          persistDismissedProviderIds(nextDismissed);
+          return nextDismissed;
+        });
       }
       void refreshAuthStatus();
     };

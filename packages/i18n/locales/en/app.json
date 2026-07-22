@@ -8020,7 +8020,7 @@
     },
     "tokenTotalsAria": "Task token totals",
     "tokenUsage": "Token Usage",
-    "totalExecutionTime": "Total execution time",
+    "totalExecutionTime": "Total active time",
     "totalTokens": "Total",
     "updateFailed": "Failed to update {{id}}: {{error}}",
     "updateSuccess": "Updated {{id}}",

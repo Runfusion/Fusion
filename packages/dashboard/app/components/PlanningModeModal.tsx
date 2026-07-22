@@ -1,7 +1,7 @@
 import "./PlanningModeModal.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useState, useCallback, useEffect, useRef, useMemo, type MouseEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, PlanningQuestion, PlanningSummary, TaskPriority, ThinkingLevel } from "@fusion/core";
@@ -9,6 +9,7 @@ import {
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,
   THINKING_LEVELS,
+  formatPlanningPlanMd,
   getErrorMessage,
 } from "@fusion/core";
 import {
@@ -54,7 +55,7 @@ import {
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { MailboxMessageContent } from "./MailboxMessageContent";
@@ -78,12 +79,44 @@ const PLANNING_SIDEBAR_MAX_WIDTH = 560;
 const PLANNING_SIDEBAR_STORAGE_KEY = "fusion:planning-sidebar-width";
 
 const MAX_PLANNING_AUTO_RETRIES = 3;
+const MAX_PLANNING_CREATE_CLAIM_RETRIES = 20;
+
+function isPlanningCreateClaimConflict(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "status" in error
+    && (error as { status?: unknown }).status === 409
+    && error instanceof Error
+    && error.message.includes("Planning task creation is already in progress");
+}
+
+async function createTaskAfterActiveClaim(createTask: () => Promise<Task>): Promise<Task> {
+  for (let retryCount = 0; ; retryCount += 1) {
+    try {
+      return await createTask();
+    } catch (error) {
+      if (!isPlanningCreateClaimConflict(error) || retryCount >= MAX_PLANNING_CREATE_CLAIM_RETRIES) throw error;
+      /*
+      FNXC:PlanningMode 2026-07-20-23:20:
+      A 409 create-claim response is cross-process coordination, not a failed user action. The
+      endpoint is idempotent by planning session, so keep the single Proceed action in its loading
+      state and retry until the active creator returns the one canonical task (or its lease expires).
+      The first retry is immediate for the common just-finished race; later retries are bounded.
+      */
+      if (retryCount > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(750 * retryCount, 2_000)));
+      }
+    }
+  }
+}
 
 interface PlanningModeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTaskCreated: (task: Task) => void;
   onTasksCreated: (tasks: Task[]) => void;
+  /** FNXC:PlanningMode 2026-07-20-23:20: Open the task produced by a completed planning session from the durable success handoff. */
+  onViewTask?: (task: Task) => void;
   tasks: Task[];
   initialPlan?: string;
   projectId?: string;
@@ -105,9 +138,15 @@ type ViewState =
   | { type: "initial" }
   | { type: "question"; session: PlanningSession }
   | { type: "summary"; session: PlanningSession; summary: PlanningSummary }
+  | { type: "plan_review"; session: PlanningSession; summary: PlanningSummary }
+  | { type: "creating_task"; session: PlanningSession; summary: PlanningSummary }
+  | { type: "create_retry"; session: PlanningSession; summary: PlanningSummary; errorMessage: string }
+  | { type: "task_created"; taskId: string; task?: Task }
   | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
   | { type: "loading" };
+
+type PlanningGenerationActivity = "initial_plan" | "plan_update" | "question";
 
 /**
  * FNXC:PlanningMode 2026-07-20-00:00:
@@ -187,10 +226,13 @@ function normalizePlanningSummary(summary: PlanningSummary): PlanningSummary {
     ...summary,
     title,
     description,
+    proposedChanges: normalizeStringArray(raw.proposedChanges),
+    acceptanceCriteria: normalizeStringArray(raw.acceptanceCriteria),
     suggestedSize: raw.suggestedSize === "S" || raw.suggestedSize === "M" || raw.suggestedSize === "L" ? raw.suggestedSize : "M",
     priority: normalizeTaskPriority(summary.priority),
     suggestedDependencies: normalizeStringArray(raw.suggestedDependencies),
     keyDeliverables: normalizeStringArray(raw.keyDeliverables),
+    suggestedRefinements: normalizeStringArray(raw.suggestedRefinements),
   };
 }
 
@@ -211,7 +253,10 @@ function normalizeQuestionOptions(question: PlanningQuestion): PlanningQuestion 
             option.id.trim().length > 0 &&
             typeof option.label === "string" &&
             option.label.trim().length > 0 &&
-            (option.description === undefined || typeof option.description === "string"),
+            (option.description === undefined || typeof option.description === "string") &&
+            option.isOther !== true &&
+            option.id !== "other" &&
+            option.id !== PLANNING_OTHER_OPTION_ID,
           ),
         )
         .map((option) => ({
@@ -321,7 +366,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, tasks, initialPlan: initialPlanProp, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal" }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal" }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
@@ -332,7 +377,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   FNXC:Planning 2026-07-15-00:00:
   FN-8003 keeps the started prompt separate from the editable composer so users can recover the original idea when an interview errors or drifts off track. The composer may be reset or reused, but this value belongs only to the active session.
   */
-  const [activePlanPrompt, setActivePlanPrompt] = useState("");
+  const [_activePlanPrompt, setActivePlanPrompt] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   const [, setResponseHistory] = useState<QuestionResponse[]>([]);
@@ -342,6 +387,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // FNXC:PlanningMode 2026-07-19-15:35: FN-8400 keeps the in-progress plan independent of the center-pane view so it remains visible while the next question is generating.
   const [runningSummary, setRunningSummary] = useState<PlanningSummary | null>(null);
   const runningSummaryRef = useRef<PlanningSummary | null>(null);
+  const [workspaceQuestion, setWorkspaceQuestion] = useState<PlanningQuestion | null>(null);
   const [branchMode, setBranchMode] = useState<"project-default" | "auto-new" | "existing" | "custom-new">("project-default");
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
@@ -366,12 +412,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   */
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const editingQuestionIdRef = useRef<string | null>(null);
-  const [isHistoryEditPending, setIsHistoryEditPending] = useState(false);
+  const [_isHistoryEditPending, setIsHistoryEditPending] = useState(false);
   const [isRenamingSession, setIsRenamingSession] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [loadedSessionTitle, setLoadedSessionTitle] = useState<string | null>(null);
   const [isRefiningSummary, setIsRefiningSummary] = useState(false);
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(null);
+  const [generationActivity, setGenerationActivity] = useState<PlanningGenerationActivity>("initial_plan");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // Align long-form planning composers with FN-5146's 640px chat convention so
@@ -393,8 +440,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [newSessionFocusSignal, setNewSessionFocusSignal] = useState(0);
   const modalRef = useRef<HTMLDivElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
+  const streamConnectionEpochRef = useRef(0);
   const currentSessionIdRef = useRef<string | null>(null);
   const viewRef = useRef<ViewState>({ type: "initial" });
+  /*
+  FNXC:PlanningMode 2026-07-20-23:52:
+  Prevent default on mobile pointer-down for keyboard-backed actions so the focused textarea
+  does not blur and resize the visual viewport before click. The action still starts from
+  click, after the gesture finishes, so replacing the control cannot retarget the trailing
+  touch click to navigation.
+  Keep a synchronous single-flight guard so rapid activation cannot start two sessions.
+  */
+  const startPlanningInFlightRef = useRef(false);
   /*
   FNXC:PlanningRetry 2026-07-15-00:00:
   FN-8332 permits automatic retry only for a generation this mounted Planning
@@ -415,6 +472,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   Refine Further is a single-flight completed-summary turn. Guard synchronously with a ref so duplicate click, touch, or keyboard activations cannot submit a second refine request or close the active stream with a generation-in-progress error before React renders the disabled state.
   */
   const refineSummaryInFlightRef = useRef(false);
+  // FNXC:PlanningMode 2026-07-20-19:10: Validate→create is one logical action. Guard it outside React state so rapid double activation cannot invoke the task-created handoff twice even when the server correctly returns the same idempotent task.
+  const validateCreateInFlightRef = useRef(false);
+  // FNXC:PlanningMode 2026-07-20-20:15: Reloaded created sessions are terminal handoffs, not SummaryView drafts that can create another task.
+  const restoredTaskHandoffRef = useRef<string | null>(null);
   const draftSessionIdRef = useRef<string | null>(null);
   /*
   FNXC:PlanningMode 2026-07-01-00:00:
@@ -422,6 +483,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   draftSessionIdRef is only populated after createPlanningDraft resolves, so it cannot gate concurrent creates while a request is in flight. This synchronous sentinel flips true before the await and gates all subsequent debounce fires, collapsing the create path to exactly one call. Cleared on failure so a later keystroke can retry.
   */
   const draftCreateInFlightRef = useRef(false);
+  const draftCreatePromiseRef = useRef<Promise<{ sessionId: string; title: string }> | null>(null);
   const draftDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks resumeSessionId values the user has explicitly dismissed (via "New
   // Session"). Without this, the resume effect re-fires on every callback
@@ -481,6 +543,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   Session navigation is an explicit header action so a transient turn cannot replace the three-pane workspace.
   */
   const [showSessionList, setShowSessionList] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -493,6 +556,29 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   // Sidebar list state
   const [planningSessions, setPlanningSessions] = useState<AiSessionSummary[]>(() => dedupeSessionsById(initialSessions ?? []));
+  const historyCloseRef = useRef<HTMLButtonElement>(null);
+  const historyTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeHistory = useCallback(() => {
+    setIsHistoryOpen(false);
+    requestAnimationFrame(() => historyTriggerRef.current?.focus());
+  }, []);
+  const historyPanelEntries = useMemo(() => {
+    const liveReasoning = streamingOutput.trim();
+    if (!liveReasoning || conversationHistory[conversationHistory.length - 1]?.thinkingOutput === liveReasoning) {
+      return conversationHistory;
+    }
+    return [...conversationHistory, { thinkingOutput: liveReasoning }];
+  }, [conversationHistory, streamingOutput]);
+
+  useEffect(() => {
+    if (!isHistoryOpen) return;
+    historyCloseRef.current?.focus();
+    const handleHistoryEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeHistory();
+    };
+    document.addEventListener("keydown", handleHistoryEscape);
+    return () => document.removeEventListener("keydown", handleHistoryEscape);
+  }, [closeHistory, isHistoryOpen]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(resumeSessionId ?? null);
   // Mobile: when the modal is narrow, only one pane is visible at a time.
@@ -540,9 +626,53 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const isSessionListMode = showSessionList || (isCompactInterview && !mobileShowDetail);
   // FNXC:PlanningModeMobile 2026-07-20-10:30: Empty mobile state opens the composer because no saved destination exists; once sessions exist, every compact detail surface gets this single Back-to-list escape.
   const canReturnToSessionList = isCompactInterview && mobileShowDetail && planningSessions.length > 0;
-  const [compactInterviewPane, setCompactInterviewPane] = useState<"question" | "plan" | "history">("question");
+  const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"question" | "plan">("question");
+  /*
+  FNXC:PlanningMode 2026-07-20-21:50:
+  Refine accepts one freeform instruction instead of generated category choices. The instruction
+  guides both the regenerated plan and its next questions, resets when canceled, and must contain
+  non-whitespace text before submission.
+  */
+  const [refinementPrompt, setRefinementPrompt] = useState("");
+
+  useEffect(() => {
+    if (isMobile && workspaceQuestion) {
+      setMobileWorkspaceTab("question");
+    }
+  }, [isMobile, workspaceQuestion?.id]);
+  const refineMenuRef = useRef<HTMLDivElement>(null);
+  const refinementInputRef = useRef<HTMLTextAreaElement>(null);
+  const refineTriggerRef = useRef<HTMLButtonElement>(null);
   const { addToast } = useToast();
   const { pushNav } = useNavigationHistoryContext();
+
+  const refinementInstructions = refinementPrompt.trim();
+
+  useEffect(() => {
+    if (!isRefineMenuOpen) return;
+    refinementInputRef.current?.focus();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!refineMenuRef.current?.contains(target) && !refineTriggerRef.current?.contains(target)) {
+        setIsRefineMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopImmediatePropagation();
+      setIsRefineMenuOpen(false);
+      refineTriggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isRefineMenuOpen]);
 
   /*
   FNXC:Planning 2026-06-23-02:00:
@@ -682,16 +812,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       return;
     }
 
-    const startedAt = Date.now();
-    setGenerationStartTime(startedAt);
-    setElapsedSeconds(0);
+    const startedAt = generationStartTime ?? Date.now();
+    if (generationStartTime === null) {
+      setGenerationStartTime(startedAt);
+    }
 
-    const timer = setInterval(() => {
+    const updateElapsed = () => {
       setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
-    }, 1000);
+    };
+    updateElapsed();
+
+    const timer = setInterval(updateElapsed, 1000);
 
     return () => clearInterval(timer);
-  }, [view.type]);
+  }, [generationStartTime, view.type]);
 
   // Fallback for missed SSE 'question'/'summary' events: when the loading
   // state lingers, periodically refetch the session and transition the view
@@ -718,7 +852,22 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         const session = await fetchAiSession(sessionId);
         if (cancelled || !session) return;
         if (currentSessionIdRef.current !== sessionId) return;
-        if (session.status === "awaiting_input" && session.currentQuestion) {
+        if (session.status === "awaiting_input" && !session.currentQuestion && session.result) {
+          // Recover a legacy or partially persisted plan when its question event was missed.
+          // New sequential turns normally settle with both result and currentQuestion.
+          resetPlanningAutoRetryBudget();
+          const history = parseConversationHistory(session.conversationHistory);
+          const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
+          conversationHistoryRef.current = history;
+          runningSummaryRef.current = summary;
+          setConversationHistory(history);
+          setResponseHistory(history
+            .map((entry) => entry.response)
+            .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
+          setRunningSummary(summary);
+          setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
+          setStreamingOutput("");
+        } else if (session.status === "awaiting_input" && session.currentQuestion) {
           /*
           FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
           Missed SSE recovery must hydrate the server's entire interview turn together. Keeping
@@ -739,6 +888,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             .map((entry) => entry.response)
             .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
           setRunningSummary(summary);
+          setWorkspaceQuestion(question);
           setView({
             type: "question",
             session: { sessionId, currentQuestion: question, summary },
@@ -749,12 +899,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setRunningSummary(summary);
           if (isValidatedPlanningSession(session)) {
             resetPlanningAutoRetryBudget();
-            setView({
-              type: "summary",
-              session: { sessionId, currentQuestion: null, summary },
-              summary,
-            });
-            setEditedSummary(summary);
+            const inputPayload = JSON.parse(session.inputPayload ?? "{}") as { createdTaskId?: unknown };
+            if (typeof inputPayload.createdTaskId === "string") {
+              setView({ type: "task_created", taskId: inputPayload.createdTaskId });
+            } else {
+              setView({ type: "create_retry", session: { sessionId, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
+            }
           } else {
             setView({
               type: "error",
@@ -818,6 +968,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setConversationHistory([]);
     setEditedSummary(null);
     setRunningSummary(null);
+    setWorkspaceQuestion(null);
     setLoadedSessionTitle(null);
     setBranchMode("project-default");
     setBranchName("");
@@ -831,6 +982,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setPlanningModelId(undefined);
     setPlanningThinkingLevel("");
     currentSessionIdRef.current = null;
+    startPlanningInFlightRef.current = false;
   }, [resetPlanningAutoRetryBudget]);
 
   const planningSelectionValue = getModelSelectionValue(planningModelProvider, planningModelId);
@@ -902,13 +1054,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   const connectToPlanningStream = useCallback(
     (sessionId: string) => {
+      const streamEpoch = ++streamConnectionEpochRef.current;
       streamConnectionRef.current?.close();
       // Guard handlers against late events from a connection the user has
       // already navigated away from (e.g. clicked "New Session" while the
       // previous SSE flushed a buffered question). currentSessionIdRef is
       // cleared by resetDetailState and reassigned by handleStartPlanning /
       // loadSession before each connectToPlanningStream call.
-      const isStaleEvent = () => currentSessionIdRef.current !== sessionId;
+      const isStaleEvent = () => currentSessionIdRef.current !== sessionId
+        || streamConnectionEpochRef.current !== streamEpoch;
 
       const connection = connectPlanningStream(sessionId, projectId, {
         onThinking: (data) => {
@@ -925,6 +1079,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         onQuestion: (question) => {
           if (isStaleEvent()) return;
           const normalizedQuestion = normalizeQuestionOptions(question);
+          setWorkspaceQuestion(normalizedQuestion);
           const isAnsweredQuestion = conversationHistoryRef.current.some(
             (entry) => entry.question?.id === normalizedQuestion.id && entry.response !== undefined,
           );
@@ -985,21 +1140,19 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           /*
           FNXC:PlanningMode 2026-07-20-00:00:
           The server broadcasts `summary` on every interview turn before or after its next
-          question. It refreshes the right running-plan pane only; Validate is the sole action
-          allowed to enter terminal SummaryView, preventing a first-answer SSE race from ending
-          the interview.
+          question. It refreshes the right running-plan pane only; Proceed is the sole action
+          allowed to validate and create the task, preventing a first-answer SSE race from ending
+          the interview or exposing an intermediate final screen.
           */
           runningSummaryRef.current = normalizedSummary;
           setRunningSummary(normalizedSummary);
           setView((previous) => previous.type === "question"
-            ? {
-                ...previous,
-                session: { ...previous.session, summary: normalizedSummary },
-              }
-            : previous);
+              ? { ...previous, session: { ...previous.session, summary: normalizedSummary } }
+              : previous);
           setStreamingOutput("");
         },
         onError: (message) => {
+          if (isStaleEvent()) return;
           const errorMessage = message || t("planning.sessionFailed", "Session failed while contacting the AI.");
 
           // A single transient stream error (e.g. tab was backgrounded long
@@ -1010,6 +1163,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           (async () => {
             try {
               const session = await fetchAiSession(sessionId);
+              if (isStaleEvent()) return;
               if (
                 session &&
                 (session.status === "generating" || session.status === "awaiting_input")
@@ -1020,6 +1174,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             } catch {
               // fall through to error view below
             }
+            if (isStaleEvent()) return;
 
             /*
             FNXC:PlanningRetry 2026-07-15-00:00:
@@ -1054,6 +1209,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           })();
         },
         onComplete: () => {
+          if (isStaleEvent()) return;
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
@@ -1073,6 +1229,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setIsRetrying(!options.auto);
       setIsAutoRetrying(options.auto);
       setStreamingOutput("");
+      setGenerationStartTime(Date.now());
       setView({ type: "loading" });
 
       currentSessionIdRef.current = retryTarget.sessionId;
@@ -1130,12 +1287,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               if (isValidatedPlanningSession(session)) {
                 resetPlanningAutoRetryBudget();
                 clearPlanningDescription(projectId);
-                setView({
-                  type: "summary",
-                  session: { sessionId: session.id, currentQuestion: null, summary },
-                  summary,
-                });
-                setEditedSummary(summary);
+                const inputPayload = JSON.parse(session.inputPayload ?? "{}") as { createdTaskId?: unknown };
+                if (typeof inputPayload.createdTaskId === "string") {
+                  setView({ type: "task_created", taskId: inputPayload.createdTaskId });
+                } else {
+                  setView({ type: "create_retry", session: { sessionId: session.id, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
+                }
               } else {
                 setView({
                   type: "error",
@@ -1208,7 +1365,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
     const plan = planOverride ?? initialPlan;
     const startedPlan = plan.trim();
-    if (!startedPlan) return;
+    if (!startedPlan || startPlanningInFlightRef.current) return;
+    startPlanningInFlightRef.current = true;
+
+    if (draftDebounceRef.current) {
+      clearTimeout(draftDebounceRef.current);
+      draftDebounceRef.current = null;
+    }
 
     setActivePlanPrompt(startedPlan);
     setError(null);
@@ -1218,6 +1381,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     resetPlanningAutoRetryBudget();
     setIsRefiningSummary(false);
     refineSummaryInFlightRef.current = false;
+    setGenerationActivity("initial_plan");
+    savePlanningDescription(startedPlan, projectId);
+    setGenerationStartTime(Date.now());
     setView({ type: "loading" });
 
     try {
@@ -1227,13 +1393,36 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           ? { planningModelProvider, planningModelId, thinkingLevel: planningThinkingLevel || undefined }
           : (planningThinkingLevel ? { thinkingLevel: planningThinkingLevel } : undefined);
 
-      const draftSessionId = draftSessionIdRef.current;
+      let draftSessionId = draftSessionIdRef.current;
+      if (!draftSessionId) {
+        const draftPromise = draftCreatePromiseRef.current ?? createPlanningDraft(startedPlan, projectId, modelOverride);
+        draftCreatePromiseRef.current = draftPromise;
+        draftCreateInFlightRef.current = true;
+        const draft = await draftPromise;
+        draftSessionId = draft.sessionId;
+        draftSessionIdRef.current = draft.sessionId;
+        draftCreatePromiseRef.current = null;
+        setPlanningSessions((previous) => dedupeSessionsById([{
+          id: draft.sessionId,
+          type: "planning",
+          status: "draft",
+          title: draft.title,
+          preview: startedPlan.length > 80 ? `${startedPlan.slice(0, 79).trimEnd()}…` : startedPlan,
+          projectId: projectId ?? null,
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        }, ...previous]));
+        setSelectedSessionId(draft.sessionId);
+      }
+      // Persist the durable handle before starting generation so a refresh during
+      // the start request can reopen the draft/generating row in either draft path.
+      savePlanningActiveSession(draftSessionId, projectId);
       const { sessionId } = await startPlanningStreaming(
         startedPlan,
         projectId,
         modelOverride,
-        { clarificationEnabled: true },
-        draftSessionId ?? undefined,
+        { clarificationEnabled: true, ...(workflowId ? { workflowId } : {}) },
+        draftSessionId,
       );
       draftSessionIdRef.current = null;
       currentSessionIdRef.current = sessionId;
@@ -1245,6 +1434,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       connectToPlanningStream(sessionId);
       setResponseHistory([]);
     } catch (err) {
+      startPlanningInFlightRef.current = false;
+      draftCreatePromiseRef.current = null;
+      draftCreateInFlightRef.current = false;
       setError(getErrorMessage(err) || t("planning.failedStartSession", "Failed to start planning session"));
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
@@ -1256,6 +1448,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     planningModelProvider,
     planningThinkingLevel,
     projectId,
+    workflowId,
     resetPlanningAutoRetryBudget,
   ]);
 
@@ -1315,10 +1508,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setConversationHistory([]);
       setEditedSummary(null);
       setRunningSummary(null);
+      setWorkspaceQuestion(null);
       setLoadedSessionTitle(null);
       setIsRetrying(false);
       setIsRefiningSummary(false);
       refineSummaryInFlightRef.current = false;
+      setGenerationStartTime(null);
       setView({ type: "loading" });
 
       try {
@@ -1364,6 +1559,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           // An unavailable payload cannot provide a safe copy target.
         }
         setActivePlanPrompt(typeof inputPayload?.initialPlan === "string" ? inputPayload.initialPlan : "");
+        const generationStartedAtSource = typeof inputPayload?.generationStartedAt === "string"
+          ? inputPayload.generationStartedAt
+          : session.updatedAt;
+        const persistedGenerationStartedAt = Date.parse(generationStartedAtSource);
+        setGenerationStartTime(
+          session.status === "generating" && Number.isFinite(persistedGenerationStartedAt)
+            ? persistedGenerationStartedAt
+            : null,
+        );
+        if (inputPayload?.generationPurpose === "plan_update" || inputPayload?.generationPurpose === "question" || inputPayload?.generationPurpose === "initial_plan") {
+          setGenerationActivity(inputPayload.generationPurpose);
+        } else if (session.status === "generating") {
+          setGenerationActivity("initial_plan");
+        }
         const parsedHistory = parseConversationHistory(session.conversationHistory);
         setConversationHistory(parsedHistory);
         setResponseHistory(
@@ -1382,6 +1591,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           ? normalizePlanningSummary(JSON.parse(session.result))
           : null;
         setRunningSummary(persistedRunningSummary);
+        if (session.status === "generating") {
+          setWorkspaceQuestion(parsedHistory.at(-1)?.question ?? null);
+        }
 
         if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
@@ -1433,10 +1645,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               }
             : null;
           setView({ type: "initial" });
+        } else if (session.status === "awaiting_input" && !session.currentQuestion && persistedRunningSummary) {
+          setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary: persistedRunningSummary }, summary: persistedRunningSummary });
         } else if (session.status === "awaiting_input" && session.currentQuestion) {
           resetPlanningAutoRetryBudget();
           clearPlanningDescription(projectId);
           const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion));
+          setWorkspaceQuestion(question);
           setView({ type: "question", session: { sessionId, currentQuestion: question, summary: persistedRunningSummary } });
           // Transfer persisted thinking into conversation history so it's
           // visible as expandable reasoning in the question view, instead of
@@ -1452,15 +1667,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               });
             }
           }
-          connectToPlanningStream(sessionId);
         } else if (session.status === "complete" && session.result) {
           const summary = persistedRunningSummary ?? normalizePlanningSummary(JSON.parse(session.result));
           setRunningSummary(summary);
           if (isValidatedPlanningSession(session)) {
+            const createdTaskId = inputPayload && typeof inputPayload.createdTaskId === "string" ? inputPayload.createdTaskId : undefined;
             resetPlanningAutoRetryBudget();
             clearPlanningDescription(projectId);
-            setView({ type: "summary", session: { sessionId, currentQuestion: null, summary }, summary });
-            setEditedSummary(summary);
+            if (createdTaskId) {
+              setView({ type: "task_created", taskId: createdTaskId });
+            } else {
+              setView({ type: "create_retry", session: { sessionId, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
+            }
           } else {
             setView({
               type: "error",
@@ -1589,6 +1807,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   // SSE subscription keeps the list live (mirrors useBackgroundSessions, but
   // unfiltered by status so completed/errored sessions stay visible).
+  /*
+  FNXC:PlanningMultiTab 2026-07-20-21:50:
+  Restored awaiting-input sessions intentionally have no idle per-session stream because a later
+  stream failure must not replace valid persisted plan/question state. Global session updates must
+  therefore rehydrate the selected idle view so another tab cannot leave it showing or submitting
+  a stale question. Locally streamed turns keep their existing connection and reconcile in place.
+  */
   useEffect(() => {
     if (!isOpen) return;
     const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
@@ -1598,6 +1823,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         const updated = JSON.parse(e.data) as AiSessionSummary;
         if (updated.type !== "planning") return;
         setPlanningSessions((prev) => dedupeSessionsById([updated, ...prev]));
+        const currentView = viewRef.current;
+        const isSelectedIdleSession = updated.id === currentSessionIdRef.current
+          && (currentView.type === "question" || currentView.type === "plan_review")
+          && streamConnectionRef.current === null;
+        if (isSelectedIdleSession) {
+          void loadSession(updated.id);
+        }
       } catch {
         // ignore malformed payload
       }
@@ -1623,7 +1855,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         void refreshSessionsList();
       },
     });
-  }, [isOpen, projectId, refreshSessionsList]);
+  }, [isOpen, loadSession, projectId, refreshSessionsList]);
 
   // Sidebar handlers
   const handleSelectSession = useCallback(
@@ -1645,6 +1877,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     streamConnectionRef.current?.close();
     streamConnectionRef.current = null;
     draftSessionIdRef.current = null;
+    draftCreatePromiseRef.current = null;
+    draftCreateInFlightRef.current = false;
     if (draftDebounceRef.current) {
       clearTimeout(draftDebounceRef.current);
       draftDebounceRef.current = null;
@@ -1965,6 +2199,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     onClose();
   }, [flushDraftAndSummarize, initialPlan, onClose, projectId, resetMobileViewportAfterClose, view.type]);
 
+  /*
+  FNXC:PlanningMode 2026-07-20-20:15:
+  A reload that discovers a linked task must complete the normal task-created handoff once.
+  It must never reopen SummaryView, whose Create Task action would misrepresent terminal state.
+  */
+  useEffect(() => {
+    if (view.type !== "task_created" || restoredTaskHandoffRef.current === view.taskId) return;
+    const task = view.task ?? tasks.find((candidate) => candidate.id === view.taskId);
+    if (!task) return;
+    restoredTaskHandoffRef.current = task.id;
+    onTaskCreated(task);
+    clearPlanningActiveSession(projectId);
+  }, [onTaskCreated, projectId, tasks, view]);
+
   // Handle escape key to close
   useEffect(() => {
     if (!isOpen) return;
@@ -2025,21 +2273,33 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       conversationHistoryRef.current = optimisticHistory;
       setConversationHistory(optimisticHistory);
       resetPlanningAutoRetryBudget();
+      setGenerationActivity("plan_update");
+      setGenerationStartTime(Date.now());
       setView({ type: "loading" });
       setStreamingOutput(""); // Clear old thinking output when entering loading state
+      currentSessionIdRef.current = sessionId;
       liveGenerationSessionIdRef.current = sessionId;
+      if (!streamConnectionRef.current?.isConnected()) {
+        connectToPlanningStream(sessionId);
+      }
 
       try {
-        // Submit response - AI will broadcast events via the already-connected stream
+        // Submit response. SSE remains the primary live path, while the HTTP payload closes
+        // the gap for restored sessions whose original stream is no longer connected.
         const response = await respondToPlanning(sessionId, responses, projectId);
-        // The stream normally drives this transition. Adopt an already-returned next question
-        // when its event was lost so loading cannot later be replaced by a stale replay.
-        if ("type" in response && response.type === "question" && response.data.id !== activeQuestion.id) {
-          const nextQuestion = normalizeQuestionOptions(response.data);
-          setView({
-            type: "question",
-            session: { sessionId, currentQuestion: nextQuestion, summary: runningSummaryRef.current },
-          });
+        const responseQuestion = "type" in response ? response.data : response.currentQuestion;
+        const responseSummary = "type" in response ? null : response.summary;
+        const nextSummary = responseSummary
+          ? normalizePlanningSummary(responseSummary)
+          : runningSummaryRef.current;
+        if (nextSummary) {
+          runningSummaryRef.current = nextSummary;
+          setRunningSummary(nextSummary);
+        }
+        if (responseQuestion) {
+          const nextQuestion = normalizeQuestionOptions(responseQuestion);
+          setWorkspaceQuestion(nextQuestion);
+          setView({ type: "question", session: { sessionId, currentQuestion: nextQuestion, summary: nextSummary } });
         }
       } catch (err) {
         const errorMessage = getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response");
@@ -2051,6 +2311,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         */
         try {
           const persisted = await fetchAiSession(sessionId);
+          if (persisted?.status === "awaiting_input" && !persisted.currentQuestion && persisted.result) {
+            const history = parseConversationHistory(persisted.conversationHistory);
+            const summary = normalizePlanningSummary(JSON.parse(persisted.result) as PlanningSummary);
+            conversationHistoryRef.current = history;
+            runningSummaryRef.current = summary;
+            setConversationHistory(history);
+            setRunningSummary(summary);
+            setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
+            return;
+          }
           if (persisted?.status === "awaiting_input" && persisted.currentQuestion) {
             const history = parseConversationHistory(persisted.conversationHistory);
             const summary = persisted.result
@@ -2065,6 +2335,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
             setRunningSummary(summary);
             setError(errorMessage);
+            setWorkspaceQuestion(currentQuestion);
             setView({ type: "question", session: { sessionId, currentQuestion, summary } });
             return;
           }
@@ -2087,10 +2358,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         conversationHistoryRef.current = historyBeforeSubmit;
         setConversationHistory(historyBeforeSubmit);
         setError(errorMessage);
+        setWorkspaceQuestion(activeQuestion);
         setView({ type: "question", session: { ...session, summary: runningSummaryRef.current } });
       }
     },
-    [conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, view]
+    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, view]
   );
 
   const handleStopGeneration = useCallback(async () => {
@@ -2098,6 +2370,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (!sessionId) {
       return;
     }
+    const priorQuestion = workspaceQuestion;
+    const summary = runningSummaryRef.current;
+    const history = conversationHistoryRef.current;
+
+    currentSessionIdRef.current = null;
+    liveGenerationSessionIdRef.current = null;
+    streamConnectionEpochRef.current += 1;
+    streamConnectionRef.current?.close();
+    streamConnectionRef.current = null;
 
     try {
       await stopPlanningGeneration(sessionId, projectId);
@@ -2105,19 +2386,38 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // best-effort; server-side timeout/stop event may have already fired
     }
 
-    streamConnectionRef.current?.close();
-    streamConnectionRef.current = null;
+    startPlanningInFlightRef.current = false;
     setIsRetrying(false);
     setIsAutoRetrying(false);
     setIsRefiningSummary(false);
     refineSummaryInFlightRef.current = false;
-    setView({
-      type: "error",
-      session: { sessionId, currentQuestion: null, summary: null },
-      errorMessage: t("planning.generationStopped", "Generation stopped by user. You can retry or start a new session."),
-    });
+    setError(null);
     setStreamingOutput("");
-  }, [projectId, t]);
+    setGenerationStartTime(null);
+
+    if (priorQuestion) {
+      currentSessionIdRef.current = sessionId;
+      const answered = history.some((entry) => entry.question?.id === priorQuestion.id && entry.response);
+      setEditingQuestionId(answered ? priorQuestion.id : null);
+      setWorkspaceQuestion(priorQuestion);
+      setView({
+        type: "question",
+        session: { sessionId, currentQuestion: priorQuestion, summary },
+      });
+    } else if (summary) {
+      currentSessionIdRef.current = sessionId;
+      setWorkspaceQuestion(null);
+      setView({
+        type: "plan_review",
+        session: { sessionId, currentQuestion: null, summary },
+        summary,
+      });
+    } else {
+      draftSessionIdRef.current = sessionId;
+      setInitialPlan(_activePlanPrompt);
+      setView({ type: "initial" });
+    }
+  }, [_activePlanPrompt, projectId, workspaceQuestion]);
 
   const handleRetryFromError = useCallback(async () => {
     if (view.type !== "error") {
@@ -2133,20 +2433,117 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   Validation belongs to the always-visible running-plan pane, not the center question state. A user
   may finalize during loading or recoverable error states; the server cancels an active turn safely.
   */
-  const handleValidatePlan = useCallback(async () => {
-    const sessionId = selectedSessionId;
-    if (!sessionId) return;
-    setError(null);
-    try {
-      const result = await validatePlanningSession(sessionId, projectId);
-      const summary = normalizePlanningSummary(result.summary);
-      setEditedSummary(summary);
-      setRunningSummary(summary);
-      setView({ type: "summary", session: { sessionId, currentQuestion: null, summary }, summary });
-    } catch (err) {
-      setError(getErrorMessage(err) || t("planning.failedValidatePlan", "Failed to validate plan"));
+  const handleRefineFromPlan = useCallback(async () => {
+    const visibleSessionId = "session" in view ? view.session.sessionId : undefined;
+    const sessionId = currentSessionIdRef.current ?? visibleSessionId;
+    const summary = runningSummaryRef.current;
+    if (!sessionId || !summary || !refinementInstructions || refineSummaryInFlightRef.current) return;
+    refineSummaryInFlightRef.current = true;
+    if (view.type === "loading") {
+      streamConnectionEpochRef.current += 1;
+      streamConnectionRef.current?.close();
+      streamConnectionRef.current = null;
+      try {
+        await stopPlanningGeneration(sessionId, projectId);
+      } catch {
+        // The turn may have settled between opening the refinement input and applying it.
+      }
     }
-  }, [projectId, selectedSessionId, t]);
+    currentSessionIdRef.current = sessionId;
+    liveGenerationSessionIdRef.current = sessionId;
+    if (!streamConnectionRef.current?.isConnected()) {
+      connectToPlanningStream(sessionId);
+    }
+    setError(null);
+    setGenerationActivity("question");
+    setIsRefineMenuOpen(false);
+    setGenerationStartTime(Date.now());
+    setView({ type: "loading" });
+    try {
+      const response = await respondToPlanning(sessionId, { refine: true, focus: refinementInstructions }, projectId);
+      const responseQuestion = "type" in response ? response.data : response.currentQuestion;
+      const responseSummary = "type" in response ? null : response.summary;
+      const nextSummary = responseSummary ? normalizePlanningSummary(responseSummary) : summary;
+      runningSummaryRef.current = nextSummary;
+      setRunningSummary(nextSummary);
+      if (responseQuestion) {
+        const nextQuestion = normalizeQuestionOptions(responseQuestion);
+        setWorkspaceQuestion(nextQuestion);
+        setView({
+          type: "question",
+          session: {
+            sessionId,
+            currentQuestion: nextQuestion,
+            summary: nextSummary,
+          },
+        });
+      }
+      setRefinementPrompt("");
+    } catch (err) {
+      setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to refine plan"));
+      if (workspaceQuestion) {
+        setView({ type: "question", session: { sessionId, currentQuestion: workspaceQuestion, summary } });
+      } else {
+        setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
+      }
+    } finally {
+      refineSummaryInFlightRef.current = false;
+    }
+  }, [connectToPlanningStream, projectId, refinementInstructions, t, view, workspaceQuestion]);
+
+  const handleProceedWithPlan = useCallback(async () => {
+    const sessionId = currentSessionIdRef.current;
+    const summary = runningSummaryRef.current;
+    if (!sessionId || !summary || validateCreateInFlightRef.current) return;
+    const session = { sessionId, currentQuestion: workspaceQuestion, summary };
+    validateCreateInFlightRef.current = true;
+    setError(null);
+    setView({ type: "creating_task", session, summary });
+    try {
+      const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(sessionId, summary, projectId, {
+        ...(workflowId !== undefined ? { workflowId } : {}),
+      }));
+      clearPlanningActiveSession(projectId);
+      setView({ type: "task_created", taskId: task.id, task });
+    } catch (err) {
+      const errorMessage = getErrorMessage(err) || t("planning.failedCreateTask", "Failed to create task");
+      setView({ type: "create_retry", session, summary, errorMessage });
+    } finally {
+      validateCreateInFlightRef.current = false;
+    }
+  }, [projectId, t, workflowId, workspaceQuestion]);
+
+  const handleMobileKeyboardActionPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (viewportMode !== "mobile" || event.pointerType === "mouse") return;
+    event.preventDefault();
+  }, [viewportMode]);
+
+  const handleApplyRefinementPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (viewportMode !== "mobile" || event.pointerType === "mouse") return;
+    /*
+    FNXC:PlanningModeMobile 2026-07-21-00:50:
+    Preventing the touch pointer default suppresses the browser's compatibility click. Apply
+    before the keyboard resize can move/remove the popup button; the single-flight guard above
+    makes a browser that still emits click harmless.
+    */
+    event.preventDefault();
+    void handleRefineFromPlan();
+  }, [handleRefineFromPlan, viewportMode]);
+
+  const handleRetryCreateTask = useCallback(async () => {
+    if (view.type !== "create_retry" || validateCreateInFlightRef.current) return;
+    validateCreateInFlightRef.current = true;
+    setView({ type: "creating_task", session: view.session, summary: view.summary });
+    try {
+      const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(view.session.sessionId, view.summary, projectId, { ...(workflowId !== undefined ? { workflowId } : {}) }));
+      clearPlanningActiveSession(projectId);
+      setView({ type: "task_created", taskId: task.id, task });
+    } catch (err) {
+      setView({ ...view, errorMessage: getErrorMessage(err) || t("planning.failedCreateTask", "Failed to create task") });
+    } finally {
+      validateCreateInFlightRef.current = false;
+    }
+  }, [projectId, t, view, workflowId]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -2265,7 +2662,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
   }, [baseBranch, branchMode, branchName, handleClose, view, onTasksCreated, projectId, workflowId]);
 
-  const handleSelectAnsweredQuestion = useCallback(async (entry: ConversationHistoryEntry) => {
+  const _handleSelectAnsweredQuestion = useCallback(async (entry: ConversationHistoryEntry) => {
     const questionId = entry.question?.id;
     if (view.type !== "question" || !questionId) return;
     setError(null);
@@ -2286,6 +2683,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const nextSummary = rewound.summary ? normalizePlanningSummary(rewound.summary) : runningSummaryRef.current;
       runningSummaryRef.current = nextSummary;
       setRunningSummary(nextSummary);
+      setWorkspaceQuestion(rewound.currentQuestion);
       setView({ type: "question", session: { ...view.session, currentQuestion: rewound.currentQuestion, summary: nextSummary } });
     } catch (err) {
       setError(getErrorMessage(err) || t("planning.failedGoBack", "Failed to edit the selected answer"));
@@ -2320,6 +2718,79 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   FN-6886 keeps the existing Planning Mode workflow component but lets App mount it as an embedded main-content view. Embedded mode must not draw a full-screen overlay, close on backdrop clicks, lock mobile scrolling, or persist resizable modal dimensions.
   */
   if (!isOpen) return null;
+
+  const renderPlanPane = (summary: PlanningSummary) => (
+    <section id="planning-plan-panel" className="planning-plan-pane" data-testid="planning-plan-pane" aria-label={t("planning.currentPlan", "Current plan")}>
+      <div className="planning-view-scroll planning-summary-scroll planning-plan-scroll" data-testid="planning-plan-scroll">
+        <article className="planning-plan-document">
+          <MailboxMessageContent
+            className="planning-plan-markdown markdown-body"
+            content={formatPlanningPlanMd(summary)}
+            testId="planning-plan-markdown"
+          />
+        </article>
+      </div>
+      <div className="planning-actions planning-summary-actions planning-plan-actions" data-testid="planning-plan-actions">
+        {isRefineMenuOpen && (
+          <div
+            id="planning-refine-menu"
+            ref={refineMenuRef}
+            className="planning-refine-menu"
+            data-testid="planning-refine-menu"
+            role="dialog"
+            aria-label={t("planning.refinePlanAndQuestions", "Refine plan and questions")}
+            tabIndex={-1}
+          >
+            <div className="planning-refine-menu-header">
+              <h4>{t("planning.refinePlanAndNextQuestions", "Refine the plan and next questions")}</h4>
+              <p>{t("planning.refineInstructionsHint", "Describe what should change. The plan will update and the next questions will follow your direction.")}</p>
+            </div>
+            <label className="planning-refine-menu-input">
+              <span>{t("planning.refinementInstructions", "Refinement instructions")}</span>
+              <textarea
+                ref={refinementInputRef}
+                className="input"
+                value={refinementPrompt}
+                onChange={(event) => setRefinementPrompt(event.target.value)}
+                placeholder={t("planning.refinePromptPlaceholder", "For example: add a staged rollout, cover failure recovery, and ask about migration risks.")}
+                rows={4}
+              />
+            </label>
+            <div className="planning-refine-menu-actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setIsRefineMenuOpen(false);
+                  setRefinementPrompt("");
+                  refineTriggerRef.current?.focus();
+                }}
+              >
+                {t("common.cancel", "Cancel")}
+              </button>
+              <button type="button" className="btn btn-primary" disabled={!refinementInstructions} onPointerDown={handleApplyRefinementPointerDown} onClick={() => void handleRefineFromPlan()}>
+                {t("planning.applyRefinement", "Apply refinement")}
+              </button>
+            </div>
+          </div>
+        )}
+        <button
+          ref={refineTriggerRef}
+          type="button"
+          className="btn"
+          aria-expanded={isRefineMenuOpen}
+          aria-controls={isRefineMenuOpen ? "planning-refine-menu" : undefined}
+          onClick={() => {
+            setRefinementPrompt("");
+            setIsRefineMenuOpen((open) => !open);
+          }}
+        >
+          {t("planning.refine", "Refine")}
+        </button>
+        <button type="button" className="btn btn-primary" onClick={() => void handleProceedWithPlan()}>{t("planning.proceedWithPlan", "Proceed with plan")}</button>
+      </div>
+    </section>
+  );
 
   return (
     <div
@@ -2382,18 +2853,39 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           synchronized on both transitions so a second Sessions press cannot leave the question pane
           hidden by the mobile list CSS.
           */}
-          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                const showList = !isSessionListMode;
-                setShowSessionList(showList);
-                if (isCompactInterview) setMobileShowDetail(!showList);
-              }}
-            >
-              {t("planning.sessions", "Sessions")}
-            </button>
+          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") && (
+            <div className="planning-header-controls">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const showList = !isSessionListMode;
+                  setIsHistoryOpen(false);
+                  setShowSessionList(showList);
+                  if (isCompactInterview) setMobileShowDetail(!showList);
+                }}
+              >
+                {t("planning.sessions", "Sessions")}
+              </button>
+              <button
+                ref={historyTriggerRef}
+                type="button"
+                className={`btn planning-history-trigger${isHistoryOpen ? " active" : ""}`}
+                aria-expanded={isHistoryOpen}
+                aria-controls="planning-history-panel"
+                onClick={() => {
+                  const nextOpen = !isHistoryOpen;
+                  setIsHistoryOpen(nextOpen);
+                  if (nextOpen) {
+                    setShowSessionList(false);
+                    if (isCompactInterview) setMobileShowDetail(true);
+                  }
+                }}
+              >
+                <History size={16} />
+                {t("planning.history", "History")}
+              </button>
+            </div>
           )}
           {!isEmbedded && (
             <div className="modal-header-actions">
@@ -2407,20 +2899,51 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         <div
           className={`planning-modal-body planning-modal-body--split ${
             isSessionListMode ? "planning-modal-body--show-list" : "planning-modal-body--show-detail"
-          } ${
-            selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview
-              ? `planning-modal-body--compact-interview planning-modal-body--compact-${compactInterviewPane}`
-              : ""
           }`}
         >
-          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") ? (
-            <AnsweredQuestionHistory
-              entries={conversationHistory}
-              selectedQuestionId={editingQuestionId ?? (view.type === "question" ? view.session.currentQuestion?.id : undefined)}
-              isPending={isHistoryEditPending}
-              onSelect={(entry) => void handleSelectAnsweredQuestion(entry)}
-            />
-          ) : (
+          {isHistoryOpen && (
+            <div className="planning-history-overlay" data-testid="planning-history-overlay">
+              <div className="planning-history-backdrop" aria-hidden="true" onClick={closeHistory} />
+              <section
+                id="planning-history-panel"
+                className="planning-history-panel"
+                role="region"
+                aria-label={t("planning.questionAnswerHistory", "Question and answer history")}
+              >
+                <div className="planning-history-header">
+                  <div className="planning-history-heading">
+                    <History size={18} />
+                    <div>
+                      <h4>{t("planning.history", "History")}</h4>
+                      <p>{t("planning.historyHint", "Questions, answers, and AI reasoning for each plan update.")}</p>
+                    </div>
+                  </div>
+                  <button
+                    ref={historyCloseRef}
+                    type="button"
+                    className="btn-icon"
+                    aria-label={t("planning.closeHistory", "Close history")}
+                    onClick={closeHistory}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="planning-history-scroll">
+                  {historyPanelEntries.length > 0 ? (
+                    // FNXC:PlanningHistory 2026-07-20-23:24: FN-8449 keeps history thinking collapsed so operators can scan Q&A first; the existing toggle remains available to expand it, matching the FN-7974 chat default.
+                    <ConversationHistory entries={historyPanelEntries} />
+                  ) : (
+                    <div className="planning-history-empty">
+                      <History size={24} />
+                      <strong>{t("planning.noHistoryYet", "No history yet")}</strong>
+                      <p>{t("planning.noHistoryHint", "Answered questions and plan-update reasoning will appear here.")}</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
+          {isSessionListMode && (
           <PlanningSessionList
             sessions={planningSessions}
             loading={sessionsLoading}
@@ -2438,11 +2961,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           />
           )}
 
-          {/*
-          FNXC:Planning 2026-06-23-02:00:
-          Sidebar resize handle — parity with MissionManager's mission-manager__sidebar-resize-handle. Rendered only on desktop (sidebar stacks on mobile). Pointer-drag and arrow-key resize both clamp + persist width.
-          */}
-          {viewportMode === "desktop" && !isShortViewport() && (
+          {isSessionListMode && viewportMode === "desktop" && !isShortViewport() && (
             <div
               className="planning-sidebar-resize-handle"
               role="separator"
@@ -2455,20 +2974,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onPointerDown={handleSidebarResizeStart}
               onKeyDown={handleSidebarResizeKeyDown}
             />
-          )}
-
-          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && isCompactInterview && (
-            <nav className="planning-compact-pane-switcher" aria-label={t("planning.interviewPanels", "Planning interview panels")}>
-              <button type="button" className={`btn ${compactInterviewPane === "question" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "question"} onClick={() => setCompactInterviewPane("question")}>
-                {t("planning.question", "Question")}
-              </button>
-              <button type="button" className={`btn ${compactInterviewPane === "plan" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "plan"} onClick={() => setCompactInterviewPane("plan")}>
-                {t("planning.runningPlan", "Running plan")}
-              </button>
-              <button type="button" className={`btn ${compactInterviewPane === "history" ? "btn-primary" : ""}`} aria-pressed={compactInterviewPane === "history"} onClick={() => setCompactInterviewPane("history")}>
-                {t("planning.answeredQuestions", "Answered questions")}
-              </button>
-            </nav>
           )}
 
           <div className="planning-detail">
@@ -2486,7 +2991,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   <Sparkles size={32} className="icon-triage-lg" />
                   <h4>{t("planning.initialHeading", "Transform your idea into a detailed task")}</h4>
                   <p className="text-muted">
-                    {t("planning.initialSubheading", "Describe what you want to build in plain language. The AI will ask clarifying questions and help you structure a well-defined task.")}
+                    {t("planning.initialSubheading", "Describe what you want to build in plain language. The AI will generate an initial plan, then you can refine or validate it.")}
                   </p>
                 </div>
 
@@ -2521,8 +3026,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                             : (planningThinkingLevel ? { thinkingLevel: planningThinkingLevel } : undefined);
                         // FNXC:PlanningMode 2026-07-01-00:00: mark in-flight synchronously so debounce fires during the round-trip don't spawn duplicate drafts.
                         draftCreateInFlightRef.current = true;
-                        void createPlanningDraft(content, projectId, modelOverride)
+                        const draftPromise = createPlanningDraft(content, projectId, modelOverride);
+                        draftCreatePromiseRef.current = draftPromise;
+                        void draftPromise
                           .then((response) => {
+                            if (draftCreatePromiseRef.current === draftPromise) {
+                              draftCreatePromiseRef.current = null;
+                            }
                             draftSessionIdRef.current = response.sessionId;
                             setPlanningSessions((prev) => {
                               const draft: AiSessionSummary = {
@@ -2543,6 +3053,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                             // best-effort; clear the in-flight sentinel so a
                             // later keystroke can retry creating the draft.
                             draftCreateInFlightRef.current = false;
+                            draftCreatePromiseRef.current = null;
                           });
                       }, 300);
                     }}
@@ -2649,7 +3160,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               <div className="planning-view-footer">
                 <button
                   className="btn btn-primary planning-start-btn"
-                  onClick={() => handleStartPlanning()}
+                  onPointerDown={handleMobileKeyboardActionPointerDown}
+                  onClick={() => void handleStartPlanning()}
                   disabled={!initialPlan.trim()}
                 >
                   <Lightbulb size={16} className="icon-mr-8" />
@@ -2659,7 +3171,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             </div>
           )}
 
-          {view.type === "loading" && (
+          {view.type === "loading" && !runningSummary && (
             <div className="planning-loading">
               <Loader2 size={40} className="spin icon-todo" />
               <p>
@@ -2668,9 +3180,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                       attempt: autoRetryAttempt,
                       max: MAX_PLANNING_AUTO_RETRIES,
                     })
-                  : streamingOutput
-                    ? t("planning.aiThinking", "AI is thinking...")
-                    : t("planning.generatingQuestion", "Generating next question...")}
+                  : generationActivity === "plan_update"
+                    ? t("planning.generatingPlan", "Generating plan…")
+                    : generationActivity === "question"
+                      ? t("planning.generatingQuestion", "Generating next question…")
+                      : t("planning.generatingInitialPlan", "Generating initial plan…")}
               </p>
               {generationStartTime && (
                 <div className="planning-elapsed">{t("planning.thinkingElapsed", "Thinking… ({{seconds}}s)", { seconds: elapsedSeconds })}</div>
@@ -2736,15 +3250,106 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             </div>
           )}
 
-          {view.type === "question" && view.session.currentQuestion && (
-            <div className="planning-question">
-              <QuestionForm
-                question={view.session.currentQuestion}
-                initialResponse={editingQuestionId
-                  ? conversationHistory.find((entry) => entry.question?.id === editingQuestionId)?.response
-                  : undefined}
-                onSubmit={handleSubmitResponse}
-              />
+          {(view.type === "question" || view.type === "loading") && runningSummary && (
+            <div
+              className={`planning-workspace${view.type === "loading" ? " planning-workspace--generating" : ""}${workspaceQuestion ? ` planning-workspace--mobile-tab-${mobileWorkspaceTab}` : " planning-workspace--plan-only"}`}
+              data-testid="planning-workspace"
+              aria-busy={view.type === "loading"}
+            >
+              {isMobile && workspaceQuestion && (
+                <div className="planning-workspace-tabs" role="tablist" aria-label={t("planning.workspaceViews", "Planning views")}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mobileWorkspaceTab === "question"}
+                    aria-controls="planning-question-panel"
+                    className={mobileWorkspaceTab === "question" ? "active" : ""}
+                    onClick={() => setMobileWorkspaceTab("question")}
+                  >
+                    {t("planning.questionsTab", "Questions")}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mobileWorkspaceTab === "plan"}
+                    aria-controls="planning-plan-panel"
+                    className={mobileWorkspaceTab === "plan" ? "active" : ""}
+                    onClick={() => setMobileWorkspaceTab("plan")}
+                  >
+                    {t("planning.planPreviewTab", "Plan preview")}
+                  </button>
+                </div>
+              )}
+              {renderPlanPane(runningSummary)}
+              {workspaceQuestion && (
+                <section id="planning-question-panel" className="planning-question planning-question-pane" data-testid="planning-question-pane" aria-label={t("planning.currentQuestion", "Current question")}>
+                  <QuestionForm
+                    question={workspaceQuestion}
+                    initialResponse={editingQuestionId
+                      ? conversationHistory.find((entry) => entry.question?.id === editingQuestionId)?.response
+                      : undefined}
+                    onSubmit={handleSubmitResponse}
+                  />
+                </section>
+              )}
+              {view.type === "loading" && (
+                <div className="planning-workspace-loader" role="status" aria-live="polite">
+                  <Loader2 size={40} className="spin" />
+                  <strong>{t("planning.generatingPlan", "Generating plan…")}</strong>
+                  {generationStartTime && <span>{t("planning.thinkingElapsed", "Thinking… ({{seconds}}s)", { seconds: elapsedSeconds })}</span>}
+                  <button className="btn planning-stop-btn" type="button" onClick={() => void handleStopGeneration()}>
+                    <StopCircle size={14} />
+                    <span className="icon-ml-6">{t("planning.stop", "Stop")}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view.type === "plan_review" && (
+            <div className="planning-summary planning-plan-review" data-testid="planning-plan-review">
+              {renderPlanPane(view.summary)}
+            </div>
+          )}
+
+          {view.type === "creating_task" && <div className="planning-loading"><Loader2 size={24} className="spin" /> {t("planning.creatingTask", "Creating task…")}</div>}
+          {view.type === "task_created" && (
+            <div className="planning-task-created" data-testid="planning-task-created" role="status" aria-live="polite">
+              <div className="planning-task-created-icon"><CheckCircle size={28} /></div>
+              <div className="planning-task-created-copy">
+                <h4>{t("planning.taskCreated", "Task created")}</h4>
+                <p>{t("planning.taskCreatedHint", "Your approved plan is ready to work on.")}</p>
+                <span className="planning-task-created-id">{view.taskId}</span>
+              </div>
+              <div className="planning-task-created-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!onViewTask || !(view.task ?? tasks.find((candidate) => candidate.id === view.taskId))}
+                  onClick={() => {
+                    const task = view.task ?? tasks.find((candidate) => candidate.id === view.taskId);
+                    if (task) onViewTask?.(task);
+                  }}
+                >
+                  {t("planning.viewTask", "View task")}
+                  <ArrowRight size={16} />
+                </button>
+                <button type="button" className="btn" onClick={handleBackToList}>
+                  {t("planning.returnToSessions", "Return to sessions")}
+                </button>
+              </div>
+            </div>
+          )}
+          {view.type === "create_retry" && (
+            <div className="planning-summary" data-testid="planning-create-retry">
+              <div className="planning-view-scroll planning-summary-scroll">
+                <h4>{view.summary.title}</h4>
+                <p>{view.summary.description}</p>
+                <div className="ai-error-panel" role="alert">
+                  <div className="ai-error-message">{view.errorMessage}</div>
+                  <button type="button" className="btn btn-primary" onClick={() => void handleRetryCreateTask()}>{t("planning.retryCreate", "Retry create")}</button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -2792,94 +3397,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           )}
           </div>
 
-          {/*
-          FNXC:PlanningModeMobile 2026-07-20-10:30:
-          FN-8427 keeps the running plan through question, loading, and recoverable-error detail
-          states, but unmounts it in session-list mode. The list must own the entire compact body;
-          leaving this pane mounted reduced rows to the New session footer on mobile.
-          */}
-          {selectedSessionId && !isSessionListMode && (view.type === "question" || view.type === "loading" || view.type === "error") && (
-            <RunningPlanPane
-              summary={runningSummary}
-              fallbackDescription={activePlanPrompt}
-              onValidate={() => void handleValidatePlan()}
-            />
-          )}
         </div>
       </div>
     </div>
-  );
-}
-
-/*
-FNXC:PlanningMode 2026-07-19-12:00:
-The active-session left pane is answer history, not a second copy of the interview. Selecting a row
-uses the server's question-id edit-and-branch contract, while the center remains the sole answer editor.
-*/
-function AnsweredQuestionHistory({ entries, selectedQuestionId, isPending, onSelect }: {
-  entries: ConversationHistoryEntry[];
-  selectedQuestionId?: string | null;
-  isPending: boolean;
-  onSelect: (entry: ConversationHistoryEntry) => void;
-}) {
-  const { t } = useTranslation("app");
-  const answered = entries.filter((entry) => entry.question && entry.response);
-  return (
-    <aside className="planning-sidebar planning-answered-history" aria-label={t("planning.answeredQuestions", "Answered questions")}>
-      <div className="planning-sidebar-header"><h4>{t("planning.answeredQuestions", "Answered questions")}</h4></div>
-      <div className="planning-session-list" {...(answered.length > 0 ? { "data-testid": "conversation-history" } : {})}>
-        {answered.map((entry) => (
-          <button
-            key={entry.question!.id}
-            type="button"
-            className={`btn planning-answered-history-edit ${selectedQuestionId === entry.question!.id ? "active" : ""}`}
-            onClick={() => onSelect(entry)}
-            disabled={isPending}
-            aria-label={t("planning.editAnswer", "Edit answer for {{question}}", { question: entry.question!.question })}
-          >
-            <Pencil size={14} />
-            <span>{entry.question!.question}</span>
-            <span className="planning-answered-history-response">{formatHistoryResponse(entry)}</span>
-          </button>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
-/*
-FNXC:PlanningMode 2026-07-19-12:00:
-Keep the running plan mounted beside every interview state, including loading and errors. Validation is
-an intentional user action; no generation state offers a competing completion path.
-*/
-function formatHistoryResponse(entry: ConversationHistoryEntry): string {
-  const response = entry.response ?? {};
-  const options = entry.question?.options ?? [];
-  const optionLabel = (value: string | number | boolean): string => {
-    const matchingOption = typeof value === "string" ? options.find((option) => option.id === value) : undefined;
-    return matchingOption?.label ?? String(value);
-  };
-  return Object.entries(response)
-    .filter(([key]) => key !== "_comment")
-    .flatMap(([, value]) => Array.isArray(value) ? value : [value])
-    .filter((value): value is string | number | boolean => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-    .map(optionLabel)
-    .join(", ");
-}
-
-function RunningPlanPane({ summary, fallbackDescription, onValidate }: { summary?: PlanningSummary | null; fallbackDescription: string; onValidate?: () => void }) {
-  const { t } = useTranslation("app");
-  const plan = normalizePlanningSummary(summary ?? { title: "", description: fallbackDescription, suggestedSize: "M", priority: DEFAULT_TASK_PRIORITY, suggestedDependencies: [], keyDeliverables: [] });
-  return (
-    <aside className="planning-running-plan" aria-label={t("planning.runningPlan", "Running plan")}>
-      <h4>{t("planning.runningPlan", "Running plan")}</h4>
-      <div className="planning-running-plan-content">
-        <h5>{plan.title}</h5>
-        <p>{plan.description}</p>
-        {plan.keyDeliverables.length > 0 && <ul>{plan.keyDeliverables.map((item) => <li key={item}>{item}</li>)}</ul>}
-      </div>
-      {onValidate && <button type="button" className="btn btn-primary" onClick={onValidate}>{t("planning.validatePlan", "Validate plan")}</button>}
-    </aside>
   );
 }
 
@@ -3229,7 +3749,7 @@ function QuestionForm({ question: rawQuestion, initialResponse, onSubmit }: Ques
           onClick={handleSubmit}
           disabled={!isValid()}
         >
-          {t("planning.nextQuestion", "Next question")}
+          {t("planning.nextQuestion", "Next")}
           <ArrowRight size={16} className="icon-ml-4" />
         </button>
       </div>

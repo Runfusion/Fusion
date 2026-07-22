@@ -604,6 +604,16 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.cumulativeActiveMs !== undefined) {
         task.cumulativeActiveMs = updates.cumulativeActiveMs;
       }
+      if (updates.cumulativePlanningMs === null) {
+        task.cumulativePlanningMs = undefined;
+      } else if (updates.cumulativePlanningMs !== undefined) {
+        task.cumulativePlanningMs = updates.cumulativePlanningMs;
+      }
+      if (updates.planningStartedAt === null) {
+        task.planningStartedAt = undefined;
+      } else if (updates.planningStartedAt !== undefined) {
+        task.planningStartedAt = updates.planningStartedAt;
+      }
       if (updates.executionStartedAt === null) {
         task.executionStartedAt = undefined;
       } else if (updates.executionStartedAt !== undefined) {

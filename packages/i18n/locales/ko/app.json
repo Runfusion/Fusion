@@ -7955,7 +7955,7 @@
     },
     "tokenTotalsAria": "작업 토큰 합계",
     "tokenUsage": "토큰 사용량",
-    "totalExecutionTime": "총 실행 시간",
+    "totalExecutionTime": "총 활성 시간",
     "totalTokens": "합계",
     "updateFailed": "{{id}} 업데이트 실패: {{error}}",
     "updateSuccess": "{{id}} 업데이트됨",

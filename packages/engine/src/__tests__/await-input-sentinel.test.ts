@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAwaitInputSentinel } from "../executor.js";
+import { parseAwaitInputQuestionToolCall, parseAwaitInputSentinel } from "../executor.js";
 
 describe("parseAwaitInputSentinel (U6)", () => {
   it("extracts the question from a well-formed sentinel block", () => {
@@ -33,5 +33,22 @@ describe("parseAwaitInputSentinel (U6)", () => {
 
   it("ignores an unterminated sentinel", () => {
     expect(parseAwaitInputSentinel("===FUSION_AWAIT_INPUT===\nno closing marker")).toBeNull();
+  });
+});
+
+describe("parseAwaitInputQuestionToolCall", () => {
+  it("normalizes supported single and multi-question tool calls", () => {
+    expect(parseAwaitInputQuestionToolCall("request_user_input", {
+      questions: [
+        { question: "Which layout should compact tablets use?" },
+        { prompt: "Should desktop keep three panes?" },
+      ],
+    })).toBe("Which layout should compact tablets use?\n\nShould desktop keep three panes?");
+    expect(parseAwaitInputQuestionToolCall("AskUserQuestion", { message: "Proceed?" })).toBe("Proceed?");
+  });
+
+  it("does not classify ordinary tools or malformed question calls", () => {
+    expect(parseAwaitInputQuestionToolCall("bash", { question: "ignored" })).toBeNull();
+    expect(parseAwaitInputQuestionToolCall("ask_user", { question: "  " })).toBeNull();
   });
 });

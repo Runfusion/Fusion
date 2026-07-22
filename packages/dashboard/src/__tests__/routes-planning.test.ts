@@ -790,11 +790,67 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/start-streaming", () => {
-      it("broadcasts a mandatory question instead of accepting a first-turn completion", async () => {
+      it("does not expose the seeded fallback as a reviewable plan while the AI turn is active", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        let releasePrompt: (() => void) | undefined;
+        let markPromptStarted: (() => void) | undefined;
+        const promptStarted = new Promise<void>((resolve) => {
+          markPromptStarted = resolve;
+        });
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              markPromptStarted?.();
+              await new Promise<void>((resolve) => {
+                releasePrompt = resolve;
+              });
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "complete",
+                  data: {
+                    title: "AI-authored plan",
+                    description: "Generated after repository inspection.",
+                    proposedChanges: ["Implement the requested behavior"],
+                    acceptanceCriteria: ["The behavior is verified"],
+                    keyDeliverables: ["Working implementation"],
+                  },
+                }),
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Generate this plan with AI" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        await promptStarted;
+        planningStreamManager.broadcast(sessionId, { type: "complete" });
+        const streamRes = await streamPromise;
+        releasePrompt?.();
+        await vi.waitFor(() => {
+          expect(planningStreamManager.getBufferedEvents(sessionId, 0).some((event) => event.event === "summary")).toBe(true);
+        });
+
+        expect(messages[0]?.content).toContain("Generate this plan with AI");
+        expect(streamRes.body).not.toContain("event: summary");
+        expect(streamRes.body).not.toContain("Generate this plan with AI");
+      });
+
+      it("broadcasts a reviewable initial plan without an unsolicited question", async () => {
         const messages: Array<{ role: string; content: string }> = [];
         const responses = [
-          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
-          JSON.stringify({ type: "question", data: { id: "q-stream-required", type: "text", question: "What risk should the plan address?" } }),
+          JSON.stringify({ type: "complete", data: { title: "Reporting workflow plan", description: "A concrete reporting plan", proposedChanges: ["Update report generation"], acceptanceCriteria: ["Reports complete successfully"], keyDeliverables: ["Implement report generation"] } }),
         ];
         let responseIndex = 0;
         __setCreateFnAgent(async () => ({
@@ -819,10 +875,9 @@ describe("Planning Mode Routes", () => {
         expect(res.status).toBe(201);
         planningStreamManager.consumeInitialTurn(res.body.sessionId)!();
         await vi.waitFor(() => {
-          const questions = planningStreamManager.getBufferedEvents(res.body.sessionId, 0)
-            .filter((event) => event.event === "question");
-          expect(questions).toHaveLength(1);
-          expect(JSON.parse(questions[0]!.data)).toMatchObject({ id: expect.any(String), type: expect.any(String) });
+          const events = planningStreamManager.getBufferedEvents(res.body.sessionId, 0);
+          expect(events.filter((event) => event.event === "summary")).toHaveLength(1);
+          expect(events.filter((event) => event.event === "question")).toHaveLength(0);
         });
         expect(messages).toHaveLength(2);
         expect(messages[0]?.content).toContain("Build a detailed reporting workflow");
@@ -1299,7 +1354,8 @@ describe("Planning Mode Routes", () => {
           expect(promptCalls).toHaveLength(1);
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
-          expect(streamRes.body).toContain("event: question");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).not.toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1351,7 +1407,8 @@ describe("Planning Mode Routes", () => {
           expect(promptCalls).toHaveLength(1);
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
-          expect(streamRes.body).toContain("event: question");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).not.toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1591,7 +1648,7 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/respond", () => {
-      it("processes response and returns next question", async () => {
+      it("updates the plan after an answer", async () => {
         // First create a session
         const startRes = await REQUEST(
           buildApp(),
@@ -1613,65 +1670,18 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(200);
-        expect(res.body.type).toBe("question");
+        expect(res.body.type).toBe("complete");
         expect(res.body.data).toBeDefined();
       });
 
-      it("returns checkpoint before summary, then completes only after explicit proceed", async () => {
-        // Create a session
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
+      it("requires an explicit refine request before asking another question", async () => {
+        const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
         const sessionId = startRes.body.sessionId;
+        const answer = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        expect(answer.body).toMatchObject({ type: "complete" });
 
-        // Submit 3 responses to complete the session
-        await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
-          { "Content-Type": "application/json" }
-        );
-
-        await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
-          { "Content-Type": "application/json" }
-        );
-
-        const checkpointRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { confirm: true } }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(checkpointRes.status).toBe(200);
-        expect(checkpointRes.body.type).toBe("question");
-        expect(checkpointRes.body.data.id).toEqual(expect.any(String));
-        expect(checkpointRes.body.data.question).toEqual(expect.any(String));
-
-        const finalRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({
-            sessionId,
-            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(finalRes.status).toBe(200);
-        expect(finalRes.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
-        expect(planningModule.getSummary(sessionId)).toBeDefined();
+        const refine = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { refine: true, focus: "security" } }), { "Content-Type": "application/json" });
+        expect(refine.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
       });
 
       it("FN-6977 normalizes omitted summary arrays from live AI completion", async () => {
@@ -1725,11 +1735,8 @@ describe("Planning Mode Routes", () => {
 
         expect(checkpointRes.status).toBe(200);
         expect(checkpointRes.body).toMatchObject({
-          type: "question",
-          data: {
-            id: expect.any(String),
-            question: expect.any(String),
-          },
+          type: "complete",
+          data: { title: "Malformed AI summary" },
         });
         expect(planningModule.getSummary(sessionId)).toMatchObject({
           suggestedDependencies: ["FN-100"],
@@ -1738,17 +1745,6 @@ describe("Planning Mode Routes", () => {
           ]),
         });
 
-        const finalRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({
-            sessionId,
-            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-          }),
-          { "Content-Type": "application/json" },
-        );
-        expect(finalRes.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
         expect(planningModule.getSummary(sessionId)).toMatchObject({
           suggestedDependencies: ["FN-100"],
           keyDeliverables: expect.arrayContaining([
@@ -1817,7 +1813,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-one": "Make it responsive and tested" } }),
           { "Content-Type": "application/json" },
         );
-        expect(checkpointRes.body.data.question).toEqual(expect.any(String));
+        expect(checkpointRes.body.type).toBe("complete");
 
         const deepeningRes = await REQUEST(
           buildApp(),
@@ -1825,10 +1821,7 @@ describe("Planning Mode Routes", () => {
           "/api/planning/respond",
           JSON.stringify({
             sessionId,
-            responses: {
-              [PLANNING_DEEPEN_CHECKPOINT_ID]: ["theme-ux"],
-              _other: "Explore rollout risk",
-            },
+            responses: { refine: true, focus: "Explore rollout risk" },
           }),
           { "Content-Type": "application/json" },
         );
@@ -1845,22 +1838,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-deeper": "Keyboard and touch interactions" } }),
           { "Content-Type": "application/json" },
         );
-        expect(secondCheckpointRes.body).toMatchObject({
-          type: "question",
-          data: { id: expect.any(String), question: expect.any(String) },
-        });
-
-        const finalRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({
-            sessionId,
-            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-          }),
-          { "Content-Type": "application/json" },
-        );
-        expect(finalRes.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
+        expect(secondCheckpointRes.body.type).toBe("complete");
       });
 
       it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
@@ -1914,13 +1892,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
           { "Content-Type": "application/json" },
         );
-        expect(interviewRes.body.data.question).toEqual(expect.any(String));
-        expect(interviewRes.body.data.options?.[0]?.id).toEqual(expect.any(String));
-        expect(interviewRes.body.data.options?.map((option: { label: string }) => option.label)).toEqual([
-          "Option 1",
-          "Option 2",
-          "Other (write your own)",
-        ]);
+        expect(interviewRes.body.type).toBe("complete");
 
         const deepeningRes = await REQUEST(
           buildApp(),
@@ -1928,7 +1900,7 @@ describe("Planning Mode Routes", () => {
           "/api/planning/respond",
           JSON.stringify({
             sessionId,
-            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+            responses: { refine: true },
           }),
           { "Content-Type": "application/json" },
         );
@@ -3989,7 +3961,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("question");
+      expect(res.body.type).toBe("complete");
     });
 
     /*
@@ -4026,7 +3998,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("question");
+      expect(res.body.type).toBe("complete");
       expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });

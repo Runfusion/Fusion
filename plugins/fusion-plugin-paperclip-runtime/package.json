@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/paperclip-runtime",
-  "version": "0.2.80",
+  "version": "0.2.81-beta.0",
   "type": "module",
   "description": "Paperclip runtime plugin for Fusion — provides AI agent web access capabilities",
   "keywords": [

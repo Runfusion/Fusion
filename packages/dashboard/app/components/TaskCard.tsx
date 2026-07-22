@@ -42,7 +42,7 @@ import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../uti
 import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
-import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
+import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
@@ -357,10 +357,11 @@ function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
 // inside instrumented code paths. Returns null on legacy tasks that completed
 // before `executionStartedAt` was tracked, so callers can fall back.
 function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
-  if (task.cumulativeActiveMs == null) {
-    return getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
-  }
-  return getActiveRuntimeMs(task, nowMs);
+  // FNXC:TaskTiming 2026-08-01-12:00: planning-only tasks have no execution
+  // accumulator, but their active AI duration still belongs on the card chip.
+  // Use the legacy execution window only when neither active-time source exists.
+  const totalActiveMs = getTotalAgentActiveMs(task, nowMs);
+  return totalActiveMs ?? getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
 }
 
 function getInReviewCompletionMs(task: Task): number | null {
@@ -1585,7 +1586,7 @@ function TaskCardComponent({
       title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
       ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
     };
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
 
   const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 

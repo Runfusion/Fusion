@@ -1320,10 +1320,22 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
       };
     };
 
-    // Main rate limits
+    const getWindowLabel = (win: unknown, fallbackLabel: string): string => {
+      if (!win || typeof win !== "object") return fallbackLabel;
+      const durationSeconds = (win as { limit_window_seconds?: unknown }).limit_window_seconds;
+      if (durationSeconds === 7 * 24 * 60 * 60) return "Weekly";
+      if (durationSeconds === 5 * 60 * 60) return "Session (5h)";
+      return fallbackLabel;
+    };
+
+    // Codex has used both positional shapes: primary=session + secondary=weekly,
+    // and primary=weekly with no secondary. Prefer the declared duration so the
+    // same quota keeps its meaning across both API responses.
     if (data.rate_limit) {
-      const primary = parseWindow(data.rate_limit.primary_window, "Session (5h)");
-      const secondary = parseWindow(data.rate_limit.secondary_window, "Weekly");
+      const primaryWindow = data.rate_limit.primary_window;
+      const secondaryWindow = data.rate_limit.secondary_window;
+      const primary = parseWindow(primaryWindow, getWindowLabel(primaryWindow, "Session (5h)"));
+      const secondary = parseWindow(secondaryWindow, getWindowLabel(secondaryWindow, "Weekly"));
       if (primary) usage.windows.push(primary);
       if (secondary) usage.windows.push(secondary);
     }
