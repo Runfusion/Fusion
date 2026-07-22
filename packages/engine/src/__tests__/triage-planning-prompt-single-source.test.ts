@@ -158,7 +158,7 @@ describe("triage planning prompt single source", () => {
     await new TriageProcessor(store, "/tmp/root").specifyTask(task);
 
     expect(customTools.map((tool) => tool.name)).toContain("fn_task_prompt_write");
-    expect(sessionTools).toBe("readonly");
+    expect(sessionTools).toBe("coding");
   });
 
   it("requires triage plans to use the durable prompt writer instead of generic filesystem writes", () => {

@@ -1612,8 +1612,11 @@ export class TriageProcessor {
           : { provider: undefined, modelId: undefined };
 
         /*
-        FNXC:TriagePromptPersistence 2026-07-21-16:30:
-        `tools: "readonly"` intentionally coexists with the custom prompt writer above: readonly governs general tools, while fn_task_prompt_write performs the one authorized synchronized task-artifact mutation.
+        FNXC:TriagePromptPersistence 2026-07-21-17:50:
+        Planning must use the coding tool surface. The shared readonly policy filters
+        mutation tools, including fn_task_prompt_write, before the model sees them;
+        advertising that writer in the prompt while running readonly stranded triage
+        on the original PROMPT.md stub and sent the stub into Plan Review.
         */
         const { session } = await createResolvedAgentSession({
           sessionPurpose: "triage",
@@ -1622,7 +1625,7 @@ export class TriageProcessor {
           cwd: this.rootDir,
           systemPrompt: triageSystemPromptFinal,
           systemPromptLayers: triageLayers,
-          tools: "readonly",
+          tools: "coding",
           customTools,
           onText: agentLogger.onText,
           onThinking: agentLogger.onThinking,

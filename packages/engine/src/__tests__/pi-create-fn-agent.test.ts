@@ -2210,6 +2210,27 @@ describe("createFnAgent", () => {
     expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_list_agents");
   });
 
+  it("keeps fn_task_prompt_write in coding session tools", async () => {
+    const promptWriter = {
+      name: "fn_task_prompt_write",
+      label: "Write PROMPT.md",
+      description: "Persist the task specification",
+      parameters: {},
+      execute: vi.fn(),
+    };
+
+    const { createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "coding",
+      customTools: [promptWriter as any],
+    });
+
+    const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
+    expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_task_prompt_write");
+  });
+
   it("does not allow extra builtin tools in readonly sessions by default", async () => {
     const { createFnAgent } = await import("../pi.js");
 
