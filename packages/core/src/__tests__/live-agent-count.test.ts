@@ -20,11 +20,14 @@ describe("live agent count predicates", () => {
     expect(isRunningAgentTask(task({ column: "ideas", status: "planning", userPaused: true }))).toBe(false);
   });
 
-  it("requires durable liveness for WIP execution rather than an in-progress shell", () => {
-    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true }))).toBe(false);
+  it("counts unpaused WIP cards as running without requiring sessionFile", () => {
+    // sessionFile is not a DB/board field; WIP membership + not paused is the production signal.
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "working", columnCountsTowardWip: true }))).toBe(true);
     expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, sessionFile: "/tmp/run" }))).toBe(true);
     expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, checkedOutBy: "agent-a" }))).toBe(true);
-    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, sessionFile: "/tmp/run", paused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, paused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, userPaused: true }))).toBe(false);
   });
 
   it("counts only active review/merge statuses and excludes terminal columns", () => {
@@ -34,7 +37,7 @@ describe("live agent count predicates", () => {
     expect(isRunningAgentTask(task({ column: "review", status: "pending", columnIsReviewOrMerge: true }))).toBe(false);
     expect(isRunningAgentTask(task({ column: "ideas", status: "merging", columnIsReviewOrMerge: false }))).toBe(false);
     expect(isRunningAgentTask(task({ column: "shipped", sessionFile: "/tmp/stale", columnCountsTowardWip: true, columnTerminalKind: "complete" }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "working", sessionFile: "/tmp/live", columnCountsTowardWip: true, columnTerminalKind: "none" }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "working", columnCountsTowardWip: true, columnTerminalKind: "none" }))).toBe(true);
   });
 
   it("enriches terminal, waiting, and WIP traits from board flags", () => {
@@ -55,7 +58,7 @@ describe("live agent count predicates", () => {
       task({ column: "triage", status: "planning" }),
       task({ column: "in-review", status: "merging", columnIsReviewOrMerge: true }),
       task({ column: "done", sessionFile: "/tmp/stale" }),
-    ])).toBe(3);
+    ])).toBe(4);
   });
 
   it("normalizes aggregate display counts", () => {

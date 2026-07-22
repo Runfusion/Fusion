@@ -109,7 +109,7 @@ describe("Column count-flash", () => {
     const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
 
-    const badge = screen.getByText("1").parentElement!;
+    const badge = screen.getByText("1");
     expect(badge.className).toContain("column-count");
     expect(badge.className).not.toContain("count-flash");
   });
@@ -121,7 +121,7 @@ describe("Column count-flash", () => {
     const moreTasks = [makeTask("FN-001"), makeTask("FN-002")];
     rerender(<Column {...defaultProps} tasks={moreTasks} />);
 
-    const badge = screen.getByText("2").parentElement!;
+    const badge = screen.getByText("2");
     expect(badge.className).toContain("count-flash");
   });
 

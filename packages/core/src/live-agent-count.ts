@@ -29,6 +29,14 @@ FN-8453 / GitHub #2359 defines Running as a live top-level working agent, not a
 board-column or worktree-holder count. Every production store- or board-backed
 consumer enriches this pure shape from workflow traits before it counts; the
 literal terminal fallback exists only for legacy fixtures while no IR is loaded.
+
+FNXC:ConcurrencyIndicators 2026-07-21-19:00:
+Unpaused WIP membership is sufficient for execute Running. sessionFile is not a
+persisted task column (absent from TaskRow, listTasks slim, and board payloads),
+so requiring sessionFile/checkedOutBy undercounted footer Running (e.g. 1 of 23)
+and under-claimed admission capacity. Pause/user-pause and terminal traits still
+exclude parked shells; durable session/checkout remain optional positive signals
+but are not required for WIP.
 */
 const ACTIVE_IN_REVIEW_AGENT_STATUSES = new Set([
   ...ACTIVE_MERGE_PIPELINE_STATUSES,
@@ -85,14 +93,11 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   return task.columnTerminalKind ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
 }
 
-function hasDurableExecuteLiveness(task: RunningAgentTaskShape): boolean {
-  return Boolean(task.sessionFile?.trim() || task.checkedOutBy?.trim());
-}
-
 /**
  * Returns true only for a live, unpaused top-level agent.
- * Planning may run in any non-terminal workflow column; execute needs durable
- * session/checkout evidence so idle worktree shells do not consume capacity.
+ * Planning may run in any non-terminal workflow column. Unpaused WIP columns
+ * count as execute holders (sessionFile is not on the board/DB row path).
+ * Active review/merge statuses count only in review/merge columns.
  */
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
@@ -102,7 +107,7 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
     return task.columnIsReviewOrMerge ?? task.column === "in-review";
   }
   const isWip = task.columnCountsTowardWip ?? task.column === "in-progress";
-  return isWip && hasDurableExecuteLiveness(task);
+  return isWip;
 }
 
 /** Exact footer waiting membership: unpaused, non-terminal intake/hold work that is not live. */

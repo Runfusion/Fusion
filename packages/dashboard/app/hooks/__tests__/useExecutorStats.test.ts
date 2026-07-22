@@ -875,7 +875,5 @@ function createMockTask(id: string, column: Task["column"]): Task {
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    // Fixture represents an active executor session, not an idle worktree shell.
-    ...(column === "in-progress" ? { sessionFile: `/tmp/${id}.json` } : {}),
   };
 }
