@@ -42,6 +42,7 @@ import {
   resolveColumnFlags,
   resolveColumnAdjacency,
   PLAN_REVIEW_GROUP_ID,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   DEFAULT_WORKFLOW_POOL_ID,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
@@ -49,6 +50,7 @@ import {
   type TaskStore,
   type Task,
   type WorkflowIr,
+  type WorkflowIrNode,
   type WorkflowIrV2,
   type WorkflowIrColumn,
 } from "@fusion/core";
@@ -141,29 +143,19 @@ function isHeldTask(ir: WorkflowIr, task: Task): boolean {
  * `promoteHeldTask`, `releaseHeldTaskByEvent`) enforces the same invariant.
  */
 /**
- * U3 — a card is "unplanned for execution" via a PRE-RELEASE Plan Review gate
- * when: the workflow contains a plan-review node placed in a NON-wip (pre-release)
- * column, Plan Review is ENABLED for the task (`enabledWorkflowSteps` includes the
- * group), and no PASSED plan-review step result exists yet. Returns false when the
- * plan-review node sits in a wip column (post-release gate — builtin `in-progress`),
- * is absent, is disabled, or has already passed. Pure (no store/clock).
+ * FNXC:PlanReview 2026-07-21-12:20:
+ * Locate a Plan Review node placed before WIP. Disabled optional groups still
+ * traverse this node, allowing the graph to persist the same generic capacity
+ * continuation without invoking a reviewer.
  */
-function isPlanReviewPreReleaseGateUnpassed(task: Task, ir: WorkflowIr): boolean {
+export function resolvePreReleasePlanReviewNode(ir: WorkflowIr): WorkflowIrNode | undefined {
   const planReviewNode = ir.nodes.find((n) => n.id === PLAN_REVIEW_GROUP_ID);
-  if (!planReviewNode?.column) return false;
+  if (!planReviewNode?.column) return undefined;
   const column = findColumn(ir, planReviewNode.column);
-  if (!column) return false;
+  if (!column) return undefined;
   // Post-release gate (plan-review lives in a wip column): do not hold release.
-  if (resolveColumnFlags(column).countsTowardWip === true) return false;
-  // Disabled → releases without any reviewer (U3 scenario 5).
-  if (!Array.isArray(task.enabledWorkflowSteps) || !task.enabledWorkflowSteps.includes(PLAN_REVIEW_GROUP_ID)) {
-    return false;
-  }
-  // Already passed → planned; release.
-  const passed = task.workflowStepResults?.some(
-    (r) => r.workflowStepId === PLAN_REVIEW_GROUP_ID && r.status === "passed",
-  );
-  return !passed;
+  if (resolveColumnFlags(column).countsTowardWip === true) return undefined;
+  return planReviewNode;
 }
 
 export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
@@ -172,14 +164,30 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   The graph is the SOLE Plan Review owner (triage's out-of-graph gate is deleted).
   When a workflow places the plan-review node in a PRE-RELEASE column (the
   benchmark's Plan Review in the Todo hold column — i.e. NOT a wip column), the
-  card must not release into execution until the graph's plan-review gate has
-  PASSED — releasing first would skip the gate. This re-keys the old
-  triage-`status:"planning"` hold onto workflow step state. It intentionally does
-  NOT fire when plan-review is placed in a wip column (builtin: in-progress), where
-  the gate runs post-release, nor when Plan Review is disabled — so a disabled or
-  post-release plan-review workflow releases normally (never deadlocks).
+  card must not release into execution until the graph has reached its durable
+  capacity boundary. Releasing first would skip the gate. This does not fire
+  when Plan Review already lives in a WIP column.
   */
-  if (isPlanReviewPreReleaseGateUnpassed(task, ir)) return true;
+  const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
+  if (preReleaseReview) {
+    // Compatibility for tasks planned before durable continuations existed and
+    // for narrow store adapters that expose only the legacy review result.
+    const legacyPassed = task.workflowStepResults?.some(
+      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
+    );
+    if (!legacyPassed) {
+      if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
+      const continuations = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
+      const active = continuations.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
+      // Readiness is represented by the graph's durable boundary continuation,
+      // not by a special-case review result. Optional groups that are disabled
+      // are still traversed and therefore reach the same capacity boundary.
+      const readyAtCapacityBoundary = active.some(
+        (item) => item.waitReason === "capacity" && item.sourceColumn === task.column,
+      );
+      if (!readyAtCapacityBoundary) return true;
+    }
+  }
   // Still-live triage/executor statuses (kept, not triage-plan-review-owned):
   // `planning` = triage is actively writing PROMPT.md; `needs-replan` = the
   // executor's graph replan rebound parked the card for another planning pass.

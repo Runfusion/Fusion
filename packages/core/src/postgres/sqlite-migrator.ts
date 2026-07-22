@@ -1412,33 +1412,15 @@ function classifyColumnType(pgCol: {
 }
 
 /*
-FNXC:PostgresMigrationNulSanitize 2026-07-17-10:05:
+FNXC:PostgresMigrationNulSanitize 2026-07-17-10:05 (moved to nul-sanitize.ts 2026-07-20):
 PostgreSQL rejects U+0000 in text/varchar ("invalid byte sequence" / "\u0000 cannot be converted to text") and in json/jsonb ("unsupported Unicode escape sequence"), but SQLite TEXT stores it freely, so legacy databases can contain NUL bytes that abort the first-boot auto-migration. Strip U+0000 from every migrated string — plain text cells, string values and object keys inside JSON documents, and opaque legacy-preservation text cells — rather than failing the cutover. Sanitization happens inside convertValue/tagLegacyCell so the content-checksum verification (computeSourceCanonicalRows reuses convertValue) compares the sanitized source against the sanitized target and still passes.
+
+stripNulChars/deepStripNulChars now live in ./nul-sanitize.js and are also
+reused by the live chat/mailbox write paths (async-chat-store.ts,
+async-message-store.ts), which can receive the same U+0000 byte from
+unsanitized tool output at runtime, not just from legacy SQLite migration.
 */
-// eslint-disable-next-line no-control-regex -- matching the NUL control character is the point
-const NUL_CHAR_RE = /\u0000/g;
-
-function stripNulChars(text: string): string {
-  return text.includes("\u0000") ? text.replace(NUL_CHAR_RE, "") : text;
-}
-
-/** Recursively strip U+0000 from all string values and object keys in a parsed JSON document. */
-function deepStripNulChars(value: unknown): unknown {
-  if (typeof value === "string") {
-    return stripNulChars(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map(deepStripNulChars);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(
-        ([key, entry]) => [stripNulChars(key), deepStripNulChars(entry)],
-      ),
-    );
-  }
-  return value;
-}
+import { stripNulChars, deepStripNulChars } from "./nul-sanitize.js";
 
 /**
  * Convert a SQLite value to its PostgreSQL representation based on the column

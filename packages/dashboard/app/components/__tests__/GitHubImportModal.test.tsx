@@ -283,6 +283,17 @@ describe("GitHubImportModal", () => {
     </MobileNavigationHarness>,
   );
 
+  function EmbeddedNavigationHarness({ children, onViewRevert }: { children: ReactNode; onViewRevert: () => void }) {
+    const navigationHistory = useNavigationHistory({ enabled: true });
+
+    useEffect(() => {
+      navigationHistory.pushNav({ type: "view", revert: onViewRevert });
+      return () => navigationHistory.removeNav(onViewRevert);
+    }, [navigationHistory, onViewRevert]);
+
+    return <NavigationHistoryProvider value={navigationHistory}>{children}</NavigationHistoryProvider>;
+  }
+
   it("builds a Planning Mode seed with the GitHub issue context", () => {
     expect(buildIssuePlanningSeed({
       number: 42,
@@ -481,9 +492,48 @@ describe("GitHubImportModal", () => {
         expect(screen.queryByTestId(surface === "gitlab" ? "gitlab-import-preview-card" : "github-import-preview-card")).toBeNull();
         expect(onClose).not.toHaveBeenCalled();
       });
+      expect(screen.getByRole("button", {
+        name: surface === "issue"
+          ? /Select issue #72/i
+          : surface === "pull"
+            ? /Select pull request #73/i
+            : /#73 Swipe GitLab issue/i,
+      })).toBeInTheDocument();
 
       window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
       expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      window.history.back = originalBack;
+    }
+  });
+
+  it("keeps embedded Import Tasks mounted until its parent view receives a second Back", async () => {
+    const leaveImportTasks = vi.fn();
+    const originalBack = window.history.back;
+    window.history.back = vi.fn();
+    try {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 75, title: "Embedded swipe issue", body: "Body", html_url: "https://github.com/owner/repo/issues/75", labels: [], state: "open" },
+      ]);
+
+      render(
+        <EmbeddedNavigationHarness onViewRevert={leaveImportTasks}>
+          <GitHubImportModal isOpen onClose={leaveImportTasks} onImport={onImport} tasks={[]} projectId="project-1" presentation="embedded" />
+        </EmbeddedNavigationHarness>,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #75/i }));
+      await screen.findByTestId("github-import-preview-card");
+
+      dispatchDetailBack("popstate");
+      await waitFor(() => {
+        expect(screen.queryByTestId("github-import-preview-card")).toBeNull();
+        expect(screen.getByRole("button", { name: /Select issue #75/i })).toBeInTheDocument();
+        expect(leaveImportTasks).not.toHaveBeenCalled();
+      });
+
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
+      expect(leaveImportTasks).toHaveBeenCalledTimes(1);
     } finally {
       window.history.back = originalBack;
     }

@@ -1698,12 +1698,16 @@ export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runC
     name: "fn_task_prompt_write",
     label: "Write PROMPT.md",
     description:
-      "Replace this task's PROMPT.md with revised plan/spec content. " +
-      "Use only during Plan Review/spec repair; provide the complete final PROMPT.md content.",
+      "Create or replace this task's PROMPT.md with complete plan/spec content. " +
+      "Use during fresh triage planning, replanning, or Plan Review repair; provide the complete final PROMPT.md content.",
     parameters: taskPromptWriteParams,
     execute: async (_id: string, params: Static<typeof taskPromptWriteParams>) => {
       try {
         await store.updateTask(taskId, { prompt: params.content }, runContext);
+        const persisted = await store.getTask(taskId);
+        if (persisted?.prompt !== params.content) {
+          throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
+        }
         return {
           content: [{ type: "text" as const, text: `Updated PROMPT.md for ${taskId}.` }],
           details: {},

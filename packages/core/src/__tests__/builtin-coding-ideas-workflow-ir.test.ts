@@ -92,6 +92,24 @@ describe("builtin coding-ideas workflow ir", () => {
     expect(codeReview?.config?.defaultOn).toBe(true);
   });
 
+  it("keeps each activity in the column named for that activity", () => {
+    const ir = BUILTIN_CODING_IDEAS_WORKFLOW_IR as WorkflowIrV2;
+    const nodeColumn = (id: string) => ir.nodes.find((node) => node.id === id)?.column;
+    expect(nodeColumn("plan")).toBe("todo");
+    expect(nodeColumn("plan-review")).toBe("todo");
+    expect(nodeColumn("parse")).toBe("in-progress");
+    expect(nodeColumn("steps")).toBe("in-progress");
+    expect(nodeColumn("code-review")).toBe("in-review");
+    expect(nodeColumn("code-review-remediation")).toBe("in-progress");
+    expect(nodeColumn("completion-summary")).toBe("in-review");
+    for (const node of ir.nodes.filter((candidate) => candidate.id.startsWith("merge-"))) {
+      expect(node.column, `${node.id} should remain in review`).toBe("in-review");
+    }
+    expect(ir.nodes.some((node) => node.id === "browser-verification")).toBe(false);
+    expect(ir.nodes.some((node) => node.id === "browser-verification-remediation")).toBe(false);
+    expect(ir.nodes.some((node) => node.id === "post-merge-verification")).toBe(false);
+  });
+
   it("never leaves a node in a column the workflow does not declare", () => {
     const ir = BUILTIN_CODING_IDEAS_WORKFLOW_IR as WorkflowIrV2;
     const declared = new Set(ir.columns.map((c) => c.id));

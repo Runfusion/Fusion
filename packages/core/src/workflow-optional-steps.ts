@@ -14,6 +14,21 @@ export interface ResolvedWorkflowOptionalStep {
   defaultOn: boolean;
 }
 
+/** Resolve one optional group's effective state consistently across runtime and
+ * readiness gates. An explicit list (including `[]`) is authoritative; only a
+ * missing list falls back to the workflow-authored default.
+ * FNXC:WorkflowOptionalSteps 2026-07-21-11:51: Persisted explicit selections,
+ * including an empty list, must override workflow defaults across all gates. */
+export function isWorkflowOptionalGroupEnabled(
+  enabledWorkflowSteps: readonly string[] | undefined,
+  groupId: string,
+  defaultOn = false,
+): boolean {
+  return Array.isArray(enabledWorkflowSteps)
+    ? enabledWorkflowSteps.includes(groupId)
+    : defaultOn;
+}
+
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
 Re-pointed the per-task optional-step toggle SOURCE from the execution-inert `ir.optionalSteps` declaration to v2 `optional-group` NODES (one resolved entry per group). The legacy `WorkflowOptionalStep` type + `optionalSteps` IR field are now REMOVED (FNXC:WorkflowOptionalGroup 2026-06-21-18:00); a legacy persisted `optionalSteps` key on an old v2 row is tolerated/ignored at parse.

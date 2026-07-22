@@ -1,0 +1,56 @@
+import type { WorkflowIr, WorkflowIrArtifact } from "@fusion/core";
+
+export const REQUIRED_ARTIFACT_MISSING_PREFIX = "required-artifact-missing:";
+export const REQUIRED_ARTIFACT_READ_FAILED_PREFIX = "required-artifact-read-failed:";
+
+/*
+FNXC:WorkflowArtifacts 2026-07-21-17:00:
+Planning-owned and step-source artifacts are executable workflow contracts, so
+they must contain non-whitespace content before the graph can consume them.
+*/
+export function requiresNonEmptyWorkflowArtifact(artifact: WorkflowIrArtifact): boolean {
+  return artifact.producedBy === "planning" || artifact.role === "step-source";
+}
+
+export function workflowEntryArtifacts(ir: WorkflowIr): WorkflowIrArtifact[] {
+  const artifacts = "artifacts" in ir && Array.isArray(ir.artifacts) ? ir.artifacts : [];
+  return artifacts.filter(requiresNonEmptyWorkflowArtifact);
+}
+
+export function requiredArtifactMissingValue(keys: readonly string[]): string {
+  const normalizedKeys = [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
+  if (normalizedKeys.length === 0) {
+    throw new Error("At least one required artifact key is needed");
+  }
+  return `${REQUIRED_ARTIFACT_MISSING_PREFIX}${JSON.stringify(normalizedKeys)}`;
+}
+
+export function parseRequiredArtifactMissingValue(value: string | undefined): string[] | null {
+  if (!value?.startsWith(REQUIRED_ARTIFACT_MISSING_PREFIX)) return null;
+  const payload = value.slice(REQUIRED_ARTIFACT_MISSING_PREFIX.length);
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (Array.isArray(parsed)) {
+      const keys = parsed
+        .filter((key): key is string => typeof key === "string")
+        .map((key) => key.trim())
+        .filter(Boolean);
+      return keys.length > 0 ? [...new Set(keys)] : null;
+    }
+  } catch {
+    // Pre-JSON signals used a comma-delimited payload; keep them recoverable.
+  }
+  const keys = payload
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  return keys.length > 0 ? [...new Set(keys)] : null;
+}
+
+export function requiredArtifactReadFailedValue(key: string): string {
+  return `${REQUIRED_ARTIFACT_READ_FAILED_PREFIX}${key}`;
+}
+
+export function isRequiredArtifactReadFailedValue(value: string | undefined): boolean {
+  return value?.startsWith(REQUIRED_ARTIFACT_READ_FAILED_PREFIX) === true;
+}

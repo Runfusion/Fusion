@@ -153,6 +153,10 @@ fn upgrade
 | `--channel <stable\|beta>` | Select the release track and persist it to global settings (`updateChannel`), shared with the dashboard and desktop updater. `stable` follows the npm `latest` dist-tag; `beta` follows the newer of `latest` and `beta`. |
 | `--force` | Install the resolved channel target even when it is not newer than the current version — the explicit beta → stable downgrade path. |
 
+Unknown options and positional arguments are rejected with an error and non-zero exit code. Repeating any option, including `--channel`, is also rejected rather than silently choosing a value.
+
+If your installed CLI predates `--channel`, bootstrap onto beta with `npm install -g @runfusion/fusion@beta`. Once installed, use `fn update --channel beta` to persist the beta track.
+
 `fn upgrade` is an alias for `fn update`. Installs always pin the exact resolved version rather than a dist-tag, so a beta-channel install can never silently land on stable (or vice versa).
 
 ---

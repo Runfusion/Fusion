@@ -34,10 +34,14 @@ export interface UseNavigationHistoryResult {
   /** Replace the top-of-stack entry and call history.replaceState. */
   replaceCurrent: (entry: NavEntry) => void;
   /**
-   * Remove a programmatically-dismissed entry and call history.back so the
-   * browser history entry created by pushNav is consumed as well.
+   * Remove a programmatically-dismissed entry. By default history.back()
+   * consumes its browser-history entry; `preserveHistoryPosition` instead
+   * replaces the current state for a close-then-navigate transition.
    */
-  removeNav: (closeOrRevert: () => void) => void;
+  removeNav: (
+    closeOrRevert: () => void,
+    options?: { preserveHistoryPosition?: boolean },
+  ) => void;
 }
 
 const SELF_POP_FALLBACK_CLEAR_MS = 1_000;
@@ -158,7 +162,7 @@ export function useNavigationHistory(
   );
 
   const removeNav = useCallback(
-    (closeOrRevert: () => void) => {
+    (closeOrRevert: () => void, options?: { preserveHistoryPosition?: boolean }) => {
       if (!enabledRef.current) return;
 
       for (let i = stackRef.current.length - 1; i >= 0; i -= 1) {
@@ -166,6 +170,19 @@ export function useNavigationHistory(
         if (getEntryCallback(entry) !== closeOrRevert) continue;
 
         stackRef.current.splice(i, 1);
+
+        /*
+        FNXC:GitHubImportSwipeBack 2026-07-20-23:12:
+        A More-sheet action closes one history surface and immediately opens
+        another. Going back asynchronously after removing More can pop that
+        newly pushed Import/detail entry instead. Keep the browser at its
+        current position and rewrite its nav depth for this atomic transition.
+        */
+        if (options?.preserveHistoryPosition) {
+          writeHistoryState("replace", stackRef.current.length);
+          return;
+        }
+
         selfPopRef.current = true;
 
         if (selfPopClearTimerRef.current !== null) {
@@ -180,7 +197,7 @@ export function useNavigationHistory(
         return;
       }
     },
-    [], // stable — reads from refs
+    [writeHistoryState],
   );
 
   // Register popstate listener. Always registers in browser environments but

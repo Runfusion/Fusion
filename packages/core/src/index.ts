@@ -282,6 +282,7 @@ export { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.j
 export {
   resolveWorkflowOptionalSteps,
   resolveDefaultOnOptionalGroupIds,
+  isWorkflowOptionalGroupEnabled,
 } from "./workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflow-optional-steps.js";
 export {
@@ -655,7 +656,13 @@ export {
   getRunningAgentCountSource,
   deriveRunningAgentCounts,
   isRunningAgentTask,
+  isWaitingAgentTask,
   countRunningAgentTasks,
+  enrichRunningAgentTaskShape,
+  enrichRunningAgentTaskShapeFromFlags,
+  resolveColumnTerminalKind,
+  type RunningAgentTaskShape,
+  type ColumnTerminalKind,
   type RunningAgentCountSource,
   type RunningAgentCounts,
 } from "./live-agent-count.js";
@@ -2608,3 +2615,4 @@ export type { LanguageFamily, DetectedContentLanguage } from "./detect-content-l
 export { promoteResearchFinding } from "./research-feature-promotion.js";
 export type { ResearchFeaturePromotionInput } from "./research-feature-promotion.js";
 export { getTotalAgentActiveMs, startPlanningSegment, finalizePlanningSegment } from "./task-timing.js";
+export { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "./types.js";

@@ -118,7 +118,7 @@ import { acquireSymbolLocksAsync, inspectSymbolLockConflictsAsync, reconcileStal
 import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./symbol-lock-types.js";
 import { queryRunAuditEvents } from "./task-store/async-audit.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
-import { upsertWorkflowWorkItemImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
+import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
 import { runPluginColumnTransitionHooksImpl, logEntryImpl } from "./task-store/audit-ops.js";
 import { clearWorkflowRunBranchesImpl, projectMergeRequestToWorkflowWorkItemImpl, createCompletionHandoffWorkflowWorkImpl } from "./task-store/workflow-workitems-ops.js";
@@ -1510,6 +1510,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   async upsertWorkflowWorkItem(input: WorkflowWorkItemUpsertInput, tx?: import("./postgres/data-layer.js").DbTransaction): Promise<WorkflowWorkItem> {
     return upsertWorkflowWorkItemImpl(this, input, tx);
+  }
+  async replaceActiveTaskWorkflowContinuation(input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<WorkflowWorkItem> {
+    return replaceActiveTaskWorkflowContinuationImpl(this, input);
   }
   async transitionWorkflowWorkItem( id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: import("./postgres/data-layer.js").DbTransaction, ): Promise<WorkflowWorkItem> {
     return transitionWorkflowWorkItemImpl(this, id, state, patch, tx);

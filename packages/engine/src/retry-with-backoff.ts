@@ -227,7 +227,7 @@ function withTimeout<T>(
  * `maxRetries` times. Non-retryable errors are re-thrown immediately.
  *
  * Rate-limit / usage-limit errors are NEVER retried by this function — they
- * should be handled by `withRateLimitRetry` or trigger a global pause.
+ * should be handled by `withRateLimitRetry` or a provider-scoped task park.
  *
  * After all retries are exhausted, the original error is thrown.
  *

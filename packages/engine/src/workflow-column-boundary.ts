@@ -49,6 +49,7 @@ export type WorkflowColumnBoundaryAuditEvent =
       workflowId: string;
       fromColumn: string;
       toColumn: string;
+      irHash: string;
       nodeId: string;
     }
   | {
@@ -97,6 +98,8 @@ export interface WorkflowColumnBoundaryDeps {
   priorPin?: WorkflowIrPin;
   /** Optional diagnostics sink; never throws into the run. */
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
+  /** Persist a durable continuation before control returns to the scheduler. */
+  onSuspend?: (suspension: Extract<WorkflowColumnBoundaryEntryResult, { kind: "suspended" }>) => void | Promise<void>;
 }
 
 /** The seam the graph executor consumes. */
@@ -104,11 +107,22 @@ export interface WorkflowColumnBoundary {
   /** The card's current lifecycle column (updated after each successful move). */
   currentColumn(): string;
   /** Cross into `node.column` when it differs from the current column. */
-  onNodeEntry(node: WorkflowIrNode): Promise<void>;
+  onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult | void>;
   /** KTD-3 drift guard — run once at graph start. Returns true when the pinned
    *  node/column is gone from the current IR (run must park, not traverse). */
   detectDrift(): Promise<boolean>;
 }
+
+export type WorkflowColumnBoundaryEntryResult =
+  | { kind: "entered" }
+  | {
+      kind: "suspended";
+      reason: "capacity";
+      nodeId: string;
+      fromColumn: string;
+      toColumn: string;
+      irHash: string;
+    };
 
 /*
 FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
@@ -259,10 +273,10 @@ export function createWorkflowColumnBoundary(
       return true;
     },
 
-    async onNodeEntry(node: WorkflowIrNode): Promise<void> {
+    async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
       // KTD-1: a columnless node (e.g. `end`) never moves the card.
-      if (!toColumn) return;
+      if (!toColumn) return { kind: "entered" };
 
       // KTD-3: pin the resolved IR for this node-entry (durable seam).
       try {
@@ -272,7 +286,7 @@ export function createWorkflowColumnBoundary(
       }
 
       // Idempotent: a re-entered/rework node or a same-column node chain no-ops.
-      if (toColumn === column) return;
+      if (toColumn === column) return { kind: "entered" };
 
       const fromColumn = column;
 
@@ -283,9 +297,19 @@ export function createWorkflowColumnBoundary(
         warn("hold→wip boundary parked at ready-for-release seam (scheduler-owned)", {
           fromColumn,
           toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
           nodeId: node.id,
         });
-        return;
+        const suspension = {
+          kind: "suspended",
+          reason: "capacity",
+          nodeId: node.id,
+          fromColumn,
+          toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+        } as const;
+        await deps.onSuspend?.(suspension);
+        return suspension;
       }
 
       // The single mover: the store's trait-hook moveTask path.
@@ -302,7 +326,7 @@ export function createWorkflowColumnBoundary(
             nodeId: node.id,
             error: err instanceof Error ? err.message : String(err),
           });
-          return;
+          throw err;
         }
       }
 
@@ -314,6 +338,7 @@ export function createWorkflowColumnBoundary(
           workflowId: deps.workflowId,
           fromColumn,
           toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
           nodeId: node.id,
         });
       } catch (err) {
@@ -323,6 +348,7 @@ export function createWorkflowColumnBoundary(
           error: err instanceof Error ? err.message : String(err),
         });
       }
+      return { kind: "entered" };
     },
   };
 }

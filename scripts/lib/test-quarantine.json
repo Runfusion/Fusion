@@ -1,4 +1,10 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet \u2014 see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date \u2014 the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config is the enforcement.",
-  "entries": []
+  "entries": [
+    {
+      "file": "packages/dashboard/src/__tests__/planning-browser-e2e.test.ts",
+      "reason": "Chromium/Vite teardown timed out after the desktop assertions passed during [local Codex run 2026-07-21 09:29 PDT](local://codex/2026-07-21/planning-browser-e2e-teardown); repeated once in the same session.",
+      "quarantinedAt": "2026-07-21"
+    }
+  ]
 }

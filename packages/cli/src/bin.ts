@@ -153,7 +153,7 @@ async function loadCommandHandlers() {
   const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runResearchCreate, runResearchList, runResearchShow, runResearchExport, runResearchCancel, runResearchRetry } = await import("./commands/research.js");
   const { runExperimentFinalize } = await import("./commands/experiment-finalize.js");
-  const { runUpdate } = await import("./commands/update.js");
+  const { dispatchUpdateCliArgs } = await import("./commands/update.js");
 
   return {
     runDashboard,
@@ -289,7 +289,7 @@ async function loadCommandHandlers() {
     runResearchCancel,
     runResearchRetry,
     runExperimentFinalize,
-    runUpdate,
+    dispatchUpdateCliArgs,
     runChatInteractive,
     parseChatCliArgs,
   };
@@ -816,7 +816,7 @@ async function main() {
     runResearchCancel,
     runResearchRetry,
     runExperimentFinalize,
-    runUpdate,
+    dispatchUpdateCliArgs,
     runChatInteractive,
     parseChatCliArgs,
   } = await loadCommandHandlers();
@@ -938,24 +938,7 @@ async function main() {
 
       case "update":
       case "upgrade": {
-        // FNXC:UpdateChannels 2026-07-19-13:05: --channel <stable|beta> selects
-        // and persists the release track; --force installs the channel target
-        // even when not newer (the explicit beta → stable downgrade path).
-        // A bare trailing --channel (or one followed by another flag) errors
-        // instead of being silently ignored (PR #2345 review).
-        const channelFlagIndex = args.indexOf("--channel");
-        const channelValue = channelFlagIndex !== -1 ? args[channelFlagIndex + 1] : undefined;
-        if (channelFlagIndex !== -1 && (channelValue === undefined || channelValue.startsWith("--"))) {
-          console.error("Error: --channel requires a value: stable or beta.");
-          process.exit(1);
-        }
-        await runUpdate({
-          check: args.includes("--check"),
-          global: args.includes("--global") ? true : undefined,
-          json: args.includes("--json"),
-          channel: channelValue,
-          force: args.includes("--force"),
-        });
+        await dispatchUpdateCliArgs(args.slice(1));
         break;
       }
 

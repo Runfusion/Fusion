@@ -14,8 +14,16 @@ import type {
   GithubIssueAction,
   CliSession,
   NotificationPayload,
+  WorkflowWorkItem,
 } from "@fusion/core";
-import { AsyncCentralClaimStore, ChatStore, isEphemeralAgent } from "@fusion/core";
+import {
+  AsyncCentralClaimStore,
+  ChatStore,
+  computeWorkflowIrPin,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
+  isEphemeralAgent,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
@@ -40,7 +48,7 @@ import type {
 import { runtimeLog } from "../logger.js";
 import { getActiveNotificationService } from "../notifier.js";
 import { StuckTaskDetector } from "../stuck-task-detector.js";
-import type { UsageLimitPauser } from "../usage-limit-detector.js";
+import { UsageLimitPauser } from "../usage-limit-detector.js";
 import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../mesh-lease-manager.js";
@@ -53,11 +61,32 @@ import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
+import { resolvePreReleasePlanReviewNode } from "../hold-release.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
 export const CLI_AGENT_AWAITING_INPUT_EVENT = "cli-agent-awaiting-input" as const;
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
+
+export interface PlanningContinuationCandidate {
+  item: WorkflowWorkItem;
+  task: Task | null | undefined;
+}
+
+/** FNXC:WorkflowScheduling 2026-07-21-12:30:
+ * Select due planning continuations whose task remains dispatchable. */
+export function selectActionablePlanningContinuations(
+  candidates: readonly PlanningContinuationCandidate[],
+): Array<{ item: WorkflowWorkItem; task: Task }> {
+  return candidates.filter(
+    (candidate): candidate is { item: WorkflowWorkItem; task: Task } =>
+      candidate.item.waitReason === "planning"
+      && candidate.task !== null
+      && candidate.task !== undefined
+      && candidate.task.paused !== true
+      && candidate.task.userPaused !== true,
+  );
+}
 
 export interface CliAgentAwaitingInputNotificationInfo {
   sessionId: string;
@@ -228,6 +257,8 @@ export class InProcessRuntime
   private missionExecutionLoop?: MissionExecutionLoop;
   private missionAutopilot?: MissionAutopilot;
   private triageProcessor?: TriageProcessor;
+  private workflowContinuationTimer?: ReturnType<typeof setInterval>;
+  private workflowContinuationDrainActive = false;
   private messageStore?: MessageStore;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
@@ -324,6 +355,12 @@ export class InProcessRuntime
           `TaskStore initialized on PostgreSQL (${backendBoot.backend.mode}) for project ${this.config.projectId}`,
         );
       }
+
+      /*
+      FNXC:ProviderRateLimitIsolation 2026-07-19-19:10:
+      Every project runtime owns one usage-limit coordinator and shares it across executor, triage, reviewer, and merger surfaces. Runtime isolation replaced the old dashboard-level construction site; constructing it here prevents a silently undefined pauser while keeping a provider outage local to the affected project/task.
+      */
+      this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore);
 
       // Initialize MessageStore early so TaskExecutor receives send_message capability.
       // FNXC:RuntimeSatelliteAsync 2026-06-24-12:45:
@@ -971,6 +1008,7 @@ export class InProcessRuntime
         {
           semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
+          usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
           pluginRunner: this.pluginRunner,
           onSpecifyStart: (t) => {
@@ -980,6 +1018,39 @@ export class InProcessRuntime
           onSpecifyComplete: (t) => {
             this.recordActivity();
             runtimeLog.log(`Specified ${t.id} → todo`);
+            void (async () => {
+              const live = await this.taskStore.getTask(t.id);
+              if (!live || live.paused || live.userPaused) return;
+              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
+              const planReview = resolvePreReleasePlanReviewNode(ir);
+              if (!planReview || planReview.column !== live.column) return;
+
+              /*
+              FNXC:PlanReview 2026-07-21-12:20:
+              Specification completion creates a planning continuation only
+              when the review node belongs to the card's current column and no
+              active continuation already owns the task.
+              */
+              const active = await this.taskStore.listWorkflowWorkItemsForTask(live.id, { kinds: ["task"] });
+              if (!active.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) {
+                await this.taskStore.replaceActiveTaskWorkflowContinuation({
+                  runId: `${live.id}:planning-continuation:${planReview.id}:${active.length}`,
+                  taskId: live.id,
+                  nodeId: planReview.id,
+                  kind: "task",
+                  state: "runnable",
+                  stableWorkflowRunId: `${live.id}:${ir.name}`,
+                  continuationSequence: active.length,
+                  waitReason: "planning",
+                  sourceColumn: live.column,
+                  targetColumn: live.column,
+                  irHash: computeWorkflowIrPin(ir, planReview.id).irHash,
+                });
+              }
+              this.kickWorkflowContinuationProcessor();
+            })().catch((error) => {
+              runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
+            });
           },
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
@@ -1218,6 +1289,11 @@ export class InProcessRuntime
       }
 
       this.setStatus("active");
+      this.workflowContinuationTimer = setInterval(() => {
+        this.kickWorkflowContinuationProcessor();
+      }, 2_000);
+      this.workflowContinuationTimer.unref?.();
+      this.kickWorkflowContinuationProcessor();
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -1274,6 +1350,10 @@ export class InProcessRuntime
     this.backendShutdown = undefined;
     let stopError: Error | undefined;
     try {
+      if (this.workflowContinuationTimer) {
+        clearInterval(this.workflowContinuationTimer);
+        this.workflowContinuationTimer = undefined;
+      }
       // 1. Remove concurrency change listener (if we registered one)
       if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
         this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
@@ -1793,6 +1873,48 @@ export class InProcessRuntime
    */
   getMissionExecutionLoop(): MissionExecutionLoop | undefined {
     return this.missionExecutionLoop;
+  }
+
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-12:20:
+   * Wake the durable task-continuation consumer in a microtask so triage can
+   * release its own execution slot before continuation dispatch begins.
+   */
+  private kickWorkflowContinuationProcessor(): void {
+    queueMicrotask(() => {
+      void this.drainWorkflowContinuations().catch((error) => {
+        runtimeLog.error("Workflow continuation processor failed:", error);
+      });
+    });
+  }
+
+  private async drainWorkflowContinuations(): Promise<void> {
+    /*
+    FNXC:WorkflowScheduling 2026-07-21-12:20:
+    A single runtime drain owns selection at a time. Concurrent wakeups collapse
+    behind this guard and the recurring processor supplies the next bounded pass.
+    */
+    if (this.workflowContinuationDrainActive || this.status !== "active") return;
+    this.workflowContinuationDrainActive = true;
+    try {
+      const items = await this.taskStore.listDueWorkflowWorkItems({
+        kinds: ["task"],
+        states: ["runnable", "retrying"],
+        limit: 20,
+      });
+      const candidates: PlanningContinuationCandidate[] = [];
+      for (const item of items) {
+        const task = await this.taskStore.getTask(item.taskId);
+        candidates.push({ item, task });
+      }
+      for (const { item, task } of selectActionablePlanningContinuations(candidates)) {
+        void this.executor.execute(task).catch((error) => {
+          runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
+        });
+      }
+    } finally {
+      this.workflowContinuationDrainActive = false;
+    }
   }
 
   /**

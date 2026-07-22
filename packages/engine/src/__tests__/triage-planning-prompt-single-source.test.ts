@@ -7,7 +7,7 @@ import {
   resolveAgentPrompt,
   resolvePlanningPromptFromIr,
 } from "@fusion/core";
-import { TriageProcessor } from "../triage.js";
+import { buildSpecificationPrompt, TriageProcessor } from "../triage.js";
 
 const { mockReviewStep, mockCreateFnAgent } = vi.hoisted(() => ({
   mockReviewStep: vi.fn(),
@@ -134,6 +134,43 @@ describe("triage planning prompt single source", () => {
     });
 
     await expect(captureBasePrompt(task, store)).resolves.toBe(renderedCanonicalPlanningPrompt);
+  });
+
+  it("exposes the TaskStore-backed PROMPT.md writer to triage sessions", async () => {
+    const task = createTask({ id: "FN-6232-PROMPT-WRITER" });
+    const store = createStore(task);
+    let customTools: Array<{ name?: string }> = [];
+    let sessionTools: string | undefined;
+    mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
+      customTools = opts.customTools ?? [];
+      sessionTools = opts.tools;
+      return {
+        session: {
+          state: {},
+          sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      };
+    });
+
+    await new TriageProcessor(store, "/tmp/root").specifyTask(task);
+
+    expect(customTools.map((tool) => tool.name)).toContain("fn_task_prompt_write");
+    expect(sessionTools).toBe("readonly");
+  });
+
+  it("requires triage plans to use the durable prompt writer instead of generic filesystem writes", () => {
+    const task = createDetail(createTask({ id: "FN-6232-DURABLE-PROMPT" }));
+    const prompt = buildSpecificationPrompt(task, `.fusion/tasks/${task.id}/PROMPT.md`, {} as Settings);
+
+    expect(prompt).toContain("fn_task_prompt_write");
+    expect(prompt).toContain("Do not use the generic filesystem write tool");
+    expect(prompt).toContain("If it returns an error, correct the problem and retry");
+    expect(prompt).toContain("do not finish planning until the tool confirms");
+    expect(prompt).not.toContain("Use the write tool to write the specification file");
+    expect(prompt).not.toContain("exactly once");
   });
 
   it("uses the built-in workflow IR planning prompt when no workflow is selected", async () => {
