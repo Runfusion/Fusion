@@ -396,7 +396,10 @@ svg.spinning {
   --provider-cursor-cli: #7c3aed;
   --provider-ollama: #d4a27f;
   /* Runtime-plugin marks. */
-  --provider-omp: var(--text);
+  --provider-omp-gradient-start: #ed4abf;
+  --provider-omp-gradient-mid: #9b4dff;
+  --provider-omp-gradient-end: #5ad8e6;
+  --provider-omp: var(--provider-omp-gradient-mid);
   --provider-hermes: #d4961c;
   --provider-openclaw: #ff4f40;
   --provider-paperclip: var(--text);
