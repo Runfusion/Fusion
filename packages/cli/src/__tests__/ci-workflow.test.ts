@@ -635,32 +635,48 @@ describe("Test-release workflow (.github/workflows/test-release.yml)", () => {
   });
 });
 
-describe("Windows agent-browser install workflow", () => {
+describe("Cross-platform agent-browser install workflow", () => {
   let workflow: any;
   let content: string;
 
   beforeAll(() => {
-    const result = loadWorkflow("windows-agent-browser-install.yml");
+    const result = loadWorkflow("agent-browser-install.yml");
     workflow = result.parsed;
     content = result.content;
   });
 
-  it("runs a packed consumer install on Windows for relevant pull requests", () => {
+  it("runs packed consumer installs on Windows, Linux, and macOS for relevant pull requests", () => {
     expect(workflow.on?.pull_request?.branches).toContain("main");
-    expect(workflow.on?.pull_request?.paths).toContain(".github/workflows/windows-agent-browser-install.yml");
+    expect(workflow.on?.pull_request?.paths).toContain(".github/workflows/agent-browser-install.yml");
     expect(workflow.on?.pull_request?.paths).toContain("packages/cli/agent-browser.mjs");
     expect(workflow.on?.pull_request?.paths).toContain("packages/cli/package.json");
     expect(workflow.on?.pull_request?.paths).toContain("packages/cli/scripts/prepare-publish-manifest.mjs");
-    expect(workflow.jobs?.["install-smoke"]?.["runs-on"]).toBe("windows-latest");
-    expect(findCompositeSetupStep(workflow.jobs?.["install-smoke"]?.steps ?? [])).toBeDefined();
+    const packFixture = workflow.jobs?.["pack-fixture"];
+    const installSmoke = workflow.jobs?.["install-smoke"];
+    expect(packFixture?.["runs-on"]).toBe("ubuntu-latest");
+    expect(findCompositeSetupStep(packFixture?.steps ?? [])?.with?.["skip-install"]).toBe("true");
+    expect(installSmoke?.needs).toBe("pack-fixture");
+    expect(installSmoke?.["runs-on"]).toBe("${{ matrix.os }}");
+    expect(installSmoke?.strategy?.matrix?.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
+    expect(findCompositeSetupStep(installSmoke?.steps ?? [])).toBeUndefined();
   });
 
-  it("executes npm's generated cmd shim and checks the native win32 executable", () => {
+  it("executes npm's generated platform shim and checks the matching native executable", () => {
     expect(content).toContain("pnpm pack --pack-destination");
-    expect(content).toContain("Packed Fusion manifest lost the agent-browser pin");
-    expect(content).toContain("npm install --ignore-scripts --no-audit --no-fund");
-    expect(content).toContain("node_modules/.bin/agent-browser.cmd");
-    expect(content).toContain("agent-browser-win32-x64.exe");
+    expect(content).toContain('dependencies["agent-browser"]');
+    expect(content).toContain("agent-browser-version.txt");
+    expect(content).toContain("actions/upload-artifact@v4");
+    expect(content).toContain("actions/download-artifact@v4");
+    expect(content).toContain("Packed Fusion manifest lost the exact agent-browser pin");
+    expect(content).toContain("Packed Fusion manifest lost the agent-browser bin");
+    expect(content).toContain("Packed Fusion tarball omitted agent-browser.mjs");
+    expect(content).toContain("npm install --ignore-scripts --no-audit --no-fund --install-strategy=nested");
+    expect(content).toContain('$shimName = if ($IsWindows) { "agent-browser.cmd" } else { "agent-browser" }');
+    expect(content).toContain('"node_modules/.bin/$shimName"');
+    expect(content).toContain("& $shim --version");
+    expect(content).toContain("does not match declared pin");
+    expect(content).toContain("Missing native executable:");
+    expect(content).toContain("process.platform + '-' + process.arch");
   });
 });
 

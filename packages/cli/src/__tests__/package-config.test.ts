@@ -159,10 +159,10 @@ describe("CLI package.json publishing config", () => {
   });
 
   /*
-  FNXC:AgentBrowserPackaging 2026-07-22-12:19:
-  Keep this unit test scoped to publish-manifest wiring. The Windows
-  agent-browser install workflow is authoritative for the packed consumer
-  install, npm-generated .cmd launcher, and native win32 executable invariant.
+  FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+  Keep this unit test scoped to publish-manifest wiring. The cross-platform
+  agent-browser install workflow is authoritative for packed consumer installs,
+  npm-generated platform launchers, and native executable invariants.
   */
   it("preserves agent-browser publish-manifest wiring", () => {
     const publishedPkg = applyPrepackTransform(pkg);
