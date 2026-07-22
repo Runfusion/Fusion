@@ -122,8 +122,11 @@ export interface StepSessionExecutorOptions {
   runtimeHint?: string;
   /** Optional assigned-agent runtime config for model override precedence. */
   assignedAgentRuntimeConfig?: Record<string, unknown>;
-  /** Callback invoked when a step starts executing. */
-  onStepStart?: (stepIndex: number) => void;
+  /**
+   * Callback invoked before a step starts executing. Returning `false`
+   * rejects the start; `void` preserves the legacy notification-only contract.
+   */
+  onStepStart?: (stepIndex: number) => void | boolean | Promise<void | boolean>;
   /** Callback invoked when a step completes (success or failure). */
   onStepComplete?: (stepIndex: number, result: StepResult) => void;
   /** Optional skill selection context for session creation. */
@@ -1227,8 +1230,24 @@ export class StepSessionExecutor {
       return { stepIndex, success: false, error: "Execution aborted", retries: 0 };
     }
 
-    // Notify caller that this step is starting
-    this.options.onStepStart?.(stepIndex);
+    // Project the start before allocating any session resources. The task store
+    // is authoritative: when it rejects an out-of-order transition, execution
+    // must not continue against a step that remains pending.
+    if (this.options.onStepStart) {
+      try {
+        const startAccepted = await this.options.onStepStart(stepIndex);
+        if (startAccepted === false) {
+          const error = `Step ${stepIndex} start was rejected by the task lifecycle projection`;
+          stepExecLog.warn(`${error} for task ${taskDetail.id}`);
+          return { stepIndex, success: false, error, retries: 0 };
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const error = `Step ${stepIndex} start projection failed: ${reason}`;
+        stepExecLog.warn(`${error} for task ${taskDetail.id}`);
+        return { stepIndex, success: false, error, retries: 0 };
+      }
+    }
 
     // Build step prompt
     const promptTaskDetail = this.consumeTaskDetailForStepPrompt();

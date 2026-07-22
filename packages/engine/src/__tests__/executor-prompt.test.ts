@@ -1502,6 +1502,62 @@ describe("swallowed async store failure observability", () => {
     mockedWithRateLimitRetry.mockImplementation((fn: () => Promise<unknown>) => fn());
   });
 
+  it("turns a rejected persisted step start into a failed step-session result", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-8490",
+      title: "Ordered step start",
+      description: "Do not execute a rejected later step",
+      column: "in-progress" as const,
+      dependencies: [] as string[],
+      steps: [{ name: "Step 0", status: "pending" as const }],
+      currentStep: 0,
+      log: [] as any[],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      worktree: "/tmp/test/.worktrees/fn-8490",
+      baseCommitSha: "abc123",
+      enabledWorkflowSteps: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15_000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      runStepsInNewSessions: true,
+      maxParallelSteps: 1,
+    });
+    store.getTask.mockResolvedValue(task);
+    store.updateStep.mockResolvedValue(task);
+    mockExecuteAll.mockImplementation(async () => {
+      const options = mockedStepSessionExecutor.mock.calls.at(-1)?.[0] as {
+        onStepStart?: (stepIndex: number) => Promise<void | boolean>;
+      };
+      const accepted = await options.onStepStart?.(0);
+      return accepted === false
+        ? [{ stepIndex: 0, success: false, error: "start rejected", retries: 0 }]
+        : [{ stepIndex: 0, success: true, retries: 0 }];
+    });
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    await executor.execute(task);
+
+    expect(store.updateStep).toHaveBeenCalledWith("FN-8490", 0, "in-progress", undefined);
+    expect(store.updateStep).not.toHaveBeenCalledWith("FN-8490", 0, "done", expect.anything());
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-8490",
+      "todo",
+      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
+    );
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-8490" }),
+      expect.objectContaining({ message: "Step 0: start rejected" }),
+    );
+  });
+
   it("logs warning when rate-limit retry logEntry fails in step-session mode", async () => {
     const warnSpy = vi.spyOn(executorLog, "warn");
     const store = createMockStore();

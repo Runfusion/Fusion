@@ -11681,14 +11681,25 @@ export class TaskExecutor {
           sourceTaskId: task.id,
           sourceAgentId: stepIdentityAgent?.id,
           taskEnv,
-          onStepStart: (stepIndex) => {
-            this.options.stuckTaskDetector?.recordProgress(task.id);
+          onStepStart: async (stepIndex) => {
             try {
-              this.store.updateStep(task.id, stepIndex, "in-progress", stepProjectionOptions).catch((err) => {
-                executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
-              });
+              const projectedTask = await this.store.updateStep(
+                task.id,
+                stepIndex,
+                "in-progress",
+                stepProjectionOptions,
+              );
+              if (projectedTask.steps?.[stepIndex]?.status !== "in-progress") {
+                executorLog.warn(
+                  `${task.id}: step ${stepIndex} start was rejected; persisted status is ` +
+                  `${projectedTask.steps?.[stepIndex]?.status ?? "missing"}`,
+                );
+                return false;
+              }
+              this.options.stuckTaskDetector?.recordProgress(task.id);
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
+              return false;
             }
           },
           onStepComplete: (stepIndex, result) => {
