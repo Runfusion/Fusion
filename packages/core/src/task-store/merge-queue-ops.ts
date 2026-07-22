@@ -59,9 +59,10 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
     // is the workflow-graph executor projecting a foreach instance's lifecycle
     // (in-progress / done / pending) onto Task.steps[] with EXPLICIT indices. Three
     // behaviors diverge from a legacy write with no explicit dependency metadata:
-    //   (a) the out-of-order-done guard uses DEPENDENCY order (a done write is
-    //       legal when every dependsOn step — default: the immediately-preceding
-    //       step — is done/skipped, KTD-11). Explicit dependsOn metadata is
+    //   (a) the out-of-order start/completion guard uses DEPENDENCY order (an
+    //       in-progress or done write is legal when every dependsOn step —
+    //       default: the immediately-preceding step — is done/skipped, KTD-11).
+    //       Explicit dependsOn metadata is
     //       authoritative for every writer, not only graph-tagged writes;
     //   (b) a guard that DOES suppress a graph write logs an audit warning loudly
     //       (legacy stays silent — a graph suppression is a projection bug);
@@ -130,13 +131,14 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
         return task;
       }
 
-      if (status === "done") {
+      if (status === "done" || status === "in-progress") {
         // The set of predecessor steps that must be done/skipped before this step
-        // may go done. Explicit dependency metadata is authoritative regardless
-        // of which execution surface performs the write: parallel step sessions
-        // and graph foreach instances share the same Task.steps[] contract. When
-        // metadata is absent, legacy callers retain strict index order while a
-        // graph-source write defaults to the immediately preceding step (KTD-11).
+        // may start or finish. Explicit dependency metadata is authoritative
+        // regardless of which execution surface performs the write: parallel
+        // step sessions and graph foreach instances share the same Task.steps[]
+        // contract. When metadata is absent, legacy callers retain strict index
+        // order while a graph-source write defaults to the immediately preceding
+        // step (KTD-11).
         const explicitDependencies = task.steps[stepIndex]?.dependsOn;
         const hasExplicitDependencies = Array.isArray(explicitDependencies);
         const validExplicitDependencies =
@@ -203,7 +205,7 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
               timestamp: ts,
               action:
                 `[integrity-warning] graph-source updateStep suppressed: step ${stepIndex} ` +
-                `(${task.steps[stepIndex].name}) → done blocked by unmet dependency ` +
+                `(${task.steps[stepIndex].name}) → ${status} blocked by unmet dependency ` +
                 `step ${blockingIndex} (${blockingStatus})`,
             });
           }

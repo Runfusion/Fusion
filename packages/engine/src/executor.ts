@@ -14374,10 +14374,9 @@ export class TaskExecutor {
         */
 
         // If the persisted status doesn't match the requested status, the
-        // store rejected the transition (currently: in-progress regression
-        // on a done/skipped step). FN-5168 treats repeated rebuffs after loop
-        // recovery as a deterministic churn signal, but the agent-facing text
-        // stays unchanged so the tool contract is preserved.
+        // store rejected the transition (for example, a completed-step
+        // regression or an out-of-order start/completion). FN-5168 treats
+        // repeated rebuffs after loop recovery as a deterministic churn signal.
         if (persistedStatus !== status) {
           stuckDetector?.recordIgnoredStepUpdate(taskId);
 
@@ -14394,7 +14393,7 @@ export class TaskExecutor {
           return {
             content: [{
               type: "text" as const,
-              text: `Step ${step} (${stepInfo.name}) is already ${persistedStatus} — ${status} request ignored to preserve completed work. Progress: ${progress}/${task.steps.length} done.`,
+              text: `Step ${step} (${stepInfo.name}) remains ${persistedStatus} — ${status} request ignored to preserve step lifecycle invariants. Progress: ${progress}/${task.steps.length} done.`,
             }],
             details: {},
           };

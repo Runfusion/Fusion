@@ -2790,6 +2790,28 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
     expect(text).toContain("skipped");
     expect(store.appendAgentLog).not.toHaveBeenCalled();
   });
+
+  it("explains that a rejected out-of-order start preserves lifecycle invariants", async () => {
+    const { store, tool } = makeTool();
+    store.getTask.mockResolvedValue(createMockTaskDetail({
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "pending" },
+      ],
+    }));
+    store.updateStep.mockResolvedValue(createMockTaskDetail({
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "pending" },
+      ],
+    }));
+
+    const result = await tool.execute("call-1", { step: 1, status: "in-progress" });
+
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("remains pending");
+    expect(text).toContain("ignored to preserve step lifecycle invariants");
+  });
 });
 
 // ---------------------------------------------------------------------------
