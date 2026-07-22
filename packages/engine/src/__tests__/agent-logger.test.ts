@@ -268,7 +268,8 @@ describe("AgentLogger", () => {
     expect(onAgentText).toHaveBeenCalledWith("FN-008", "delta");
 
     logger.onToolStart("Bash", { command: "echo hi" });
-    expect(onAgentTool).toHaveBeenCalledWith("FN-008", "Bash");
+    // FNXC:StuckDetector 2026-07-22-19:25: third arg is primary-arg detail for fingerprint telemetry.
+    expect(onAgentTool).toHaveBeenCalledWith("FN-008", "Bash", "echo hi");
   });
 
   it("does not schedule multiple timers for consecutive small writes", async () => {

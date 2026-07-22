@@ -1601,7 +1601,13 @@ export interface TaskExecutorOptions {
   /** Testable, best-effort completion-deliverable seam; production uses generateFeatureVideo. */
   reviewArtifactGenerator?: (options: GenerateFeatureVideoOptions) => Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>;
   onAgentText?: (taskId: string, delta: string) => void;
-  onAgentTool?: (taskId: string, toolName: string) => void;
+  /**
+   * FNXC:StuckDetector 2026-07-22-19:25:
+   * Optional third arg is the primary-arg summary from AgentLogger so downstream
+   * telemetry (and any external onAgentTool subscribers) keep the same fingerprint contract
+   * the stuck detector uses — do not drop `detail` at the executor boundary.
+   */
+  onAgentTool?: (taskId: string, toolName: string, detail?: string) => void;
   /*
   FNXC:PlannerOversight 2026-07-13-23:05:
   Session-advisor live delta path — AgentLogger invokes this after durable
@@ -12413,9 +12419,13 @@ export class TaskExecutor {
           FNXC:StuckDetector 2026-07-22-18:05:
           Tool heartbeats carry name+detail fingerprints so the stuck detector can distinguish
           legitimate iterative single-step work from repetitive thrash loops.
+
+          FNXC:StuckDetector 2026-07-22-19:25:
+          Forward `detail` to options.onAgentTool so external telemetry keeps the full
+          fingerprint contract (CodeRabbit on PR #2404).
           */
           stuckDetector?.recordActivity(taskId, { toolName, toolDetail: detail });
-          this.options.onAgentTool?.(taskId, toolName);
+          this.options.onAgentTool?.(taskId, toolName, detail);
         },
         // FNXC:PlannerOversight 2026-07-13-23:05: live session-advisor delta path (fail-soft).
         onEntriesFlushed: (taskId, entries) => {
@@ -16859,8 +16869,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       onAgentText: (taskId, delta) => {
         this.options.onAgentText?.(taskId, delta);
       },
-      onAgentTool: (taskId, toolName) => {
-        this.options.onAgentTool?.(taskId, toolName);
+      onAgentTool: (taskId, toolName, detail) => {
+        this.options.onAgentTool?.(taskId, toolName, detail);
       },
     });
 
