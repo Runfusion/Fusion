@@ -11681,14 +11681,25 @@ export class TaskExecutor {
           sourceTaskId: task.id,
           sourceAgentId: stepIdentityAgent?.id,
           taskEnv,
-          onStepStart: (stepIndex) => {
-            this.options.stuckTaskDetector?.recordProgress(task.id);
+          // FNXC:StepLifecycle 2026-07-22-09:53: Await the dependency-aware store projection before session allocation so a rejected out-of-order start cannot execute while its persisted step remains pending.
+          onStepStart: async (stepIndex) => {
             try {
-              this.store.updateStep(task.id, stepIndex, "in-progress", stepProjectionOptions).catch((err) => {
-                executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
-              });
+              const startResult = await this.store.startStep(
+                task.id,
+                stepIndex,
+                stepProjectionOptions,
+              );
+              if (!startResult.accepted) {
+                executorLog.warn(
+                  `${task.id}: step ${stepIndex} start was rejected (${startResult.disposition}); persisted status is ` +
+                  `${startResult.task.steps?.[stepIndex]?.status ?? "missing"}`,
+                );
+                return false;
+              }
+              this.options.stuckTaskDetector?.recordProgress(task.id);
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
+              return false;
             }
           },
           onStepComplete: (stepIndex, result) => {
@@ -14373,11 +14384,10 @@ export class TaskExecutor {
         RETHINK re-enters the implementation node instead of rewinding the live conversation.
         */
 
-        // If the persisted status doesn't match the requested status, the
-        // store rejected the transition (currently: in-progress regression
-        // on a done/skipped step). FN-5168 treats repeated rebuffs after loop
-        // recovery as a deterministic churn signal, but the agent-facing text
-        // stays unchanged so the tool contract is preserved.
+        // FNXC:StepLifecycle 2026-07-22-09:50: A persisted-status mismatch means
+        // the store rejected the transition (for example, a completed-step
+        // regression or an out-of-order start/completion). FN-5168 treats
+        // repeated rebuffs after loop recovery as a deterministic churn signal.
         if (persistedStatus !== status) {
           stuckDetector?.recordIgnoredStepUpdate(taskId);
 
@@ -14394,7 +14404,7 @@ export class TaskExecutor {
           return {
             content: [{
               type: "text" as const,
-              text: `Step ${step} (${stepInfo.name}) is already ${persistedStatus} — ${status} request ignored to preserve completed work. Progress: ${progress}/${task.steps.length} done.`,
+              text: `Step ${step} (${stepInfo.name}) remains ${persistedStatus} — ${status} request ignored to preserve step lifecycle invariants. Progress: ${progress}/${task.steps.length} done.`,
             }],
             details: {},
           };
