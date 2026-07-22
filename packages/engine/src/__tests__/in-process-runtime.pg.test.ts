@@ -75,6 +75,13 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
       expect(taskStore.isBackendMode()).toBe(true);
       expect(layer?.projectId).toBe("runtime-composition");
       expect(runtime.getMissionExecutionLoop()).toBeDefined();
+      const runtimeInternals = runtime as unknown as {
+        usageLimitPauser?: unknown;
+        triageProcessor?: { options?: { usageLimitPauser?: unknown } };
+      };
+      expect(runtimeInternals.usageLimitPauser).toBeDefined();
+      expect(runtimeInternals.triageProcessor?.options?.usageLimitPauser)
+        .toBe(runtimeInternals.usageLimitPauser);
 
       const missionStore = taskStore.getMissionStore();
       const mission = await missionStore.createMission({ title: "Runtime composition" });

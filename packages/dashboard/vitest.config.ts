@@ -339,6 +339,11 @@ FN-8077 removed routes-system.test.ts from this list and the ledger in lockstep.
 */
 const quarantinedDashboardTests: string[] = [
   /*
+  FNXC:DashboardTestQuarantine 2026-07-21-09:30:
+  planning-browser-e2e completed its desktop assertions but timed out twice while tearing down Chromium/Vite. Quarantine the file without widening teardown timeouts or retries; delete it on 2026-08-04 unless a root-cause rescue restores deterministic teardown.
+  */
+  "src/__tests__/planning-browser-e2e.test.ts",
+  /*
   FNXC:DashboardTestQuarantine 2026-07-17-16:50:
   FN-8245 re-admits all three UI files with their ledger rows removed in lockstep.
   QuickEntryBox restores focus from its resolved submit path while isolated jsdom

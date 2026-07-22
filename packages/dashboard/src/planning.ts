@@ -24,7 +24,6 @@ import type {
   MessageStore,
 } from "@fusion/core";
 import {
-  DASHBOARD_USER_ID,
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -73,13 +72,16 @@ type AgentMessage = {
 
 const PLANNING_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 type PlanningMcpServers = Awaited<ReturnType<typeof resolveMcpServersForStore>>["servers"];
+/*
+FNXC:PlanningMode 2026-07-21-09:15:
+Planning questions must never create dashboard Mailbox messages. Retain the optional MessageStore input only as a source-compatible no-op for callers compiled against the prior planning API while route and session code omit every mailbox read/write path.
+*/
 type PlanningSessionOptions = {
   projectId?: string;
   ntfyConfig?: PlanningNtfyConfig;
   clarificationEnabled?: boolean;
   /** Workflow selected by the planning entry point; retained for agent rebuilds. */
   workflowId?: string;
-  /** Runtime-only mailbox dependency; never serialize this store. */
   messageStore?: MessageStore;
   pluginRunner?: SkillPluginRunner;
 };
@@ -307,6 +309,7 @@ export interface DraftInputPayload {
   generationStartedAt?: string;
   generationReturnQuestion?: PlanningQuestion;
   clarificationEnabled?: boolean;
+  /* FNXC:PlanningMode 2026-07-21-09:15: Keep old payloads source-compatible without reading or writing this retired mailbox dedupe marker. */
   lastMailboxNotifiedQuestionKey?: string;
   modelProvider?: string;
   modelId?: string;
@@ -381,13 +384,9 @@ interface Session {
   ntfyConfig?: PlanningNtfyConfig;
   /** Persisted per-session override for proactive AI clarification checkpoints. */
   clarificationEnabled?: boolean;
-  /** Runtime-only mailbox dependency, attached by the current route. */
-  messageStore?: MessageStore;
   autoMerge?: boolean;
   /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
   lastNotifiedQuestionKey?: string;
-  /** Durable fast-path marker; the inbox lookup remains authoritative after a crash. */
-  lastMailboxNotifiedQuestionKey?: string;
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   /** Question currently being edited; history is preserved rather than truncated. */
@@ -619,7 +618,6 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.generationPurpose ? { generationPurpose: session.generationPurpose } : {}),
       ...(session.generationStartedAt ? { generationStartedAt: session.generationStartedAt } : {}),
       ...(session.generationReturnQuestion ? { generationReturnQuestion: session.generationReturnQuestion } : {}),
-      ...(session.lastMailboxNotifiedQuestionKey ? { lastMailboxNotifiedQuestionKey: session.lastMailboxNotifiedQuestionKey } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -779,9 +777,6 @@ function buildSessionFromRow(row: AiSessionRow): Session {
       : undefined,
     generationReturnQuestion: payload.generationReturnQuestion && typeof payload.generationReturnQuestion === "object"
       ? normalizePlanningQuestion(payload.generationReturnQuestion, payload.initialPlan ?? row.title)
-      : undefined,
-    lastMailboxNotifiedQuestionKey: typeof payload.lastMailboxNotifiedQuestionKey === "string"
-      ? payload.lastMailboxNotifiedQuestionKey
       : undefined,
     history,
     currentQuestion,
@@ -1107,7 +1102,6 @@ export async function createSession(
     clarificationEnabled: options?.clarificationEnabled === true,
     workflowId: options?.workflowId,
     ntfyConfig: options?.ntfyConfig,
-    messageStore: options?.messageStore,
   };
 
   sessions.set(sessionId, session);
@@ -1615,7 +1609,6 @@ export async function startExistingSession(
   if (runtimeOptions) {
     session.clarificationEnabled = runtimeOptions.clarificationEnabled === true;
     session.ntfyConfig = runtimeOptions.ntfyConfig;
-    session.messageStore = runtimeOptions.messageStore;
   }
   beginPlanningGeneration(session, "initial_plan");
   await persistSession(session, "generating");
@@ -1688,7 +1681,6 @@ export async function createSessionWithAgent(
         }
       : undefined,
     clarificationEnabled: options?.clarificationEnabled === true,
-    messageStore: options?.messageStore,
     history: [],
     summary: buildRunningSummary(initialPlan, []),
     validated: false,
@@ -1942,43 +1934,6 @@ async function maybeNotifyPlanningAwaitingInput(
   proactiveClarification = false,
 ): Promise<void> {
   const questionKey = `${session.id}:${question.id}`;
-
-  /*
-  FNXC:AgentClarification 2026-07-16-12:00:
-  Proactive planner questions use an inbox message independently of ntfy. The
-  inbox lookup is authoritative because a process can die after sendMessage but
-  before the persisted marker write; ntfy remains best-effort and separately deduped.
-
-  FNXC:MailboxRelatedWork 2026-07-20-09:30:
-  FN-8428 relies on this stable kind/sessionId/questionId tuple to deduplicate clarification
-  notices and open the exact Planning session from mailbox detail. Keep the readable question in
-  the body, but never replace these metadata fields with a markdown-only navigation link.
-  */
-  if (proactiveClarification && session.clarificationEnabled && session.messageStore
-    && session.lastMailboxNotifiedQuestionKey !== questionKey) {
-    try {
-      const inbox = await session.messageStore.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
-      const delivered = inbox.some((message) => message.metadata?.kind === "planning-clarification"
-        && message.metadata?.sessionId === session.id && message.metadata?.questionId === question.id);
-      if (!delivered) {
-        await session.messageStore.sendMessage({
-          fromType: "system",
-          toType: "user",
-          toId: DASHBOARD_USER_ID,
-          type: "system",
-          content: `Planning needs your answer in the planner chat: ${question.question}`,
-          metadata: { kind: "planning-clarification", sessionId: session.id, questionId: question.id },
-        });
-      }
-      session.lastMailboxNotifiedQuestionKey = questionKey;
-      await persistSession(session, "awaiting_input");
-    } catch (error) {
-      diagnostics.warn("Failed to deliver planning clarification mailbox message", {
-        sessionId: session.id, questionId: question.id,
-        error: error instanceof Error ? error.message : String(error), operation: "planning-clarification-mailbox",
-      });
-    }
-  }
 
   // Summary deepening checkpoints retain their existing ntfy behavior regardless
   // of the clarification preference; only proactive questions are setting-gated.
@@ -3303,12 +3258,11 @@ export async function attachPlanningRuntime(
   /*
   FNXC:AgentClarification 2026-07-16-16:15:
   The following mutator owns the authoritative missing-session error. Runtime
-  attachment is best-effort so restored live sessions receive current ntfy and
-  mailbox dependencies without changing existing route error semantics.
+  attachment is best-effort so restored live sessions receive current ntfy
+  settings without changing existing route error semantics.
   */
   if (!session) return;
   session.ntfyConfig = options.ntfyConfig;
-  session.messageStore = options.messageStore;
   // Persisted session choice wins on resumed sessions; route defaults only fill old rows.
   if (session.clarificationEnabled === undefined) session.clarificationEnabled = options.clarificationEnabled === true;
 }

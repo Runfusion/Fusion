@@ -1,4 +1,11 @@
-import { countRunningAgentTasks, type Task } from "@fusion/core";
+import {
+  compareTaskIdNumeric,
+  countRunningAgentTasks,
+  enrichRunningAgentTaskShape,
+  resolveWorkflowIrForTask,
+  type Task,
+  type WorkflowIrResolverStore,
+} from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const concurrencyLog = createLogger("concurrency");
@@ -9,6 +16,155 @@ export const PRIORITY_MERGE = 2;
 export const PRIORITY_EXECUTE = 1;
 /** Priority level for specification/triage agents — served last (default). */
 export const PRIORITY_SPECIFY = 0;
+
+/** A task waiting to enter one of the top-level agent lanes. */
+export interface AdmissionCandidate {
+  taskId: string;
+  projectId: string;
+  createdAt?: string;
+  /** Records ownership of the host reservation before the lane starts. */
+  reserve?: () => void;
+  /**
+   * Starts the owning lane after this coordinator has atomically reserved a slot.
+   * Return `false` when the lane rejects the handoff before it has accepted the
+   * reservation; this makes the coordinator release capacity in one place.
+   */
+  start: () => Promise<boolean | void>;
+}
+
+/** A lane contributes its current ready work on every project admission pass. */
+export interface AdmissionProvider {
+  projectId: string;
+  refresh: () => Promise<AdmissionCandidate[]>;
+}
+
+/**
+ * Deterministic oldest-first ordering used for all task-lane admission.
+ * Invalid/missing timestamps deliberately sort after valid timestamps; numeric
+ * task ids break normal ties before lexical ids so a malformed fixture cannot
+ * make Array.sort's NaN handling decide capacity admission.
+ */
+export function compareAdmissionCandidates(a: Pick<AdmissionCandidate, "taskId" | "createdAt">, b: Pick<AdmissionCandidate, "taskId" | "createdAt">): number {
+  const aTime = a.createdAt ? Date.parse(a.createdAt) : Number.NaN;
+  const bTime = b.createdAt ? Date.parse(b.createdAt) : Number.NaN;
+  const aValid = Number.isFinite(aTime);
+  const bValid = Number.isFinite(bTime);
+  if (aValid !== bValid) return aValid ? -1 : 1;
+  if (aValid && aTime !== bTime) return aTime - bTime;
+  const numeric = compareTaskIdNumeric(a.taskId, b.taskId);
+  return numeric !== 0 ? numeric : a.taskId.localeCompare(b.taskId);
+}
+
+/*
+FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+FN-8453 / #2359 requires a per-project oldest-first authority rather than
+independent triage/execute/merge polls or semaphore lane priority. Lanes refresh
+candidates then hand their starts here; nested runNested helpers are deliberately
+not candidates because they remain parent-internal soft breaches.
+*/
+export class ProjectAdmissionCoordinator {
+  private draining = new Map<string, Promise<void>>();
+  private providers = new Map<string, Map<string, AdmissionProvider>>();
+  /**
+   * Reservations bridge coordinator selection and durable task liveness. They
+   * are deliberately project-scoped, so a prompt handoff cannot let a second
+   * same-project admission observe stale persisted rows and exceed maxConcurrent.
+   */
+  private reservations = new Map<string, Set<string>>();
+
+  private reserve(projectId: string, taskId: string): void {
+    const tasks = this.reservations.get(projectId) ?? new Set<string>();
+    tasks.add(taskId);
+    this.reservations.set(projectId, tasks);
+  }
+
+  releaseReservation(taskId: string): void {
+    for (const [projectId, tasks] of this.reservations) {
+      if (!tasks.delete(taskId)) continue;
+      if (tasks.size === 0) this.reservations.delete(projectId);
+      return;
+    }
+  }
+
+  private reservationCount(projectId: string): number {
+    return this.reservations.get(projectId)?.size ?? 0;
+  }
+
+  /** Register a lane's refresh source. Re-registering replaces its prior source. */
+  registerProvider(providerId: string, provider: AdmissionProvider): () => void {
+    const projectProviders = this.providers.get(provider.projectId) ?? new Map<string, AdmissionProvider>();
+    projectProviders.set(providerId, provider);
+    this.providers.set(provider.projectId, projectProviders);
+    return () => {
+      const current = this.providers.get(provider.projectId);
+      current?.delete(providerId);
+      if (current?.size === 0) this.providers.delete(provider.projectId);
+    };
+  }
+
+  async admitOldest(params: {
+    projectId: string;
+    maxConcurrent: number;
+    claimed: () => Promise<number> | number;
+    /** One-shot source for callers that do not hold a durable lane registration. */
+    refresh?: () => Promise<AdmissionCandidate[]>;
+    semaphore?: Pick<AgentSemaphore, "tryAcquire" | "release">;
+  }): Promise<string | undefined> {
+    const existing = this.draining.get(params.projectId);
+    if (existing) await existing;
+    let admitted: string | undefined;
+    const drain = (async () => {
+      const providers = [...(this.providers.get(params.projectId)?.values() ?? [])];
+      if (params.refresh) providers.push({ projectId: params.projectId, refresh: params.refresh });
+      const candidates = (await Promise.all(providers.map((provider) => provider.refresh())))
+        .flat()
+        .filter((candidate) => candidate.projectId === params.projectId)
+        .sort(compareAdmissionCandidates);
+      // FNXC:ConcurrencyAdmission 2026-08-06-12:00: FN-8453/#2359 requires
+      // in-memory handoffs to count until they either become live or are dropped.
+      // Persisted task rows lag a fire-and-forget lane start, so omitting these
+      // reservations lets a second coordinator pass over-admit one project.
+      if (candidates.length === 0 || (await params.claimed()) + this.reservationCount(params.projectId) >= params.maxConcurrent) return;
+      const winner = candidates[0];
+      // Older test/runtime semaphore wrappers predate tryAcquire. They still
+      // exercise project admission, while production semaphores atomically take
+      // the host slot here.
+      const hasReservableHostSlot = typeof params.semaphore?.tryAcquire === "function";
+      const acquiredHostSlot = hasReservableHostSlot
+        ? params.semaphore!.tryAcquire()
+        : true;
+      if (!acquiredHostSlot) return;
+      // Compatibility-only semaphore shims cannot hold a reservation. Their
+      // lane tests provide claimed() synchronously, while real host semaphores
+      // use this durable marker until take/drop below.
+      if (hasReservableHostSlot) this.reserve(params.projectId, winner.taskId);
+      try {
+        winner.reserve?.();
+        const accepted = await winner.start();
+        if (accepted === false) {
+          this.releaseReservation(winner.taskId);
+          params.semaphore?.release();
+          return;
+        }
+        admitted = winner.taskId;
+      } catch (error) {
+        this.releaseReservation(winner.taskId);
+        params.semaphore?.release();
+        throw error;
+      }
+    })();
+    this.draining.set(params.projectId, drain);
+    try {
+      await drain;
+      return admitted;
+    } finally {
+      if (this.draining.get(params.projectId) === drain) this.draining.delete(params.projectId);
+    }
+  }
+}
+
+/** Shared coordinator instance used by lane polls in this engine process. */
+export const projectAdmissionCoordinator = new ProjectAdmissionCoordinator();
 
 /** A waiter entry that tracks both the priority and the resolve callback. */
 interface PriorityWaiter {
@@ -70,12 +226,18 @@ export function registerPreHeldExecutorSlot(taskId: string): void {
  * Returns true when a slot was registered; the caller MUST release the underlying semaphore in its finally path.
  */
 export function takePreHeldExecutorSlot(taskId: string): boolean {
-  return preHeldExecutorSlots.delete(taskId);
+  const taken = preHeldExecutorSlots.delete(taskId);
+  if (taken) projectAdmissionCoordinator.releaseReservation(taskId);
+  return taken;
 }
 
 /** Drop a pre-held slot without transferring ownership (failed reserve / cancelled dispatch). Optionally releases the semaphore. */
 export function dropPreHeldExecutorSlot(taskId: string, semaphore?: { release(): void }): void {
   if (!preHeldExecutorSlots.delete(taskId)) return;
+  // FNXC:ConcurrencyAdmission 2026-08-06-12:00: every rejection path funnels
+  // through this helper, so releasing the matching coordinator marker here
+  // prevents early scheduler/triage returns from permanently consuming a slot.
+  projectAdmissionCoordinator.releaseReservation(taskId);
   semaphore?.release();
 }
 
@@ -98,19 +260,56 @@ export function persistedTopLevelAgentSlots(tasks: Task[]): number {
 }
 
 /**
+ * Store-backed claim counts must enrich workflow traits before using the pure
+ * predicate; raw `persistedTopLevelAgentSlots` remains for pre-enriched tests
+ * and callers that cannot resolve an IR.
+ */
+export async function persistedTopLevelAgentSlotsFromStore(store: WorkflowIrResolverStore, tasks: Task[]): Promise<number> {
+  const irCache = new Map();
+  const enriched = await Promise.all(tasks.map(async (task) => {
+    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+    return enrichRunningAgentTaskShape(task, ir);
+  }));
+  return countRunningAgentTasks(enriched);
+}
+
+/**
  * FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
  * Admission control for new top-level agents must use the same running-agent predicate the dashboard shows next to the global/project caps. Prefer the larger of live task-based holders and in-memory semaphore activeCount so neither under-counts the other during the brief window between column/status writes and acquire/release.
  */
 export function computeTopLevelConcurrencyClaimed(params: {
   tasks: readonly Task[];
+  /**
+   * Retained for compatibility but intentionally excluded from this
+   * project-local claim. The host semaphore is a separate process-wide gate.
+   */
   semaphoreActiveCount?: number;
   /** specifyTask calls that have entered `processing` but not yet written status:"planning". */
   pendingSpecifyCount?: number;
 }): number {
   const persisted = countRunningAgentTasks(params.tasks);
   const pending = Math.max(0, Math.floor(params.pendingSpecifyCount ?? 0));
-  const active = Math.max(0, Math.floor(params.semaphoreActiveCount ?? 0));
-  return Math.max(active, persisted + pending);
+  return persisted + pending;
+}
+
+/**
+ * Store-backed production counterpart to {@link computeTopLevelConcurrencyClaimed}.
+ *
+ * FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+ * FN-8453 forbids admission from raw task rows whenever workflow IR is available:
+ * custom complete/archived columns can retain stale session metadata, so each row
+ * must be trait-enriched before it is allowed to occupy a top-level capacity slot.
+ */
+export async function computeTopLevelConcurrencyClaimedFromStore(params: {
+  store: WorkflowIrResolverStore;
+  tasks: Task[];
+  /** Host semaphore activity must never consume this project's capacity. */
+  semaphoreActiveCount?: number;
+  pendingSpecifyCount?: number;
+}): Promise<number> {
+  const persisted = await persistedTopLevelAgentSlotsFromStore(params.store, params.tasks);
+  const pending = Math.max(0, Math.floor(params.pendingSpecifyCount ?? 0));
+  return persisted + pending;
 }
 
 export interface IdleSemaphoreLeakRecoveryResult {

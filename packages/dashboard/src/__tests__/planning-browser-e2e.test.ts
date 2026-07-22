@@ -111,10 +111,13 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       const question = document.querySelector<HTMLElement>("[data-testid='planning-question-pane']")!;
       const scroll = document.querySelector<HTMLElement>("[data-testid='planning-plan-scroll']")!;
       const actions = document.querySelector<HTMLElement>("[data-testid='planning-plan-actions']")!;
+      const questionScroll = question.querySelector<HTMLElement>(".planning-question-scroll")!;
+      const questionActions = question.querySelector<HTMLElement>(".planning-actions")!;
       const planRect = plan.getBoundingClientRect();
       const questionRect = question.getBoundingClientRect();
       const scrollRect = scroll.getBoundingClientRect();
       const actionsRect = actions.getBoundingClientRect();
+      const questionActionsRect = questionActions.getBoundingClientRect();
       return {
         planVisible: planRect.width > 0 && planRect.height > 0,
         questionVisible: questionRect.width > 0 && questionRect.height > 0,
@@ -127,6 +130,12 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
         scrollable: scroll.scrollHeight > scroll.clientHeight,
         scrollOwnerConfigured: getComputedStyle(scroll).overflowY === "auto",
         markdownRendered: Boolean(plan.querySelector("h1") && plan.querySelector("strong")),
+        flushPaneInsets: getComputedStyle(scroll).paddingLeft === "0px"
+          && getComputedStyle(questionScroll).paddingLeft === "0px",
+        desktopActionRowsAligned: Math.abs(actionsRect.top - questionActionsRect.top) <= 1
+          && Math.abs(actionsRect.bottom - questionActionsRect.bottom) <= 1,
+        actionTopDelta: Math.round(Math.abs(actionsRect.top - questionActionsRect.top)),
+        actionBottomDelta: Math.round(Math.abs(actionsRect.bottom - questionActionsRect.bottom)),
       };
     });
 
@@ -142,6 +151,10 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       scrollable: true,
       scrollOwnerConfigured: true,
       markdownRendered: true,
+      flushPaneInsets: !mobile,
+      desktopActionRowsAligned: mobile ? false : true,
+      actionTopDelta: mobile ? expect.any(Number) : 0,
+      actionBottomDelta: mobile ? expect.any(Number) : 0,
     });
     await page.close();
   }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
+import { AgentSemaphore } from "../concurrency.js";
 // Resolves to the vi.mock factory above (the mocked merger-ai exports the real-shaped
 // workspace land error classes so the dispatch's `instanceof` matching is exercised).
 import { WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "../merger-ai.js";
@@ -2445,6 +2446,8 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     const processPullRequestMerge = vi.fn(async () => "merged" as const);
     const engine = createEngine({ processPullRequestMerge, getMergeStrategy: () => "pull-request" });
     await engine.start();
+    const semaphore = new AgentSemaphore(1);
+    (engine as unknown as { runtime: { projectSemaphore?: AgentSemaphore } }).runtime.projectSemaphore = semaphore;
     engine.enqueueMerge("FN-pr");
 
     await vi.waitFor(() => {
@@ -2457,6 +2460,37 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
       );
     });
 
+    expect(semaphore.activeCount).toBe(0);
+    await engine.stop();
+  });
+
+  it("runs a sole dequeued merge when coordinator capacity is available", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true, maxConcurrent: 1 });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-sole-merge",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-sole-merge",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    // Exercise the production reservation path: this task has already been
+    // dequeued, so it must add itself as the one-shot admission candidate.
+    (engine as unknown as { runtime: { projectSemaphore?: AgentSemaphore } }).runtime.projectSemaphore = new AgentSemaphore(1);
+    engine.enqueueMerge("FN-sole-merge");
+
+    await vi.waitFor(() => expect(mocks.runAiMerge).toHaveBeenCalledWith(
+      mockStore.store,
+      "/tmp/proj_test",
+      "FN-sole-merge",
+      expect.any(Object),
+    ));
+    expect((engine as unknown as { mergeQueue: string[] }).mergeQueue).toEqual([]);
     await engine.stop();
   });
 

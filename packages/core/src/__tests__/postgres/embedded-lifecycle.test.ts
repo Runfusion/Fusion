@@ -1109,6 +1109,125 @@ describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", (
  * both startup-factory boot and direct lifecycle callers. Mock starts reject
  * before database work so these tests stay deterministic and process-free.
  */
+/*
+ * FNXC:PostgresEmbedded 2026-07-21-10:00:
+ * A shared data directory's pid file is the cross-process join contract. These
+ * process-free tests make the original extension timeout reproducible: the real
+ * layout joins using index 3, while a persistent unreadable lock file must never
+ * instantiate a colliding embedded-postgres start.
+ */
+describe("embedded-lifecycle: postmaster.pid join safety", () => {
+  it("joins an issue-shaped live pid without instantiating a second postmaster", async () => {
+    const dataDir = makeDataDir();
+    const ctor = vi.fn();
+    class UnexpectedEmbeddedPostgres {
+      constructor() {
+        ctor();
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {});
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(UnexpectedEmbeddedPostgres as never);
+    const ensureJoinedDatabase = vi
+      .spyOn(EmbeddedPostgresLifecycle.prototype, "ensureJoinedDatabase")
+      .mockResolvedValue(undefined);
+    try {
+      writeFileSync(
+        join(dataDir, "postmaster.pid"),
+        ["1866", dataDir, "1784424901", "34643", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
+      );
+      const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+
+      await expect(lifecycle.start()).resolves.toMatchObject({
+        runtimeUrl: expect.stringContaining(":34643/"),
+      });
+      expect(ensureJoinedDatabase).toHaveBeenCalledWith(34643);
+      expect(ctor).not.toHaveBeenCalled();
+      expect(lifecycle.getOwnsProcess()).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for an unparseable present pid without starting PostgreSQL", async () => {
+    const dataDir = makeDataDir();
+    const ctor = vi.fn();
+    class UnexpectedEmbeddedPostgres {
+      constructor() {
+        ctor();
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {});
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(UnexpectedEmbeddedPostgres as never);
+    try {
+      // `/tmp` at index 3 mirrors the prior off-by-one regression shape.
+      writeFileSync(
+        join(dataDir, "postmaster.pid"),
+        ["1866", dataDir, "1784424901", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
+      );
+      const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+
+      await expect(lifecycle.start()).rejects.toThrow(
+        /postmaster\.pid is present but its port could not be read.*second postmaster will not be started/i,
+      );
+      expect(ctor).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for an empty present pid without starting PostgreSQL", async () => {
+    const dataDir = makeDataDir();
+    const ctor = vi.fn();
+    class UnexpectedEmbeddedPostgres {
+      constructor() {
+        ctor();
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {});
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(UnexpectedEmbeddedPostgres as never);
+    try {
+      writeFileSync(join(dataDir, "postmaster.pid"), "");
+      const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+
+      await expect(lifecycle.start()).rejects.toThrow(/postmaster\.pid is present but its port could not be read/i);
+      expect(ctor).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows a fresh start when postmaster.pid is absent", async () => {
+    const dataDir = makeDataDir();
+    const ctor = vi.fn();
+    const expected = new Error("mock start reached");
+    class RecordingEmbeddedPostgres {
+      constructor() {
+        ctor();
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {
+        throw expected;
+      });
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(RecordingEmbeddedPostgres as never);
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({ ...baseOptions(dataDir), startTimeoutMs: 0 });
+
+      await expect(lifecycle.start()).rejects.toBe(expected);
+      expect(ctor).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
   const sentinel = new Error("mock postgres start complete");
 

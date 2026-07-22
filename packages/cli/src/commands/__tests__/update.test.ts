@@ -432,5 +432,49 @@ describe("runUpdate", () => {
       await expect(runUpdate({ check: true })).rejects.toThrow("process.exit:1");
       expect(errorSpy).toHaveBeenCalledWith("Error checking for updates: network down");
     });
+
+    it.each([
+      [{ latest: "1.2.3", beta: "1.3.0-beta.1" }, "1.2.3", undefined, true],
+      [{ latest: "1.4.0", beta: "1.3.0-beta.1" }, "1.2.3", undefined, false],
+      [{ latest: "1.2.3", beta: "1.3.0-beta.1" }, "1.3.0-beta.1", undefined, false],
+      [{ latest: "1.2.3" }, "1.2.3", undefined, false],
+      [{ latest: "1.2.3", beta: "1.3.0-beta.1" }, "1.2.3", "beta", false],
+    ])("shows a stable beta notice only for the strict live-registry predicate", async (distTags, currentVersion, channel, expectNotice) => {
+      if (channel) getConfiguredUpdateChannelMock.mockResolvedValue(channel);
+      readFileSyncMock.mockReturnValue(JSON.stringify({ name: "@runfusion/fusion", version: currentVersion }));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": distTags }) }));
+
+      await runUpdate({ check: true });
+
+      expect(logSpy.mock.calls.flat().join("\n").includes("A newer beta")).toBe(expectNotice);
+    });
+
+    it("never announces beta from a cached registry fallback or JSON output", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+      getCachedUpdateStatusMock.mockReturnValue({
+        updateAvailable: true,
+        currentVersion: "1.2.3",
+        latestVersion: "1.2.4",
+        channel: "stable",
+      });
+
+      await runUpdate({ check: true });
+      expect(logSpy.mock.calls.flat().join("\n")).not.toContain("A newer beta");
+
+      logSpy.mockClear();
+      process.exitCode = 0;
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "1.2.3", beta: "1.3.0-beta.1" } }) }));
+      await runUpdate({ check: true, json: true });
+
+      const output = logSpy.mock.calls[0]?.[0] as string;
+      expect(JSON.parse(output)).toEqual({
+        currentVersion: "1.2.3",
+        latestVersion: "1.2.3",
+        updateAvailable: false,
+        updated: false,
+        channel: "stable",
+      });
+      expect(logSpy.mock.calls.flat().join("\n")).not.toContain("A newer beta");
+    });
   });
 });
