@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Cpu } from "lucide-react";
 
 import { inferProviderIconKey } from "../utils/providerIconKey";
@@ -527,11 +528,13 @@ function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: st
 }
 
 /*
-FNXC:ProviderIcons 2026-07-18-18:24:
-FN-8354: OMP ACP is a first-class provider, so its shared dashboard icon must use the official omp.sh favicon's stepped T mark rather than the generic Cpu fallback. Render its official single-color silhouette with the provider token so it remains legible in either theme.
+FNXC:ProviderIcons 2026-07-22-00:00:
+FN-8487: The shared OMP mark must retain the official omp.sh favicon's pink-to-purple-to-cyan diagonal gradient instead of adapting to the theme as a monochrome glyph. Keep the favicon's stepped-T path but omit its dark rounded tile so the mark remains transparent on dashboard chrome.
 Source: https://omp.sh/favicon.svg
 */
-function OmpIcon({ size, color, label = "Oh My Pi" }: { size: number; color: string; label?: string }) {
+function OmpIcon({ size, label = "Oh My Pi" }: { size: number; color: string; label?: string }) {
+  const gradientId = `omp-gradient-${useId().replace(/:/g, "")}`;
+
   return (
     <svg
       width={size}
@@ -542,7 +545,14 @@ function OmpIcon({ size, color, label = "Oh My Pi" }: { size: number; color: str
       data-testid="omp-icon"
       aria-label={label}
     >
-      <path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" fill={color} />
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="var(--provider-omp-gradient-start)" />
+          <stop offset="0.5" stopColor="var(--provider-omp-gradient-mid)" />
+          <stop offset="1" stopColor="var(--provider-omp-gradient-end)" />
+        </linearGradient>
+      </defs>
+      <path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" fill={`url(#${gradientId})`} />
     </svg>
   );
 }

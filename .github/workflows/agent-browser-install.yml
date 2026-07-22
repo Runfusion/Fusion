@@ -1,0 +1,151 @@
+name: Agent-browser install
+
+# FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+# Exercise the published npm boundary on every supported desktop OS because
+# source-tree tests cannot prove the platform shim and native binary survive a
+# packed consumer install.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/agent-browser-install.yml"
+      - "packages/cli/agent-browser.mjs"
+      - "packages/cli/package.json"
+      - "packages/cli/scripts/prepare-publish-manifest.mjs"
+
+concurrency:
+  group: agent-browser-install-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  pack-fixture:
+    name: Pack agent-browser install fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          skip-install: "true"
+
+      - name: Pack Fusion CLI and agent-browser
+        shell: bash
+        working-directory: packages/cli
+        run: |
+          pack_dir="$RUNNER_TEMP/fusion-agent-browser-pack"
+          mkdir -p "$pack_dir"
+          pnpm pack --pack-destination "$pack_dir"
+          agent_browser_version="$(node -p 'require("./package.json").dependencies["agent-browser"]')"
+          node -e "const version = process.argv[1]; if (!/^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('agent-browser must use an exact version pin')" "$agent_browser_version"
+          npm pack "agent-browser@$agent_browser_version" --ignore-scripts --pack-destination "$pack_dir"
+          node -e "require('node:fs').writeFileSync(process.argv[1], process.argv[2] + '\n')" "$pack_dir/agent-browser-version.txt" "$agent_browser_version"
+
+      - name: Upload packed install fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-browser-install-pack
+          path: |
+            ${{ runner.temp }}/fusion-agent-browser-pack/*.tgz
+            ${{ runner.temp }}/fusion-agent-browser-pack/agent-browser-version.txt
+          retention-days: 1
+
+  install-smoke:
+    name: Agent-browser install (${{ matrix.os }})
+    needs: pack-fixture
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Download packed install fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-browser-install-pack
+          path: ${{ runner.temp }}/fusion-agent-browser-pack
+
+      - name: Install packed CLI and execute npm shim
+        shell: pwsh
+        run: |
+          $packDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-pack"
+          $fixtureDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-fixture"
+          $fixturePackDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-fixture-pack"
+          $installDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-consumer"
+          $tarball = Get-ChildItem $packDir -Filter "runfusion-fusion-*.tgz" | Select-Object -First 1
+          if (!$tarball) { Write-Error "Packed Fusion CLI tarball was not created"; exit 1 }
+          $agentBrowserTarball = Get-ChildItem $packDir -Filter "agent-browser-*.tgz" | Select-Object -First 1
+          if (!$agentBrowserTarball) { Write-Error "Packed agent-browser dependency was not created"; exit 1 }
+          $expectedVersion = (Get-Content (Join-Path $packDir "agent-browser-version.txt") -Raw).Trim()
+
+          New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $fixturePackDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          tar -xzf $tarball.FullName -C $fixtureDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+          # Derive a minimal fixture from the real Fusion tarball to exercise its
+          # launcher and bin declaration without installing unrelated dependencies.
+          $fixturePackage = Join-Path $fixtureDir "package"
+          node -e "const { existsSync, readFileSync, writeFileSync } = require('node:fs'); const { join } = require('node:path'); const root = process.argv[1]; const dep = process.argv[2].replaceAll('\\', '/'); const expected = process.argv[3]; const file = join(root, 'package.json'); const pkg = JSON.parse(readFileSync(file, 'utf8')); if (pkg.dependencies?.['agent-browser'] !== expected) throw new Error('Packed Fusion manifest lost the exact agent-browser pin'); if (pkg.bin?.['agent-browser'] !== './agent-browser.mjs') throw new Error('Packed Fusion manifest lost the agent-browser bin'); if (!existsSync(join(root, 'agent-browser.mjs'))) throw new Error('Packed Fusion tarball omitted agent-browser.mjs'); pkg.dependencies = { 'agent-browser': 'file:' + dep }; delete pkg.devDependencies; delete pkg.peerDependencies; delete pkg.peerDependenciesMeta; delete pkg.scripts; writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');" $fixturePackage $agentBrowserTarball.FullName $expectedVersion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm pack $fixturePackage --ignore-scripts --pack-destination $fixturePackDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $fixtureTarball = Get-ChildItem $fixturePackDir -Filter "runfusion-fusion-*.tgz" | Select-Object -First 1
+          if (!$fixtureTarball) { Write-Error "Minimal Fusion install fixture was not created"; exit 1 }
+
+          Push-Location $installDir
+          try {
+            npm init --yes | Out-Null
+            npm install --ignore-scripts --no-audit --no-fund --install-strategy=nested $fixtureTarball.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            $shimName = if ($IsWindows) { "agent-browser.cmd" } else { "agent-browser" }
+            $shim = Join-Path $installDir "node_modules/.bin/$shimName"
+            if (!(Test-Path $shim)) { Write-Error "npm did not generate $shimName"; exit 1 }
+            if ($IsWindows) {
+              $normalizedShim = (Get-Content $shim -Raw).Replace("\", "/")
+              if (!$normalizedShim.Contains("@runfusion/fusion/agent-browser.mjs")) {
+                Write-Error "agent-browser.cmd does not target Fusion's packed launcher"
+                exit 1
+              }
+            } else {
+              node -e "const { readlinkSync } = require('node:fs'); const target = readlinkSync(process.argv[1]).replaceAll('\\', '/'); if (target !== '../@runfusion/fusion/agent-browser.mjs') { console.error('agent-browser does not target Fusion packed launcher: ' + target); process.exit(1); }" $shim
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            $version = (& $shim --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $installedVersion = (node -e "const { readFileSync } = require('node:fs'); const { createRequire } = require('node:module'); const fromFusion = createRequire(require.resolve('@runfusion/fusion/package.json')); console.log(JSON.parse(readFileSync(fromFusion.resolve('agent-browser/package.json'), 'utf8')).version)" | Out-String).Trim()
+            if ($installedVersion -ne $expectedVersion) {
+              Write-Error "Installed agent-browser $installedVersion does not match declared pin $expectedVersion"
+              exit 1
+            }
+            if ($version -ne "agent-browser $expectedVersion") {
+              Write-Error "Unexpected agent-browser version: $version"
+              exit 1
+            }
+
+            node -e "const { existsSync } = require('node:fs'); const { createRequire } = require('node:module'); const { dirname, join } = require('node:path'); const fromFusion = createRequire(require.resolve('@runfusion/fusion/package.json')); const pkg = fromFusion.resolve('agent-browser/package.json'); const suffix = process.platform === 'win32' ? 'win32-x64.exe' : process.platform + '-' + process.arch; const native = join(dirname(pkg), 'bin', 'agent-browser-' + suffix); if (!existsSync(native)) { console.error('Missing native executable: ' + native); process.exit(1); } console.log(native);"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }

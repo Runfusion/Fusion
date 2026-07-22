@@ -2211,6 +2211,31 @@ describe("ListView", () => {
     }
   });
 
+  it("FN-8493 renders Revising, not Replan, for bare needs-replan list rows on desktop and mobile", () => {
+    const task = createMockTask({ id: "FN-8493-needs-replan", column: "triage", status: "needs-replan" });
+
+    const desktopViewport = mockDesktopViewport();
+    try {
+      const { unmount } = renderListView({ tasks: [task] });
+      const row = screen.getByText(task.id).closest("tr") as HTMLElement;
+      expect(within(row).getByText("Revising")).toHaveClass("list-status-badge");
+      expect(within(row).queryByText("Replan")).not.toBeInTheDocument();
+      unmount();
+    } finally {
+      desktopViewport.mockRestore();
+    }
+
+    const mobileViewport = mockMobileViewport();
+    try {
+      renderListView({ tasks: [task] });
+      const card = screen.getByText(task.id).closest(".list-card") as HTMLElement;
+      expect(within(card).getByText("Revising")).toHaveClass("list-status-badge");
+      expect(within(card).queryByText("Replan")).not.toBeInTheDocument();
+    } finally {
+      mobileViewport.mockRestore();
+    }
+  });
+
   it("renders paused tasks with dimmed styling", () => {
     const tasks = [createMockTask({ id: "FN-001", paused: true })];
 

@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  isColumnCentered,
   resolvePanDirection,
   resolveTargetIndexInScrollDirection,
   useColumnScrollSnap,
@@ -111,6 +112,17 @@ describe("resolvePanDirection", () => {
   });
 });
 
+describe("isColumnCentered", () => {
+  it("recognizes only an integer column-centering target", () => {
+    const scroller = createScroller(3, COLUMN_WIDTH);
+    const columns = [...scroller.children] as HTMLElement[];
+
+    expect(isColumnCentered(scroller, columns)).toBe(true);
+    scroller.scrollLeft = 40;
+    expect(isColumnCentered(scroller, columns)).toBe(false);
+  });
+});
+
 describe("resolveTargetIndexInScrollDirection", () => {
   it("forward from column 0 always goes right to column 1", () => {
     const scroller = createScroller(3, 0);
@@ -167,6 +179,26 @@ describe("useColumnScrollSnap", () => {
     settleAfterMomentum();
 
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+  });
+
+  it("hard-settles a zero-direction pan at the nearest column center", () => {
+    const scroller = createScroller(3, 40);
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 200);
+      // A weak/reversed gesture can have a real pan but zero net direction at lift.
+      scroller.scrollLeft = 60;
+      scroller.dispatchEvent(new Event("scroll"));
+      scroller.scrollLeft = 40;
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 200);
+    });
+    settleAfterMomentum();
+
+    // Regression: proximity alone previously left this invalid mid-column rest at 40.
+    expect(scroller.scrollLeft).toBe(0);
+    expect(isColumnCentered(scroller, [...scroller.children] as HTMLElement[])).toBe(true);
   });
 
   it("does not reverse direction when post-lift scroll rubber-bands", () => {

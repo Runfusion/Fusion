@@ -1601,7 +1601,13 @@ export interface TaskExecutorOptions {
   /** Testable, best-effort completion-deliverable seam; production uses generateFeatureVideo. */
   reviewArtifactGenerator?: (options: GenerateFeatureVideoOptions) => Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>;
   onAgentText?: (taskId: string, delta: string) => void;
-  onAgentTool?: (taskId: string, toolName: string) => void;
+  /**
+   * FNXC:StuckDetector 2026-07-22-19:25:
+   * Optional third arg is the primary-arg summary from AgentLogger so downstream
+   * telemetry (and any external onAgentTool subscribers) keep the same fingerprint contract
+   * the stuck detector uses — do not drop `detail` at the executor boundary.
+   */
+  onAgentTool?: (taskId: string, toolName: string, detail?: string) => void;
   /*
   FNXC:PlannerOversight 2026-07-13-23:05:
   Session-advisor live delta path — AgentLogger invokes this after durable
@@ -11681,14 +11687,25 @@ export class TaskExecutor {
           sourceTaskId: task.id,
           sourceAgentId: stepIdentityAgent?.id,
           taskEnv,
-          onStepStart: (stepIndex) => {
-            this.options.stuckTaskDetector?.recordProgress(task.id);
+          // FNXC:StepLifecycle 2026-07-22-09:53: Await the dependency-aware store projection before session allocation so a rejected out-of-order start cannot execute while its persisted step remains pending.
+          onStepStart: async (stepIndex) => {
             try {
-              this.store.updateStep(task.id, stepIndex, "in-progress", stepProjectionOptions).catch((err) => {
-                executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
-              });
+              const startResult = await this.store.startStep(
+                task.id,
+                stepIndex,
+                stepProjectionOptions,
+              );
+              if (!startResult.accepted) {
+                executorLog.warn(
+                  `${task.id}: step ${stepIndex} start was rejected (${startResult.disposition}); persisted status is ` +
+                  `${startResult.task.steps?.[stepIndex]?.status ?? "missing"}`,
+                );
+                return false;
+              }
+              this.options.stuckTaskDetector?.recordProgress(task.id);
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
+              return false;
             }
           },
           onStepComplete: (stepIndex, result) => {
@@ -12397,9 +12414,18 @@ export class TaskExecutor {
           stuckDetector?.recordActivity(taskId);
           this.options.onAgentText?.(taskId, delta);
         },
-        onAgentTool: (taskId, toolName) => {
-          stuckDetector?.recordActivity(taskId);
-          this.options.onAgentTool?.(taskId, toolName);
+        onAgentTool: (taskId, toolName, detail) => {
+          /*
+          FNXC:StuckDetector 2026-07-22-18:05:
+          Tool heartbeats carry name+detail fingerprints so the stuck detector can distinguish
+          legitimate iterative single-step work from repetitive thrash loops.
+
+          FNXC:StuckDetector 2026-07-22-19:25:
+          Forward `detail` to options.onAgentTool so external telemetry keeps the full
+          fingerprint contract (CodeRabbit on PR #2404).
+          */
+          stuckDetector?.recordActivity(taskId, { toolName, toolDetail: detail });
+          this.options.onAgentTool?.(taskId, toolName, detail);
         },
         // FNXC:PlannerOversight 2026-07-13-23:05: live session-advisor delta path (fail-soft).
         onEntriesFlushed: (taskId, entries) => {
@@ -14373,11 +14399,10 @@ export class TaskExecutor {
         RETHINK re-enters the implementation node instead of rewinding the live conversation.
         */
 
-        // If the persisted status doesn't match the requested status, the
-        // store rejected the transition (currently: in-progress regression
-        // on a done/skipped step). FN-5168 treats repeated rebuffs after loop
-        // recovery as a deterministic churn signal, but the agent-facing text
-        // stays unchanged so the tool contract is preserved.
+        // FNXC:StepLifecycle 2026-07-22-09:50: A persisted-status mismatch means
+        // the store rejected the transition (for example, a completed-step
+        // regression or an out-of-order start/completion). FN-5168 treats
+        // repeated rebuffs after loop recovery as a deterministic churn signal.
         if (persistedStatus !== status) {
           stuckDetector?.recordIgnoredStepUpdate(taskId);
 
@@ -14394,7 +14419,7 @@ export class TaskExecutor {
           return {
             content: [{
               type: "text" as const,
-              text: `Step ${step} (${stepInfo.name}) is already ${persistedStatus} — ${status} request ignored to preserve completed work. Progress: ${progress}/${task.steps.length} done.`,
+              text: `Step ${step} (${stepInfo.name}) remains ${persistedStatus} — ${status} request ignored to preserve step lifecycle invariants. Progress: ${progress}/${task.steps.length} done.`,
             }],
             details: {},
           };
@@ -16844,8 +16869,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       onAgentText: (taskId, delta) => {
         this.options.onAgentText?.(taskId, delta);
       },
-      onAgentTool: (taskId, toolName) => {
-        this.options.onAgentTool?.(taskId, toolName);
+      onAgentTool: (taskId, toolName, detail) => {
+        this.options.onAgentTool?.(taskId, toolName, detail);
       },
     });
 

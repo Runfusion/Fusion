@@ -59,6 +59,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.81.1
         version: 0.81.1(@modelcontextprotocol/sdk@1.28.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
+      agent-browser:
+        specifier: 0.26.0
+        version: 0.26.0
       claude-code-cli-acp:
         specifier: 0.1.1
         version: 0.1.1
@@ -3777,6 +3780,10 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
+
+  agent-browser@0.26.0:
+    resolution: {integrity: sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==}
+    hasBin: true
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -11136,6 +11143,8 @@ snapshots:
   acorn@8.16.0: {}
 
   agent-base@7.1.4: {}
+
+  agent-browser@0.26.0: {}
 
   ajv-formats@3.0.1(ajv@8.18.0):
     optionalDependencies:

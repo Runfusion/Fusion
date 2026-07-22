@@ -84,6 +84,17 @@ function scrollLeftToCenterColumn(scroller: HTMLElement, column: HTMLElement): n
   return Math.round(scroller.scrollLeft + columnRect.left + columnRect.width / 2 - viewportCenter);
 }
 
+/** Whether the viewport is already centered on one of its eligible snap columns. */
+export function isColumnCentered(
+  scroller: HTMLElement,
+  columns: HTMLElement[],
+  tolerance = CENTER_TOLERANCE_PX,
+): boolean {
+  if (columns.length === 0) return false;
+  const nearest = nearestColumnIndex(scroller, columns);
+  return Math.abs(scroller.scrollLeft - scrollLeftToCenterColumn(scroller, columns[nearest])) <= tolerance;
+}
+
 /**
  * Resolve pan direction from the full gesture (net deltas only).
  * Do NOT pass last micro-tick direction for settle — rubber-band flips it.
@@ -307,7 +318,7 @@ export function useColumnScrollSnap(
       gestureStartClientX = null;
       lastClientX = null;
 
-      if (!hadPanIntent || direction === 0) {
+      if (!hadPanIntent) {
         restoreNativeSnap();
         return;
       }
@@ -324,7 +335,21 @@ export function useColumnScrollSnap(
         return;
       }
 
-      const targetIndex = resolveTargetIndexInScrollDirection(scroller, columns, direction);
+      /*
+      FNXC:BoardNavigation 2026-07-22-18:30:
+      A user-driven mobile settle must rest at the integer center of exactly one `.column`,
+      never between columns. Keep CSS proximity (not prohibited mandatory snap) and free
+      scrolling while held: a locked direction pages in that direction, while an off-center
+      zero-direction settle hard-jumps to its nearest center and pins until the next touch.
+      */
+      if (direction === 0 && isColumnCentered(scroller, columns)) {
+        restoreNativeSnap();
+        return;
+      }
+
+      const targetIndex = direction === 0
+        ? nearestColumnIndex(scroller, columns)
+        : resolveTargetIndexInScrollDirection(scroller, columns, direction);
       const targetLeft = scrollLeftToCenterColumn(scroller, columns[targetIndex]);
       applySnapTo(targetLeft);
     };

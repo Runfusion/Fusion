@@ -3,11 +3,14 @@
  *
  * The detector supports two detection modes:
  * - **Inactivity** — no activity at all for the timeout period (session appears dead)
- * - **Loop** — agent is active but making no step progress despite lots of activity
- *   (e.g., context growth causing the agent to repeat itself without advancing steps)
+ * - **Loop** — agent is active, has not advanced a step past the timeout, AND shows
+ *   repetitive tool fingerprints or ignored step-update rebuffs (context-growth thrash).
+ *   High activity volume alone is NOT a loop — long single-step work (E2E debug, refactors)
+ *   produces many heartbeats without step transitions and must not false-positive.
  *
  * Activity tracking uses two signals:
- * - `recordActivity(taskId)` — text/tool heartbeats only; increments `activitySinceProgress`
+ * - `recordActivity(taskId, signal?)` — text/tool heartbeats; increments `activitySinceProgress`.
+ *   Tool calls should pass `{ toolName, toolDetail? }` so loop classification can fingerprint novelty.
  * - `recordProgress(taskId)` — step transitions (in-progress, done, skipped); resets counters
  *
  * The detector polls at a configurable interval and compares timestamps against
@@ -15,6 +18,7 @@
  * default while keeping workflow-step execution timeouts independent.
  */
 
+import { createHash } from "node:crypto";
 import type { TaskStore, Settings } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
@@ -23,6 +27,17 @@ const stuckLog = createLogger("stuck-detector");
 /** Minimal session interface — matches what TaskExecutor stores. */
 export interface DisposableSession {
   dispose: () => void;
+}
+
+/**
+ * Optional activity signal for loop-novelty accounting.
+ * Text/heartbeat-only calls omit this; tool starts should include toolName + primary-arg detail.
+ */
+export interface ActivitySignal {
+  /** Tool name when this heartbeat is a tool invocation. */
+  toolName?: string;
+  /** Primary arg summary (command, path, etc.) when available. */
+  toolDetail?: string;
 }
 
 /** Tracked entry for a single in-progress task. */
@@ -36,6 +51,12 @@ interface TrackedTask {
   activitySinceProgress: number;
   /** Number of ignored fn_task_update rebuffs since the last progress event. */
   ignoredStepUpdateCount: number;
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * Ring buffer of recent tool fingerprints (toolName + normalized detail). Loop classification requires
+   * low novelty here so linear iterative work (distinct edits/tests/fixes on one step) is not killed as a loop.
+   */
+  toolFingerprints: string[];
   /**
    * FNXC:Reliability 2026-06-17-16:05:
    * FN-6598 requires long fn_run_verification subprocesses to count as healthy in-flight work instead of loop churn. Track active runs with a count so nested or overlapping verification calls do not clear suppression until every run ends.
@@ -90,12 +111,88 @@ export interface StuckTaskEvent {
 const LOOP_ACTIVITY_THRESHOLD = 60;
 
 /**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Loop requires evidence of thrash beyond "busy without a step transition".
+ * Elevated ignored step-update rebuffs (before the post-recovery FN-5168 terminal) are one such signal.
+ */
+const LOOP_IGNORED_STEP_MIN = 10;
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Tool-fingerprint window and novelty gates for loop detection. Distinct iterative tool work
+ * (E2E debug cycles with different commands/files) stays above these novelty floors and is not a loop.
+ *
+ * FNXC:StuckDetector 2026-07-22-19:15:
+ * Do NOT use a 50% single-fingerprint dominance rule. Alternating one stable test command with
+ * unique file edits is healthy fix/test work: the test fingerprint can occupy half the window while
+ * the other half is novel, and that must not kill the session (Greptile P1 on PR #2404).
+ * Unique-ratio alone still catches pure thrash (one or few fingerprints filling the window).
+ */
+const TOOL_FINGERPRINT_WINDOW = 40;
+const LOOP_MIN_TOOL_SAMPLES = 20;
+/** Unique fingerprints / samples at or below this ratio counts as repetitive. */
+const LOOP_MAX_UNIQUE_RATIO = 0.25;
+/** Hex chars kept from the detail content hash (sha256 prefix). */
+const TOOL_DETAIL_HASH_HEX_LEN = 16;
+
+/**
  * FN-5168 root cause: once compact-and-resume has already fired, repeated
  * ignored step-update rebuffs are a strong deterministic signal that the agent
  * is still churning on completed work instead of advancing.
  */
 const NO_PROGRESS_CHURN_THRESHOLD = 25;
 const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
+
+/**
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Stable short hash of the full (whitespace-collapsed) tool detail so long arguments that
+ * differ only after a shared prefix remain distinct. Prefix truncation alone was a false-loop path
+ * (Greptile P1 on PR #2404).
+ */
+export function hashToolDetail(detail: string): string {
+  return createHash("sha256").update(detail).digest("hex").slice(0, TOOL_DETAIL_HASH_HEX_LEN);
+}
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Build a stable fingerprint from tool name + primary arg so repeated identical actions
+ * collapse while distinct edit/test/debug actions stay unique.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:20:
+ * Return null when detail is missing. Bare tool-name fingerprints collapse every call to the
+ * same custom tool into one value and false-positive productive structured-arg work as a loop
+ * (Greptile P1 on PR #2404). Name-only activity still refreshes liveness; it is not thrash evidence.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Hash the full detail body instead of a fixed character prefix so long structured/string args
+ * that diverge late still fingerprint as novel.
+ */
+export function buildToolFingerprint(toolName: string, toolDetail?: string): string | null {
+  const name = toolName.trim().toLowerCase() || "tool";
+  const detail = toolDetail?.trim().replace(/\s+/g, " ");
+  if (!detail) return null;
+  return `${name}:${hashToolDetail(detail)}`;
+}
+
+function emptyTrackedTask(
+  session: DisposableSession,
+  now: number,
+  canonicalTaskId: string,
+): TrackedTask {
+  return {
+    session,
+    lastActivity: now,
+    lastProgressAt: now,
+    activitySinceProgress: 0,
+    ignoredStepUpdateCount: 0,
+    toolFingerprints: [],
+    verificationActiveCount: 0,
+    verificationDeadlineAt: null,
+    loopObservedInLifecycle: false,
+    recoveryInProgress: false,
+    canonicalTaskId,
+  };
+}
 
 export interface StuckTaskDetectorOptions {
   /** Polling interval in milliseconds. Default: 30000 (30 seconds). */
@@ -223,55 +320,19 @@ export class StuckTaskDetector {
             return;
           }
           this.exhaustedTasks.delete(canonicalId);
-          const now = Date.now();
-          this.tracked.set(trackingKey, {
-            session,
-            lastActivity: now,
-            lastProgressAt: now,
-            activitySinceProgress: 0,
-            ignoredStepUpdateCount: 0,
-            verificationActiveCount: 0,
-            verificationDeadlineAt: null,
-            loopObservedInLifecycle: false,
-            recoveryInProgress: false,
-            canonicalTaskId: canonicalId,
-          });
+          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
           stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
         })
         .catch((err) => {
           stuckLog.error(`Failed to validate exhausted status for ${canonicalId}; proceeding to track:`, err);
           this.exhaustedTasks.delete(canonicalId);
-          const now = Date.now();
-          this.tracked.set(trackingKey, {
-            session,
-            lastActivity: now,
-            lastProgressAt: now,
-            activitySinceProgress: 0,
-            ignoredStepUpdateCount: 0,
-            verificationActiveCount: 0,
-            verificationDeadlineAt: null,
-            loopObservedInLifecycle: false,
-            recoveryInProgress: false,
-            canonicalTaskId: canonicalId,
-          });
+          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
           stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
         });
       return;
     }
 
-    const now = Date.now();
-    this.tracked.set(trackingKey, {
-      session,
-      lastActivity: now,
-      lastProgressAt: now,
-      activitySinceProgress: 0,
-      ignoredStepUpdateCount: 0,
-      verificationActiveCount: 0,
-      verificationDeadlineAt: null,
-      loopObservedInLifecycle: false,
-      recoveryInProgress: false,
-      canonicalTaskId: canonicalId,
-    });
+    this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
     stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
   }
 
@@ -308,17 +369,64 @@ export class StuckTaskDetector {
    * Called on text deltas and tool calls only (NOT step transitions).
    * Increments `activitySinceProgress` counter.
    *
+   * When `signal` includes a tool name **and** a non-empty toolDetail, appends a fingerprint
+   * to the novelty ring buffer used by loop classification. Text/heartbeat-only calls and
+   * name-only tool calls refresh liveness without contributing loop-thrash evidence.
+   *
    * In step-session mode, called with step-scoped keys (e.g., "FN-200-step-0").
    */
-  recordActivity(taskId: string): void {
+  recordActivity(taskId: string, signal?: ActivitySignal): void {
     const entry = this.tracked.get(taskId);
     if (entry) {
       entry.lastActivity = Date.now();
       entry.activitySinceProgress++;
+      const toolName = signal?.toolName?.trim();
+      if (toolName) {
+        const fingerprint = buildToolFingerprint(toolName, signal?.toolDetail);
+        if (fingerprint) {
+          this.pushToolFingerprint(entry, fingerprint);
+        }
+      }
       if (entry.activitySinceProgress <= 3 || entry.activitySinceProgress % 50 === 0) {
-        stuckLog.log(`Activity recorded for ${taskId} (sinceProgress=${entry.activitySinceProgress})`);
+        stuckLog.log(
+          `Activity recorded for ${taskId} (sinceProgress=${entry.activitySinceProgress}` +
+          `${toolName ? `, tools=${entry.toolFingerprints.length}` : ""})`,
+        );
       }
     }
+  }
+
+  private pushToolFingerprint(entry: TrackedTask, fingerprint: string): void {
+    entry.toolFingerprints.push(fingerprint);
+    if (entry.toolFingerprints.length > TOOL_FINGERPRINT_WINDOW) {
+      entry.toolFingerprints.splice(0, entry.toolFingerprints.length - TOOL_FINGERPRINT_WINDOW);
+    }
+  }
+
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * True when recent tool fingerprints show low novelty (few unique commands/paths in the window).
+   * Diverse iterative work (different files/commands per cycle) returns false.
+   *
+   * FNXC:StuckDetector 2026-07-22-19:15:
+   * Unique-ratio only — no single-fingerprint dominance share. A stable re-run test interleaved with
+   * novel edits is productive mixed work and must stay below the thrash bar.
+   */
+  private isRepetitiveToolActivity(entry: TrackedTask): boolean {
+    const fps = entry.toolFingerprints;
+    if (fps.length < LOOP_MIN_TOOL_SAMPLES) return false;
+    const unique = new Set(fps).size;
+    return unique / fps.length <= LOOP_MAX_UNIQUE_RATIO;
+  }
+
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * Loop thrash evidence is either repetitive tool fingerprints or elevated ignored step-update rebuffs.
+   * Bare high activity without either signal is healthy long single-step work.
+   */
+  private hasLoopThrashEvidence(entry: TrackedTask): boolean {
+    return entry.ignoredStepUpdateCount >= LOOP_IGNORED_STEP_MIN
+      || this.isRepetitiveToolActivity(entry);
   }
 
   private findTrackedEntry(taskId: string): TrackedTask | undefined {
@@ -365,6 +473,9 @@ export class StuckTaskDetector {
     }
     entry.lastActivity = Date.now();
     entry.activitySinceProgress = 0;
+    // Verification output is forward progress; clear tool-fingerprint thrash so a
+    // healthy marathon command does not leave a residual repetitive window.
+    entry.toolFingerprints = [];
     if (entry.verificationActiveCount === 0) {
       entry.verificationDeadlineAt = null;
     }
@@ -385,6 +496,7 @@ export class StuckTaskDetector {
       entry.lastProgressAt = Date.now();
       entry.activitySinceProgress = 0;
       entry.ignoredStepUpdateCount = 0;
+      entry.toolFingerprints = [];
       entry.verificationActiveCount = 0;
       entry.verificationDeadlineAt = null;
       entry.recoveryInProgress = false;
@@ -494,8 +606,14 @@ export class StuckTaskDetector {
       return null;
     }
 
-    // Check loop — active but not making progress, with enough activity to be a real loop
-    if (noProgressMs >= timeoutMs && entry.activitySinceProgress >= LOOP_ACTIVITY_THRESHOLD) {
+    // Check loop — active, no step progress past timeout, enough activity volume,
+    // AND thrash evidence (repetitive tools or ignored step-update rebuffs).
+    // Volume without thrash is legitimate long single-step work, not a loop.
+    if (
+      noProgressMs >= timeoutMs
+      && entry.activitySinceProgress >= LOOP_ACTIVITY_THRESHOLD
+      && this.hasLoopThrashEvidence(entry)
+    ) {
       return "loop";
     }
 
@@ -671,6 +789,7 @@ export class StuckTaskDetector {
       entry.lastProgressAt = now;
       entry.activitySinceProgress = 0;
       entry.ignoredStepUpdateCount = 0;
+      entry.toolFingerprints = [];
       entry.verificationActiveCount = 0;
       entry.verificationDeadlineAt = null;
       entry.loopObservedInLifecycle = false;
@@ -698,7 +817,8 @@ export class StuckTaskDetector {
    * - **no-progress-churn**: after an earlier loop recovery in the same execute() lifecycle,
    *   `lastProgressAt` still exceeds `taskStuckTimeoutMs` and ignored step-update rebuffs reach 25+
    * - **loop**: `lastProgressAt` older than `taskStuckTimeoutMs` AND `activitySinceProgress >= 60`
-   *   (agent is actively doing things but not advancing steps)
+   *   AND thrash evidence (repetitive tool fingerprints in the recent window, or
+   *   ignored step-update rebuffs ≥ 10). High activity without thrash is not a loop.
    * - Active `fn_run_verification`: suppresses loop/no-progress-churn until the command ends or its own deadline elapses; inactivity remains governed by `lastActivity`.
    */
   private async checkStuckTasks(): Promise<void> {
