@@ -22,7 +22,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
-import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
 import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
@@ -304,7 +304,11 @@ function shouldShowTaskProgress(task: Task): boolean {
 }
 
 function getTaskProgress(task: Task): { label: string; percent: number; hasProgress: boolean } {
-  const progress = getUnifiedTaskProgress(task);
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
+  List progress for WIP matches TaskCard: only implementation steps, not Todo Plan Review or In-review Code Review gates.
+  */
+  const progress = getUnifiedTaskProgress(task, { scope: "implementation" });
   if (progress.total === 0 || !shouldShowTaskProgress(task)) {
     return { label: "-", percent: 0, hasProgress: false };
   }
@@ -2678,7 +2682,8 @@ export function ListView({
                             || isTransientPlannerActive)
                             && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                          const planReviewRunning = isPlanReviewRunning(task);
+                          const optionalGateBadge = getRunningOptionalGateBadge(task);
+                          const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
                           const hasProgress = taskProgress.hasProgress;
@@ -2746,13 +2751,27 @@ export function ListView({
                                         : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
                                   </span>
                                 ) : null}
-                                {planReviewRunning && isAgentActive && (
+                                {showOptionalGateBadge && optionalGateBadge && (
                                   /*
                                   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:10:
                                   Grouped ListView cards must show the same active Plan Review "Reviewing" badge as TaskCard so board and list surfaces remain visually equivalent while the `plan-review` workflow step is running.
+
+                                  FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+                                  Same badge contract for Code Review / Browser Verification in In-review.
                                   */
-                                  <span className="list-status-badge list-status-badge--reviewing pulsing">
-                                    {t("listView.reviewing", "Reviewing")}
+                                  <span
+                                    className="list-status-badge list-status-badge--reviewing pulsing"
+                                    data-testid={`list-${optionalGateBadge.testId}-${task.id}`}
+                                    data-optional-gate={optionalGateBadge.workflowStepId}
+                                    title={
+                                      optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+                                        ? t("tasks.planReviewingTitle", "Plan Review in progress")
+                                        : t("tasks.optionalGateRunningTitle", "{{name}} in progress", { name: optionalGateBadge.name })
+                                    }
+                                  >
+                                    {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+                                      ? t("listView.reviewing", "Reviewing")
+                                      : optionalGateBadge.label}
                                   </span>
                                 )}
                               </div>
@@ -2899,7 +2918,8 @@ export function ListView({
                               && isAgentActive;
                             const showStatusBadge = (Boolean(visualStatus) || isTransientPlannerActive)
                               && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
-                            const planReviewRunning = isPlanReviewRunning(task);
+                            const optionalGateBadge = getRunningOptionalGateBadge(task);
+                            const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                             const isDragging = draggingTaskId === task.id;
 
                             return (
@@ -2981,13 +3001,27 @@ export function ListView({
                                     ) : (
                                       <span className="list-status-badge">-</span>
                                     )}
-                                    {planReviewRunning && isAgentActive && (
+                                    {showOptionalGateBadge && optionalGateBadge && (
                                       /*
                                       FNXC:TaskCardPlanReviewBadge 2026-07-11-12:11:
                                       Ungrouped ListView table rows must render the same Reviewing badge from the shared predicate; this second status render path is easy to miss and must stay in parity with grouped rows.
+
+                                      FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+                                      Same badge contract for Code Review / Browser Verification in In-review.
                                       */
-                                      <span className="list-status-badge list-status-badge--reviewing pulsing">
-                                        {t("listView.reviewing", "Reviewing")}
+                                      <span
+                                        className="list-status-badge list-status-badge--reviewing pulsing"
+                                        data-testid={`list-${optionalGateBadge.testId}-${task.id}`}
+                                        data-optional-gate={optionalGateBadge.workflowStepId}
+                                        title={
+                                          optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+                                            ? t("tasks.planReviewingTitle", "Plan Review in progress")
+                                            : t("tasks.optionalGateRunningTitle", "{{name}} in progress", { name: optionalGateBadge.name })
+                                        }
+                                      >
+                                        {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+                                          ? t("listView.reviewing", "Reviewing")
+                                          : optionalGateBadge.label}
                                       </span>
                                     )}
                                   </td>

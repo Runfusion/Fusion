@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
-import { getUnifiedTaskProgress, isPlanReviewRunning } from "../taskProgress";
+import { getRunningOptionalGateBadge, getUnifiedTaskProgress, isPlanReviewRunning } from "../taskProgress";
 
 /*
 FNXC:WorkflowSteps 2026-06-25-00:00 — graph-native progress model (plan U3).
@@ -34,6 +34,92 @@ describe("isPlanReviewRunning", () => {
   });
 });
 
+/*
+FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+Lane-owned optional gates badge only in their planning/review columns while running.
+*/
+describe("getRunningOptionalGateBadge", () => {
+  const runningPlanReview = {
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    status: "pending" as const,
+    startedAt: "2026-07-11T12:00:00.000Z",
+  };
+  const runningCodeReview = {
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    status: "pending" as const,
+    startedAt: "2026-07-11T12:00:00.000Z",
+  };
+  const runningBrowser = {
+    workflowStepId: "browser-verification",
+    workflowStepName: "Browser Verification",
+    status: "pending" as const,
+    startedAt: "2026-07-11T12:00:00.000Z",
+  };
+
+  it("badges Plan Review on triage and todo only", () => {
+    for (const column of ["triage", "todo"] as const) {
+      const badge = getRunningOptionalGateBadge({
+        ...makeTask({
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [runningPlanReview],
+        }),
+        column,
+      } as Task);
+      expect(badge?.label).toBe("Reviewing");
+      expect(badge?.testId).toBe("reviewing");
+    }
+    expect(getRunningOptionalGateBadge({
+      ...makeTask({
+        enabledWorkflowSteps: ["plan-review"],
+        workflowStepResults: [runningPlanReview],
+      }),
+      column: "in-progress",
+    } as Task)).toBeUndefined();
+  });
+
+  it("badges Code Review and Browser Verification on in-review only", () => {
+    expect(getRunningOptionalGateBadge({
+      ...makeTask({
+        enabledWorkflowSteps: ["code-review"],
+        workflowStepResults: [runningCodeReview],
+      }),
+      column: "in-review",
+    } as Task)).toMatchObject({ label: "Code Review", testId: "code-review" });
+
+    expect(getRunningOptionalGateBadge({
+      ...makeTask({
+        enabledWorkflowSteps: ["browser-verification"],
+        workflowStepResults: [runningBrowser],
+      }),
+      column: "in-review",
+    } as Task)).toMatchObject({ label: "Browser Verification", testId: "browser-verification" });
+
+    expect(getRunningOptionalGateBadge({
+      ...makeTask({
+        enabledWorkflowSteps: ["code-review"],
+        workflowStepResults: [runningCodeReview],
+      }),
+      column: "in-progress",
+    } as Task)).toBeUndefined();
+  });
+
+  it("returns undefined when the gate is not running", () => {
+    expect(getRunningOptionalGateBadge({
+      ...makeTask({
+        enabledWorkflowSteps: ["code-review"],
+        workflowStepResults: [{
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          status: "pending",
+        }],
+      }),
+      column: "in-review",
+    } as Task)).toBeUndefined();
+  });
+});
+
 describe("getUnifiedTaskProgress", () => {
   it("resolves workflow step names from result.workflowStepName without a lookup", () => {
     const progress = getUnifiedTaskProgress(
@@ -52,6 +138,50 @@ describe("getUnifiedTaskProgress", () => {
     const item = progress.items.find((i) => i.id === "workflow-browser-verification");
     expect(item?.name).toBe("Browser Verification");
     expect(item?.status).toBe("done");
+  });
+
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
+  Implementation scope is the WIP progress contract: Plan Review / Code Review and other lane-owned gates stay out of the in-progress checklist while full scope keeps the complete pipeline for detail and badges.
+  */
+  it("implementation scope keeps only WIP steps, not Plan Review or Code Review", () => {
+    const task = makeTask({
+      steps: [
+        { name: "Implement feature", status: "done" },
+        { name: "Add tests", status: "in-progress" },
+      ] as Task["steps"],
+      enabledWorkflowSteps: ["plan-review", "code-review", "browser-verification"],
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "passed",
+          startedAt: "2026-07-11T12:00:00.000Z",
+          completedAt: "2026-07-11T12:01:00.000Z",
+        },
+        {
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          status: "pending",
+        },
+      ],
+    });
+
+    const full = getUnifiedTaskProgress(task);
+    expect(full.items.map((item) => item.id)).toEqual([
+      "workflow-plan-review",
+      "step-0",
+      "step-1",
+      "workflow-code-review",
+      "workflow-browser-verification",
+    ]);
+    expect(full.total).toBe(5);
+    expect(full.completed).toBe(2);
+
+    const implementation = getUnifiedTaskProgress(task, { scope: "implementation" });
+    expect(implementation.items.map((item) => item.id)).toEqual(["step-0", "step-1"]);
+    expect(implementation.total).toBe(2);
+    expect(implementation.completed).toBe(1);
   });
 
   it("falls back to the workflow step id when no result name is available", () => {

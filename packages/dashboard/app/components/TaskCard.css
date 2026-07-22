@@ -331,6 +331,9 @@ FN-7780 anchors the created-by-agent badge in its own bottom-left row before wor
 /*
 FNXC:TaskCardPlanReviewBadge 2026-07-11-12:15:
 The Plan Review "Reviewing" badge must read as an active review state without adding custom sizing. Reuse the in-review semantic token and existing status badge geometry so desktop and mobile header wrapping keep the same invariants.
+
+FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+Code Review / Browser Verification reuse the same reviewing token while the card is in In-review so lane-owned gates share one active-review chrome.
 */
 .card-status-badge--reviewing {
   background: color-mix(in srgb, var(--in-review) 18%, transparent);
