@@ -1,5 +1,10 @@
-import type { InReviewStallSignal } from "./in-review-stall.js";
-import type { PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
+/*
+ * FNXC:CodeOrganization 2026-07-22-14:00:
+ * After peels moved Task (and its signal field types) out of this barrel, the prior
+ * `import type { …Signal }` lines became unused and failed eslint. Keep type-only
+ * re-exports instead so the dashboard vite alias (`@fusion/core` → types.ts) still
+ * resolves stall/staleness/overseer types for browser-safe pure helpers.
+ */
 // FNXC:PlannerOversight 2026-07-04-18:00: FN-7563 needs `PlannerOverseerState`/
 // `PlannerOverseerRuntimeSnapshot` as TYPE-ONLY imports in the dashboard's pure
 // `plannerOverseerBadge.ts` helper. The dashboard's vite alias for "@fusion/core"
@@ -7,11 +12,12 @@ import type { PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js
 // be re-exported here (type-only — no engine/runtime code crosses into the browser
 // bundle) rather than requiring dashboard code to import the source module path.
 export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
-import type { InReviewStalledSignal } from "./in-review-stalled.js";
-import type { StalePausedReviewSignal } from "./stale-paused-review.js";
-import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
-import type { StalledReviewSignal } from "./stalled-review-detector.js";
-import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
+export type { ExecutorEscalationTarget, InReviewStallCode, InReviewStallSignal, ProviderErrorClassification } from "./in-review-stall.js";
+export type { InReviewStalledCode, InReviewStalledSignal } from "./in-review-stalled.js";
+export type { StalePausedReviewCode, StalePausedReviewSignal } from "./stale-paused-review.js";
+export type { StalePausedTodoCode, StalePausedTodoSignal } from "./stale-paused-todo.js";
+export type { StalledReviewSignal } from "./stalled-review-detector.js";
+export type { TaskAgeStalenessLevel, TaskAgeStalenessSignal } from "./task-age-staleness.js";
 // FNXC:UpdateChannels 2026-07-19-12:30: re-export type-only so browser-side
 // dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
 // package barrel) can name the update channel union.
