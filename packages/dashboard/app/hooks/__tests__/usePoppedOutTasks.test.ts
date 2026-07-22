@@ -22,6 +22,19 @@ describe("usePoppedOutTasks", () => {
     ]);
   });
 
+  it("refreshes the requested tab when reopening the same task and view", () => {
+    const { result } = renderHook(() => usePoppedOutTasks());
+
+    act(() => {
+      result.current.popOut(task("1"), "board", "changes");
+      result.current.popOut(task("1"), "board", "workflow");
+    });
+
+    expect(result.current.entries).toEqual([
+      { task: task("1"), originTaskView: "board", initialTab: "workflow" },
+    ]);
+  });
+
   it("keeps the same task independently open on different origin views", () => {
     const { result } = renderHook(() => usePoppedOutTasks());
 
