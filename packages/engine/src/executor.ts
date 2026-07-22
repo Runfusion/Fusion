@@ -12408,8 +12408,13 @@ export class TaskExecutor {
           stuckDetector?.recordActivity(taskId);
           this.options.onAgentText?.(taskId, delta);
         },
-        onAgentTool: (taskId, toolName) => {
-          stuckDetector?.recordActivity(taskId);
+        onAgentTool: (taskId, toolName, detail) => {
+          /*
+          FNXC:StuckDetector 2026-07-22-18:05:
+          Tool heartbeats carry name+detail fingerprints so the stuck detector can distinguish
+          legitimate iterative single-step work from repetitive thrash loops.
+          */
+          stuckDetector?.recordActivity(taskId, { toolName, toolDetail: detail });
           this.options.onAgentTool?.(taskId, toolName);
         },
         // FNXC:PlannerOversight 2026-07-13-23:05: live session-advisor delta path (fail-soft).

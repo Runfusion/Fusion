@@ -101,8 +101,12 @@ async function runNoProgressChurnFlow(options: { autoMerge?: boolean } = {}) {
 
   detector.trackTask(task.id, session as any);
   vi.advanceTimersByTime(61_000);
+  // Loop requires thrash evidence (repetitive tool fingerprints), not bare activity volume.
   for (let i = 0; i < 80; i++) {
-    detector.recordActivity(task.id);
+    detector.recordActivity(task.id, {
+      toolName: "bash",
+      toolDetail: "pnpm test packages/foo --run",
+    });
   }
 
   await detector.killAndRetry(task.id, 60_000);
@@ -203,7 +207,10 @@ describe("reliability interactions: non-progress churn", () => {
     detector.beginVerification(task.id, 120_000);
     vi.advanceTimersByTime(61_000);
     for (let i = 0; i < 80; i++) {
-      detector.recordActivity(task.id);
+      detector.recordActivity(task.id, {
+        toolName: "bash",
+        toolDetail: "pnpm test packages/foo --run",
+      });
     }
 
     await detector.checkNow();
@@ -229,7 +236,10 @@ describe("reliability interactions: non-progress churn", () => {
     detector.trackTask(task.id, session as any);
     vi.advanceTimersByTime(61_000);
     for (let i = 0; i < 80; i++) {
-      detector.recordActivity(task.id);
+      detector.recordActivity(task.id, {
+        toolName: "bash",
+        toolDetail: "pnpm test packages/foo --run",
+      });
     }
 
     await detector.checkNow();
@@ -260,7 +270,10 @@ describe("reliability interactions: non-progress churn", () => {
     detector.trackTask(task.id, session as any);
     vi.advanceTimersByTime(61_000);
     for (let i = 0; i < 80; i++) {
-      detector.recordActivity(task.id);
+      detector.recordActivity(task.id, {
+        toolName: "bash",
+        toolDetail: "pnpm test packages/foo --run",
+      });
     }
 
     await detector.killAndRetry(task.id, 60_000);

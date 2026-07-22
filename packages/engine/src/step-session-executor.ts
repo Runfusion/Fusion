@@ -36,7 +36,7 @@ import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { AgentSemaphore } from "./concurrency.js";
 import { StuckTaskDetector } from "./stuck-task-detector.js";
-import { AgentLogger } from "./agent-logger.js";
+import { AgentLogger, summarizeToolArgs } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
@@ -1425,7 +1425,15 @@ Follow instructions precisely and avoid unrelated changes.`,
               onToolStart: (name, args) => {
                 const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
                 telemetry.agentLogger.onToolStart(name, args);
-                stuckTaskDetector?.recordActivity(telemetry.trackingKey);
+                /*
+                FNXC:StuckDetector 2026-07-22-18:05:
+                Fingerprint step-session tool starts for loop novelty. Detail comes from the same
+                summarizeToolArgs path AgentLogger uses so detector and logs stay aligned.
+                */
+                stuckTaskDetector?.recordActivity(telemetry.trackingKey, {
+                  toolName: name,
+                  toolDetail: summarizeToolArgs(name, args),
+                });
               },
               onToolEnd: (name, isError, result) => {
                 const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
