@@ -421,6 +421,12 @@ export class ProjectEngine {
    * subsequent polls emits exactly one `escalate` entry, not one per poll.
    */
   private readonly plannerEscalationEmitDedup = new Set<string>();
+  /**
+   * FNXC:PlannerOversight 2026-07-21-22:56:
+   * Dedup keys for durable "retry_step skipped — live session" task-log lines so
+   * the 45s overseer poll does not flood FN-8471-class live-skip conditions.
+   */
+  private readonly plannerLiveRetrySkipLogDedup = new Set<string>();
   private prReconciler?: PrReconciler;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
@@ -1810,6 +1816,33 @@ export class ProjectEngine {
         );
       },
       retryStep: async (task, decision) => {
+        /*
+        FNXC:PlannerOversight 2026-07-21-22:56:
+        Never hard-cancel a live executor to "retry" incomplete work (FN-8471).
+        moveTask(in-progress→todo) aborts agent/graph sessions via task:moved.
+        When a coding/step/CLI session or graph claim is still live, skip the bounce
+        and return false so PlannerRecoveryController does not burn the attempt
+        budget. Mirror self-healing FN-7566 live-session refusal before reclaim.
+        Durable skip log is deduped per (taskId, stage) so 45s polls do not flood the task log.
+        */
+        const executor = this.runtime.getExecutor?.();
+        if (executor?.isTaskLiveForOverseerRetry?.(task.id) === true) {
+          const stage = (decision.watchedStage ?? "executor") as string;
+          const skipKey = `${task.id}::${stage}`;
+          if (!this.plannerLiveRetrySkipLogDedup.has(skipKey)) {
+            this.plannerLiveRetrySkipLogDedup.add(skipKey);
+            runtimeLog.log(
+              `[planner-oversight] retry_step skipped for ${task.id} — live executor/session still active (refusing hard-cancel thrash)`,
+            );
+            await store.logEntry(
+              task.id,
+              `[planner] stage=${stage} signal=retry-skipped: live session active — not bouncing to todo`,
+            ).catch(() => undefined);
+          }
+          return false;
+        }
+        // Live surface cleared — allow a fresh skip log if work goes live again later.
+        this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
@@ -1824,6 +1857,7 @@ export class ProjectEngine {
             sourceLinks: this.toInterventionSourceLinks(decision.sourceLinks),
           }),
         );
+        return true;
       },
       requestTargetedFix: async (task, decision) => {
         const sourceRef = decision.sourceLinks[0]?.ref;

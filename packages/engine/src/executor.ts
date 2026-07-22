@@ -2534,6 +2534,20 @@ export class TaskExecutor {
     );
   }
 
+  /*
+  FNXC:PlannerOversight 2026-07-21-22:56:
+  Overseer retry_step must not hard-cancel a live agent (FN-8471 thrash: status=failed from a raced graph park while step-execute still held a session, then overseer moveTask→todo aborted the live work three times). True when any in-process graph claim, coding/step/CLI session, or unpause-resume handoff still owns the task — broader than isTaskActive so step/workflow/CLI surfaces are covered.
+  */
+  isTaskLiveForOverseerRetry(taskId: string): boolean {
+    // isTaskActive covers executing/graphRouting/coding session/recoveringCompleted;
+    // hasLiveTaskSessionSurface adds step/workflow/CLI surfaces; resumingUnpaused is the unpause handoff gap.
+    return (
+      this.isTaskActive(taskId)
+      || this.hasLiveTaskSessionSurface(taskId)
+      || this.resumingUnpaused.has(taskId)
+    );
+  }
+
   /**
    * FNXC:ExecutorBinding 2026-06-19-00:00:
    * FN-6736 gives self-healing a narrow escape hatch for phantom in-memory executor bindings after the liveness gate proves the owner is dead. Never use this as a general task stopper: it refuses to detach observable live session surfaces, then clears only stale bookkeeping (`executing`, resume/recovery sets, process-wide graph routing, activeWorktrees, activeSessionRegistry paths, and executingTaskLock) so the scheduler can re-dispatch the preserved worktree.
@@ -2910,6 +2924,9 @@ export class TaskExecutor {
     /*
     FNXC:ExecutorResume 2026-07-14-15:31:
     A terminal failed in-progress task must not be resurrected by an unrelated `task:updated` event. Planner oversight steering comments emit that event; treating it as an unpause cleared the failure and restarted the same missing-credential execution every 45 seconds. Explicit Retry/Unpause routes clear `status` before emitting their update, while startup orphan recovery has its own bounded path, so keep failed rows parked here for operator action.
+
+    FNXC:ExecutorResume 2026-07-21-22:56:
+    Claim resumingUnpaused BEFORE any await so concurrent task:updated handlers cannot both pass the gate, both await getExecutionPauseLabel, and both log "Resuming execution after unpause" (FN-8471 multi-resume race). Also treat process-wide graphRouting as already-owned work.
     */
     if (task.status === "failed") {
       return false;
@@ -2922,44 +2939,75 @@ export class TaskExecutor {
       || this.activeSessions.has(task.id)
       || this.activeStepExecutors.has(task.id)
       || this.activeWorkflowStepSessions.has(task.id)
+      || this.graphRouting.has(task.id)
     ) {
       return false;
     }
 
-    const pauseLabel = await this.getExecutionPauseLabel();
-    if (pauseLabel) {
-      executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
-      return false;
-    }
-
-    this.approvalSuspended.delete(task.id);
-    if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
-      this.recoveringCompleted.add(task.id);
-      executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
-      void this.recoverCompletedTask(task)
-        .catch((err) => executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err))
-        .finally(() => this.recoveringCompleted.delete(task.id));
-      return true;
-    }
-
+    // Synchronous single-flight claim before any await (TOCTOU fix).
     this.resumingUnpaused.add(task.id);
-    executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
+    let handoffOwnsClaim = false;
     try {
-      await this.clearResumeFailureState(task);
-      await this.store.updateTask(task.id, {
-        resumeLimboCount: 0,
-        resumeLimboTipSha: null,
-        resumeLimboStepSignature: null,
-      });
-      await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.getRunContextFor(task.id));
-      await this.recoverApprovedStepsOnResume(task.id);
-    } catch (clearErr) {
-      executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
+      const pauseLabel = await this.getExecutionPauseLabel();
+      if (pauseLabel) {
+        executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
+        return false;
+      }
+
+      // Re-check after await: a concurrent graph claim may have won meanwhile.
+      if (
+        this.executing.has(task.id)
+        || this.recoveringCompleted.has(task.id)
+        || this.activeSessions.has(task.id)
+        || this.activeStepExecutors.has(task.id)
+        || this.activeWorkflowStepSessions.has(task.id)
+        || this.graphRouting.has(task.id)
+      ) {
+        return false;
+      }
+
+      this.approvalSuspended.delete(task.id);
+      if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
+        /*
+        FNXC:ExecutorResume 2026-07-21-23:06:
+        recoverCompletedTask refuses when resumingUnpaused still holds the id.
+        Transfer ownership: clear the unpause claim before the recovery path runs,
+        then own the flight via recoveringCompleted (FN-8471 early-claim fix).
+        */
+        this.resumingUnpaused.delete(task.id);
+        this.recoveringCompleted.add(task.id);
+        handoffOwnsClaim = true; // prevent finally from double-deleting a already-cleared claim
+        executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
+        void this.recoverCompletedTask(task)
+          .catch((err) => executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err))
+          .finally(() => this.recoveringCompleted.delete(task.id));
+        return true;
+      }
+
+      executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
+      try {
+        await this.clearResumeFailureState(task);
+        await this.store.updateTask(task.id, {
+          resumeLimboCount: 0,
+          resumeLimboTipSha: null,
+          resumeLimboStepSignature: null,
+        });
+        await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.getRunContextFor(task.id));
+        await this.recoverApprovedStepsOnResume(task.id);
+      } catch (clearErr) {
+        executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
+      }
+      handoffOwnsClaim = true;
+      this.execute(task)
+        .catch((err) => executorLog.error(`Failed to resume unpaused ${task.id}:`, err))
+        .finally(() => this.resumingUnpaused.delete(task.id));
+      // execute().finally owns resumingUnpaused release from here.
+      return true;
+    } finally {
+      if (!handoffOwnsClaim) {
+        this.resumingUnpaused.delete(task.id);
+      }
     }
-    this.execute(task)
-      .catch((err) => executorLog.error(`Failed to resume unpaused ${task.id}:`, err))
-      .finally(() => this.resumingUnpaused.delete(task.id));
-    return true;
   }
 
   private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
@@ -5515,10 +5563,13 @@ export class TaskExecutor {
    * Returns true when the graph owned the task to a terminal disposition
    * (completed or failed); false when the legacy pipeline should run.
    */
-  private async executeWorkflowGraph(task: Task): Promise<void> {
+  private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
     // Claim synchronously before any await so concurrent execute() calls for
     // the same task cannot both enter graph routing (mirrors executingTaskLock).
-    this.graphRouting.add(task.id);
+    // executeCore may already have claimed before its pre-graph awaits (FN-8471).
+    if (!opts?.alreadyClaimed) {
+      this.graphRouting.add(task.id);
+    }
     let graphAbortController: AbortController | undefined;
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
@@ -10416,19 +10467,29 @@ export class TaskExecutor {
       /*
       FNXC:WorkflowRemediation 2026-07-01-23:40:
       Do NOT flag a still-executing task as failed. A `pre-merge-remediation` / `plan-replan` node (e.g. `code-review-remediation`) is a fire-and-forget async scheduler with no `failure` out-edge, so a failed re-arm (missing rehydrated failureContext after restart, remediation-not-scheduled, or an exhausted rework budget) bubbles out as the terminal graph outcome here. When a SEPARATE live agent session surface is still registered for this task, the previously-scheduled fix/reviewer is genuinely mid-flight — parking `status:"failed"` would surface a spurious "Task Failed" over live work. Preserve the row and let the live session drive its own terminal handoff instead. Scoped strictly to remediation nodes + a live session surface so genuine execute/merge terminal failures (and remediation failures with NO live session, e.g. a truly exhausted budget) still park exactly as before.
+
+      FNXC:WorkflowRemediation 2026-07-21-22:56:
+      Extend the same preserve rule to execute-family nodes when a SEPARATE live session surface exists. A losing raced graph (duplicate resume after plan-review) can terminate at steps#N:step-execute while a peer session still owns coding work; stamping status=failed arms overseer retry_step hard-cancels (FN-8471). Merge-region failures still park — they are not execute-family.
       */
-      if (this.hasLiveTaskSessionSurface(task.id) && await this.isRemediationGraphNode(task.id, failedNode)) {
-        const benignMessage = `Workflow graph ended at remediation node '${failedNode ?? "unknown"}' while a live agent session is still executing — not flagging as failed; live session preserved`;
-        executorLog.warn(`${task.id}: ${benignMessage}`);
-        await this.store.logEntry(task.id, benignMessage, undefined, this.getRunContextFor(task.id));
-        await this.persistTokenUsage(task.id);
-        return;
+      const isExecuteFamilyNode =
+        failedNode === "execute"
+        || failedNode === "step-execute"
+        || failedNode?.endsWith(":step-execute") === true;
+      if (this.hasLiveTaskSessionSurface(task.id)) {
+        const isRemediation = await this.isRemediationGraphNode(task.id, failedNode);
+        if (isRemediation || isExecuteFamilyNode) {
+          const kind = isRemediation ? "remediation" : "execute";
+          const benignMessage = `Workflow graph ended at ${kind} node '${failedNode ?? "unknown"}' while a live agent session is still executing — not flagging as failed; live session preserved`;
+          executorLog.warn(`${task.id}: ${benignMessage}`);
+          await this.store.logEntry(task.id, benignMessage, undefined, this.getRunContextFor(task.id));
+          await this.persistTokenUsage(task.id);
+          return;
+        }
       }
       const message = `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
       const settings = await this.store.getSettings();
       const maxToolFailureRetries = resolveMaxConsecutiveToolFailureRetries(settings);
-      const isExecuteFailure = failedNode === "execute" || failedNode?.endsWith(":step-execute") === true || failedNode === "step-execute";
-      if (maxToolFailureRetries > 0 && isExecuteFailure && !live.paused && !live.userPaused && !live.deletedAt && live.column === "in-progress") {
+      if (maxToolFailureRetries > 0 && isExecuteFamilyNode && !live.paused && !live.userPaused && !live.deletedAt && live.column === "in-progress") {
         // Prefer the execution-local boundary; recovery paths refetch durable state rather than use the stale failure snapshot.
         const cursor = this.graphToolFailureRunCursors.get(task.id) ?? (await this.store.getTask(task.id))?.toolFailureDetectorLogCursor;
         const threshold = resolveConsecutiveToolFailureThreshold(settings);
@@ -10916,7 +10977,6 @@ export class TaskExecutor {
   */
   private async executeCore(task: Task): Promise<void> {
     this.completionFinalizedTaskIds.delete(task.id);
-    await this.clearStalePauseAbortBeforeDispatch(task);
     /*
     FNXC:ExecutorSoftDelete 2026-07-20-23:30:
     Soft-delete refuse belongs in routing, not only inside runImplementation. After U10b the
@@ -10931,41 +10991,59 @@ export class TaskExecutor {
       dropPreHeldExecutorSlot(task.id, this.options.semaphore);
       return;
     }
+    /*
+    FNXC:WorkflowExecution 2026-07-21-22:56:
+    Claim graphRouting BEFORE any await. The previous check-then-await-then-claim
+    window let concurrent execute() calls (task:moved + unpause resume after plan-review)
+    both pass the graphRouting.has gate, both enter executeWorkflowGraph, and one park
+    status=failed while the other still owned work (FN-8471 overseer thrash).
+    */
     if (this.graphRouting.has(task.id)) {
       // Duplicate dispatch while the graph runner owns this task — drop it,
       // mirroring the executingTaskLock duplicate-invocation behavior.
       executorLog.log(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
       return;
     }
-    if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
-      // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-      return;
-    }
-    // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
-    // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
-    // them can claim the task, so the single check covers all three entry points.
-    if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
-      return;
-    }
-    /*
-    FNXC:WorkflowExecution 2026-07-19-10:40:
-    U10 (R9) — the `workflowAuthoritativeDispatch` branch is DELETED along with
-    WorkflowAuthoritativeDriver. It was the pre-graph "authoritative" runtime: a second
-    in-process execution path that could claim a task between the graph and the legacy
-    implementation. The graph is now the sole orchestrator, so a second claimant is not a
-    fallback, it is a race.
+    this.graphRouting.add(task.id);
+    let graphRunnerOwnsClaim = false;
+    try {
+      await this.clearStalePauseAbortBeforeDispatch(task);
+      if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
+        // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        return;
+      }
+      // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
+      // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
+      // them can claim the task, so the single check covers all three entry points.
+      if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        return;
+      }
+      /*
+      FNXC:WorkflowExecution 2026-07-19-10:40:
+      U10 (R9) — the `workflowAuthoritativeDispatch` branch is DELETED along with
+      WorkflowAuthoritativeDriver. It was the pre-graph "authoritative" runtime: a second
+      in-process execution path that could claim a task between the graph and the legacy
+      implementation. The graph is now the sole orchestrator, so a second claimant is not a
+      fallback, it is a race.
 
-    FNXC:WorkflowExecution 2026-07-19-17:45 (U10b / R9):
-    The trailing `await this.runImplementation(task)` is DELETED too, and
-    `maybeExecuteWorkflowGraph` is now `executeWorkflowGraph` returning void. The old boolean
-    meant "did the graph claim this task"; with the legacy fallback gone the answer is always
-    yes, so a bare `runImplementation` call with NO `graphCompletion` — an implementation pass
-    that nothing owns the completion of — is unreachable by construction rather than by
-    convention. That is what makes `graphCompletion` a required parameter below.
-    */
-    await this.executeWorkflowGraph(task);
+      FNXC:WorkflowExecution 2026-07-19-17:45 (U10b / R9):
+      The trailing `await this.runImplementation(task)` is DELETED too, and
+      `maybeExecuteWorkflowGraph` is now `executeWorkflowGraph` returning void. The old boolean
+      meant "did the graph claim this task"; with the legacy fallback gone the answer is always
+      yes, so a bare `runImplementation` call with NO `graphCompletion` — an implementation pass
+      that nothing owns the completion of — is unreachable by construction rather than by
+      convention. That is what makes `graphCompletion` a required parameter below.
+      */
+      graphRunnerOwnsClaim = true;
+      await this.executeWorkflowGraph(task, { alreadyClaimed: true });
+    } finally {
+      // executeWorkflowGraph's finally releases the claim when it owns the run.
+      if (!graphRunnerOwnsClaim) {
+        this.graphRouting.delete(task.id);
+      }
+    }
   }
 
   /*
