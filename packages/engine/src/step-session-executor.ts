@@ -123,8 +123,9 @@ export interface StepSessionExecutorOptions {
   /** Optional assigned-agent runtime config for model override precedence. */
   assignedAgentRuntimeConfig?: Record<string, unknown>;
   /**
-   * Callback invoked before a step starts executing. Returning `false`
-   * rejects the start; `void` preserves the legacy notification-only contract.
+   * FNXC:StepLifecycle 2026-07-22-09:53: This awaitable pre-start contract lets the
+   * authoritative lifecycle projection reject execution before session allocation;
+   * `void` preserves the legacy notification-only contract.
    */
   onStepStart?: (stepIndex: number) => void | boolean | Promise<void | boolean>;
   /** Callback invoked when a step completes (success or failure). */
@@ -1230,9 +1231,8 @@ export class StepSessionExecutor {
       return { stepIndex, success: false, error: "Execution aborted", retries: 0 };
     }
 
-    // Project the start before allocating any session resources. The task store
-    // is authoritative: when it rejects an out-of-order transition, execution
-    // must not continue against a step that remains pending.
+    // FNXC:StepLifecycle 2026-07-22-09:53: Project the start before allocating session
+    // resources; a store-rejected out-of-order transition must not execute while pending.
     if (this.options.onStepStart) {
       try {
         const startAccepted = await this.options.onStepStart(stepIndex);

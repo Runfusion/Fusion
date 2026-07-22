@@ -18,6 +18,15 @@ import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/she
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
 import type {MergeQueueRow} from "../task-store/row-types.js";
 
+export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
+
+export interface StepStartResult {
+  task: Task;
+  accepted: boolean;
+  disposition: StepStartDisposition;
+  blockingStepIndex?: number;
+}
+
 /**
  * Step state is written from more places than an agent's explicit
  * `fn_task_update` call: workflow projection, review auto-approval, restart
@@ -53,7 +62,7 @@ async function appendProactiveStepStatus(store: TaskStore, taskId: string, messa
   await store.appendAgentLog(taskId, message, "status", undefined, "executor");
 }
 
-export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
+async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<{ task: Task; startResult?: Omit<StepStartResult, "task"> }> {
     // FNXC:WorkflowStepOrdering 2026-07-20-20:05:
     // Step-inversion projection discipline (U6/KTD-7). A `source: "graph"` write
     // is the workflow-graph executor projecting a foreach instance's lifecycle
@@ -128,7 +137,13 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
         await store.atomicWriteTaskJson(dir, task);
         if (store.isWatching) store.taskCache.set(id, { ...task });
         store.emit("task:updated", task);
-        return task;
+        return {
+          task,
+          startResult: {
+            accepted: false,
+            disposition: "terminal",
+          },
+        };
       }
 
       if (status === "done" || status === "in-progress") {
@@ -212,7 +227,18 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
           await store.atomicWriteTaskJson(dir, task);
           if (store.isWatching) store.taskCache.set(id, { ...task });
           store.emit("task:updated", task);
-          return task;
+          return {
+            task,
+            ...(status === "in-progress"
+              ? {
+                  startResult: {
+                    accepted: false,
+                    disposition: "blocked" as const,
+                    blockingStepIndex: blockingIndex,
+                  },
+                }
+              : {}),
+          };
         }
       }
 
@@ -266,9 +292,38 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
         id,
         proactiveStepStatusMessage(stepIndex, task.steps[stepIndex].name, currentStatus, status),
       ).catch(() => undefined);
-      return task;
+      return {
+        task,
+        ...(status === "in-progress"
+          ? {
+              startResult: {
+                accepted: true,
+                disposition: currentStatus === "in-progress" ? "resumed" as const : "started" as const,
+              },
+            }
+          : {}),
+      };
     });
-  }
+}
+
+export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
+  return (await mutateStepImpl(store, id, stepIndex, status, options)).task;
+}
+
+/*
+FNXC:StepLifecycle 2026-07-22-10:30:
+Execution must distinguish a dependency-blocked projection from a valid restart resume even when both return a task whose target step is already in-progress. Keep that verdict inside the same task lock as the dependency check; a caller-side pre-read would race and duplicate ordering policy.
+*/
+export async function startStepImpl(store: TaskStore, id: string, stepIndex: number, options?: { source?: "graph" },): Promise<StepStartResult> {
+  const result = await mutateStepImpl(store, id, stepIndex, "in-progress", options);
+  return {
+    task: result.task,
+    ...(result.startResult ?? {
+      accepted: false,
+      disposition: "terminal" as const,
+    }),
+  };
+}
 
 export async function acquireMergeQueueLeaseImpl(store: TaskStore, workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
     if (store.backendMode) {

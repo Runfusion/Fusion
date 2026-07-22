@@ -1502,7 +1502,13 @@ describe("swallowed async store failure observability", () => {
     mockedWithRateLimitRetry.mockImplementation((fn: () => Promise<unknown>) => fn());
   });
 
-  it("turns a rejected persisted step start into a failed step-session result", async () => {
+  /*
+   * FNXC:StepLifecycle 2026-07-22-10:30:
+   * A legacy inversion leaves the target in-progress even when the predecessor guard rejects
+   * its restart. The executor must consume the atomic verdict instead of inferring acceptance
+   * from that unchanged target status.
+   */
+  it("turns a blocked corrupted in-progress start into a failed step-session result", async () => {
     const store = createMockStore();
     const task = {
       id: "FN-8490",
@@ -1510,10 +1516,13 @@ describe("swallowed async store failure observability", () => {
       description: "Do not execute a rejected later step",
       column: "in-progress" as const,
       dependencies: [] as string[],
-      steps: [{ name: "Step 0", status: "pending" as const }],
+      steps: [
+        { name: "Step 0", status: "in-progress" as const },
+        { name: "Step 1", status: "in-progress" as const },
+      ],
       currentStep: 0,
       log: [] as any[],
-      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n### Step 1: Implement\n- [ ] build",
       worktree: "/tmp/test/.worktrees/fn-8490",
       baseCommitSha: "abc123",
       enabledWorkflowSteps: [],
@@ -1530,23 +1539,38 @@ describe("swallowed async store failure observability", () => {
       maxParallelSteps: 1,
     });
     store.getTask.mockResolvedValue(task);
-    store.updateStep.mockResolvedValue(task);
+    store.startStep
+      .mockResolvedValueOnce({
+        task,
+        accepted: true,
+        disposition: "resumed",
+      })
+      .mockResolvedValueOnce({
+        task,
+        accepted: false,
+        disposition: "blocked",
+        blockingStepIndex: 0,
+      });
     mockExecuteAll.mockImplementation(async () => {
       const options = mockedStepSessionExecutor.mock.calls.at(-1)?.[0] as {
         onStepStart?: (stepIndex: number) => Promise<void | boolean>;
       };
-      const accepted = await options.onStepStart?.(0);
+      const accepted = await options.onStepStart?.(1);
       return accepted === false
-        ? [{ stepIndex: 0, success: false, error: "start rejected", retries: 0 }]
-        : [{ stepIndex: 0, success: true, retries: 0 }];
+        ? [{ stepIndex: 1, success: false, error: "start rejected", retries: 0 }]
+        : [{ stepIndex: 1, success: true, retries: 0 }];
     });
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
     await executor.execute(task);
 
-    expect(store.updateStep).toHaveBeenCalledWith("FN-8490", 0, "in-progress", undefined);
-    expect(store.updateStep).not.toHaveBeenCalledWith("FN-8490", 0, "done", expect.anything());
+    expect(store.startStep).toHaveBeenLastCalledWith("FN-8490", 1, undefined);
+    expect(
+      store.updateStep.mock.calls.some(
+        ([taskId, stepIndex, status]) => taskId === "FN-8490" && stepIndex === 0 && status === "done",
+      ),
+    ).toBe(false);
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-8490",
       "todo",
@@ -1554,7 +1578,7 @@ describe("swallowed async store failure observability", () => {
     );
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-8490" }),
-      expect.objectContaining({ message: "Step 0: start rejected" }),
+      expect.objectContaining({ message: "Step 1: start rejected" }),
     );
   });
 

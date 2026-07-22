@@ -11681,18 +11681,18 @@ export class TaskExecutor {
           sourceTaskId: task.id,
           sourceAgentId: stepIdentityAgent?.id,
           taskEnv,
+          // FNXC:StepLifecycle 2026-07-22-09:53: Await the dependency-aware store projection before session allocation so a rejected out-of-order start cannot execute while its persisted step remains pending.
           onStepStart: async (stepIndex) => {
             try {
-              const projectedTask = await this.store.updateStep(
+              const startResult = await this.store.startStep(
                 task.id,
                 stepIndex,
-                "in-progress",
                 stepProjectionOptions,
               );
-              if (projectedTask.steps?.[stepIndex]?.status !== "in-progress") {
+              if (!startResult.accepted) {
                 executorLog.warn(
-                  `${task.id}: step ${stepIndex} start was rejected; persisted status is ` +
-                  `${projectedTask.steps?.[stepIndex]?.status ?? "missing"}`,
+                  `${task.id}: step ${stepIndex} start was rejected (${startResult.disposition}); persisted status is ` +
+                  `${startResult.task.steps?.[stepIndex]?.status ?? "missing"}`,
                 );
                 return false;
               }
