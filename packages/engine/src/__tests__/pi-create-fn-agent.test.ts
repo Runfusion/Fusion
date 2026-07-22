@@ -891,13 +891,17 @@ describe("wrapToolsWithPermanentAgentGating", () => {
 
     const result = await (wrapped[0] as any).execute("t1", { description: "create" });
     expect((result as any).isError).toBe(true);
-    // FNXC:EngineTests 2026-07-20-23:55: governed fn_task_create without mission_lineage is hard-blocked (FN-8307) rather than approval-gated.
+    /*
+    FNXC:EngineTests 2026-07-22-13:07:
+    Freeform chat creates omit mission_lineage and remain policy-governed (require-approval
+    here), not hard-blocked. Autonomous heartbeat still enforces lineage at the tool factory.
+    */
     expect((result as any).details).toEqual(expect.objectContaining({
       category: "task_agent_mutation",
-      disposition: "block",
+      disposition: "require-approval",
       toolName: "fn_task_create",
     }));
-    expect(createApprovalRequest).not.toHaveBeenCalled();
+    expect(createApprovalRequest).toHaveBeenCalledOnce();
     expect(tool.execute).not.toHaveBeenCalled();
   });
 
