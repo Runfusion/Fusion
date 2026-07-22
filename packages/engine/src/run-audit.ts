@@ -398,7 +398,9 @@ export type GitMutationType =
    */
   | "pull:fast-forward"
   /**
-   * Metadata shape:
+   * `push:origin` is polymorphic — two producers emit it with different shapes:
+   *
+   * 1. Dashboard Smart Push (interactive):
    * ```ts
    * {
    *   integrationBranch: string;
@@ -413,6 +415,21 @@ export type GitMutationType =
    *   durationMs: number;
    * }
    * ```
+   *
+   * 2. Automated post-merge push (merger-ai.ts pushAfterMergeToRemote):
+   * ```ts
+   * {
+   *   integrationBranch: string;
+   *   remote: string;
+   *   targetBranch?: string;   // omitted on the shutdown-abort path
+   *   refAdvanced?: boolean;   // divergence rebase rewrote the landed squash
+   *   outcome: "success" | "failed" | "aborted";
+   *   stderrPreview?: string;  // present on "failed"
+   * }
+   * ```
+   * `outcome: "aborted"` (Tchori-Labs/Fusion#5) marks a shutdown signal after
+   * finalization: the merge stays landed and its divergence recovery branch is
+   * retained (see `push:recovery-branch`), but the target push did not complete.
    */
   | "push:origin"
   /*

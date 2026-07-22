@@ -2190,30 +2190,35 @@ export async function pushAfterMergeToRemote(input: {
   */
   const recoveryBranch = `fusion/${taskId.toLowerCase()}-stranded`;
   const recoveryRef = `refs/heads/${recoveryBranch}`;
+  // Both the create and delete recovery-ref paths record the same
+  // {audit event + task-log entry} pair, differing only in outcome/message/
+  // action — keep them in one place so the paths can't drift apart.
+  const recordRecoveryBranch = async (
+    outcome: "success" | "failed" | "deleted" | "delete-failed",
+    logMessage: string,
+    logAction: "PushRecoveryBranch" | "PushRecoveryBranchFailed",
+  ): Promise<void> => {
+    await audit.git({
+      type: "push:recovery-branch",
+      target: taskId,
+      metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome },
+    }).catch(() => undefined);
+    await store.logEntry(taskId, logMessage, logAction).catch(() => undefined);
+  };
   try {
     await git(["push", "--force", remote, `${localSha}:${recoveryRef}`], projectRootDir, { timeout: 120_000 });
-    await audit.git({
-      type: "push:recovery-branch",
-      target: taskId,
-      metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome: "success" },
-    }).catch(() => undefined);
-    await store.logEntry(
-      taskId,
+    await recordRecoveryBranch(
+      "success",
       `Push after merge: preserved the approved pre-rebase squash on ${remote}/${recoveryBranch} at ${localSha}`,
       "PushRecoveryBranch",
-    ).catch(() => undefined);
+    );
   } catch (recoveryError: unknown) {
     const message = getErrorMessage(recoveryError);
-    await audit.git({
-      type: "push:recovery-branch",
-      target: taskId,
-      metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome: "failed" },
-    }).catch(() => undefined);
-    await store.logEntry(
-      taskId,
+    await recordRecoveryBranch(
+      "failed",
       `Push after merge: could not preserve the approved squash on recovery branch ${remote}/${recoveryBranch}; continuing the non-fatal divergence rebase: ${message}`,
       "PushRecoveryBranchFailed",
-    ).catch(() => undefined);
+    );
   }
 
   // 2. Divergence path: remote moved ahead — rebase in a detached clean room.
@@ -2256,27 +2261,17 @@ export async function pushAfterMergeToRemote(input: {
     // must not turn a successful target push into a failed merge outcome.
     try {
       await git(["push", remote, `:${recoveryRef}`], canonicalPushRoot, { timeout: 120_000 });
-      await audit.git({
-        type: "push:recovery-branch",
-        target: taskId,
-        metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome: "deleted" },
-      }).catch(() => undefined);
-      await store.logEntry(
-        taskId,
+      await recordRecoveryBranch(
+        "deleted",
         `Push after merge: deleted recovery branch ${remote}/${recoveryBranch} after the target push succeeded`,
         "PushRecoveryBranch",
-      ).catch(() => undefined);
+      );
     } catch (recoveryDeleteError: unknown) {
-      await audit.git({
-        type: "push:recovery-branch",
-        target: taskId,
-        metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome: "delete-failed" },
-      }).catch(() => undefined);
-      await store.logEntry(
-        taskId,
+      await recordRecoveryBranch(
+        "delete-failed",
         `Push after merge: target push succeeded but recovery branch ${remote}/${recoveryBranch} could not be deleted: ${getErrorMessage(recoveryDeleteError)}`,
         "PushRecoveryBranchFailed",
-      ).catch(() => undefined);
+      );
     }
 
     // The clean-room HEAD is what the remote now has. Advance the local
@@ -2323,7 +2318,7 @@ export async function pushAfterMergeToRemote(input: {
     FNXC:MergePush 2026-07-22-18:48:
     The divergence clean room must never survive an unexpected exit with staged, uncommitted rebase state. This outer guard complements the resolver helper's catch so cleanup is safe even when a future throw bypasses that helper.
     */
-    if (pushRoot && worktreeAdded && isRebaseInProgress(pushRoot)) {
+    if (pushRoot && worktreeAdded && (await isRebaseInProgress(pushRoot))) {
       try {
         await git(["rebase", "--abort"], pushRoot, { timeout: 120_000 });
         await log("Push after merge: aborted the unfinished clean-room rebase before cleanup");
