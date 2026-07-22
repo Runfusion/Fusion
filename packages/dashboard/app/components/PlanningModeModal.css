@@ -1043,16 +1043,21 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
 }
 
 /* Question View */
+/*
+FNXC:PlanningMode 2026-07-21-16:47:
+The interview workspace no longer insets the question/plan panes with outer padding or inter-pane gap.
+That gutter read as dead space around the framed cards; panes now sit flush edge-to-edge with a single column divider, matching Missions split layout and the desktop flush rules below.
+*/
 .planning-workspace {
   position: relative;
   display: grid;
   grid-template-areas: "question plan";
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
-  gap: var(--space-lg);
+  gap: 0;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-lg);
+  padding: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--card) 40%, var(--surface));
 }
@@ -1068,10 +1073,10 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: var(--radius-xl);
+  border: none;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .planning-plan-pane {
@@ -1085,6 +1090,7 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
 
 .planning-question-pane {
   grid-area: question;
+  border-right: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
 }
 
 .planning-workspace--generating > .planning-plan-pane,
@@ -2206,10 +2212,19 @@ mobile and desktop offer the same View task / Return to sessions choices.
     padding: var(--space-lg);
   }
 
+  /*
+  FNXC:PlanningMode 2026-07-21-16:47:
+  Mobile keeps a compact card inset and rounded panes because only one pane is visible at a time;
+  clear the desktop column divider so a solo question/plan card is not edged by a right border.
+  */
   .planning-workspace {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-md);
     padding: var(--space-md);
+  }
+
+  .planning-question-pane {
+    border-right: none;
   }
 
   .planning-workspace--mobile-tab-question,
@@ -2272,7 +2287,9 @@ mobile and desktop offer the same View task / Return to sessions choices.
 
   .planning-plan-pane,
   .planning-question-pane {
+    border: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
     border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
   }
 
   /* FNXC:PlanningMode 2026-06-22-15:30: this legacy full-viewport sheet sizing

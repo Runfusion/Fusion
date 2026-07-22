@@ -65,6 +65,7 @@ import {
 import { isContextLimitError } from "./context-limit-detector.js";
 import { applyClaudeAcpEnable } from "./claude-acp-enable.js";
 import { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
+import { refreshFusionModelRegistry } from "./model-registry-refresh.js";
 import { piLog, extensionsLog } from "./logger.js";
 import { readCustomProviders } from "./custom-providers.js";
 import { buildCustomProviderModels } from "./custom-provider-registry.js";
@@ -1571,12 +1572,20 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => extensionsLog.warn(message));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => extensionsLog.warn(message));
-    await modelRegistry.refresh();
+    /*
+    FNXC:ModelRegistry 2026-07-21-17:15:
+    Bound post-extension refresh so a hung catalog fetch cannot stall agent session setup.
+    */
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => extensionsLog.warn(message),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     extensionsLog.error(`Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    await modelRegistry.refresh();
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => extensionsLog.warn(message),
+    });
   }
 }
 
@@ -2168,7 +2177,9 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       piLog.warn(`Failed to register custom provider "${provider.name}" (key=${registryKey}, id=${provider.id}, apiType=${provider.apiType}, baseUrl=${provider.baseUrl}): ${message}`);
     }
   }
-  await modelRegistry.refresh();
+  await refreshFusionModelRegistry(modelRegistry, {
+    log: (message) => extensionsLog.warn(message),
+  });
   mergeSupplementalAnthropicModels(modelRegistry, (message) => extensionsLog.warn(message));
   /*
    * FNXC:ModelCatalog 2026-07-09-00:00:

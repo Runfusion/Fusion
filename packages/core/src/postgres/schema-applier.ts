@@ -40,8 +40,12 @@ Per-migration identities above stay fixed; only this latest-version marker moves
 FNXC:WorkflowTaskContinuations 2026-07-21:
 SCHEMA_BASELINE_VERSION advances to 0031 for durable, single-owner task
 continuations at workflow column boundaries.
+
+FNXC:LegacyAdoption 2026-07-21-17:30:
+SCHEMA_BASELINE_VERSION advances to 0032 for fusion_runtime SELECT +
+SECURITY DEFINER write access to the legacy-adoption drained marker.
 */
-export const SCHEMA_BASELINE_VERSION = "0031";
+export const SCHEMA_BASELINE_VERSION = "0032";
 /** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -133,6 +137,11 @@ export const PLANNING_ACTIVE_TIMING_VERSION = "0029";
 /** Dashboard health needs project-scoped, read-only runtime access to the SQLite cutover ledger. */
 export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
 export const WORKFLOW_TASK_CONTINUATIONS_VERSION = "0031";
+/** FNXC:LegacyAdoption 2026-07-21-17:30: runtime role needs drained-marker read + restricted write. */
+export const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION = "0032";
+
+/** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
+export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
 
 /**
  * Thrown when the database was migrated by a NEWER Fusion binary than the one now
@@ -326,6 +335,10 @@ const PLANNING_ACTIVE_TIMING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0029_plannin
 const TASK_DECLARED_SYMBOLS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0028_task_declared_symbols.sql");
 const SQLITE_MIGRATION_RUNTIME_READ_PATH = join(MIGRATIONS_DIR, "0030_sqlite_migration_runtime_read.sql");
 const WORKFLOW_TASK_CONTINUATIONS_PATH = join(MIGRATIONS_DIR, "0031_workflow_task_continuations.sql");
+const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_PATH = join(
+  MIGRATIONS_DIR,
+  "0032_legacy_adoption_drained_marker_runtime_grants.sql",
+);
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -425,6 +438,9 @@ export async function applySchemaBaseline(
     const planningActiveTimingAlreadyApplied = applied.includes(PLANNING_ACTIVE_TIMING_VERSION);
     const sqliteMigrationRuntimeReadAlreadyApplied = applied.includes(SQLITE_MIGRATION_RUNTIME_READ_VERSION);
     const workflowTaskContinuationsAlreadyApplied = applied.includes(WORKFLOW_TASK_CONTINUATIONS_VERSION);
+    const legacyAdoptionDrainedMarkerRuntimeGrantsAlreadyApplied = applied.includes(
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+    );
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -878,6 +894,21 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(WORKFLOW_TASK_CONTINUATIONS_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_TASK_CONTINUATIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:LegacyAdoption 2026-07-21-17:30:
+    Explicit registration (migrations are never auto-discovered). Existing
+    clusters need fusion_runtime SELECT + SECURITY DEFINER write for the
+    drained-marker short-circuit before store-open adoption can stop spamming.
+    */
+    if (!legacyAdoptionDrainedMarkerRuntimeGrantsAlreadyApplied) {
+      const migrationSql = await readFile(LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
       schemaChanged = true;
     }
 

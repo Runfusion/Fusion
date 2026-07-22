@@ -9,7 +9,11 @@
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
 import {planLegacyAdoption} from "../legacy-adoption.js";
 import {sql} from "drizzle-orm";
-import {MIGRATION_BOOKKEEPING_TABLE, LEGACY_ADOPTION_DRAINED_MARKER} from "../postgres/schema-applier.js";
+import {
+  MIGRATION_BOOKKEEPING_TABLE,
+  LEGACY_ADOPTION_DRAINED_MARKER,
+  LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION,
+} from "../postgres/schema-applier.js";
 import {mkdir, readdir, readFile, stat, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, watch, type Dirent} from "node:fs";
@@ -320,6 +324,23 @@ Safety rules:
   marker WRITE is warned and swallowed (the next clean drain retries).
 - SQLite (non-backend) mode has no bookkeeping table → no marker, sweep always runs.
 */
+/*
+FNXC:LegacyAdoption 2026-07-21-17:30:
+Drizzle wraps Postgres errors as "Failed query: <SQL> params: …" while the real
+SQLSTATE lives on err.cause. Walk a short cause chain so drained-marker failures
+surface as permission denied / missing function instead of opaque query text.
+*/
+function describeStoreOpenDbError(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current !== undefined && current !== null && depth < 4; depth += 1) {
+    const message = current instanceof Error ? current.message : String(current);
+    parts.push(message.length > 400 ? `${message.slice(0, 200)} … ${message.slice(-120)}` : message);
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return parts.join(" ⇐ ");
+}
+
 async function hasLegacyAdoptionDrainedMarker(store: TaskStore): Promise<boolean> {
   const db = store.asyncLayer?.db;
   if (!db) return false;
@@ -332,7 +353,7 @@ async function hasLegacyAdoptionDrainedMarker(store: TaskStore): Promise<boolean
     // Fail-open toward correctness: an unreadable marker means sweep.
     storeLog.warn("Legacy-adoption drained-marker read failed — sweeping anyway", {
       phase: "init:legacy-adoption",
-      error: error instanceof Error ? error.message : String(error),
+      error: describeStoreOpenDbError(error),
     });
     return false;
   }
@@ -342,14 +363,18 @@ async function writeLegacyAdoptionDrainedMarker(store: TaskStore): Promise<void>
   const db = store.asyncLayer?.db;
   if (!db) return;
   try {
-    await db.execute(
-      sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_ADOPTION_DRAINED_MARKER}) ON CONFLICT (version) DO NOTHING`,
-    );
+    /*
+    FNXC:LegacyAdoption 2026-07-21-17:30:
+    Call the SECURITY DEFINER helper (migration 0032) instead of a raw INSERT.
+    fusion_runtime has EXECUTE on the function but not unrestricted INSERT on
+    fusion_schema_migrations, so it cannot stamp arbitrary migration versions.
+    */
+    await db.execute(sql`SELECT public.${sql.identifier(LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION)}()`);
   } catch (error) {
     // Non-fatal: the next fully-clean drain writes it again.
     storeLog.warn("Legacy-adoption drained-marker write failed", {
       phase: "init:legacy-adoption",
-      error: error instanceof Error ? error.message : String(error),
+      error: describeStoreOpenDbError(error),
     });
   }
 }
