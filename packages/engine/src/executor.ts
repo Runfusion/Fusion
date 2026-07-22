@@ -187,6 +187,13 @@ import {
   formatExternalIntegrationEvidenceDiagnostic,
 } from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
+import {
+  isRequiredArtifactReadFailedValue,
+  parseRequiredArtifactMissingValue,
+  requiredArtifactMissingValue,
+  requiredArtifactReadFailedValue,
+  workflowEntryArtifacts,
+} from "./required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
@@ -1150,6 +1157,8 @@ export interface WorkflowStepOutcome {
   timedOut?: boolean;
   /** True when no structured or prose verdict could be inferred. */
   malformed?: boolean;
+  /** Machine-readable graph failure used for deterministic recovery routing. */
+  failureValue?: string;
 }
 
 /**
@@ -4734,6 +4743,14 @@ export class TaskExecutor {
     if (info.status !== "advisory_failure" && info.status !== "failed") return false;
 
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
+    const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
+    if (missingArtifactKeys) {
+      await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
+        source: "workflow-step",
+        nodeId: info.nodeId,
+      });
+      return true;
+    }
     const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
     if (isPlanReview) {
       /*
@@ -4880,6 +4897,91 @@ export class TaskExecutor {
       `Pre-merge optional workflow step "${info.stepName}" requested revision`,
     );
     return true;
+  }
+
+  private async recoverMissingRequiredArtifacts(
+    task: Task,
+    artifactKeys: string[],
+    source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
+  ): Promise<void> {
+    const currentTask = await this.store.getTask(task.id).catch(() => null);
+    if (!currentTask || this.isRequiredArtifactRecoveryProtected(currentTask)) return;
+    task = currentTask;
+    const decision = computeRecoveryDecision({
+      recoveryRetryCount: task.recoveryRetryCount,
+      nextRecoveryAt: task.nextRecoveryAt,
+    });
+    const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+    const context = this.getRunContextFor(task.id);
+    const action = decision.shouldRetry ? "replan" : "park-failed";
+
+    await this.store.recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "executor",
+      runId: context?.runId ?? generateSyntheticRunId("required-artifact-missing", task.id),
+      domain: "database",
+      mutationType: "task:required-artifact-missing",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        artifactKeys,
+        owner: "planning",
+        source: source.source,
+        action,
+        attempt,
+        maxAttempts: MAX_RECOVERY_RETRIES,
+        ...(source.nodeId ? { nodeId: source.nodeId } : {}),
+      },
+    });
+
+    if (!decision.shouldRetry) {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+      await this.store.logEntry(task.id, error, undefined, context);
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }, context);
+      return;
+    }
+
+    const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
+    await this.store.logEntry(
+      task.id,
+      `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
+      `Missing artifact keys: ${artifactKeys.join(", ")}`,
+      context,
+    );
+    this.workflowLifecycleMovesInFlight.add(task.id);
+    try {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      await moveTaskToReplanColumn(this.store, { id: task.id, column: liveTask.column }, replanColumn);
+    } finally {
+      this.workflowLifecycleMovesInFlight.delete(task.id);
+    }
+    await this.store.updateTask(task.id, {
+      status: "needs-replan",
+      error: null,
+      recoveryRetryCount: decision.nextState.recoveryRetryCount,
+      nextRecoveryAt: decision.nextState.nextRecoveryAt,
+      graphResumeRetryCount: 0,
+    }, context);
+  }
+
+  private isRequiredArtifactRecoveryProtected(task: Task): boolean {
+    return Boolean(
+      task.deletedAt
+      || task.paused
+      || task.userPaused === true
+      || task.column === "done"
+      || task.column === "archived"
+      || task.mergeDetails?.mergeConfirmed === true
+      || (task.column === "in-review" && task.autoMerge === false),
+    );
   }
 
   /**
@@ -5504,6 +5606,31 @@ export class TaskExecutor {
       } catch {
         columnAgentIr = undefined;
       }
+      if (columnAgentIr) {
+        const missingEntryArtifacts: string[] = [];
+        for (const artifact of workflowEntryArtifacts(columnAgentIr)) {
+          let content: string | undefined;
+          try {
+            content = await this.readTaskArtifact(task.id, artifact.key);
+          } catch (error) {
+            const failureValue = requiredArtifactReadFailedValue(artifact.key);
+            await this.handleGraphFailure(task, {
+              disposition: "failed",
+              outcome: "failure",
+              reason: `workflow-required-artifact-read-failed:${artifact.key}:${error instanceof Error ? error.message : String(error)}`,
+              visitedNodeIds: ["workflow-entry-artifact"],
+              context: { "node:workflow-entry-artifact:value": failureValue },
+            });
+            return;
+          }
+          if (typeof content !== "string" || !content.trim()) missingEntryArtifacts.push(artifact.key);
+        }
+        if (missingEntryArtifacts.length > 0) {
+          const liveTask = await this.store.getTask(task.id).catch(() => task);
+          await this.recoverMissingRequiredArtifacts(liveTask, missingEntryArtifacts, { source: "graph-entry" });
+          return;
+        }
+      }
       const resolveBindingForNode = (nodeId: string): WorkflowColumnAgent | undefined =>
         columnAgentIr ? resolveColumnAgentBinding(columnAgentIr, nodeId) : undefined;
       // Column-agent seam wiring (U4): expose the same per-run resolver to the
@@ -6057,20 +6184,26 @@ export class TaskExecutor {
    */
   private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
     // Declared artifacts ride the task-documents layer.
+    let documentReadError: unknown;
     try {
       const doc = await this.store.getTaskDocument(taskId, key);
       if (doc) return doc.content;
-    } catch {
-      // Fall through to the PROMPT fallback below.
+    } catch (error) {
+      documentReadError = error;
     }
     if (key === "PROMPT.md") {
       try {
         const detail = await this.store.getTask(taskId);
         if (typeof detail.prompt === "string") return detail.prompt;
-      } catch {
-        // No PROMPT available.
+        return undefined;
+      } catch (error) {
+        throw new Error(
+          `Unable to read required artifact ${key} from task documents or task storage: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: documentReadError ?? error },
+        );
       }
     }
+    if (documentReadError) throw documentReadError;
     return undefined;
   }
 
@@ -8615,7 +8748,7 @@ export class TaskExecutor {
     */
     return {
       outcome: outcome.success || !blocking || malformed ? "success" : "failure",
-      value: verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
+      value: (outcome as WorkflowStepOutcome).failureValue ?? verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
       ...(Object.keys(contextPatch).length > 0 ? { contextPatch } : {}),
     };
   }
@@ -9657,6 +9790,43 @@ export class TaskExecutor {
       the task failed with the signature erased (FN-7996 looped dispatch→park all day).
       */
       if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result)) {
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      if (isRequiredArtifactReadFailedValue(this.graphFailureValue(result))) {
+        /*
+        FNXC:WorkflowArtifacts 2026-07-21-17:00:
+        A TaskStore read outage is not proof that an artifact is absent. Keep the
+        task in place and use the bounded graph-resume budget instead of replanning
+        or terminalizing a possibly healthy workflow contract.
+        */
+        const priorRetries = live.graphResumeRetryCount ?? 0;
+        if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
+          const nextRetries = priorRetries + 1;
+          const message = `Required workflow artifact could not be read — retrying in place (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+          await this.store.updateTask(task.id, { graphResumeRetryCount: nextRetries }, this.getRunContextFor(task.id));
+          const scheduleRetry = () => {
+            void (async () => {
+              try {
+                const resumeTask = await this.store.getTask(task.id);
+                if (this.isRequiredArtifactRecoveryProtected(resumeTask) || resumeTask.status === "failed") return;
+                await this.execute(resumeTask);
+              } catch (err) {
+                executorLog.error(`Failed required-artifact read retry for ${task.id}:`, err);
+              }
+            })();
+          };
+          const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
+          handle.unref?.();
+        } else {
+          await this.store.logEntry(
+            task.id,
+            "Required workflow artifact read retry budget exhausted — task remains held in its current state",
+            undefined,
+            this.getRunContextFor(task.id),
+          );
+        }
         await this.persistTokenUsage(task.id);
         return;
       }
@@ -16322,11 +16492,43 @@ ${scopeGuard}
      * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
      * FN-7561 established that review agents cannot reliably locate the project-root PROMPT.md from a task worktree. Load it once through the store and embed it for every review-type node. FN-8288 extends that invariant beyond Plan Review: approved planning revisions are authoritative, the original task description is historical, and a failed artifact read must stay visible instead of silently restoring superseded scope.
      */
-    const workflowReviewSpecArtifact = isReviewTypeWorkflowStep
-      ? await this.readTaskArtifact(task.id, "PROMPT.md")
-      : undefined;
+    let workflowReviewSpecArtifact: string | undefined;
+    if (isReviewTypeWorkflowStep) {
+      try {
+        workflowReviewSpecArtifact = await this.readTaskArtifact(task.id, "PROMPT.md");
+      } catch (error) {
+        const diagnostic = `PROMPT.md could not be read because task storage failed; ${workflowStep.name} must retry without replanning. ${error instanceof Error ? error.message : String(error)}`;
+        await this.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} artifact read failed: ${diagnostic}`);
+        return {
+          success: false,
+          error: diagnostic,
+          output: diagnostic,
+          failureValue: requiredArtifactReadFailedValue("PROMPT.md"),
+        };
+      }
+    }
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
+
+    /*
+    FNXC:PlanReview 2026-07-21-16:30:
+    Review steps must never approve or execute against an unavailable contract. Confirmed missing or whitespace-only PROMPT.md fails closed before reviewer creation; typed recovery routes ownership back to planning without spending the review-revision budget.
+    */
+    if (isReviewTypeWorkflowStep && !workflowReviewSpecText.trim()) {
+      const diagnostic = `PROMPT.md could not be loaded; ${workflowStep.name} cannot approve without the authoritative task contract.`;
+      await this.store.logEntry(
+        task.id,
+        `[pre-merge] ${workflowStep.name} refused to run without PROMPT.md: ${diagnostic}`,
+      );
+      return {
+        success: false,
+        revisionRequested: true,
+        output: `REVISE: ${diagnostic}`,
+        verdict: "REVISE",
+        notes: diagnostic,
+        failureValue: requiredArtifactMissingValue(["PROMPT.md"]),
+      };
+    }
 
     if (isPlanReviewStep && requireExternalIntegrationEvidence) {
       /*
@@ -16388,8 +16590,7 @@ ${scopeGuard}
      * state and loop back to triage after the planner already approved the spec.
      */
     const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
-      ? workflowReviewSpecText
-        ? `
+      ? `
 
 Approved Task Contract:
 - PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
@@ -16400,12 +16601,6 @@ Approved Task Contract:
 --- BEGIN APPROVED PROMPT.md ---
 ${workflowReviewSpecText}
 --- END APPROVED PROMPT.md ---`
-        : `
-
-Approved Task Contract Unavailable:
-- PROMPT.md could not be loaded for this review. The Task Description is historical input only and is not a substitute contract.
-- Do not infer, reinstate, approve, or reject requirements from the Task Description.
-- Return REVISE with the single reason that the approved contract could not be loaded so the workflow can retry with canonical scope.`
       : "";
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:
@@ -16415,7 +16610,7 @@ Approved Task Contract Unavailable:
 - If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
 
 --- BEGIN PROMPT.md ---
-${planReviewSpecText || `(The plan artifact could not be loaded into this prompt. Read it read-only from the project root at .fusion/tasks/${task.id}/PROMPT.md before judging; do not treat an unavailable artifact as a plan defect.)`}
+${planReviewSpecText}
 --- END PROMPT.md ---`
       : `Diff Scope (files changed by THIS task vs base):
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}

@@ -11,6 +11,7 @@ import type {
 } from "@fusion/core";
 import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "./transient-error-detector.js";
+import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "./required-workflow-artifacts.js";
 
 import {
   createDefaultNodeHandlers,
@@ -916,11 +917,14 @@ export class WorkflowGraphExecutor {
           const nonPlanDefectPlanReviewFailure =
             node.id === PLAN_REVIEW_GROUP_ID
             && stepStatus === "failed"
-            && isNonPlanDefectPlanReviewFailure({
-              verdict,
-              errorMessage: stepOutput ?? stepNotes,
-              failureValue: verdictRaw,
-            });
+            && (
+              isRequiredArtifactReadFailedValue(verdictRaw)
+              || isNonPlanDefectPlanReviewFailure({
+                verdict,
+                errorMessage: stepOutput ?? stepNotes,
+                failureValue: verdictRaw,
+              })
+            );
           /*
            * FNXC:PlanReview 2026-06-29-02:05:
            * Plan Review should send a task back to triage only for an actual
@@ -931,7 +935,7 @@ export class WorkflowGraphExecutor {
           const shouldRequestPreMergeFix =
             stepPhase === "pre-merge"
             && (stepStatus === "advisory_failure" || stepStatus === "failed")
-            && (verdict === "REVISE" || (
+            && (verdict === "REVISE" || parseRequiredArtifactMissingValue(verdictRaw) !== null || (
               node.id === PLAN_REVIEW_GROUP_ID
               && stepStatus === "failed"
               && !nonPlanDefectPlanReviewFailure
@@ -960,7 +964,7 @@ export class WorkflowGraphExecutor {
               phase: stepPhase,
               status: stepStatus,
               verdict: verdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
-              ...(!verdict && verdictRaw !== undefined ? { failureValue: verdictRaw } : {}),
+              ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
             };

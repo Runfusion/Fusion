@@ -170,6 +170,7 @@ import {
   createWebFetchTool,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
+  createTaskPromptWriteTool,
   createWorkflowListTool,
   createWorkflowSelectTool,
 } from "./agent-tools.js";
@@ -1403,6 +1404,10 @@ export class TriageProcessor {
           source: "triage",
         } as const;
 
+        /*
+        FNXC:TriagePromptPersistence 2026-07-21-16:30:
+        Planning sessions keep readonly built-in tools so they cannot mutate repository files, while the narrow TaskStore-backed prompt writer remains available as the only durable PROMPT.md creation and repair path.
+        */
         const customTools = [
           ...this.createTriageTools({
             parentTaskId: task.id,
@@ -1411,6 +1416,7 @@ export class TriageProcessor {
           }),
           createTaskDocumentWriteTool(this.store, task.id),
           createTaskDocumentReadTool(this.store, task.id),
+          createTaskPromptWriteTool(this.store, task.id, triageRunContext),
           createWorkflowListTool(this.store),
           createWorkflowSelectTool(this.store, task.id),
           ...(isResearchToolSurfaceEnabled(settings)
@@ -1600,6 +1606,10 @@ export class TriageProcessor {
           )
           : { provider: undefined, modelId: undefined };
 
+        /*
+        FNXC:TriagePromptPersistence 2026-07-21-16:30:
+        `tools: "readonly"` intentionally coexists with the custom prompt writer above: readonly governs general tools, while fn_task_prompt_write performs the one authorized synchronized task-artifact mutation.
+        */
         const { session } = await createResolvedAgentSession({
           sessionPurpose: "triage",
           runtimeHint: triageRuntimeHint,
@@ -1607,7 +1617,7 @@ export class TriageProcessor {
           cwd: this.rootDir,
           systemPrompt: triageSystemPromptFinal,
           systemPromptLayers: triageLayers,
-          tools: "coding",
+          tools: "readonly",
           customTools,
           onText: agentLogger.onText,
           onThinking: agentLogger.onThinking,
@@ -2572,6 +2582,68 @@ export class TriageProcessor {
     }
   }
 
+  /*
+  FNXC:WorkflowArtifacts 2026-07-21-17:00:
+  Planning cannot release a task unless authoritative TaskStore read-back proves
+  PROMPT.md survived persistence. Confirmed absence retries the planning owner
+  within the shared recovery budget, then parks visibly when that budget expires.
+  */
+  private async recoverMissingPromptBeforeRelease(task: Task): Promise<boolean> {
+    const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+    // Legacy/minimal stores may not expose prompt enrichment. Production TaskStore
+    // always does; only enforce the read-back when the authoritative field exists.
+    if (!live || !Object.prototype.hasOwnProperty.call(live, "prompt")) return false;
+    if (typeof live.prompt === "string" && live.prompt.trim()) return false;
+
+    const decision = computeRecoveryDecision({
+      recoveryRetryCount: live.recoveryRetryCount ?? task.recoveryRetryCount,
+      nextRecoveryAt: live.nextRecoveryAt ?? task.nextRecoveryAt,
+    });
+    const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+    const auditor = createRunAuditor(this.store, {
+      taskId: task.id,
+      agentId: task.assignedAgentId ?? "triage",
+      runId: generateSyntheticRunId("required-artifact-missing", task.id),
+      phase: "triage",
+      source: "triage",
+    });
+    await auditor.database({
+      type: "task:required-artifact-missing",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        artifactKeys: ["PROMPT.md"],
+        owner: "planning",
+        source: "planning-release",
+        action: decision.shouldRetry ? "replan" : "park-failed",
+        attempt,
+        maxAttempts: MAX_RECOVERY_RETRIES,
+      },
+    });
+
+    if (decision.shouldRetry) {
+      const message = `PROMPT.md disappeared before planning release — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
+      await this.store.logEntry(task.id, message);
+      await this.updatePlanningStateIfStillCurrent(task, {
+        status: this.restoreStatusAfterInterruptedTriageWork(task),
+        error: null,
+        recoveryRetryCount: decision.nextState.recoveryRetryCount,
+        nextRecoveryAt: decision.nextState.nextRecoveryAt,
+      });
+      return true;
+    }
+
+    const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: PROMPT.md remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+    await this.store.logEntry(task.id, error);
+    await this.updatePlanningStateIfStillCurrent(task, {
+      status: "failed",
+      error,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    });
+    return true;
+  }
+
   private async finalizeApprovedTaskBody(
     task: Task,
     writtenInput: string,
@@ -2584,6 +2656,10 @@ export class TriageProcessor {
     } = {},
   ): Promise<void> {
     let written = writtenInput;
+    // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
+    // exists before persisting any dependencies, steps, metadata, or review state
+    // derived from it; a missing plan must leave no partially accepted projection.
+    if (await this.recoverMissingPromptBeforeRelease(task)) return;
     const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
 
     /*
@@ -3453,7 +3529,7 @@ ${existingPrompt}
 ## Revision Feedback
 ${feedback}
 
-Revise the specification above to address this feedback. Write the complete revised PROMPT.md to \`${promptPath}\`.`;
+Revise the specification above to address this feedback. Persist the complete revised PROMPT.md with \`fn_task_prompt_write\`.`;
   } else if (isFreshRespecification) {
     revisionSection = `
 
@@ -3465,7 +3541,7 @@ You are creating a fresh replacement specification based on Plan Review or user 
 ## Revision Feedback
 ${feedback}
 
-Please write the complete fresh PROMPT.md to \`${promptPath}\`.`;
+Persist the complete fresh PROMPT.md with \`fn_task_prompt_write\`.`;
   }
 
   let subtaskSection = "";
@@ -3526,7 +3602,9 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
   operator description verbatim. Deterministic finalize injection enforces the same
   contract if the planner omits or rewrites it.
   */
-  return `${isRevision ? "Revise" : isFreshRespecification ? "Re-specify" : "Specify"} this task and write the result to \`${promptPath}\`.
+  return `${isRevision ? "Revise" : isFreshRespecification ? "Re-specify" : "Specify"} this task and persist the result with \`fn_task_prompt_write\`.
+
+The authoritative artifact will be stored at \`${promptPath}\`. Do not use the generic filesystem write tool for PROMPT.md; only \`fn_task_prompt_write\` durably synchronizes the task store and artifact.
 
 ## Task
 - **ID:** ${task.id}
@@ -3541,7 +3619,7 @@ ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : "
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Produce a fresh complete PROMPT.md specification following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Produce a complete PROMPT.md specification following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
+Call \`fn_task_prompt_write\` after the complete final specification is ready. If it returns an error, correct the problem and retry; do not finish planning until the tool confirms the authoritative PROMPT.md read-back. Do not use the generic filesystem write tool for PROMPT.md.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }
