@@ -403,6 +403,36 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
+    it("returns null when a stable test command alternates with unique edits", () => {
+      /*
+      FNXC:StuckDetector 2026-07-22-19:15:
+      Greptile P1 on PR #2404: one unchanged test fingerprint interleaved with unique edits can fill
+      half the window. Unique-ratio thrash detection must not treat that productive fix/test cycle as a loop.
+      */
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        if (i % 2 === 0) {
+          detector.recordActivity("FN-001", {
+            toolName: "bash",
+            toolDetail: "pnpm test e2e --run",
+          });
+        } else {
+          detector.recordActivity("FN-001", {
+            toolName: "edit",
+            toolDetail: `src/feature/file-${i}.ts`,
+          });
+        }
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      vi.useRealTimers();
+    });
+
     it("returns null for high text/heartbeat volume without tool thrash evidence", () => {
       const session = createMockSession();
       vi.useFakeTimers({ shouldAdvanceTime: true });

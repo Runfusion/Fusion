@@ -120,13 +120,17 @@ const LOOP_IGNORED_STEP_MIN = 10;
  * FNXC:StuckDetector 2026-07-22-18:05:
  * Tool-fingerprint window and novelty gates for loop detection. Distinct iterative tool work
  * (E2E debug cycles with different commands/files) stays above these novelty floors and is not a loop.
+ *
+ * FNXC:StuckDetector 2026-07-22-19:15:
+ * Do NOT use a 50% single-fingerprint dominance rule. Alternating one stable test command with
+ * unique file edits is healthy fix/test work: the test fingerprint can occupy half the window while
+ * the other half is novel, and that must not kill the session (Greptile P1 on PR #2404).
+ * Unique-ratio alone still catches pure thrash (one or few fingerprints filling the window).
  */
 const TOOL_FINGERPRINT_WINDOW = 40;
 const LOOP_MIN_TOOL_SAMPLES = 20;
 /** Unique fingerprints / samples at or below this ratio counts as repetitive. */
 const LOOP_MAX_UNIQUE_RATIO = 0.25;
-/** A single fingerprint dominating this share of the window counts as repetitive. */
-const LOOP_DOMINANT_SHARE = 0.5;
 /** Max chars of tool detail kept in a fingerprint (after whitespace collapse). */
 const TOOL_DETAIL_FINGERPRINT_MAX = 120;
 
@@ -379,24 +383,18 @@ export class StuckTaskDetector {
 
   /**
    * FNXC:StuckDetector 2026-07-22-18:05:
-   * True when recent tool fingerprints show low novelty (tight repeat of the same commands/paths)
-   * or a single dominant fingerprint. Diverse iterative work (different files/commands per cycle) returns false.
+   * True when recent tool fingerprints show low novelty (few unique commands/paths in the window).
+   * Diverse iterative work (different files/commands per cycle) returns false.
+   *
+   * FNXC:StuckDetector 2026-07-22-19:15:
+   * Unique-ratio only — no single-fingerprint dominance share. A stable re-run test interleaved with
+   * novel edits is productive mixed work and must stay below the thrash bar.
    */
   private isRepetitiveToolActivity(entry: TrackedTask): boolean {
     const fps = entry.toolFingerprints;
     if (fps.length < LOOP_MIN_TOOL_SAMPLES) return false;
-
     const unique = new Set(fps).size;
-    if (unique / fps.length <= LOOP_MAX_UNIQUE_RATIO) return true;
-
-    const counts = new Map<string, number>();
-    let max = 0;
-    for (const fp of fps) {
-      const next = (counts.get(fp) ?? 0) + 1;
-      counts.set(fp, next);
-      if (next > max) max = next;
-    }
-    return max / fps.length >= LOOP_DOMINANT_SHARE;
+    return unique / fps.length <= LOOP_MAX_UNIQUE_RATIO;
   }
 
   /**
