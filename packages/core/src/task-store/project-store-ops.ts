@@ -1,5 +1,7 @@
 /**
- * remaining-ops-1 operations.
+ * FNXC:CodeOrganization 2026-07-22-12:00:
+ * Domain rename from remaining-ops-1: project store open, checkout claims, run-audit,
+ * workflow step/definition helpers, and related foundation ops.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure

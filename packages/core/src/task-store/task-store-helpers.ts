@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  *
  * FNXC:CodeOrganization 2026-07-16-20:00:
- * Renamed from remaining-ops-10.ts (domain: task-store helper ops).
+ * Renamed from project-store-ops0.ts (domain: task-store helper ops).
  */
 
 import { TaskStore } from "../store.js";
