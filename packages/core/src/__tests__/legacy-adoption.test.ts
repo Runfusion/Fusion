@@ -121,9 +121,19 @@ describe("KTD-8 adoption table — write-site census completeness (build-failing
 
 describe("resolveLegacyStatusAdoption — every legacy (status) resumes owned", () => {
   it("triage plan-review statuses resume the graph (writers deleted in U3)", () => {
-    for (const s of ["planning", "needs-replan", "plan-review-unavailable"]) {
+    for (const s of ["planning", "plan-review-unavailable"]) {
       expect(resolveLegacyStatusAdoption(s)?.kind).toBe("resume-graph");
     }
+  });
+
+  /*
+  FNXC:LegacyAdoption 2026-07-22-15:55 (FN-8498 incident):
+  needs-replan is written LIVE by the graph's plan-replan seam and is the exact key
+  triage's todo-rediscovery uses to re-admit a planned todo task. Adoption must never
+  clear it — the resume-graph mapping stranded FN-8498 in `todo` across a restart.
+  */
+  it("needs-replan is preserved — it is the graph's live replan signal, not legacy", () => {
+    expect(resolveLegacyStatusAdoption("needs-replan")?.kind).toBe("preserve");
   });
 
   it("live human/terminal gates are preserved (never disturbed)", () => {
@@ -184,7 +194,7 @@ describe("planLegacyAdoption (U9b consumers)", () => {
   const NOW = "2026-07-19T04:40:00.000Z";
 
   it("clears every resume-graph status so the graph re-enters at its owning node", () => {
-    for (const status of ["planning", "needs-replan", "plan-review-unavailable", "queued", "triaged"]) {
+    for (const status of ["planning", "plan-review-unavailable", "queued", "triaged"]) {
       const plan = planLegacyAdoption({ status }, NOW);
       expect(plan.action, status).toBe("resume-graph");
       // Clearing the legacy status IS the re-entry: the graph owns the node again.
@@ -208,6 +218,20 @@ describe("planLegacyAdoption (U9b consumers)", () => {
     for (const status of ["awaiting-approval", "failed", "done", "blocked", "cancelled"]) {
       expect(planLegacyAdoption({ status }, NOW).action, status).toBe("skip");
     }
+  });
+
+  /*
+  FNXC:LegacyAdoption 2026-07-22-15:55 (FN-8498 incident):
+  A post-cutover todo row in the plan-replan loop carries status "needs-replan" and no
+  legacyAdoptedAt stamp. The startup sweep used to clear it (resume-graph), stranding the
+  task: triage's todo-rediscovery only re-admits a planned todo task on that exact status.
+  The plan must skip it entirely — no status clear, no patch, no stamp — so the replan
+  signal survives any number of engine restarts.
+  */
+  it("survives a restart mid-replan-loop: needs-replan is skipped, never cleared (FN-8498)", () => {
+    const plan = planLegacyAdoption({ status: "needs-replan" }, NOW);
+    expect(plan.action).toBe("skip");
+    expect(plan.patch).toBeUndefined();
   });
 
   it("backfills reviewLevel-only rows and never writes both fields", () => {

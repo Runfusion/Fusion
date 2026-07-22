@@ -11,8 +11,9 @@ cutover window fails the build instead of mass-parking rows `paused` at upgrade.
 Adoption action per legacy status (KTD-8), for the FOUNDATIONAL targets (U9 scope A):
   - resume-graph   : clear the legacy triage-owned status so the graph re-enters
                      cleanly at the owning node (planning → planning node,
-                     needs-replan → plan-replan, plan-review-unavailable →
-                     plan-review retry, queued/triaged → scheduler re-pickup).
+                     plan-review-unavailable → plan-review retry,
+                     queued/triaged → scheduler re-pickup). NOT needs-replan —
+                     that is a LIVE graph signal, preserved (see its table row).
   - preserve       : a live human/terminal gate the graph must NOT disturb
                      (awaiting-approval, awaiting-user-input, failed, error,
                      blocked, done, cancelled). Pausing is NOT a status: it is
@@ -56,7 +57,16 @@ export interface LegacyAdoptionAction {
 export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionAction>> = {
   // ── Triage plan-review statuses whose writers U3 deleted → graph re-entry ──
   "planning": { kind: "resume-graph", note: "re-enter planning node" },
-  "needs-replan": { kind: "resume-graph", note: "re-enter plan-replan node" },
+  /*
+  FNXC:LegacyAdoption 2026-07-22-15:55 (FN-8498 incident):
+  `needs-replan` is NOT legacy — post-U3 it is written live by the graph's own plan-replan
+  seam (executor.ts / scheduler.ts) and CONSUMED by triage's todo-rediscovery, which only
+  re-admits a planned todo task when status === "needs-replan". The original resume-graph
+  mapping cleared it on every engine restart, deleting the exact signal its consumer keys
+  on and stranding replan-loop tasks in `todo` forever (FN-8498 sat "ready" for 80 minutes
+  after a restart). Preserve it: the status is self-resuming — triage picks it up as-is.
+  */
+  "needs-replan": { kind: "preserve", note: "live graph replan signal — triage todo-rediscovery consumes it" },
   "plan-review-unavailable": { kind: "resume-graph", note: "plan-review retry (leased)" },
   // ── Scheduler / dispatch transient states → re-pickup ─────────────────────
   "queued": { kind: "resume-graph", note: "scheduler re-queue" },
