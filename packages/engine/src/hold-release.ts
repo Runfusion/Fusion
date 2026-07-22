@@ -648,6 +648,20 @@ export async function promoteHeldTask(
   const target = resolveReleaseTarget(ir, task.column, true);
   if (!target) return { released: false, rejection: "no-release-target" };
 
+  /*
+  FNXC:WorkflowScheduling 2026-07-21-22:31:
+  Surface pre-release Plan Review / unplanned holds distinctly from true WIP
+  capacity. issueRelease returns a bare false for both; without this check the
+  promote API mislabeled FN-8471-style plan-review waits as capacity-exhausted.
+  */
+  const targetColumn = findColumn(ir, target);
+  const targetIsProcessing = targetColumn
+    ? resolveColumnFlags(targetColumn).countsTowardWip === true
+    : false;
+  if (targetIsProcessing && (await isUnplannedForExecution(store, task, ir))) {
+    return { released: false, rejection: "unplanned-for-execution", toColumn: target };
+  }
+
   const released = await issueRelease(
     store,
     { now: () => Date.now(), reserveSlot: deps.reserveSlot, allocateWorktree: deps.allocateWorktree },
