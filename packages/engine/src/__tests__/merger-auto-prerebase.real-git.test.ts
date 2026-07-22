@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "../merger-auto-prerebase.js";
+import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "../merge/merger-auto-prerebase.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;

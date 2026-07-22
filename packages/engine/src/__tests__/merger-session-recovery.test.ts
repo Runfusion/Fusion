@@ -113,11 +113,11 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 
@@ -370,7 +370,7 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
   }
 
   it("retries with minimal prompt when context limit hit after auto-compaction", async () => {
-    const { isContextLimitError } = await import("../context-limit-detector.js");
+    const { isContextLimitError } = await import("../errors/context-limit-detector.js");
 
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
@@ -418,7 +418,7 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
   });
 
   it("throws when truncated retry also fails with context limit", async () => {
-    const { isContextLimitError } = await import("../context-limit-detector.js");
+    const { isContextLimitError } = await import("../errors/context-limit-detector.js");
 
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
@@ -490,7 +490,7 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
   });
 
   it("succeeds when prompt succeeds on retry after context error", async () => {
-    const { isContextLimitError } = await import("../context-limit-detector.js");
+    const { isContextLimitError } = await import("../errors/context-limit-detector.js");
 
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
@@ -532,7 +532,7 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
 
   it("does not attempt truncation retry for non-context errors", async () => {
     const { compactSessionContext } = await import("../pi.js");
-    const { isContextLimitError } = await import("../context-limit-detector.js");
+    const { isContextLimitError } = await import("../errors/context-limit-detector.js");
 
     // Non-context error should not trigger recovery path
     vi.mocked(compactSessionContext).mockResolvedValue(null);

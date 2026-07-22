@@ -24,8 +24,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
-import { landWorkspaceTask } from "../merger-ai.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { landWorkspaceTask } from "../merge/merger-ai.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

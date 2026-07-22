@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowIr } from "@fusion/core";
 
-import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
-import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+import { WorkflowTaskRuntime } from "../workflows/workflow-task-runtime.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 
 /*
 FNXC:WorkflowArtifacts 2026-07-21-17:00:

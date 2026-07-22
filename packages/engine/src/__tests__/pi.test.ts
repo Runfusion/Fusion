@@ -4,7 +4,7 @@ import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } fr
 import { piLog } from "../logger.js";
 
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
-vi.mock("../skill-resolver.js", () => {
+vi.mock("../cli-runtime/skill-resolver.js", () => {
   const resolveSessionSkillsMock = vi.fn();
   const createSkillsOverrideFromSelectionMock = vi.fn();
   return {
@@ -71,7 +71,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
 }));
 // FNXC:McpConfig 2026-07-13: Mock connectMcpSessionTools so createFnAgent doesn't attempt real MCP server bootstrap (the configured test binary doesn't exist). The clean toolset keeps MCP forwarding tests deterministic without a live server.
-vi.mock("../mcp-session-tools.js", () => ({
+vi.mock("../mcp/mcp-session-tools.js", () => ({
   connectMcpSessionTools: vi.fn().mockResolvedValue({
     tools: [],
     connected: [],
@@ -351,7 +351,7 @@ describe("createFnAgent skills parameter", () => {
     piErrorSpy = vi.spyOn(piLog, "error").mockImplementation(() => {});
 
     // Access the mocked module to get/set mocks
-    const skillResolver = await import("../skill-resolver.js");
+    const skillResolver = await import("../cli-runtime/skill-resolver.js");
     mockResolveSessionSkills = vi.mocked(skillResolver.resolveSessionSkills);
     mockCreateSkillsOverride = vi.mocked(skillResolver.createSkillsOverrideFromSelection);
 

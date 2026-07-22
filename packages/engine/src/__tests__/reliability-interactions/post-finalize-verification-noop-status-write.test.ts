@@ -10,8 +10,8 @@ const testState = vi.hoisted(() => ({
 // FNXC:MergerUnification 2026-06-21-19:05: master-plan U0 unified the merge
 // dispatch onto runAiMerge (merger-ai.js). This test uses the merge fn as a
 // mockable seam to inject a verification failure; it now mocks runAiMerge.
-vi.mock("../../merger-ai.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../merger-ai.js")>();
+vi.mock("../../merge/merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../merge/merger-ai.js")>();
   return {
     ...actual,
     runAiMerge: testState.runAiMerge,

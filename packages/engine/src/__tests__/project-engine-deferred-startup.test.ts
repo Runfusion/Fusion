@@ -32,13 +32,13 @@ vi.mock("../notification/index.js", () => ({
   }),
 }));
 
-vi.mock("../notifier.js", () => ({
+vi.mock("../util/notifier.js", () => ({
   NtfyNotifier: vi.fn().mockImplementation(function () {
     return { start: notifierStart, stop: vi.fn(), notifyGridlock: vi.fn() };
   }),
 }));
 
-vi.mock("../auth-storage.js", () => ({
+vi.mock("../auth/auth-storage.js", () => ({
   createFusionAuthStorage: vi.fn(() => ({})),
   getFusionOAuthAlertStatePath: () => "/tmp/fusion-oauth-alert-state-test",
 }));
@@ -65,13 +65,13 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
   }),
 }));
 
-vi.mock("../gridlock-detector.js", () => ({
+vi.mock("../healing/gridlock-detector.js", () => ({
   GridlockDetector: vi.fn().mockImplementation(function () {
     return { start: vi.fn(), stop: vi.fn() };
   }),
 }));
 
-vi.mock("../cron-runner.js", () => ({
+vi.mock("../scheduling/cron-runner.js", () => ({
   CronRunner: vi.fn().mockImplementation(function () {
     return { start: vi.fn(), stop: vi.fn() };
   }),
@@ -88,38 +88,38 @@ vi.mock("@fusion/core", async (importOriginal) => {
   };
 });
 
-vi.mock("../pr-monitor.js", () => ({
+vi.mock("../merge/pr-monitor.js", () => ({
   PrMonitor: vi.fn().mockImplementation(function () {
     return { onNewComments: vi.fn(), start: vi.fn(), stop: vi.fn() };
   }),
 }));
 
-vi.mock("../pr-comment-handler.js", () => ({
+vi.mock("../merge/pr-comment-handler.js", () => ({
   PrCommentHandler: vi.fn().mockImplementation(function () {
     return { handleNewComments: vi.fn(), createFollowUpTask: vi.fn() };
   }),
 }));
 
-vi.mock("../pr-reconcile.js", () => ({
+vi.mock("../merge/pr-reconcile.js", () => ({
   PrReconciler: vi.fn().mockImplementation(function () {
     return { start: vi.fn(), stop: vi.fn() };
   }),
 }));
 
-vi.mock("../planner-overseer.js", () => ({
+vi.mock("../overseer/planner-overseer.js", () => ({
   PlannerOverseerMonitor: vi.fn().mockImplementation(function () {
     return {};
   }),
   resolveExecutorStuckAfterMs: vi.fn(() => 60_000),
 }));
 
-vi.mock("../planner-recovery-controller.js", () => ({
+vi.mock("../overseer/planner-recovery-controller.js", () => ({
   PlannerRecoveryController: vi.fn().mockImplementation(function () {
     return {};
   }),
 }));
 
-vi.mock("../postgres-migration-notice.js", () => ({
+vi.mock("../project/postgres-migration-notice.js", () => ({
   deliverPostgresMigrationNoticeIfNeeded: vi.fn(async () => undefined),
   deliverPostgresMigrationCompleteNoticeIfNeeded: vi.fn(async () => undefined),
 }));

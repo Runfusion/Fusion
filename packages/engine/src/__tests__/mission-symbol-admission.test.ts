@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Mission, Milestone, MissionFeature, Slice, Task } from "@fusion/core";
-import { decideMissionSymbolAdmission } from "../mission-symbol-admission.js";
+import { decideMissionSymbolAdmission } from "../missions/mission-symbol-admission.js";
 
 const mission: Mission = { id: "M-1", title: "Mission", status: "active", interviewState: "completed", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const milestone: Milestone = { id: "MS-1", missionId: mission.id, title: "Milestone", status: "active", orderIndex: 0, interviewState: "completed", dependencies: [], createdAt: "2026-01-01", updatedAt: "2026-01-01" };

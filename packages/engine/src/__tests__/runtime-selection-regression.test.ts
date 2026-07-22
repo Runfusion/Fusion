@@ -36,8 +36,8 @@ vi.mock("../pi.js", () => ({
 
 // Mock the runtime resolution module
 const mockResolveRuntime = vi.fn();
-vi.mock("../runtime-resolution.js", async () => {
-  const actual = await vi.importActual<typeof import("../runtime-resolution.js")>("../runtime-resolution.js");
+vi.mock("../execution/runtime-resolution.js", async () => {
+  const actual = await vi.importActual<typeof import("../execution/runtime-resolution.js")>("../runtime-resolution.js");
   return {
     ...actual,
     resolveRuntime: (...args: unknown[]) => mockResolveRuntime(...args),
@@ -50,7 +50,7 @@ vi.mock("../runtime-resolution.js", async () => {
 });
 
 // Mock session skill context
-vi.mock("../session-skill-context.js", () => ({
+vi.mock("../cli-runtime/session-skill-context.js", () => ({
   buildSessionSkillContext: vi.fn().mockResolvedValue({
     skillSelectionContext: undefined,
     resolvedSkillNames: [],
@@ -64,7 +64,7 @@ vi.mock("../session-skill-context.js", () => ({
 }));
 
 // Mock agent instructions
-vi.mock("../agent-instructions.js", () => ({
+vi.mock("../agents/agent-instructions.js", () => ({
   resolveAgentInstructions: vi.fn().mockResolvedValue(""),
   buildSystemPromptWithInstructions: vi.fn().mockImplementation((base) => base),
   resolveAgentInstructionsWithRatings: vi.fn().mockResolvedValue(""),
@@ -99,7 +99,7 @@ describe("Runtime Selection Regression Tests", () => {
 
   describe("createResolvedAgentSession", () => {
     it("should call resolveRuntime when creating a session", async () => {
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       await createResolvedAgentSession({
         sessionPurpose: "executor",
@@ -130,7 +130,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "test-runtime",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const permanentAgentGating = {
         permissionPolicy: {
@@ -167,7 +167,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "my-runtime",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "triage",
@@ -198,7 +198,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "pi",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "merger",
@@ -227,7 +227,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "pi",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "heartbeat",
@@ -260,7 +260,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "code-interpreter",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "executor",
@@ -299,7 +299,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "openclaw",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "executor",
@@ -330,7 +330,7 @@ describe("Runtime Selection Regression Tests", () => {
         runtimeId: "droid",
       });
 
-      const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+      const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
 
       const result = await createResolvedAgentSession({
         sessionPurpose: "executor",

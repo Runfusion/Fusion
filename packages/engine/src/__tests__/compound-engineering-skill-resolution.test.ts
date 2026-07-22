@@ -34,7 +34,7 @@ import { DefaultResourceLoader, loadSkills, type Skill } from "@earendil-works/p
 import {
   createSkillsOverrideFromSelection,
   resolveSessionSkills,
-} from "../skill-resolver.js";
+} from "../cli-runtime/skill-resolver.js";
 
 vi.mock("../logger.js", () => ({
   piLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },

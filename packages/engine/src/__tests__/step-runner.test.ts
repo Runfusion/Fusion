@@ -21,7 +21,7 @@ import {
   isUsableWorktreeDirectory,
   type StepRunnerTask,
   type SessionRef,
-} from "../step-runner.js";
+} from "../execution/step-runner.js";
 
 function makeStore() {
   return {

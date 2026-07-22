@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
+import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
 import type {
   RoutineStore,
   Routine,

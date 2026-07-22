@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
-import { getFusionAuthPath } from "../auth-storage.js";
+import { getFusionAuthPath } from "../auth/auth-storage.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 

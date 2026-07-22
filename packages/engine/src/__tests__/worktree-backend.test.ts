@@ -7,8 +7,8 @@ import {
   removeWorktree,
   resolveWorktreeBackend,
   RemovalReason,
-} from "../worktree-backend.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+} from "../worktree/worktree-backend.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
 const {
   execMock,
@@ -43,14 +43,14 @@ const {
 vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
 vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock, rm: rmMock }));
-vi.mock("../branch-conflicts.js", () => ({
+vi.mock("../execution/branch-conflicts.js", () => ({
   inspectBranchConflict: vi.fn().mockResolvedValue({ kind: "stale" }),
 }));
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: installGuardMock,
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
-vi.mock("../worktree-stale-lock.js", () => ({
+vi.mock("../worktree/worktree-stale-lock.js", () => ({
   StaleWorktreeIndexLockError: class StaleWorktreeIndexLockError extends Error {
     lockPath: string;
     classification: string;
@@ -67,11 +67,11 @@ vi.mock("../worktree-stale-lock.js", () => ({
   classifyStaleLock: classifyStaleLockMock,
   tryRemoveStaleLock: tryRemoveStaleLockMock,
 }));
-vi.mock("../worktree-stale-registration.js", () => ({
+vi.mock("../worktree/worktree-stale-registration.js", () => ({
   parseStaleRegistrationPath: parseStaleRegistrationPathMock,
   recoverStaleRegistration: recoverStaleRegistrationMock,
 }));
-vi.mock("../worktree-prune.js", () => ({
+vi.mock("../worktree/worktree-prune.js", () => ({
   pruneWorktreeAdminEntries: pruneWorktreeAdminEntriesMock,
 }));
 

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { advanceIntegrationBranchRef } from "../merger-ref-update-advance.js";
+import { advanceIntegrationBranchRef } from "../merge/merger-ref-update-advance.js";
 
 // Signal-safe sweep for fusion-test-ref-advance-* tmp dirs. Vitest's forks pool
 // SIGTERMs a fork when a test times out, which skips `finally { rmSync(...) }`
@@ -284,7 +284,7 @@ describe("advanceIntegrationBranchRef", () => {
       // way to force this is to inject a runGit stub that fails the
       // update-ref call but leaves the ref untouched (re-read returns the
       // same expected sha). We monkey-patch the internal test hooks.
-      const { __test__ } = await import("../merger-ref-update-advance.js");
+      const { __test__ } = await import("../merge/merger-ref-update-advance.js");
       const originalRunGit = __test__.runGit;
       let updateRefSeen = false;
       __test__.runGit = (async (args: string[], cwd: string) => {

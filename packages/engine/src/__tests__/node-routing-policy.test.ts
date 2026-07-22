@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { EffectiveNode } from "../effective-node.js";
+import type { EffectiveNode } from "../project/effective-node.js";
 import type { NodeStatus, UnavailableNodePolicy } from "@fusion/core";
-import { applyUnavailableNodePolicy } from "../node-routing-policy.js";
+import { applyUnavailableNodePolicy } from "../project/node-routing-policy.js";
 
 function effectiveNode(nodeId: string | undefined, source: EffectiveNode["source"]): EffectiveNode {
   return { nodeId, source };

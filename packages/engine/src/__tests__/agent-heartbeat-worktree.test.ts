@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Agent, AgentHeartbeatRun } from "@fusion/core";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
-import * as worktreeAcquisition from "../worktree-acquisition.js";
+import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
 import * as piModule from "../pi.js";
 
 describe("heartbeat worktree cwd", () => {

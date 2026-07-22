@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ResearchStepRunner } from "../research-step-runner.js";
+import { ResearchStepRunner } from "../research/research-step-runner.js";
 
 describe("ResearchStepRunner", () => {
   it("returns provider_not_configured when provider missing", async () => {

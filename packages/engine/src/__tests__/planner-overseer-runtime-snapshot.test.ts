@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assemblePlannerOverseerRuntimeSnapshot } from "../planner-overseer-runtime-snapshot.js";
-import type { OverseerStageObservation, OverseerWatchedStage } from "../planner-overseer.js";
+import { assemblePlannerOverseerRuntimeSnapshot } from "../overseer/planner-overseer-runtime-snapshot.js";
+import type { OverseerStageObservation, OverseerWatchedStage } from "../overseer/planner-overseer.js";
 
 function observation(overrides: Partial<OverseerStageObservation> = {}): OverseerStageObservation {
   return {

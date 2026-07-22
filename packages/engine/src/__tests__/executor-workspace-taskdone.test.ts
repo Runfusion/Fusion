@@ -27,7 +27,7 @@ import {
   deriveRepoScopeSubset,
   splitRepoScopedPath,
   UNSCOPED_REPO,
-} from "../workspace-paths.js";
+} from "../worktree/workspace-paths.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

@@ -8,7 +8,7 @@ import {
   type TaskDetail,
   type WorkflowIr,
 } from "@fusion/core";
-import { evaluateAutoMergeFactProviders } from "../auto-merge-fact-providers.js";
+import { evaluateAutoMergeFactProviders } from "../merge/auto-merge-fact-providers.js";
 
 describe("auto-merge fact providers", () => {
   afterEach(() => {

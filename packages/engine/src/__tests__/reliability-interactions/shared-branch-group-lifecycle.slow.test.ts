@@ -2,11 +2,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { type TaskStore } from "@fusion/core";
-import { evaluateBranchGroupCompletion, promoteBranchGroup } from "../../group-merge-coordinator.js";
+import { evaluateBranchGroupCompletion, promoteBranchGroup } from "../../merge/group-merge-coordinator.js";
 import { aiMergeTask } from "../../merger.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import { acquireTaskWorktree } from "../../worktree-acquisition.js";
-import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "../../worktree-names.js";
+import { acquireTaskWorktree } from "../../worktree/worktree-acquisition.js";
+import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "../../worktree/worktree-names.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 

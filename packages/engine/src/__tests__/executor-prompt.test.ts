@@ -2,23 +2,23 @@
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "./executor-test-helpers.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
 import { createFnAgent } from "../pi.js";
-import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
+import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { writeFile, rm } from "node:fs/promises";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
-import { WorktreePool } from "../worktree-pool.js";
-import { generateWorktreeName, slugify } from "../worktree-names.js";
+import { WorktreePool } from "../worktree/worktree-pool.js";
+import { generateWorktreeName, slugify } from "../worktree/worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { StepSessionExecutor } from "../step-session-executor.js";
-import { executingTaskLock } from "../active-session-registry.js";
+import { StepSessionExecutor } from "../execution/step-session-executor.js";
+import { executingTaskLock } from "../agents/active-session-registry.js";
 import { executorLog } from "../logger.js";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
-import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
+import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
@@ -2824,7 +2824,7 @@ describe("executor base prompt runtime self-awareness", () => {
   it("lands the preamble in the stable (cacheable) layer via buildPromptLayers", async () => {
     const { FUSION_RUNTIME_SELF_AWARENESS } = await import("@fusion/core");
     const { getExecutorSystemPrompt } = await import("../executor.js");
-    const { buildPromptLayers } = await import("../prompt-layers.js");
+    const { buildPromptLayers } = await import("../execution/prompt-layers.js");
     const settings = { agentPrompts: undefined } as any;
     const basePrompt = getExecutorSystemPrompt(settings);
     const layers = buildPromptLayers({

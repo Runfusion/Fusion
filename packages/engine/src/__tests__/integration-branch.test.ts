@@ -16,7 +16,7 @@ import {
   INTEGRATION_BRANCH_FALLBACK,
   resolveIntegrationBranch,
   resolveIntegrationBranchSync,
-} from "../integration-branch.js";
+} from "../merge/integration-branch.js";
 
 describe("integration-branch resolver", () => {
   beforeEach(() => {

@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import "@fusion/core"; // registers the built-in traits the column boundary resolves against
 import type { Settings, Task, TaskDetail, TaskStep, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 
-import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
+import { WorkflowTaskRuntime } from "../workflows/workflow-task-runtime.js";
 import {
   createWorkflowColumnBoundary,
   type WorkflowColumnBoundary,
   type WorkflowColumnBoundaryAuditEvent,
-} from "../workflow-column-boundary.js";
-import { isUnplannedForExecution } from "../hold-release.js";
+} from "../workflows/workflow-column-boundary.js";
+import { isUnplannedForExecution } from "../execution/hold-release.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
-import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import {
   BENCHMARK_CODE_REVIEW_CYCLES,
   BENCHMARK_COLUMNS,

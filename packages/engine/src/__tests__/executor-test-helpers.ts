@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
-import { installTaskWorktreeIdentityGuard } from "../worktree-hooks.js";
-import type * as ReviewerModule from "../reviewer.js";
+import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
+import type * as ReviewerModule from "../execution/reviewer.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -29,7 +29,7 @@ vi.mock("../pi.js", () => ({
  * FNXC:WorkflowReviewers 2026-07-07-08:40:
  * Commit 3167dbc83 wired `proseSignalsClearApproval` + `extractJsonObjectCandidates` from reviewer.js into the workflow-step verdict parser (parseWorkflowStepVerdict). A mock that returns only `reviewStep` makes every executeWorkflowStep verdict parse throw `[vitest] No "extractJsonObjectCandidates" export`. Surface the real exports via importOriginal and stub only `reviewStep` (the agent-invoking seam these tests avoid); the verdict-parsing helpers then run for real.
  */
-vi.mock("../reviewer.js", async (importOriginal) => {
+vi.mock("../execution/reviewer.js", async (importOriginal) => {
   const actual = (await importOriginal()) as ReviewerModule;
   return { ...actual, reviewStep: vi.fn() };
 });
@@ -116,7 +116,7 @@ function withSessionDefaults(session: any, options?: { systemPrompt?: unknown })
   return session;
 }
 
-vi.mock("../agent-session-helpers.js", async () => {
+vi.mock("../agents/agent-session-helpers.js", async () => {
   const { createFnAgent } = await import("../pi.js");
   return {
     createResolvedAgentSession: async (options: any) => {
@@ -192,16 +192,16 @@ vi.mock("../agent-session-helpers.js", async () => {
     },
   };
 });
-vi.mock("../worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree-names.js")>("../worktree-names.js");
+vi.mock("../worktree/worktree-names.js", async () => {
+  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree-names.js");
   return {
     ...actual,
     generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
   };
 });
-vi.mock("../worktree-pool.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../worktree-pool.js")>();
-  const backend = await vi.importActual<typeof import("../worktree-backend.js")>("../worktree-backend.js");
+vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../worktree/worktree-pool.js")>();
+  const backend = await vi.importActual<typeof import("../worktree/worktree-backend.js")>("../worktree-backend.js");
   return {
     ...actual,
     ActiveSessionWorktreeRemovalError: backend.ActiveSessionWorktreeRemovalError,
@@ -212,13 +212,13 @@ vi.mock("../worktree-pool.js", async (importOriginal) => {
     isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   };
 });
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
 
-vi.mock("../worktree-stale-lock.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree-stale-lock.js")>("../worktree-stale-lock.js");
+vi.mock("../worktree/worktree-stale-lock.js", async () => {
+  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-lock.js")>("../worktree-stale-lock.js");
   return {
     ...actual,
     parseIndexLockPath: vi.fn(actual.parseIndexLockPath),
@@ -227,8 +227,8 @@ vi.mock("../worktree-stale-lock.js", async () => {
   };
 });
 
-vi.mock("../worktree-stale-registration.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree-stale-registration.js")>("../worktree-stale-registration.js");
+vi.mock("../worktree/worktree-stale-registration.js", async () => {
+  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-registration.js")>("../worktree-stale-registration.js");
   return {
     ...actual,
     parseStaleRegistrationPath: vi.fn(actual.parseStaleRegistrationPath),
@@ -326,7 +326,7 @@ export const mockTerminateAllSessions: Mock<() => Promise<void>> = vi.fn().mockR
 export const mockCleanup: Mock<() => Promise<void>> = vi.fn().mockResolvedValue(undefined);
 export const mockSteerActiveSessions: Mock<(message: string) => Promise<void>> = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("../step-session-executor.js", () => ({
+vi.mock("../execution/step-session-executor.js", () => ({
   StepSessionExecutor: vi.fn().mockImplementation(function () {
     return {
       executeAll: mockExecuteAll,
@@ -347,10 +347,10 @@ vi.mock("../step-session-executor.js", () => ({
   },
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({
     tasksCopied: 0,
     documentsCopied: 0,
@@ -358,8 +358,8 @@ vi.mock("../worktree-db-hydrate.js", () => ({
     degraded: false,
   }),
 }));
-vi.mock("../verification-utils.js", async () => {
-  const actual = await vi.importActual<typeof import("../verification-utils.js")>("../verification-utils.js");
+vi.mock("../execution/verification-utils.js", async () => {
+  const actual = await vi.importActual<typeof import("../execution/verification-utils.js")>("../verification-utils.js");
   return {
     ...actual,
     runVerificationCommand: vi.fn(),
@@ -388,17 +388,17 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
 
 import { createFnAgent } from "../pi.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { generateWorktreeName } from "../worktree-names.js";
+import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { findWorktreeUser } from "../merger.js";
-import { StepSessionExecutor } from "../step-session-executor.js";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
+import { StepSessionExecutor } from "../execution/step-session-executor.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { exec, execSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
-import { classifyTaskWorktree, describeRegisteredWorktrees, isUsableTaskWorktree } from "../worktree-pool.js";
-import { classifyStaleLock, tryRemoveStaleLock } from "../worktree-stale-lock.js";
-import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree-stale-registration.js";
-import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
+import { hydrateWorktreeDb } from "../worktree/worktree-db-hydrate.js";
+import { classifyTaskWorktree, describeRegisteredWorktrees, isUsableTaskWorktree } from "../worktree/worktree-pool.js";
+import { classifyStaleLock, tryRemoveStaleLock } from "../worktree/worktree-stale-lock.js";
+import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree/worktree-stale-registration.js";
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 import { TaskExecutor } from "../executor.js";
 
 export const mockedCreateFnAgent = vi.mocked(createFnAgent);

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FusionPlugin, PluginLoader, PluginStore, TaskStore } from "@fusion/core";
-import { PluginRunner } from "../plugin-runner.js";
+import { PluginRunner } from "../plugins/plugin-runner.js";
 import { createLogger } from "../logger.js";
 
 vi.mock("../logger.js", () => ({

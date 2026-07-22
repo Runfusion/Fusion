@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readCustomProviders } from "../custom-providers.js";
+import { readCustomProviders } from "../auth/custom-providers.js";
 
 describe("readCustomProviders", () => {
   let homeDir: string;

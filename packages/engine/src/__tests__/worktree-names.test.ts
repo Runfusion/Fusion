@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { generateWorktreeName, ADJECTIVES, NOUNS, resolveTaskWorkingBranch } from "../worktree-names.js";
+import { generateWorktreeName, ADJECTIVES, NOUNS, resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
 
 describe("resolveTaskWorkingBranch", () => {
   it("returns canonical per-task branch for shared assignment mode", () => {

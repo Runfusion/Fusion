@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NodeConfig } from "@fusion/core";
-import type { RuntimeMetrics } from "../../project-runtime.js";
+import type { RuntimeMetrics } from "../../project/project-runtime.js";
 import { RemoteNodeRuntime } from "../remote-node-runtime.js";
 
 const mockClientConstructor = vi.hoisted(() => vi.fn());

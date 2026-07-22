@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
-import { StaleTaskReporter } from "../stale-task-reporter.js";
+import { StaleTaskReporter } from "../healing/stale-task-reporter.js";
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {

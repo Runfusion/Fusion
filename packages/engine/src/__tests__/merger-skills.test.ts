@@ -113,11 +113,11 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 
@@ -269,7 +269,7 @@ const setupFailingTheirsStrategy = setupFailingFallbackStrategy;
 
 describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", () => {
   // FNXC:SessionSkillContext 2026-07-13: buildSessionSkillContext mockResolvedValue objects MUST include additionalSkillPaths: [] — production code (merger.ts:1991/3187/3607/12094) reads skillContext.additionalSkillPaths.length unconditionally when skillContext is truthy; omitting the field crashes with TypeError before createFnAgent is reached.
-  vi.mock("../session-skill-context.js", () => ({
+  vi.mock("../cli-runtime/session-skill-context.js", () => ({
     buildSessionSkillContext: vi.fn(),
   }));
 
@@ -278,7 +278,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("passes skillSelection to createFnAgent when agentStore is provided", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/root",
       requestedSkillNames: ["fusion"],
@@ -322,7 +322,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("uses assigned agent skills when available", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/root",
       requestedSkillNames: ["custom-skill", "another-skill"],
@@ -363,7 +363,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("does not pass skillSelection when buildSessionSkillContext returns undefined context", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue({
@@ -428,7 +428,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("gracefully handles buildSessionSkillContext throwing", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockRejectedValue(new Error("Agent not found"));
 
     mockedCreateFnAgent.mockResolvedValue({
@@ -466,7 +466,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("records resolved skill names in skill context result", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     const resolvedNames = ["skill-a", "skill-b"];
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/root",
@@ -507,7 +507,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
   });
 
   it("uses sessionPurpose='merger' in skill selection context", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/root",
       requestedSkillNames: ["fusion"],
@@ -550,7 +550,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
 
 describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511)", () => {
   // FNXC:SessionSkillContext 2026-07-13: buildSessionSkillContext mockResolvedValue objects MUST include additionalSkillPaths: [] — same contract as the resolver-contract block above; production code reads skillContext.additionalSkillPaths.length unconditionally.
-  vi.mock("../session-skill-context.js", () => ({
+  vi.mock("../cli-runtime/session-skill-context.js", () => ({
     buildSessionSkillContext: vi.fn(),
   }));
 
@@ -564,7 +564,7 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
   });
 
   it("merge continues when skill selection produces diagnostics", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     // Simulate diagnostics being logged - the resolver would produce these
     // when requested skills are not found or filtered
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
@@ -605,7 +605,7 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
   });
 
   it("records skill source in context result for debugging", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/root",
       requestedSkillNames: ["custom-skill"],

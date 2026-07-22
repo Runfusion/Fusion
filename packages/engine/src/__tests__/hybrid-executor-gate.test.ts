@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CentralCore } from "@fusion/core";
-import { shouldUseHybridExecutor } from "../hybrid-executor-gate.js";
+import { shouldUseHybridExecutor } from "../concurrency/hybrid-executor-gate.js";
 
 function createMockCentralCore(overrides?: {
   listNodes?: () => Promise<Array<{ id: string; type: "local" | "remote" }>>;

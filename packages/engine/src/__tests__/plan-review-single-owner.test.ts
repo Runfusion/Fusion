@@ -24,7 +24,7 @@ import {
   PLAN_REVIEW_LEASE_HELD_VALUE,
   WorkflowGraphExecutor,
   type WorkflowNodeHandler,
-} from "../workflow-graph-executor.js";
+} from "../workflows/workflow-graph-executor.js";
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 

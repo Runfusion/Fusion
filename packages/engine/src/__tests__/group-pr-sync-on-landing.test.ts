@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BranchGroup, Task } from "@fusion/core";
 import { syncGroupPrOnLanding } from "../merger.js";
-import type { SyncGroupPrFn } from "../group-merge-coordinator.js";
+import type { SyncGroupPrFn } from "../merge/group-merge-coordinator.js";
 
 /**
  * ## Surface Enumeration

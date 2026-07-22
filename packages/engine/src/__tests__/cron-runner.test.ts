@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { CronRunner, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, isInProcessScheduledEvalCommand } from "../cron-runner.js";
-import type { AiPromptExecutor } from "../cron-runner.js";
+import { CronRunner, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, isInProcessScheduledEvalCommand } from "../scheduling/cron-runner.js";
+import type { AiPromptExecutor } from "../scheduling/cron-runner.js";
 import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, AutomationStep, Settings } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 

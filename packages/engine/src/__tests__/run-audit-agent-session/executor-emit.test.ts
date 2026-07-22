@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunAuditEvent, RunAuditEventFilter, RunAuditEventInput, TaskStore } from "@fusion/core";
 import { MOCK_PROVIDER_ID } from "@fusion/core";
-import { createResolvedAgentSession } from "../../agent-session-helpers.js";
-import { createRunAuditor } from "../../run-audit.js";
+import { createResolvedAgentSession } from "../../agents/agent-session-helpers.js";
+import { createRunAuditor } from "../../util/run-audit.js";
 
 // Existing FN-5544 coverage references:
 // - run-audit-session-runtime-resolved.test.ts: mock/non-mock/no-auditor/metadata round-trip

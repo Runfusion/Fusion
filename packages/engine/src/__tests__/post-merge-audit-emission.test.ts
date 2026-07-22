@@ -4,12 +4,12 @@ import {
   SquashAuditError,
   handleDirtyPostMergeAuditOutcome,
 } from "../merger.js";
-import { createRunAuditor, type RunAuditor } from "../run-audit.js";
+import { createRunAuditor, type RunAuditor } from "../util/run-audit.js";
 import type {
   SquashAuditDuplicateSubjectFinding,
   SquashAuditFindings,
   SquashAuditTouchedFileOverlapFinding,
-} from "../merger-squash-audit.js";
+} from "../merge/merger-squash-audit.js";
 
 function overlap(file: string): SquashAuditTouchedFileOverlapFinding {
   return {

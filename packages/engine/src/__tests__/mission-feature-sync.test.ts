@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileMissionFeatureState } from "../mission-feature-sync.js";
+import { reconcileMissionFeatureState } from "../missions/mission-feature-sync.js";
 
 describe("reconcileMissionFeatureState", () => {
   it("keeps assertion validation as the completion gate for research-derived features", async () => {

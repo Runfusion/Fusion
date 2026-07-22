@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunAuditEvent, RunAuditEventFilter, RunAuditEventInput, TaskStore } from "@fusion/core";
 import { MOCK_PROVIDER_ID, isTestModeActive } from "@fusion/core";
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
-import { createRunAuditor, type DatabaseMutationType, type EngineRunContext, type GitMutationType } from "../run-audit.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
+import { createRunAuditor, type DatabaseMutationType, type EngineRunContext, type GitMutationType } from "../util/run-audit.js";
 
 class AuditStoreStub {
   events: RunAuditEventInput[] = [];
@@ -13,8 +13,8 @@ class AuditStoreStub {
 
 const { resolveRuntimeMock } = vi.hoisted(() => ({ resolveRuntimeMock: vi.fn() }));
 
-vi.mock("../runtime-resolution.js", async () => {
-  const actual = await vi.importActual<typeof import("../runtime-resolution.js")>("../runtime-resolution.js");
+vi.mock("../execution/runtime-resolution.js", async () => {
+  const actual = await vi.importActual<typeof import("../execution/runtime-resolution.js")>("../runtime-resolution.js");
   return { ...actual, resolveRuntime: resolveRuntimeMock };
 });
 

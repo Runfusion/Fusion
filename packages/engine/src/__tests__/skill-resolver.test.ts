@@ -31,7 +31,7 @@ import {
   resolveProjectRoot,
   createSkillsOverrideFromSelection,
   type SkillSelectionResult,
-} from "../skill-resolver.js";
+} from "../cli-runtime/skill-resolver.js";
 
 // ── Mock Setup ───────────────────────────────────────────────────────────────
 

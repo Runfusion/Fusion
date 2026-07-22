@@ -3,7 +3,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import {
   DependencyBlockedTodoReporter,
   DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX,
-} from "../dependency-blocked-todo-reporter.js";
+} from "../healing/dependency-blocked-todo-reporter.js";
 
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:15:

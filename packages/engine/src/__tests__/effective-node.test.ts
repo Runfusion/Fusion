@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveEffectiveNode } from "../effective-node.js";
+import { resolveEffectiveNode } from "../project/effective-node.js";
 
 describe("resolveEffectiveNode", () => {
   it.each([

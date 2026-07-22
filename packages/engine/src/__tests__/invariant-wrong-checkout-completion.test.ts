@@ -4,7 +4,7 @@ FN-4115 invariant: fn_task_done is the only path from in-progress to done, and i
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import * as worktreePool from "../worktree-pool.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
 import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {

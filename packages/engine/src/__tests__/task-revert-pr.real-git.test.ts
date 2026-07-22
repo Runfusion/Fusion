@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareRevertPrBranch } from "../task-revert.js";
+import { prepareRevertPrBranch } from "../execution/task-revert.js";
 import type { Task } from "@fusion/core";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;

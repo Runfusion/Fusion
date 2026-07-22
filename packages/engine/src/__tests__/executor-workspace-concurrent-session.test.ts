@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { TaskStore } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
-import { activeSessionRegistry, ActiveSessionPathHeldByForeignTaskError } from "../active-session-registry.js";
+import { activeSessionRegistry, ActiveSessionPathHeldByForeignTaskError } from "../agents/active-session-registry.js";
 
 const WORKSPACE_ROOT = "/tmp/fusion-test-workspace-root";
 

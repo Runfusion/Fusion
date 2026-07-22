@@ -5,7 +5,7 @@ import type {
   ProjectRuntimeConfig,
   RuntimeMetrics,
   RuntimeStatus,
-} from "../../project-runtime.js";
+} from "../../project/project-runtime.js";
 import { runtimeLog } from "../../logger.js";
 import {
   START_RUNTIME,

@@ -1,5 +1,5 @@
 import { createLogger } from "../logger.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 import type {
   SandboxBackend,
   SandboxCapabilities,

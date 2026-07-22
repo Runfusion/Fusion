@@ -3,7 +3,7 @@ import {
   ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,
   PERMANENT_AGENT_TASK_MUTATION_TOOLS,
   TASK_AGENT_MUTATION_TOOLS,
-} from "../gating-classifications.js";
+} from "../execution/gating-classifications.js";
 
 describe("gating classifications provisioning split", () => {
   it("keeps provisioning tools out of action-gate set", () => {

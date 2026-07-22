@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CentralClaimStore, Task, TaskStore } from "@fusion/core";
 import { Scheduler } from "../../scheduler.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import { MeshLeaseManager } from "../../mesh-lease-manager.js";
+import { MeshLeaseManager } from "../../project/mesh-lease-manager.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

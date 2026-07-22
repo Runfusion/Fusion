@@ -15,8 +15,8 @@ Surface enumeration (engine-only; no UI, so desktop/mobile breakpoints are N/A):
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { primitiveNodeContext } from "../runtime-primitives.js";
-import { classifyMergePrimitiveResult } from "../workflow-merge-nodes.js";
+import { primitiveNodeContext } from "../execution/runtime-primitives.js";
+import { classifyMergePrimitiveResult } from "../workflows/workflow-merge-nodes.js";
 import { createMergeAttemptHandler } from "../workflow-node-runners/merge-runner.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
 

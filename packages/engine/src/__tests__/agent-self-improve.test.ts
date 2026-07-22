@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentStore, ReflectionStore, TaskStore, Agent, AgentRatingSummary, AgentRating } from "@fusion/core";
 import { createReadEvaluationsTool, createUpdateIdentityTool } from "../agent-tools.js";
-import { MAX_INSTRUCTIONS_TEXT_LENGTH, MAX_MEMORY_LENGTH, MAX_SOUL_LENGTH } from "../agent-instructions.js";
-import { AgentSelfImproveService } from "../agent-self-improve.js";
+import { MAX_INSTRUCTIONS_TEXT_LENGTH, MAX_MEMORY_LENGTH, MAX_SOUL_LENGTH } from "../agents/agent-instructions.js";
+import { AgentSelfImproveService } from "../agents/agent-self-improve.js";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
 
 vi.mock("../logger.js", () => ({

@@ -14,7 +14,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 
 const task = { id: "FN-U6" } as TaskDetail;
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });

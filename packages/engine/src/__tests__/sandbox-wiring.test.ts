@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __runConfiguredCommandForTests } from "../executor.js";
-import { RoutineRunner } from "../routine-runner.js";
+import { RoutineRunner } from "../scheduling/routine-runner.js";
 import {
   __resetSandboxBackendForTests,
   __setSandboxBackendForTests,
   type SandboxBackend,
 } from "../sandbox/index.js";
-import { defaultShell } from "../shell-utils.js";
+import { defaultShell } from "../worktree/shell-utils.js";
 import {
   defaultVerificationTimeoutMs,
   runVerificationCommand,
   VERIFICATION_COMMAND_MAX_BUFFER,
-} from "../verification-utils.js";
+} from "../execution/verification-utils.js";
 
 function makeStub(overrides: Partial<SandboxBackend> = {}): SandboxBackend {
   return {

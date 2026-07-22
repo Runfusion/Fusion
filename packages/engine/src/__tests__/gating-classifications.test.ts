@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateAgentActionGate } from "../agent-action-gate.js";
+import { evaluateAgentActionGate } from "../agents/agent-action-gate.js";
 import {
   ACTION_GATE_NETWORK_API_TOOLS,
   ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,
@@ -13,8 +13,8 @@ import {
   TASK_AGENT_MUTATION_TOOLS,
   classifyGitCommand,
   isGitWriteCommand,
-} from "../gating-classifications.js";
-import { classifyPermanentAgentToolCall, resolvePermanentAgentToolDecision } from "../permanent-agent-gating.js";
+} from "../execution/gating-classifications.js";
+import { classifyPermanentAgentToolCall, resolvePermanentAgentToolDecision } from "../agents/permanent-agent-gating.js";
 import type { AgentPermissionPolicy } from "@fusion/core";
 
 const unrestrictedPolicy: AgentPermissionPolicy = {

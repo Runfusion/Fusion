@@ -7,7 +7,7 @@ import type {
   SquashAuditFindings,
   SquashAuditTouchedFileOverlapFinding,
   SquashAuditDuplicateSubjectFinding,
-} from "../merger-squash-audit.js";
+} from "../merge/merger-squash-audit.js";
 
 /**
  * FN-4333 — unit tests for the post-merge audit decision helper.

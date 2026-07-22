@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { AutoClaimSnapshotManager, extractDescriptionFirstLine, isRunnableAutoClaimCandidate, resolveFreshAutoClaimCandidates } from "../auto-claim-snapshot.js";
+import { AutoClaimSnapshotManager, extractDescriptionFirstLine, isRunnableAutoClaimCandidate, resolveFreshAutoClaimCandidates } from "../scheduling/auto-claim-snapshot.js";
 
 function makeTask(overrides: Partial<Task> & Pick<Task, "id">): Task {
   return {

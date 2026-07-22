@@ -4,7 +4,7 @@ import {
   emitGoalInjectionDiagnostic,
   resolveAndEmitGoalContext,
   resolveGoalContextForDiagnostics,
-} from "../goal-injection-diagnostics.js";
+} from "../goals/goal-injection-diagnostics.js";
 
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:15:

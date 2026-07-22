@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { isEphemeralAgent, resolvePersistAgentThinkingLog, type GlobalSettings } from "@fusion/core";
-import { AgentLogger } from "../agent-logger.js";
+import { AgentLogger } from "../agents/agent-logger.js";
 
-vi.mock("../agent-logger.js", () => ({
+vi.mock("../agents/agent-logger.js", () => ({
   AgentLogger: vi.fn(),
 }));
 

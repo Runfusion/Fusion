@@ -16,7 +16,7 @@ vi.mock("../../pi.js", () => ({
 }));
 
 import { aiMergeTask } from "../../merger.js";
-import { WorktreePool } from "../../worktree-pool.js";
+import { WorktreePool } from "../../worktree/worktree-pool.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 

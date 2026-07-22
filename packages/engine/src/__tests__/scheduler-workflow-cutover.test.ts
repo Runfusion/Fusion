@@ -3,7 +3,7 @@ import { makeTransitionRejection, TransitionRejectionError, buildBootstrapPrompt
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Scheduler } from "../scheduler.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();

@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
-vi.mock("../agent-session-helpers.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../agent-session-helpers.js")>();
+vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agents/agent-session-helpers.js")>();
   return {
     ...actual,
     createResolvedAgentSession: createResolvedAgentSessionMock,
@@ -32,8 +32,8 @@ import {
   buildReviewSystemPrompt,
   REVIEW_VERDICT_MARKER,
   AiMergeBlockedError,
-} from "../merger-ai.js";
-import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../planner-overseer.js";
+} from "../merge/merger-ai.js";
+import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();

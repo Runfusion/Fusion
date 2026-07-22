@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Settings, TaskStore } from "@fusion/core";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import { SelfHealingManager } from "../../self-healing.js";
 
 function sh(command: string, cwd: string): string {

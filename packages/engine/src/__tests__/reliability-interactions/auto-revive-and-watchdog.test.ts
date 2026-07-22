@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { RestartRecoveryCoordinator } from "../../restart-recovery-coordinator.js";
+import { RestartRecoveryCoordinator } from "../../healing/restart-recovery-coordinator.js";
 
 function task(overrides: Partial<Task>): Task {
   return {

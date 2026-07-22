@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
-import { accumulateSessionTokenUsage, captureSessionTokenBaseline, computeCacheHitRatio } from "../session-token-usage.js";
-import { enforceTaskTokenBudgetForPersist } from "../token-budget-enforcer.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, computeCacheHitRatio } from "../execution/session-token-usage.js";
+import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
 import { TaskExecutor } from "../executor.js";
 
 const { notificationService } = vi.hoisted(() => ({ notificationService: { dispatch: vi.fn() } }));
-vi.mock("../notifier.js", () => ({ getActiveNotificationService: () => notificationService }));
+vi.mock("../util/notifier.js", () => ({ getActiveNotificationService: () => notificationService }));
 
 interface MockSessionStats {
   tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };

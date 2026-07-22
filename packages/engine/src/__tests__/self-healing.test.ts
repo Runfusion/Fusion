@@ -63,7 +63,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-vi.mock("../worktree-pool.js", () => ({
+vi.mock("../worktree/worktree-pool.js", () => ({
   WorktreePool: vi.fn(),
   // FN-4811: Must mirror the production `RemovalReason` const in worktree-backend.ts
   // exactly — every key referenced as `RemovalReason.X` in production code (self-healing,
@@ -121,9 +121,9 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "../worktree-pool.js";
-import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
-import * as branchConflictModule from "../branch-conflicts.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "../worktree/worktree-pool.js";
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
+import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { createLogger } from "../logger.js";
 import { NotificationService } from "../notification/notification-service.js";
 import { classifyOwnedLandedEvidence } from "../merger.js";

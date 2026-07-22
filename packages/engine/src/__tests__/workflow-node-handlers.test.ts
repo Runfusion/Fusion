@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIrNode } from "@fusion/core";
 
-import { createDefaultNodeHandlers } from "../workflow-node-handlers.js";
+import { createDefaultNodeHandlers } from "../workflows/workflow-node-handlers.js";
 
 const task = { id: "FN-5767" } as TaskDetail;
 const node = (kind: WorkflowIrNode["kind"], seam?: string): WorkflowIrNode => ({ id: kind, kind, config: seam ? { seam } : {} });

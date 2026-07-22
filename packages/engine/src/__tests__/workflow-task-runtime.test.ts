@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowIr, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 
-import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflow-task-runtime.js";
-import type { WorkflowNodeResult } from "../workflow-graph-executor.js";
-import type { PreparedWorktree, WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflows/workflow-task-runtime.js";
+import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
+import type { PreparedWorktree, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 
 const task = { id: "FN-9002" } as TaskDetail;
 const flagOff = { experimentalFeatures: {} } as unknown as Pick<Settings, "experimentalFeatures">;

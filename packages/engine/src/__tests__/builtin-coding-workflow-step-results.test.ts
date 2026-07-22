@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler, type WorkflowNodeResult } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler, type WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowStepResults 2026-06-25-12:00:

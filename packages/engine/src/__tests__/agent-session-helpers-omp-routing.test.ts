@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as fusionCore from "@fusion/core";
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
 import { MOCK_PROVIDER_ID } from "../providers/mock-provider.js";
 
 const mockCreateFnAgent = vi.hoisted(() => vi.fn());

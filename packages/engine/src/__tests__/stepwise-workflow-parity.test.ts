@@ -30,19 +30,19 @@ import {
   type WorkflowIr,
 } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeResult } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type StepReviewSeamResult,
   type WorkflowLegacySeams,
-} from "../workflow-node-handlers.js";
+} from "../workflows/workflow-node-handlers.js";
 import {
   makeAncestryBlastRadiusGuard,
   resetStepToBaseline,
   runTaskStep,
   type StepRunnerTask,
-} from "../step-runner.js";
+} from "../execution/step-runner.js";
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 const settingsOff = () => ({ experimentalFeatures: { workflowGraphExecutor: false } });

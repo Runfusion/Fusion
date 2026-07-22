@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
-import { readCustomProviders } from "../custom-providers.js";
+import { readCustomProviders } from "../auth/custom-providers.js";
 
 async function createInMemoryModelRegistry(): Promise<ModelRegistry> {
   const runtime = await ModelRuntime.create({

@@ -24,8 +24,8 @@ import {
   compareWorkflowRunObservations,
 } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
-import type { WorkflowLegacySeams } from "../workflow-node-handlers.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
 
 /*
  * FNXC:WorkflowParity 2026-06-29-07:45:

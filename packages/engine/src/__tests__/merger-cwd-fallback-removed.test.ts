@@ -16,7 +16,7 @@ vi.mock("../pi.js", () => ({
 
 import { aiMergeTask } from "../merger.js";
 import { mergerLog } from "../logger.js";
-import { resolveMergeIntegrationRoot } from "../merger-integration-worktree.js";
+import { resolveMergeIntegrationRoot } from "../merge/merger-integration-worktree.js";
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:10:
 VAL-REMOVAL-005 reliability fixtures use PostgreSQL AsyncDataLayer storage. Read

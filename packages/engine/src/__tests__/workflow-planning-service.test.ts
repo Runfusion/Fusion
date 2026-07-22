@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { primitiveNodeContext } from "../runtime-primitives.js";
-import { WorkflowPlanningService } from "../workflow-planning-service.js";
+import { primitiveNodeContext } from "../execution/runtime-primitives.js";
+import { WorkflowPlanningService } from "../workflows/workflow-planning-service.js";
 
 describe("WorkflowPlanningService", () => {
   it("preserves the graph pre-specified planning result", async () => {

@@ -11,7 +11,7 @@ vi.mock("../logger.js", () => ({
 import {
   emitGoalInjectionDiagnostic,
   type GoalInjectionDiagnosticInput,
-} from "../goal-injection-diagnostics.js";
+} from "../goals/goal-injection-diagnostics.js";
 
 function buildInput(overrides: Partial<GoalInjectionDiagnosticInput> = {}): GoalInjectionDiagnosticInput {
   return {

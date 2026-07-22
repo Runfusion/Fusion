@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { acquireTaskWorktree } from "../../worktree-acquisition.js";
+import { acquireTaskWorktree } from "../../worktree/worktree-acquisition.js";
 
 describe("shared branch group working branch regression", () => {
   it("uses per-task working branches for shared members and keeps existing derivation modes", async () => {

@@ -17,7 +17,7 @@ vi.mock("../pi.js", () => ({
 }));
 
 import { createFnAgent, promptWithFallback } from "../pi.js";
-import { AgentReflectionService } from "../agent-reflection.js";
+import { AgentReflectionService } from "../agents/agent-reflection.js";
 import { createReflectOnPerformanceTool, reflectOnPerformanceParams } from "../agent-tools.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);

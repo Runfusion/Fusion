@@ -6,7 +6,7 @@ import {
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WorkflowGraphExecutor,
   type WorkflowNodeHandler,
-} from "../workflow-graph-executor.js";
+} from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:

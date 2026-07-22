@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pruneExistingAiMergeWorktrees, resolveAiMergeRoot } from "../merger-ai.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { pruneExistingAiMergeWorktrees, resolveAiMergeRoot } from "../merge/merger-ai.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "../self-healing.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const tracked = new Set<string>();
 const registeredActivePaths = new Set<string>();

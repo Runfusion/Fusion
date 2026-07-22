@@ -27,8 +27,8 @@ import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { landWorkspaceTask, WorkspaceRepoLandBusyError } from "../merger-ai.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { landWorkspaceTask, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import * as worktreePool from "../worktree-pool.js";
-import { resolveWorktreesDir } from "../worktree-paths.js";
-import * as worktreeAcquisition from "../worktree-acquisition.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
+import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
+import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function task(overrides: Record<string, unknown> = {}) {

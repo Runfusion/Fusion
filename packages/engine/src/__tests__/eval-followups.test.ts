@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { normalizeEvalFollowUpText } from "@fusion/core";
-import { materializeEvalFollowUps, normalizeEvalFollowUps, resolveEvalFollowUpPolicyMode } from "../eval-followups.js";
+import { materializeEvalFollowUps, normalizeEvalFollowUps, resolveEvalFollowUpPolicyMode } from "../eval/eval-followups.js";
 
 function makeStore(params: {
   openTasks?: Array<Record<string, unknown>>;

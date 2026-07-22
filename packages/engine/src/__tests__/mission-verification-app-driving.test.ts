@@ -29,7 +29,7 @@ import {
   type VerificationCapability,
   type VerificationOutcome,
   type VerificationRequest,
-} from "../mission-verification.js";
+} from "../missions/mission-verification.js";
 
 // ── Mock seams (no real app / browser) ─────────────────────────────────────────
 

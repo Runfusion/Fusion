@@ -23,7 +23,7 @@ const { mockCreateResolvedAgentSession, mockPromptWithFallback } = vi.hoisted(()
   mockPromptWithFallback: vi.fn(),
 }));
 
-vi.mock("../agent-session-helpers.js", () => ({
+vi.mock("../agents/agent-session-helpers.js", () => ({
   createResolvedAgentSession: mockCreateResolvedAgentSession,
   extractRuntimeHint: vi.fn(),
   resolvePlanningSessionModel: vi.fn().mockReturnValue({ provider: "mock", modelId: "mock-model" }),

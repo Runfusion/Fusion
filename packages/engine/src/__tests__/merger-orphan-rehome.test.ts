@@ -6,7 +6,7 @@ import { execSync } from "node:child_process";
 import {
   classifyOrphanOurAdvance,
   rehomeOrphanOntoIntegration,
-} from "../merger-orphan-rehome.js";
+} from "../merge/merger-orphan-rehome.js";
 
 const TMP_DIR_RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const trackedTmpDirs = new Set<string>();

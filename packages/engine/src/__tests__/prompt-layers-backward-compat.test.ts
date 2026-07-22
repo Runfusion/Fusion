@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPromptWithInstructions } from "../agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "../prompt-layers.js";
+import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
+import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
 
 /**
  * Backward compatibility tests: verify that the new layered prompt approach

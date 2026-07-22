@@ -4,8 +4,8 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { writeSecretsEnvFile } from "../../secrets-env-writer.js";
-import { reapOrphanWorktrees } from "../../worktree-pool.js";
+import { writeSecretsEnvFile } from "../../worktree/secrets-env-writer.js";
+import { reapOrphanWorktrees } from "../../worktree/worktree-pool.js";
 
 const dirs: string[] = [];
 function tmpRepo(): string {

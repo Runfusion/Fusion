@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { relocateReclaimableWorktreeIntoRoot } from "../worktree-pool.js";
+import { relocateReclaimableWorktreeIntoRoot } from "../worktree/worktree-pool.js";
 
 const cleanupPaths: string[] = [];
 

@@ -1,9 +1,9 @@
 import type { Settings } from "@fusion/core";
 
-import type { WorkflowNodeHandler } from "../workflow-graph-executor.js";
-import type { WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "../runtime-primitives.js";
-import { runWorkflowMergeAttemptNode } from "../workflow-merge-nodes.js";
-import type { WorkflowLegacySeams } from "../workflow-node-handlers.js";
+import type { WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import { runWorkflowMergeAttemptNode } from "../workflows/workflow-merge-nodes.js";
+import type { WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
 
 type MergeRunnerNode = Parameters<WorkflowNodeHandler>[0];
 type MergeRunnerContext = Parameters<WorkflowNodeHandler>[1];

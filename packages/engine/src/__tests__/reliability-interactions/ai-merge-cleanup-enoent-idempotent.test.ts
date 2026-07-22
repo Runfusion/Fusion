@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { runAiMerge } from "../../merger-ai.js";
+import { runAiMerge } from "../../merge/merger-ai.js";
 import { hasGit } from "./_helpers.js";
 
 const tracked = new Set<string>();

@@ -20,15 +20,15 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual, existsSync: existsSyncMock };
 });
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
-vi.mock("../worktree-pool.js", async () => {
+vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return { ...actual, isUsableTaskWorktree: vi.fn().mockResolvedValue(true) };
 });
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 1, documentsCopied: 1, artifactsCopied: 0 }),
 }));
 
@@ -79,7 +79,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("uses native by default when worktrunk settings absent", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "" });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const rootDir = await makeRootDir();
 
     const result = await acquireTaskWorktree({
@@ -103,7 +103,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("prefers explicit createWorktree override", async () => {
     const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const rootDir = await makeRootDir();
 
     await acquireTaskWorktree({
@@ -131,7 +131,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       }
       return Promise.resolve({ stdout: "", stderr: "" });
     });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const { audit, events } = makeAudit();
 
     await acquireTaskWorktree({
@@ -163,7 +163,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       return Promise.resolve({ stdout: "", stderr: "" });
     });
     existsSyncMock.mockImplementation((path: string) => path === resolvedPath);
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
 
     const result = await acquireTaskWorktree({
       task,
@@ -181,7 +181,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("fails hard without fallback when onFailure=fail", async () => {
     execMock.mockRejectedValue({ stderr: "nope", status: 9 });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const { audit, events } = makeAudit();
     const rootDir = await makeRootDir();
 
@@ -209,7 +209,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       }
       return Promise.resolve({ stdout: "", stderr: "" });
     });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const { audit, events } = makeAudit();
     const rootDir = await makeRootDir();
 
@@ -228,7 +228,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
   });
 
   it("fails with binary missing when enabled and binaryPath absent", async () => {
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const rootDir = await makeRootDir();
 
     await expect(
@@ -243,7 +243,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("uses custom backend when provided", async () => {
     const create = vi.fn().mockResolvedValue({ path: "/tmp/custom", branch: "fusion/fn-1-custom" });
-    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const { acquireTaskWorktree } = await import("../worktree/worktree-acquisition.js");
     const rootDir = await makeRootDir();
 
     const result = await acquireTaskWorktree({

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
-import { StuckTaskDetector } from "../../stuck-task-detector.js";
+import { StuckTaskDetector } from "../../healing/stuck-task-detector.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

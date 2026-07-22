@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPromptLayers, collapsePromptLayers } from "../prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
 
 describe("reviewer prompt layering", () => {
   const REVIEWER_BASE = "You are an independent code and plan reviewer.";

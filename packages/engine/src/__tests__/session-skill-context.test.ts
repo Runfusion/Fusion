@@ -9,9 +9,9 @@ import {
   buildSessionSkillContextSync,
   SKILL_DIAGNOSTIC_MESSAGES,
   type SessionPurpose,
-} from "../session-skill-context.js";
+} from "../cli-runtime/session-skill-context.js";
 import type { Agent, AgentStore } from "@fusion/core";
-import type { PluginRunner } from "../plugin-runner.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
 
 const tempDirs: string[] = [];
 

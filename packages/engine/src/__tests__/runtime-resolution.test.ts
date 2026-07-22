@@ -8,14 +8,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
 import {
   resolveRuntime,
   getDefaultPiRuntime,
   type RuntimeResolutionContext,
   type ResolvedRuntime,
-} from "../runtime-resolution.js";
-import type { PluginRunner } from "../plugin-runner.js";
+} from "../execution/runtime-resolution.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
 import type { PluginRuntimeRegistration } from "@fusion/core";
 
 // Mock the logger to suppress output during tests

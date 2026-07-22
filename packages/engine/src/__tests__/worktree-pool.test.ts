@@ -44,7 +44,7 @@ vi.mock("node:child_process", async () => {
   return { execSync: execSyncFn, exec: execFn, execFile: execFileFn };
 });
 
-vi.mock("../worktree-desktop-artifacts.js", () => ({
+vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
@@ -56,12 +56,12 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
 }));
 
-vi.mock("../worktree-prune.js", () => ({
+vi.mock("../worktree/worktree-prune.js", () => ({
   pruneWorktreeAdminEntries: vi.fn().mockResolvedValue(undefined),
 }));
 
-import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
-import * as worktreePrune from "../worktree-prune.js";
+import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
+import * as worktreePrune from "../worktree/worktree-prune.js";
 import {
   WorktreePool,
   detectGitRepository,
@@ -71,9 +71,9 @@ import {
   scanIdleWorktrees,
   cleanupOrphanedWorktrees,
   reapOrphanWorktrees,
-} from "../worktree-pool.js";
-import { BranchConflictError } from "../branch-conflicts.js";
-import * as branchConflictModule from "../branch-conflicts.js";
+} from "../worktree/worktree-pool.js";
+import { BranchConflictError } from "../execution/branch-conflicts.js";
+import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";

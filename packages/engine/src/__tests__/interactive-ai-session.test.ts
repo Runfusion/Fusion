@@ -7,8 +7,8 @@ import {
   type InteractiveAgentFactory,
   type InteractiveAgentResult,
   type InteractiveAgentSession,
-} from "../interactive-ai-session.js";
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
+} from "../execution/interactive-ai-session.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 function planningRuntime(text: string, options: { throwCreate?: Error; throwPrompt?: Error } = {}) {

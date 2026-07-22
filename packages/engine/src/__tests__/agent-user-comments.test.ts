@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskComment } from "@fusion/core";
-import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "../agent-user-comments.js";
+import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 
 function comment(overrides: Partial<TaskComment>): TaskComment {
   return {

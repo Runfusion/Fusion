@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, TaskStep, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type StepReviewSeamResult,
   type WorkflowLegacySeams,
-} from "../workflow-node-handlers.js";
-import type { WorkflowStepInstanceState } from "../workflow-graph-foreach.js";
+} from "../workflows/workflow-node-handlers.js";
+import type { WorkflowStepInstanceState } from "../workflows/workflow-graph-foreach.js";
 
 /**
  * U5 — step-review node + verdict wiring (KTD-4). These scenarios exercise the

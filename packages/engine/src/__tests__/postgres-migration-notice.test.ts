@@ -7,7 +7,7 @@ import {
   deliverPostgresMigrationCompleteNoticeIfNeeded,
   deliverPostgresMigrationNoticeIfNeeded,
   isPostgresMigrationNoticeVersion,
-} from "../postgres-migration-notice.js";
+} from "../project/postgres-migration-notice.js";
 
 /*
 FNXC:PostgresCutover 2026-07-12 (merge port from main):

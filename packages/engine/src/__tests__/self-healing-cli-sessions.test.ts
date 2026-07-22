@@ -18,9 +18,9 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing.js";
-import * as worktreePool from "../worktree-pool.js";
-import { StuckTaskDetector, type DisposableSession } from "../stuck-task-detector.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
+import { StuckTaskDetector, type DisposableSession } from "../healing/stuck-task-detector.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
 function createStore(settings: Record<string, unknown>): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;

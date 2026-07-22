@@ -32,10 +32,10 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
-import type { MeshLeaseManager } from "./mesh-lease-manager.js";
+import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
-import { mergeEffectiveSettings } from "./effective-settings.js";
-import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
+import { mergeEffectiveSettings } from "./project/effective-settings.js";
+import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
@@ -44,8 +44,8 @@ import {
   isRecoverableMissingWorktreeReviewFailureNoProgress,
   isRecoverableMissingWorktreeReviewFailureWithProgress,
   MERGE_ACTIVE_MISSING_WORKTREE_STATUSES,
-} from "./restart-recovery-coordinator.js";
-import { extractMissingModulePath, isNonContinuableSessionError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
+} from "./healing/restart-recovery-coordinator.js";
+import { extractMissingModulePath, isNonContinuableSessionError, isStaleWorktreeModuleResolutionError } from "./errors/transient-error-detector.js";
 import {
   buildHeartbeatErrorRecoveryMetadata,
   HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
@@ -57,12 +57,12 @@ import {
   resetHeartbeatErrorRecoveryMetadata,
   resolveErrorRecoveryLimit,
 } from "./agent-heartbeat.js";
-import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
-import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
-import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./auto-merge-finalization.js";
-import { AutoRecoveryDispatcher } from "./auto-recovery.js";
-import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
-import { isTaskStillInPlanningStage } from "./replan-target.js";
+import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./execution/branch-conflicts.js";
+import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./util/run-audit.js";
+import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
+import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
+import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
+import { isTaskStillInPlanningStage } from "./execution/replan-target.js";
 /*
 FNXC:Workspace 2026-06-22-14:10 (Phase D review G — cycle dissolved):
 `isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It now lives in
@@ -70,19 +70,19 @@ the dependency-free `workspace-land-predicate` module, NOT merger-ai. Previously
 imported it from merger-ai while merger-ai imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from
 self-healing — a real import cycle. Importing from the predicate module breaks the cycle.
 */
-import { isRepoLanded } from "./workspace-land-predicate.js";
-import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-merged-detector.js";
-import { getTaskCompletionBlockerForStore } from "./task-completion.js";
-import { shouldReclaimWedgedMerge } from "./merge-reclaim-policy.js";
+import { isRepoLanded } from "./merge/workspace-land-predicate.js";
+import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./merge/already-merged-detector.js";
+import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
+import { shouldReclaimWedgedMerge } from "./merge/merge-reclaim-policy.js";
 
-import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
-import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
-import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
-import { preservedWorktreeTargetPathForTask } from "./worktree-pinning.js";
-import { resolveIntegrationBranch } from "./integration-branch.js";
-import { resolveBranchGroupMergeRouting } from "./group-merge-coordinator.js";
+import { advanceIntegrationBranchRef } from "./merge/merger-ref-update-advance.js";
+import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
+import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
+import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
+import { resolveIntegrationBranch } from "./merge/integration-branch.js";
+import { resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
 import type { OwnedLandedClassification } from "./merger.js";
-import { regenerateBareMergeSubject } from "./merger-bare-subject.js";
+import { regenerateBareMergeSubject } from "./merge/merger-bare-subject.js";
 import { recoverForeignOnlyContamination } from "./recovery/foreign-only-contamination.js";
 import {
   buildNtfyClickUrl,
@@ -91,11 +91,11 @@ import {
   resolveNtfyEvents,
   sendNtfyNotification,
   type NtfyNotifier,
-} from "./notifier.js";
-import type { GhostBugDecision } from "./triage-preflight.js";
-import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
+} from "./util/notifier.js";
+import type { GhostBugDecision } from "./triage-domain/triage-preflight.js";
+import { DependencyBlockedTodoReporter } from "./healing/dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
-import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
+import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./agents/task-agent-sync.js";
 
 export {
   COMPLETED_BLOCKED_PAUSE_REASON,
@@ -112,7 +112,7 @@ export {
   PAUSE_ABORT_PARK_OPERATOR_MARKER,
   MAX_AUTO_MERGE_RETRIES,
   MAX_TRANSIENT_MERGE_RECOVERIES,
-} from "./self-healing-constants.js";
+} from "./healing/self-healing-constants.js";
 import {
   COMPLETED_BLOCKED_PAUSE_REASON,
   STALE_TEMP_MERGE_WORKTREE_MS,
@@ -126,9 +126,9 @@ import {
   PAUSE_ABORT_PARK_ERROR_MARKER,
   PAUSE_ABORT_PARK_OPERATOR_MARKER,
   MAX_TRANSIENT_MERGE_RECOVERIES,
-} from "./self-healing-constants.js";
-export { isBranchAheadOfBase } from "./self-healing-branch.js";
-import { isBranchAheadOfBase } from "./self-healing-branch.js";
+} from "./healing/self-healing-constants.js";
+export { isBranchAheadOfBase } from "./healing/self-healing-branch.js";
+import { isBranchAheadOfBase } from "./healing/self-healing-branch.js";
 
 export {
   OPTIONAL_STEP_REVISION_KEY_MARKER,
@@ -136,12 +136,12 @@ export {
   optionalStepRevisionKey,
   countOptionalStepRevisionAttempts,
   optionalStepRevisionLogOutcome,
-} from "./self-healing-optional-step-revision.js";
+} from "./healing/self-healing-optional-step-revision.js";
 import {
   optionalStepRevisionKey,
   countOptionalStepRevisionAttempts,
   optionalStepRevisionLogOutcome,
-} from "./self-healing-optional-step-revision.js";
+} from "./healing/self-healing-optional-step-revision.js";
 
 export {
   extractTaskIdFromTempMergeDir,
@@ -151,7 +151,7 @@ export {
   formatRecoveryTimestamp,
   matchGlob,
   matchesScope,
-} from "./self-healing-path-utils.js";
+} from "./healing/self-healing-path-utils.js";
 import {
   extractTaskIdFromTempMergeDir,
   getErrorMessage,
@@ -159,7 +159,7 @@ import {
   buildResumeLimboStepSignature,
   formatRecoveryTimestamp,
   matchesScope,
-} from "./self-healing-path-utils.js";
+} from "./healing/self-healing-path-utils.js";
 
 
 const log = createLogger("self-healing");
@@ -432,8 +432,8 @@ shares ONE definition with this sweep. Previously the manual gate hardcoded its 
 and refused to retry ANY merge-active status, so an orphaned `landing` stamp was un-retryable by
 hand while this sweep cleared it automatically minutes later.
 */
-import { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isStaleMergeActiveStatus } from "./merge-active-status.js";
-export { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isMergeActiveStatus, isStaleMergeActiveStatus } from "./merge-active-status.js";
+import { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isStaleMergeActiveStatus } from "./merge/merge-active-status.js";
+export { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isMergeActiveStatus, isStaleMergeActiveStatus } from "./merge/merge-active-status.js";
 const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
 const STRANDED_COMPLETED_TODO_ACTIVE_STATUSES = new Set([
   "in-progress",
@@ -486,8 +486,8 @@ const RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET = new Set<string>(MERGE_A
 // to avoid pulling `createLogger` into modules that mock `../logger.js`
 // (notification-service tests in particular). Re-exported here for callers
 // that already depend on `self-healing.ts` exports.
-import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
-export { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
+import { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
+export { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
 const MAX_STARVATION_DROPS = 3;
 const DEADLOCK_RECOVERY_COOLDOWN_MS = 15 * 60_000;
 // DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS now lives in ./merge-active-status.js (imported above)

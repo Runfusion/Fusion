@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
-import { ActiveSessionWorktreeRemovalError, RemovalReason } from "../../worktree-backend.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
+import { ActiveSessionWorktreeRemovalError, RemovalReason } from "../../worktree/worktree-backend.js";
 import { executorLog } from "../../logger.js";
-import { WorktreePool } from "../../worktree-pool.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import { WorktreePool } from "../../worktree/worktree-pool.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
 const ROOT = "/tmp/test";

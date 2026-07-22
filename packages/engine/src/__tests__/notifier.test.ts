@@ -7,7 +7,7 @@ import {
   isNtfyEventEnabled,
   resolveNtfyEvents,
   sendNtfyNotificationWithResult,
-} from "../notifier.js";
+} from "../util/notifier.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
 import { MockTaskStore, createTask, flushAsyncWork } from "./notifier.test-harness.js";
 

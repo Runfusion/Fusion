@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MissionFeature, MissionStore, TaskStore } from "@fusion/core";
 import { Scheduler } from "../../scheduler.js";
-import { MissionExecutionLoop } from "../../mission-execution-loop.js";
+import { MissionExecutionLoop } from "../../missions/mission-execution-loop.js";
 
 function makeTaskStore(taskColumn: "done" | "archived" | "in-progress" = "done") {
   return {

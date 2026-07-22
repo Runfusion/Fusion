@@ -12,7 +12,7 @@ describe("shell-utils", () => {
   ])("returns %s shell as %s", async (platform, expectedShell) => {
     vi.spyOn(process, "platform", "get").mockReturnValue(platform as NodeJS.Platform);
 
-    const { defaultShell } = await import("../shell-utils.js");
+    const { defaultShell } = await import("../worktree/shell-utils.js");
 
     expect(defaultShell).toBe(expectedShell);
   });

@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { TaskStore, RunAuditEvent, RunAuditEventFilter, RunAuditEventInput } from "@fusion/core";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 
 // NOTE: This file uses mock stores/fakes instead of real SQLite databases.
 // See FN-2142 for the rationale.

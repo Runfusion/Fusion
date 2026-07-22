@@ -11,9 +11,9 @@ import type {
   Task,
 } from "@fusion/core";
 import { DASHBOARD_USER_ID, NotificationDispatcher } from "@fusion/core";
-import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
+import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
-import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
+import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
 

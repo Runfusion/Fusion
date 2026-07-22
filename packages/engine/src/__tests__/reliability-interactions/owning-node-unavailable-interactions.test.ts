@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import type { NodeStatus, OwningNodeHandoffPolicy, Task, TaskStore } from "@fusion/core";
 import { TaskStore as CoreTaskStore } from "@fusion/core";
-import { MeshLeaseManager } from "../../mesh-lease-manager.js";
+import { MeshLeaseManager } from "../../project/mesh-lease-manager.js";
 import { Scheduler } from "../../scheduler.js";
 import { hasGit, hasPg, makePgTaskStore } from "./_helpers.js";
 
@@ -67,7 +67,7 @@ function createMockStore(task: Task, settings: Record<string, unknown> = {}): Ta
 function createMockHealthMonitor(statusMap: Record<string, NodeStatus | undefined>) {
   return {
     getNodeHealth: vi.fn((id: string) => statusMap[id]),
-  } as unknown as import("../../node-health-monitor.js").NodeHealthMonitor;
+  } as unknown as import("../../project/node-health-monitor.js").NodeHealthMonitor;
 }
 
 describeIfGit("reliability interactions: owning-node unavailable handoff", () => {

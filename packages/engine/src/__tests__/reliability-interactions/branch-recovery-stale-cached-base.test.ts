@@ -16,9 +16,9 @@ vi.mock("node:child_process", async () => {
 });
 
 import { SelfHealingManager } from "../../self-healing.js";
-import { RestartRecoveryCoordinator } from "../../restart-recovery-coordinator.js";
-import * as branchConflicts from "../../branch-conflicts.js";
-import * as worktreePool from "../../worktree-pool.js";
+import { RestartRecoveryCoordinator } from "../../healing/restart-recovery-coordinator.js";
+import * as branchConflicts from "../../execution/branch-conflicts.js";
+import * as worktreePool from "../../worktree/worktree-pool.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;

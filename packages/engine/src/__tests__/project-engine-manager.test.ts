@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Stub out the per-machine singleton lock so tests with fake working dirs
 // (e.g. /mapped/...) don't try to mkdir or bind real sockets.
-vi.mock("../engine-singleton-lock.js", () => ({
+vi.mock("../project/engine-singleton-lock.js", () => ({
   acquireEngineSingleton: vi.fn().mockResolvedValue({
     release: vi.fn().mockResolvedValue(undefined),
     socketPath: "/tmp/test.sock",
@@ -40,9 +40,9 @@ import { ProjectEngine } from "../project-engine.js";
 import {
   acquireEngineSingleton,
   EngineAlreadyRunningError,
-} from "../engine-singleton-lock.js";
+} from "../project/engine-singleton-lock.js";
 import type { RegisteredProject, CentralCore } from "@fusion/core";
-import { ScopedAgentSemaphore } from "../concurrency.js";
+import { ScopedAgentSemaphore } from "../concurrency/concurrency.js";
 
 function createMockCentralCore(projects: RegisteredProject[]): CentralCore {
   const projectMap = new Map(projects.map((p) => [p.id, p]));

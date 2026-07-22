@@ -9,7 +9,7 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 
-vi.mock("../agent-session-helpers.js", () => ({
+vi.mock("../agents/agent-session-helpers.js", () => ({
   createResolvedAgentSession: vi.fn(),
   extractRuntimeHint: vi.fn().mockReturnValue(undefined),
   resolveValidatorSessionModel: vi.fn().mockReturnValue({
@@ -18,8 +18,8 @@ vi.mock("../agent-session-helpers.js", () => ({
   }),
 }));
 
-import { reviewStep } from "../reviewer.js";
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
+import { reviewStep } from "../execution/reviewer.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
 
 const mockedCreateResolvedAgentSession = vi.mocked(createResolvedAgentSession);
 

@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { createFnAgent } from "../../pi.js";
-import * as worktreePool from "../../worktree-pool.js";
-import * as worktreeAcquisition from "../../worktree-acquisition.js";
+import * as worktreePool from "../../worktree/worktree-pool.js";
+import * as worktreeAcquisition from "../../worktree/worktree-acquisition.js";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 // FNXC:Reliability-ErrorClassification 2026-07-15-19:15 (FN-8004): the pure predicates moved to
 // the import-free leaf `transient-error-patterns.ts`; this module re-exports them. Importing via
 // BOTH paths here pins the re-export contract so existing callers keep working.
-import { isTransientError as isTransientErrorViaLeaf } from "../transient-error-patterns.js";
+import { isTransientError as isTransientErrorViaLeaf } from "../errors/transient-error-patterns.js";
 import {
   isTransientError,
   isTransientAuthCredentialError,
@@ -19,8 +19,8 @@ import {
   isNonContinuableSessionError,
   isNonPlanDefectPlanReviewFailure,
   TRANSIENT_ERROR_PATTERNS,
-} from "../transient-error-detector.js";
-import { isUsageLimitError } from "../usage-limit-detector.js";
+} from "../errors/transient-error-detector.js";
+import { isUsageLimitError } from "../errors/usage-limit-detector.js";
 
 describe("Transient Error Detector", () => {
   describe("isTransientError", () => {

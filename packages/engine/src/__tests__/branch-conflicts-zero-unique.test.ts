@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { inspectBranchConflict } from "../branch-conflicts.js";
+import { inspectBranchConflict } from "../execution/branch-conflicts.js";
 
 const execAsync = promisify(exec);
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   refreshFusionModelRegistry,
-} from "../model-registry-refresh.js";
+} from "../auth/model-registry-refresh.js";
 
 describe("refreshFusionModelRegistry", () => {
   afterEach(() => {

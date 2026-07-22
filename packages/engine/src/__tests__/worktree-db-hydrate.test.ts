@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
+import { hydrateWorktreeDb } from "../worktree/worktree-db-hydrate.js";
 
 describe("hydrateWorktreeDb", () => {
   it("uses shared PostgreSQL storage without reading a worktree-local database", async () => {

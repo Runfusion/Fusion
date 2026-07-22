@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunAuditEvent, RunAuditEventFilter, RunAuditEventInput, TaskStore } from "@fusion/core";
 import { MOCK_PROVIDER_ID } from "@fusion/core";
-import { createResolvedAgentSession } from "../../agent-session-helpers.js";
+import { createResolvedAgentSession } from "../../agents/agent-session-helpers.js";
 
 // Existing FN-5544 helper-level no-op coverage lives in agent-session-helpers.test.ts
 // FN-5556 extends at store integration seam by asserting no rows + silent no-auditor path.

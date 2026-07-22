@@ -1,4 +1,4 @@
-import { extractSection } from "../step-session-executor.js";
+import { extractSection } from "../execution/step-session-executor.js";
 
 export interface ExternalIntegrationEvidenceFinding {
   integrationHint: string;

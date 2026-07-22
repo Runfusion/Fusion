@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { AgentRuntimeOptions } from "../agent-runtime.js";
-import type { SystemPromptLayers } from "../prompt-layers.js";
+import type { AgentRuntimeOptions } from "../agents/agent-runtime.js";
+import type { SystemPromptLayers } from "../execution/prompt-layers.js";
 
 describe("AgentRuntimeOptions.systemPromptLayers", () => {
   it("accepts systemPromptLayers alongside systemPrompt", () => {

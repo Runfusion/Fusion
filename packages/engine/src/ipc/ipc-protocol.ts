@@ -10,7 +10,7 @@
  * 3. Worker can also send events unsolicited (task events, health changes)
  */
 
-import type { RuntimeStatus, ProjectRuntimeConfig } from "../project-runtime.js";
+import type { RuntimeStatus, ProjectRuntimeConfig } from "../project/project-runtime.js";
 import type { GithubIssueAction, Task } from "@fusion/core";
 
 // ── Base Message Types ────────────────────────────────────────────────────

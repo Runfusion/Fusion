@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CentralCore, RegisteredProject } from "@fusion/core";
-import { HybridExecutor } from "../hybrid-executor.js";
-import { shouldUseHybridExecutor } from "../hybrid-executor-gate.js";
+import { HybridExecutor } from "../concurrency/hybrid-executor.js";
+import { shouldUseHybridExecutor } from "../concurrency/hybrid-executor-gate.js";
 
 const projectManagerState = vi.hoisted(() => ({
   projectIds: [] as string[],
   stopAll: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../project-manager.js", () => ({
+vi.mock("../project/project-manager.js", () => ({
   ProjectManager: vi.fn().mockImplementation(function () {
     return {
     on: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock("../project-manager.js", () => ({
   }),
 }));
 
-vi.mock("../node-health-monitor.js", () => ({
+vi.mock("../project/node-health-monitor.js", () => ({
   NodeHealthMonitor: vi.fn().mockImplementation(function () {
     return {
       start: vi.fn().mockResolvedValue(undefined),

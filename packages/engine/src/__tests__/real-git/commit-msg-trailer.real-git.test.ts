@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { execSync } from "node:child_process";
-import { installTaskWorktreeIdentityGuard } from "../../worktree-hooks.js";
+import { installTaskWorktreeIdentityGuard } from "../../worktree/worktree-hooks.js";
 
 function git(dir: string, cmd: string): string {
   return execSync(cmd, { cwd: dir, stdio: "pipe" }).toString().trim();

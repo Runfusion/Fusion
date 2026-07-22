@@ -1,7 +1,7 @@
 // Real-git wallclock under parallel CI load; do not lower per-test timeouts
 // without re-measuring under pnpm test:full. (FN-4839)
 import { afterEach, describe, expect, it } from "vitest";
-import { checkDiffVolume } from "../../merger-diff-volume-gate.js";
+import { checkDiffVolume } from "../../merge/merger-diff-volume-gate.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { makeReliabilityFixture, hasGit, hasPg, git } from "./_helpers.js";
 

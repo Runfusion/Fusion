@@ -9,7 +9,7 @@ import {
   type TaskDetail,
   type WorkflowIr,
 } from "@fusion/core";
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 
 const settingsOn = { experimentalFeatures: { workflowGraphExecutor: true } };
 

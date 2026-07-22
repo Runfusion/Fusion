@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
-import { ActiveSessionWorktreeRemovalError } from "../worktree-backend.js";
-import * as worktreePoolModule from "../worktree-pool.js";
-import * as branchConflictModule from "../branch-conflicts.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { ActiveSessionWorktreeRemovalError } from "../worktree/worktree-backend.js";
+import * as worktreePoolModule from "../worktree/worktree-pool.js";
+import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { createMockStore, mockedGenerateWorktreeName, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const CONFLICT_PATH = "/tmp/test/.worktrees/stale-self-owned";

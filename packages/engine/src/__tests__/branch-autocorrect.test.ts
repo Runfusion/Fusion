@@ -42,7 +42,7 @@ vi.mock("node:child_process", async () => {
   return { exec: execFn, execFile: execFileFn, __execMock: execMock };
 });
 
-import { attemptBranchAutocorrect } from "../branch-autocorrect.js";
+import { attemptBranchAutocorrect } from "../execution/branch-autocorrect.js";
 
 const mockedExec = vi.mocked(execMock);
 

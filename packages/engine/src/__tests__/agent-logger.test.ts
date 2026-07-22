@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AgentLogger, summarizeToolArgs } from "../agent-logger.js";
+import { AgentLogger, summarizeToolArgs } from "../agents/agent-logger.js";
 import type { TaskStore } from "@fusion/core";
 
 const loggerWarnSpy = vi.hoisted(() => vi.fn());

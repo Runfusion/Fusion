@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CentralCore, NodeConfig, PeerInfo, SettingsSyncPayload } from "@fusion/core";
-import { PeerExchangeService } from "../peer-exchange-service.js";
+import { PeerExchangeService } from "../project/peer-exchange-service.js";
 
 function makeNode(overrides: Partial<NodeConfig> = {}): NodeConfig {
   return {

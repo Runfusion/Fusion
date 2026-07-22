@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ResolvedMcpServerDefinition } from "@fusion/core";
-import { connectMcpSessionTools, uniqueMcpToolName, type McpSessionClient } from "../mcp-session-tools.js";
+import { connectMcpSessionTools, uniqueMcpToolName, type McpSessionClient } from "../mcp/mcp-session-tools.js";
 
 function stdioServer(name: string, enabled = true): ResolvedMcpServerDefinition {
   return { name, transport: "stdio", command: "fake", enabled };

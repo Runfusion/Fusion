@@ -36,61 +36,61 @@ import {
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
 } from "@fusion/core";
-import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
+import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
-import type { WorktreePool } from "./worktree-pool.js";
-import type { ProjectRuntimeConfig } from "./project-runtime.js";
-import { PrMonitor } from "./pr-monitor.js";
-import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./planner-overseer.js";
-import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./planner-recovery-controller.js";
-import { evaluateOverseerHumanControl } from "./overseer-human-control-policy.js";
+import type { WorktreePool } from "./worktree/worktree-pool.js";
+import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
+import { PrMonitor } from "./merge/pr-monitor.js";
+import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./overseer/planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./overseer/planner-recovery-controller.js";
+import { evaluateOverseerHumanControl } from "./overseer/overseer-human-control-policy.js";
 import {
   OverseerAdvisorService,
   createParsingOverseerAgent,
-} from "./overseer-advisor-service.js";
-import { extractAdvisorAssistantText } from "./overseer-advise-tool.js";
-import { createResolvedAgentSession } from "./agent-session-helpers.js";
-import type { PrNodeGithubOps } from "./pr-nodes.js";
-import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
-import { PrCommentHandler } from "./pr-comment-handler.js";
-import { NtfyNotifier } from "./notifier.js";
+} from "./overseer/overseer-advisor-service.js";
+import { extractAdvisorAssistantText } from "./overseer/overseer-advise-tool.js";
+import { createResolvedAgentSession } from "./agents/agent-session-helpers.js";
+import type { PrNodeGithubOps } from "./merge/pr-nodes.js";
+import { PrReconciler, type PrReconcileGithubOps } from "./merge/pr-reconcile.js";
+import { PrCommentHandler } from "./merge/pr-comment-handler.js";
+import { NtfyNotifier } from "./util/notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthRefreshScheduler, OAuthValidityLogger } from "./notification/index.js";
 import type { NotificationChatStore } from "./notification/notification-service.js";
-import { GridlockDetector } from "./gridlock-detector.js";
-import { createFusionAuthStorage, getFusionOAuthAlertStatePath } from "./auth-storage.js";
-import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
-import type { RoutineRunner } from "./routine-runner.js";
+import { GridlockDetector } from "./healing/gridlock-detector.js";
+import { createFusionAuthStorage, getFusionOAuthAlertStatePath } from "./auth/auth-storage.js";
+import { CronRunner, createAiPromptExecutor } from "./scheduling/cron-runner.js";
+import type { RoutineRunner } from "./scheduling/routine-runner.js";
 import { sweepStaleAutostashes, VerificationError } from "./merger.js";
-import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merger-ai.js";
-import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
-import { computeTopLevelConcurrencyClaimedFromStore, projectAdmissionCoordinator } from "./concurrency.js";
-import { canStartNextMergeBody } from "./merge-reclaim-policy.js";
+import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merge/merger-ai.js";
+import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
+import { computeTopLevelConcurrencyClaimedFromStore, projectAdmissionCoordinator } from "./concurrency/concurrency.js";
+import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import {
   registerProjectVerificationLimit,
   unregisterProjectVerificationLimit,
-} from "./verification-concurrency.js";
+} from "./concurrency/verification-concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
-import { ResearchOrchestrator } from "./research-orchestrator.js";
-import { ResearchRunDispatcher } from "./research-dispatcher.js";
-import { ResearchStepRunner } from "./research-step-runner.js";
+import { ResearchOrchestrator } from "./research/research-orchestrator.js";
+import { ResearchRunDispatcher } from "./research/research-dispatcher.js";
+import { ResearchStepRunner } from "./research/research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
-import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import {
   computeVerificationFailureSignature,
   createAutomatedFollowup,
   extractFailingTestFiles,
-} from "./verification-followup-dedup.js";
-import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
-import { isTransientError } from "./transient-error-detector.js";
-import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
+} from "./execution/verification-followup-dedup.js";
+import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
+import { isTransientError } from "./errors/transient-error-detector.js";
+import { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
 import {
   deliverPostgresMigrationCompleteNoticeIfNeeded,
   deliverPostgresMigrationNoticeIfNeeded,
-} from "./postgres-migration-notice.js";
+} from "./project/postgres-migration-notice.js";
 import type {
   ExternalTunnelInfo,
   TunnelProvider,
@@ -1719,7 +1719,7 @@ export class ProjectEngine {
    * `(stage, signal)` pair emits. Best-effort: any store/façade failure is
    * swallowed so it never breaks `PlannerOverseerMonitor#observeTask`/the poll.
    */
-  private async emitOverseerObservationDeduped(store: TaskStore, observation: import("./planner-overseer.js").OverseerStageObservation): Promise<void> {
+  private async emitOverseerObservationDeduped(store: TaskStore, observation: import("./overseer/planner-overseer.js").OverseerStageObservation): Promise<void> {
     try {
       const dedupKey = `${observation.stage}:${observation.signal}`;
       const last = this.plannerObservationEmitDedup.get(observation.taskId);

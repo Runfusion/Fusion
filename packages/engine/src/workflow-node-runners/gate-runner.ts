@@ -1,8 +1,8 @@
 import { WorkflowIrError } from "@fusion/core";
 
-import type { WorkflowCustomNodeRunner } from "../workflow-node-handlers.js";
-import type { WorkflowNodeHandler } from "../workflow-graph-executor.js";
-import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflow-node-runner.js";
+import type { WorkflowCustomNodeRunner } from "../workflows/workflow-node-handlers.js";
+import type { WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflows/workflow-node-runner.js";
 
 /*
 FNXC:WorkflowNodeRunners 2026-07-01-00:00:

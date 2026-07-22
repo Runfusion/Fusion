@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentStore, CentralClaimStore, RunAuditEventInput, Task, TaskStore } from "@fusion/core";
-import { MeshLeaseManager } from "../mesh-lease-manager.js";
+import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {

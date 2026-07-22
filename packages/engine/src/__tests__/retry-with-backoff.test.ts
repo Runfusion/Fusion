@@ -6,7 +6,7 @@ import {
   cancellableSleep,
   type JitterStrategy,
   type RetryOptions,
-} from "../retry-with-backoff.js";
+} from "../errors/retry-with-backoff.js";
 import {
   EngineError,
   TransientError,
@@ -19,7 +19,7 @@ import {
   RateLimitError,
   classifyThrownError,
   isRetryableError,
-} from "../engine-errors.js";
+} from "../errors/engine-errors.js";
 
 // ── engine-errors.ts tests ──────────────────────────────────────────────
 

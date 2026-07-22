@@ -12,7 +12,7 @@ import {
   classifyBootstrapMisbinding,
   classifyForeignCommits,
   type BranchCrossContaminationCommit,
-} from "../branch-conflicts.js";
+} from "../execution/branch-conflicts.js";
 
 const execAsync = promisify(exec);
 

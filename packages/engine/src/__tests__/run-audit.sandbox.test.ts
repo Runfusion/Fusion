@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunAuditEventInput, TaskStore } from "@fusion/core";
-import { createRunAuditor } from "../run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 
 class AuditStoreStub {
   events: RunAuditEventInput[] = [];

@@ -5,7 +5,7 @@ import type {
   NotificationResult,
 } from "@fusion/core";
 import { schedulerLog } from "../logger.js";
-import { buildNtfyClickUrl } from "../notifier.js";
+import { buildNtfyClickUrl } from "../util/notifier.js";
 
 export interface WebhookProviderConfig {
   /** Webhook endpoint URL */

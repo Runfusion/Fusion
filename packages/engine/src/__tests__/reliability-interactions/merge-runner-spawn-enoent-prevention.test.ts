@@ -17,7 +17,7 @@ vi.mock("../../pi.js", () => ({
 }));
 
 import type { Settings } from "@fusion/core";
-import { activeSessionRegistry, executingTaskLock } from "../../active-session-registry.js";
+import { activeSessionRegistry, executingTaskLock } from "../../agents/active-session-registry.js";
 import { aiMergeTask } from "../../merger.js";
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:10:

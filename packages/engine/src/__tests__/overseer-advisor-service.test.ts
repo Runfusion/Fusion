@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { OverseerAdvisorService, createParsingOverseerAgent } from "../overseer-advisor-service.js";
+import { OverseerAdvisorService, createParsingOverseerAgent } from "../overseer/overseer-advisor-service.js";
 
 function baseTask(overrides: Partial<Task> = {}): Task {
   return {

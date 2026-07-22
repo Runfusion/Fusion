@@ -4,7 +4,7 @@ import {
   PlannerOverseerMonitor,
   resolveWatchedStage,
   type OverseerTaskRef,
-} from "../planner-overseer.js";
+} from "../overseer/planner-overseer.js";
 
 function taskFixture(overrides: Partial<OverseerTaskRef> = {}): OverseerTaskRef {
   return {

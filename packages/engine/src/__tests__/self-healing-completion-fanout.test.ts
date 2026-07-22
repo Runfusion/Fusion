@@ -16,8 +16,8 @@ vi.mock("node:fs", async (importOriginal) => {
 const { uniqueCommitsMock } = vi.hoisted(() => ({
   uniqueCommitsMock: vi.fn(async () => ({ commits: [], mainRef: "main", degraded: false })),
 }));
-vi.mock("../branch-conflicts.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../branch-conflicts.js")>();
+vi.mock("../execution/branch-conflicts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../execution/branch-conflicts.js")>();
   return { ...actual, listUniqueBranchCommits: uniqueCommitsMock };
 });
 

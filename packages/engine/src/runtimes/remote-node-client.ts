@@ -1,5 +1,5 @@
 import type { Task, TaskCreateInput } from "@fusion/core";
-import type { RuntimeMetrics } from "../project-runtime.js";
+import type { RuntimeMetrics } from "../project/project-runtime.js";
 import { remoteNodeLog } from "../logger.js";
 
 export type RemoteNodeEventType =

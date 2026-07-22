@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import { DEFAULT_PROJECT_SETTINGS, RetryStormError, type TaskDetail } from "@fusion/core";
-import { recordRetry } from "../retry-burned-logger.js";
+import { recordRetry } from "../errors/retry-burned-logger.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {

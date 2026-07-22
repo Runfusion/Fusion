@@ -19,8 +19,8 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 
-vi.mock("../agent-session-helpers.js", async () => {
-  const actual = await vi.importActual<typeof import("../agent-session-helpers.js")>("../agent-session-helpers.js");
+vi.mock("../agents/agent-session-helpers.js", async () => {
+  const actual = await vi.importActual<typeof import("../agents/agent-session-helpers.js")>("../agent-session-helpers.js");
   const pi = await import("../pi.js");
   return {
     ...actual,

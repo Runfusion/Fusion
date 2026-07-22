@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareWorkspaceRevertPrBranches } from "../task-revert.js";
+import { prepareWorkspaceRevertPrBranches } from "../execution/task-revert.js";
 import type { Task } from "@fusion/core";
 
 const realExecAsync = promisify(exec);

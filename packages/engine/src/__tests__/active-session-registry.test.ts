@@ -3,7 +3,7 @@ import {
   activeSessionRegistry,
   reconcileSelfOwnedActiveSessionForRemoval,
   ActiveSessionPathHeldByForeignTaskError,
-} from "../active-session-registry.js";
+} from "../agents/active-session-registry.js";
 
 describe("activeSessionRegistry", () => {
   beforeEach(() => {

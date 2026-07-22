@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeWorktreeBackend, RemovalReason, removeWorktree } from "../../worktree-backend.js";
+import { NativeWorktreeBackend, RemovalReason, removeWorktree } from "../../worktree/worktree-backend.js";
 import { git, hasGit } from "./_helpers.js";
 
 async function pathExists(path: string): Promise<boolean> {

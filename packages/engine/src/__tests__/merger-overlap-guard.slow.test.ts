@@ -21,8 +21,8 @@ vi.mock("../pi.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../agent-session-helpers.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../agent-session-helpers.js")>();
+vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agents/agent-session-helpers.js")>();
   return {
     ...actual,
     createResolvedAgentSession: vi.fn(async () => ({
@@ -36,8 +36,8 @@ vi.mock("../agent-session-helpers.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../merger-squash-audit.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../merger-squash-audit.js")>();
+vi.mock("../merge/merger-squash-audit.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../merge/merger-squash-audit.js")>();
   return {
     ...actual,
     auditSquashMerge: vi.fn(async () => ({
@@ -65,7 +65,7 @@ import {
   getBranchTouchedFiles,
   getRecentMainTouchedFiles,
   restoreBranchWinsFiles,
-} from "../merger-overlap-guard.js";
+} from "../merge/merger-overlap-guard.js";
 
 function git(cwd: string, command: string): string {
   return execSync(command, { cwd, stdio: "pipe" }).toString().trim();

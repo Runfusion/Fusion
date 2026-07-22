@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeMetrics } from "../../project-runtime.js";
+import type { RuntimeMetrics } from "../../project/project-runtime.js";
 import { RemoteNodeClient } from "../remote-node-client.js";
 
 const BASE_URL = "https://node.example.com";

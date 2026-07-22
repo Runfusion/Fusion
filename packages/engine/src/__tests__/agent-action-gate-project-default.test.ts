@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_PERMISSION_POLICY_ACTION_CATEGORIES, resolveEffectiveAgentPermissionPolicy, type AgentPermissionPolicyRules } from "@fusion/core";
-import { evaluateAgentActionGate } from "../agent-action-gate.js";
+import { evaluateAgentActionGate } from "../agents/agent-action-gate.js";
 
 describe("agent action gate project-default resolution", () => {
   it("applies project default rules when agent policy is undefined", () => {

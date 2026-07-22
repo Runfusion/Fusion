@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 import { postMergeOptionalGroupNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowPostMerge 2026-06-26-15:30:

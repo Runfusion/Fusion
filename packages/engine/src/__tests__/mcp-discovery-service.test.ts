@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { discoverMcpServers } from "../mcp-discovery-service.js";
+import { discoverMcpServers } from "../mcp/mcp-discovery-service.js";
 
 describe("discoverMcpServers", () => {
   it("reads only requested-scope sources through the injectable reader", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { enforceTaskTokenBudget, getTokenBudgetUsage, resolveTaskTokenBudget } from "../token-budget-enforcer.js";
+import { enforceTaskTokenBudget, getTokenBudgetUsage, resolveTaskTokenBudget } from "../concurrency/token-budget-enforcer.js";
 
 const task = (patch: Record<string, unknown> = {}) => ({
   id: "FN-1", description: "x", column: "todo", dependencies: [], steps: [], currentStep: 0, createdAt: "", updatedAt: "", ...patch,

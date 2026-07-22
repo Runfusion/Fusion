@@ -1,10 +1,10 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PluginRunner } from "../plugin-runner.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
 import type { PluginRuntimeRegistration } from "@fusion/core";
 import * as fusionCore from "@fusion/core";
-import { resolveRuntime } from "../runtime-resolution.js";
-import { createResolvedAgentSession, extractRuntimeHint } from "../agent-session-helpers.js";
+import { resolveRuntime } from "../execution/runtime-resolution.js";
+import { createResolvedAgentSession, extractRuntimeHint } from "../agents/agent-session-helpers.js";
 
 /*
 FNXC:GrokCli 2026-07-09-00:00:

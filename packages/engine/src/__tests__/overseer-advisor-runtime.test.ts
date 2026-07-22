@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { OverseerAdvisorRuntime, type OverseerAdvisorAgent } from "../overseer-advisor-runtime.js";
+import { OverseerAdvisorRuntime, type OverseerAdvisorAgent } from "../overseer/overseer-advisor-runtime.js";
 
 function createFakeAgent(opts?: {
   failTimes?: number;

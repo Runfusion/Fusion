@@ -3,7 +3,7 @@ import {
   evaluateOverseerHumanControl,
   type OverseerHumanControlSettings,
   type OverseerHumanControlTask,
-} from "../overseer-human-control-policy.js";
+} from "../overseer/overseer-human-control-policy.js";
 
 function task(overrides: Partial<OverseerHumanControlTask> = {}): OverseerHumanControlTask {
   return {

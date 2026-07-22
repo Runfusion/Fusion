@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { AgentStore } from "@fusion/core";
-import type { PluginRunner } from "../plugin-runner.js";
-import { buildSessionSkillContext } from "../session-skill-context.js";
-import { createSkillsOverrideFromSelection, resolveSessionSkills } from "../skill-resolver.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
+import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
+import { createSkillsOverrideFromSelection, resolveSessionSkills } from "../cli-runtime/skill-resolver.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
 describe("plugin skill integration", () => {

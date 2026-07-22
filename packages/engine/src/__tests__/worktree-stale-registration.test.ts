@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree-stale-registration.js";
+import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree/worktree-stale-registration.js";
 
 const { execMock } = vi.hoisted(() => {
   const mock = vi.fn();

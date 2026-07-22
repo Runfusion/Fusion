@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { processDueWorkflowWorkItem } from "../workflow-work-processor.js";
+import { processDueWorkflowWorkItem } from "../workflows/workflow-work-processor.js";
 
 const item = { id: "WW-renew", taskId: "FN-renew", runId: "run-renew", nodeId: "execute", kind: "execute" } as any;
 

@@ -9,7 +9,7 @@ import {
   computeApprovalDedupeKey,
   resolveGateOutcome,
   type AgentActionGateDecision,
-} from "../agent-action-gate.js";
+} from "../agents/agent-action-gate.js";
 
 export class SandboxProvisioningPendingError extends Error {
   readonly approvalRequestId: string;

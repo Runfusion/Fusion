@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { getFusionOAuthAlertStatePath } from "../auth-storage.js";
+import { getFusionOAuthAlertStatePath } from "../auth/auth-storage.js";
 
 export interface OAuthAlertStateEntry {
   expires: number;

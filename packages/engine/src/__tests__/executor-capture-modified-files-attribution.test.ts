@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { BranchAttributionError } from "../branch-attribution.js";
+import { BranchAttributionError } from "../execution/branch-attribution.js";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const { filterFilesToOwnTaskCommitsMock } = vi.hoisted(() => ({
   filterFilesToOwnTaskCommitsMock: vi.fn(),
 }));
 
-vi.mock("../branch-attribution.js", async () => {
-  const actual = await vi.importActual<typeof import("../branch-attribution.js")>("../branch-attribution.js");
+vi.mock("../execution/branch-attribution.js", async () => {
+  const actual = await vi.importActual<typeof import("../execution/branch-attribution.js")>("../branch-attribution.js");
   return {
     ...actual,
     filterFilesToOwnTaskCommits: filterFilesToOwnTaskCommitsMock,

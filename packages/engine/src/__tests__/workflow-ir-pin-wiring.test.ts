@@ -32,14 +32,14 @@ import { computeWorkflowIrPin, hashWorkflowIr } from "@fusion/core";
 
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { WORKFLOW_DRIFT_PARK_CONTEXT_KEY } from "../workflow-graph-executor.js";
+import { WORKFLOW_DRIFT_PARK_CONTEXT_KEY } from "../workflows/workflow-graph-executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 import {
   createStoreIrPinPersistence,
   createWorkflowColumnBoundary,
   type WorkflowColumnBoundaryAuditEvent,
   type WorkflowIrPinStoreSurface,
-} from "../workflow-column-boundary.js";
+} from "../workflows/workflow-column-boundary.js";
 
 /** Minimal v2 IR: in-progress → in-review → done, benchmark-slice shaped. */
 function baseIr(): WorkflowIr {

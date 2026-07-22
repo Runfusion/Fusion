@@ -2,13 +2,13 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import {
   classifyForeignOnlyContamination,
   reanchorBranchToBase,
-} from "../branch-conflicts.js";
-import type { RunAuditor } from "../run-audit.js";
-import { isUsableTaskWorktree } from "../worktree-pool.js";
+} from "../execution/branch-conflicts.js";
+import type { RunAuditor } from "../util/run-audit.js";
+import { isUsableTaskWorktree } from "../worktree/worktree-pool.js";
 
 const execAsync = promisify(exec);
 const GIT_TIMEOUT_MS = 30_000;

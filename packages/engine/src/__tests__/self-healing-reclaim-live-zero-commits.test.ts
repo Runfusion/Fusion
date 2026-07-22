@@ -24,7 +24,7 @@ Reclaim path uses removeWorktree + relocate + classify; mock the pool so unit te
 FNXC:EngineTests 2026-07-21-18:00:
 RemovalReason must be re-exported — product passes RemovalReason.SelfHealingBranchConflict into removeWorktree; a missing mock export aborts the destructive path before removeWorktree runs.
 */
-vi.mock("../worktree-pool.js", () => ({
+vi.mock("../worktree/worktree-pool.js", () => ({
   isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: false, classification: "missing", reason: "test" }),
   removeWorktree: vi.fn().mockResolvedValue(undefined),
@@ -55,8 +55,8 @@ vi.mock("../worktree-pool.js", () => ({
 }));
 
 import { SelfHealingManager } from "../self-healing.js";
-import * as branchConflicts from "../branch-conflicts.js";
-import { isUsableTaskWorktree, removeWorktree, relocateReclaimableWorktreeIntoRoot } from "../worktree-pool.js";
+import * as branchConflicts from "../execution/branch-conflicts.js";
+import { isUsableTaskWorktree, removeWorktree, relocateReclaimableWorktreeIntoRoot } from "../worktree/worktree-pool.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;

@@ -3,7 +3,7 @@ import {
   type SystemPromptLayers,
   buildPromptLayers,
   collapsePromptLayers,
-} from "../prompt-layers.js";
+} from "../execution/prompt-layers.js";
 
 describe("buildPromptLayers", () => {
   it("separates base prompt into stable layer", () => {

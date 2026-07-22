@@ -9,8 +9,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
-import { WorkflowGraphTaskRunner } from "../workflow-graph-task-runner.js";
-import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflow-node-handlers.js";
+import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
+import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import {
   createMockStore,
   mockedCreateFnAgent,

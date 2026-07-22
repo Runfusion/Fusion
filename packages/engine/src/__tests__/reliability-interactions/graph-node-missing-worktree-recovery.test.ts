@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
-import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflow-graph-executor.js";
+import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflows/workflow-graph-executor.js";
 import { TaskExecutor } from "../../executor.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import {
   createMockStore,
   mockedCreateFnAgent,

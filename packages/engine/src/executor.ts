@@ -15,23 +15,23 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
-import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
-import { mergeEffectiveSettings } from "./effective-settings.js";
+import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
+import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
+import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./execution/replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
-import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
-import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
-import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
-import { createCodeNodeRunner } from "./code-node-runner.js";
-import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./review-checkout.js";
-import { getActiveNotificationService } from "./notifier.js";
-import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflow-node-handlers.js";
-import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflow-graph-branches.js";
+import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
+import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflows/workflow-column-boundary.js";
+import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
+import { createCodeNodeRunner } from "./execution/code-node-runner.js";
+import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
+import { getActiveNotificationService } from "./util/notifier.js";
+import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
+import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflows/workflow-graph-branches.js";
 import type {
   WorkflowStepInstancePersistence,
   WorkflowStepInstanceState,
-} from "./workflow-graph-foreach.js";
+} from "./workflows/workflow-graph-foreach.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
@@ -39,26 +39,26 @@ import {
   SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type WorkflowLegacySeams,
-} from "./workflow-node-handlers.js";
+} from "./workflows/workflow-node-handlers.js";
 import {
   MERGE_REGION_KINDS,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
-} from "./workflow-graph-executor.js";
-import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflow-graph-executor.js";
-import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
+} from "./workflows/workflow-graph-executor.js";
+import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
+import { workflowNodeRequiresWorktree } from "./workflows/workflow-node-execution-needs.js";
 import type {
   AuditPrimitiveInput,
   PreparedWorktree,
   WorkflowPrimitiveContext,
   WorkflowRuntimePrimitives,
-} from "./runtime-primitives.js";
-import { createWorkflowRuntimePrimitiveProvider } from "./workflow-runtime-primitive-provider.js";
-import { WorkflowCustomNodeExecutionService } from "./workflow-custom-node-execution.js";
-import { WorkflowReviewService } from "./workflow-review-service.js";
-import { WorkflowPlanningService } from "./workflow-planning-service.js";
+} from "./execution/runtime-primitives.js";
+import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
+import { WorkflowCustomNodeExecutionService } from "./workflows/workflow-custom-node-execution.js";
+import { WorkflowReviewService } from "./workflows/workflow-review-service.js";
+import { WorkflowPlanningService } from "./workflows/workflow-planning-service.js";
 import {
   buildPlanVerifiedMessage,
   buildReviewUnavailableMessage,
@@ -67,7 +67,7 @@ import {
   buildStepFailureMessage,
   emitProactiveStatus,
   sanitizeFailureReason,
-} from "./proactive-status.js";
+} from "./project/proactive-status.js";
 import {
   ApprovalRequestStore,
   buildExecutionMemoryInstructions,
@@ -89,15 +89,15 @@ import {
   summarizeVerificationOutput,
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
-} from "./verification-utils.js";
-import { canonicalFusionBranchName, canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
-import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
+} from "./execution/verification-utils.js";
+import { canonicalFusionBranchName, canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
+import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
-import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
+import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
-import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
+import { enforceTaskTokenBudgetForPersist } from "./concurrency/token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -106,11 +106,11 @@ import {
   resolveExecutorFallbackThinkingLevel,
   resolveValidatorThinkingLevel,
   resolveValidatorFallbackThinkingLevel,
-} from "./agent-session-helpers.js";
-import { buildSessionSkillContext } from "./session-skill-context.js";
-import { resolveMcpServersForStore } from "./mcp-resolution.js";
-import { proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
-import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
+} from "./agents/agent-session-helpers.js";
+import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
+import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
+import { proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./execution/reviewer.js";
+import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agents/agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -119,23 +119,23 @@ import {
   dropPreHeldExecutorSlot,
   takePreHeldExecutorSlot,
   type AgentSemaphore,
-} from "./concurrency.js";
+} from "./concurrency/concurrency.js";
 // FNXC:Workspace 2026-06-21-15:00: F5/F8 — wire in the previously dead workspace-path helpers.
 // `normalizeRepoRelPath` is the single shared scope-path normalizer (F8); `deriveRepoScopeSubset`
 // maps the task's repo-prefixed declared File Scope to a repo-LOCAL subset so the per-repo scope-leak
 // filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
 // executor→workspace-paths edge (workspace-paths imports nothing).
-import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.js";
-import { preservedWorktreeTargetPathForTask } from "./worktree-pinning.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
-import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
-import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
+import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./worktree/workspace-paths.js";
+import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree/worktree-pool.js";
+import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
+import { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
 import {
   activeSessionRegistry,
   executingTaskLock,
   reconcileSelfOwnedActiveSessionForRemoval,
-} from "./active-session-registry.js";
+} from "./agents/active-session-registry.js";
 // CLI Agent Executor (U7): task ↔ CLI session orchestration seam.
 import {
   CliTaskSession,
@@ -154,8 +154,8 @@ import {
   classifyStaleLock,
   parseIndexLockPath,
   tryRemoveStaleLock,
-} from "./worktree-stale-lock.js";
-import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree-stale-registration.js";
+} from "./worktree/worktree-stale-lock.js";
+import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree/worktree-stale-registration.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -169,67 +169,67 @@ import {
   reanchorBranchToBase,
   inspectBranchConflict,
   reportBranchAttribution,
-} from "./branch-conflicts.js";
+} from "./execution/branch-conflicts.js";
 import {
   classifyOrphanOurAdvance,
   rehomeOrphanOntoIntegration,
-} from "./merger-orphan-rehome.js";
-import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./branch-attribution.js";
-import { resolveIntegrationBranch } from "./integration-branch.js";
-import { AgentLogger } from "./agent-logger.js";
+} from "./merge/merger-orphan-rehome.js";
+import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./execution/branch-attribution.js";
+import { resolveIntegrationBranch } from "./merge/integration-branch.js";
+import { AgentLogger } from "./agents/agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
-import { TokenCapDetector } from "./token-cap-detector.js";
-import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
-import { isNonContinuableSessionError, isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
-import { withRateLimitRetry } from "./rate-limit-retry.js";
+import { TokenCapDetector } from "./errors/token-cap-detector.js";
+import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
+import { isNonContinuableSessionError, isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
+import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import {
   detectExternalIntegrationEvidenceGaps,
   formatExternalIntegrationEvidenceDiagnostic,
 } from "./spec-validation/external-integration-evidence.js";
-import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 import {
   isRequiredArtifactReadFailedValue,
   parseRequiredArtifactMissingValue,
   requiredArtifactMissingValue,
   requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
-} from "./required-workflow-artifacts.js";
-import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
-import type { PluginRunner } from "./plugin-runner.js";
-import { isContextLimitError } from "./context-limit-detector.js";
-import { StepSessionExecutor } from "./step-session-executor.js";
+} from "./execution/required-workflow-artifacts.js";
+import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
+import type { PluginRunner } from "./plugins/plugin-runner.js";
+import { isContextLimitError } from "./errors/context-limit-detector.js";
+import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import {
   isUsableWorktreeDirectory,
   makeAncestryBlastRadiusGuard,
   resetStepToBaseline,
   runTaskStep,
   type RunTaskStepResult,
-} from "./step-runner.js";
+} from "./execution/step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
-import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree-acquisition.js";
-import { resolveCapturedBaseCommitSha } from "./base-commit-capture.js";
-import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
+import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree/worktree-acquisition.js";
+import { resolveCapturedBaseCommitSha } from "./execution/base-commit-capture.js";
+import { installTaskWorktreeIdentityGuard } from "./worktree/worktree-hooks.js";
 import {
   resolveAgentInstructions,
   buildSystemPromptWithInstructions,
   buildPluginPromptSection,
-} from "./agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
-import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
-import type { AgentReflectionService } from "./agent-reflection.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./run-audit.js";
-import { AutoRecoveryDispatcher } from "./auto-recovery.js";
+} from "./agents/agent-instructions.js";
+import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
+import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
+import type { AgentReflectionService } from "./agents/agent-reflection.js";
+import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
+import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
-} from "./restart-recovery-coordinator.js";
+} from "./healing/restart-recovery-coordinator.js";
 import { BranchWorktreeAutoRecoveryHandler } from "./auto-recovery-handlers/branch-worktree.js";
 import { autoRecoverWorktreeSessionStartFailure, COMPLETED_BLOCKED_PAUSE_REASON, MAX_WORKTREE_SESSION_RETRIES, PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
 import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/contamination.js";
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
-import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
-import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
+import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflows/workflow-step-tool-policy.js";
+import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
 import {
   createAgentCreateTool,
   createAgentDeleteTool,
@@ -269,21 +269,21 @@ import {
   createTraitListTool as sharedCreateTraitListTool,
   createAcquireRepoWorktreeTool,
 } from "./agent-tools.js";
-import { getTaskCompletionBlockerForStore } from "./task-completion.js";
-import { createStreamingDeltaNormalizer } from "./streaming-delta.js";
+import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
+import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
 import {
   getEnabledPluginTools,
   getResearchGuidanceForSurface,
   isResearchToolSurfaceEnabled,
-} from "./tool-availability.js";
-import { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
-import { createRunVerificationTool, runVerificationCommand as runTaskVerificationCommand } from "./run-verification-tool.js";
-import { createFallbackModelObserver } from "./fallback-model-observer.js";
-import { recordRetry } from "./retry-burned-logger.js";
-import type { AgentActionGateContext } from "./agent-action-gate.js";
+} from "./execution/tool-availability.js";
+import { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
+import { createRunVerificationTool, runVerificationCommand as runTaskVerificationCommand } from "./execution/run-verification-tool.js";
+import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
+import { recordRetry } from "./errors/retry-burned-logger.js";
+import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
-export { summarizeToolArgs } from "./agent-logger.js";
+export { summarizeToolArgs } from "./agents/agent-logger.js";
 export {
   createAgentCreateTool,
   createAgentDeleteTool,
@@ -1616,7 +1616,7 @@ export interface TaskExecutorOptions {
    *  callbacks) for the `pr-create`/`pr-respond`/`pr-merge` workflow nodes. The
    *  runtime binds the store and threads the CLI-injected ops. Absent → the pr-*
    *  node kinds fail closed. */
-  prNodes?: import("./pr-nodes.js").PrNodeDeps;
+  prNodes?: import("./merge/pr-nodes.js").PrNodeDeps;
   /**
    * CLI Agent Executor runtime (U7). When present, workflow nodes with
    * `config.executor === "cli-agent"` drive an engine-owned CLI session via the
@@ -6410,8 +6410,8 @@ export class TaskExecutor {
       base: string | undefined,
     ) => Promise<{ worktreePath: string; branchName: string }>;
     resolveIntegrationBase: () => Promise<string | undefined>;
-    integrationGitOps: import("./step-integration.js").IntegrationGitOps;
-    integrationProjection: import("./step-integration.js").IntegrationProjection;
+    integrationGitOps: import("./execution/step-integration.js").IntegrationGitOps;
+    integrationProjection: import("./execution/step-integration.js").IntegrationProjection;
     semaphoreAvailability: () => number;
     resumeReconcile: (
       pinned: number,
@@ -6462,7 +6462,7 @@ export class TaskExecutor {
         return { worktreePath: created.path, branchName: created.branch };
       },
       integrationGitOps: {
-        integrate: async (branchName, stepIndex): Promise<import("./step-integration.js").IntegrationAttemptResult> => {
+        integrate: async (branchName, stepIndex): Promise<import("./execution/step-integration.js").IntegrationAttemptResult> => {
           const cwd = await mainWorktree();
           const target = await mainBranch();
           // The instance branch is checked out in its OWN worktree, so the rebase

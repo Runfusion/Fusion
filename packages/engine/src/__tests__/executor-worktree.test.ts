@@ -2,26 +2,26 @@
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "./executor-test-helpers.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
 import { createFnAgent } from "../pi.js";
-import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
+import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
-import { WorktreePool } from "../worktree-pool.js";
-import * as worktreePoolModule from "../worktree-pool.js";
-import { BranchConflictError } from "../branch-conflicts.js";
-import * as branchConflictModule from "../branch-conflicts.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
-import { ActiveSessionWorktreeRemovalError } from "../worktree-backend.js";
-import { generateWorktreeName, slugify } from "../worktree-names.js";
+import { WorktreePool } from "../worktree/worktree-pool.js";
+import * as worktreePoolModule from "../worktree/worktree-pool.js";
+import { BranchConflictError } from "../execution/branch-conflicts.js";
+import * as branchConflictModule from "../execution/branch-conflicts.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { ActiveSessionWorktreeRemovalError } from "../worktree/worktree-backend.js";
+import { generateWorktreeName, slugify } from "../worktree/worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { StepSessionExecutor } from "../step-session-executor.js";
+import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { executorLog } from "../logger.js";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
-import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
+import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
 import { __resetSandboxBackendForTests, __setSandboxBackendForTests } from "../sandbox/index.js";
 import {
   createMockStore,

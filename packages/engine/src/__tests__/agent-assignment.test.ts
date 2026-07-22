@@ -1,6 +1,6 @@
 import type { Agent, Task } from "@fusion/core";
 import { describe, expect, it } from "vitest";
-import { listEligibleExecutorAgents, selectPermanentAgentForTask } from "../agent-assignment.js";
+import { listEligibleExecutorAgents, selectPermanentAgentForTask } from "../agents/agent-assignment.js";
 
 function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id">): Agent {
   return {

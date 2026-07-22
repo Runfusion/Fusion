@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, TaskStore } from "@fusion/core";
-import { getTaskCompletionBlockerForStore } from "../task-completion.js";
+import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
 
 function createTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   const now = new Date().toISOString();

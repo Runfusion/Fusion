@@ -25,7 +25,7 @@ vi.mock("../pi.js", () => ({
 }));
 
 import { resolveAgentPrompt } from "@fusion/core";
-import { reviewStep, ReviewerProviderError } from "../reviewer.js";
+import { reviewStep, ReviewerProviderError } from "../execution/reviewer.js";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 
 const DEFAULT_REVIEWER_PROMPT = resolveAgentPrompt("reviewer");
@@ -1428,7 +1428,7 @@ describe("reviewStep — user comments in spec review", () => {
 
 describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", () => {
   // FNXC:SessionSkillContext 2026-07-13: buildSessionSkillContext mockResolvedValue objects MUST include additionalSkillPaths: [] — the production code (reviewer.ts:429) reads skillContext.additionalSkillPaths.length unconditionally when skillContext is truthy; omitting the field crashes with TypeError before createFnAgent is reached.
-  vi.mock("../session-skill-context.js", () => ({
+  vi.mock("../cli-runtime/session-skill-context.js", () => ({
     buildSessionSkillContext: vi.fn(),
   }));
 
@@ -1437,7 +1437,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("passes skillSelection to createFnAgent when agentStore and rootDir are provided", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/project",
       requestedSkillNames: ["fusion"],
@@ -1470,7 +1470,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("uses assigned agent skills when available", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/project",
       requestedSkillNames: ["custom-skill", "another-skill"],
@@ -1503,7 +1503,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("does not pass skillSelection when buildSessionSkillContext returns undefined context", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
@@ -1549,7 +1549,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("gracefully handles buildSessionSkillContext throwing", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockRejectedValue(new Error("Agent not found"));
 
     mockedCreateFnAgent.mockResolvedValue(
@@ -1576,7 +1576,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("records resolved skill names in skill context result", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     const resolvedNames = ["skill-a", "skill-b", "skill-c"];
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/project",
@@ -1608,7 +1608,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   });
 
   it("uses sessionPurpose='reviewer' in skill selection context", async () => {
-    const { buildSessionSkillContext } = await import("../session-skill-context.js");
+    const { buildSessionSkillContext } = await import("../cli-runtime/session-skill-context.js");
     vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
       projectRootDir: "/tmp/project",
       requestedSkillNames: ["fusion"],

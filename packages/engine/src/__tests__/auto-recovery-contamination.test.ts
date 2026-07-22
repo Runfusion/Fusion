@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { AutoRecoveryDispatcher } from "../auto-recovery.js";
+import { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
 import { ContaminationAutoRecoveryHandler } from "../auto-recovery-handlers/contamination.js";
 
-vi.mock("../branch-conflicts.js", () => ({
+vi.mock("../execution/branch-conflicts.js", () => ({
   classifyForeignOnlyContamination: vi.fn(async () => ({ kind: "foreign-only-no-own-work" })),
 }));
 vi.mock("../recovery/foreign-only-contamination.js", () => ({

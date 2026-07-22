@@ -12,7 +12,7 @@ benchmark whose Done is terminal, complete-column entry IS the success terminal.
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core";
 import type { MergeResult, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { finalizeProvenAutoMergeTask } from "../auto-merge-finalization.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 
 function benchmarkIr(): WorkflowIr {
   return {

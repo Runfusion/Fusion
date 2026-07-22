@@ -10,7 +10,7 @@ import {
   buildStepSuccessMessage,
   emitProactiveStatus,
   sanitizeFailureReason,
-} from "../proactive-status.js";
+} from "../project/proactive-status.js";
 
 describe("proactive status narration", () => {
   it("sanitizes nullish, stack, path, token and multiline diagnostics", () => {

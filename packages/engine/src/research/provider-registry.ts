@@ -1,6 +1,6 @@
 import type { GlobalSettings, ProjectSettings, WebSearchBackend } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import type { ResearchProvider } from "../research-step-runner.js";
+import type { ResearchProvider } from "./research-step-runner.js";
 import type { ResearchProviderType } from "./types.js";
 import { GitHubProvider } from "./providers/github-provider.js";
 import { LLMSynthesisProvider } from "./providers/llm-synthesis-provider.js";

@@ -17,8 +17,8 @@ const testState = vi.hoisted(() => ({
 // dispatch onto runAiMerge (merger-ai.js). This test injects a verification
 // failure through the merge seam, so it now mocks runAiMerge. merger.js stays
 // real (importOriginal) for commitOrAmendMergeWithFixes used below.
-vi.mock("../../merger-ai.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../merger-ai.js")>();
+vi.mock("../../merge/merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../merge/merger-ai.js")>();
   return {
     ...actual,
     runAiMerge: testState.runAiMerge,

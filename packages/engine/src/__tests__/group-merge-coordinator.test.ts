@@ -13,7 +13,7 @@ import {
   promoteBranchGroup,
   reconcileBranchGroupPr,
   resolveBranchGroupMergeRouting,
-} from "../group-merge-coordinator.js";
+} from "../merge/group-merge-coordinator.js";
 import { ProjectEngine } from "../project-engine.js";
 
 const dirs: string[] = [];

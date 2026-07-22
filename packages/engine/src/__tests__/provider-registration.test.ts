@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import { seedDashboardProviders } from "../provider-registration.js";
-import { registerCustomProviders } from "../custom-provider-registry.js";
+import { seedDashboardProviders } from "../auth/provider-registration.js";
+import { registerCustomProviders } from "../auth/custom-provider-registry.js";
 
 /*
 FNXC:ProviderRegistration 2026-07-07-00:00:

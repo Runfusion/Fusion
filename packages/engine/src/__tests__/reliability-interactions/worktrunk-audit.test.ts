@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunAuditEventInput, TaskStore } from "@fusion/core";
-import { createRunAuditor } from "../../run-audit.js";
-import { handleWorktrunkOperationFailure } from "../../worktrunk-failure-handler.js";
+import { createRunAuditor } from "../../util/run-audit.js";
+import { handleWorktrunkOperationFailure } from "../../worktree/worktrunk-failure-handler.js";
 
 describe("reliability interactions: worktrunk audit correlation", () => {
   it("keeps runId/taskId aligned across install + create lifecycle events", async () => {

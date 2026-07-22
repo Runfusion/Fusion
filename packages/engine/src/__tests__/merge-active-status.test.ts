@@ -20,7 +20,7 @@ import {
   DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
   isMergeActiveStatus,
   isStaleMergeActiveStatus,
-} from "../merge-active-status.js";
+} from "../merge/merge-active-status.js";
 
 const NOW = Date.parse("2026-07-16T00:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();

@@ -11,7 +11,7 @@ import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-uti
 import {
   UNLINKED_MISSIONS_ADVISORY_TITLE,
   UnlinkedMissionsAdvisoryReporter,
-} from "../unlinked-missions-advisory-reporter.js";
+} from "../missions/unlinked-missions-advisory-reporter.js";
 
 pgDescribe("UnlinkedMissionsAdvisoryReporter PostgreSQL", () => {
   it("persists one advisory for only active unlinked missions without duplicating it", async () => {

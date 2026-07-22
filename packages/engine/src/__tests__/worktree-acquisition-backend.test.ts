@@ -3,19 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
-import { acquireTaskWorktree } from "../worktree-acquisition.js";
-import type { WorktreeBackend } from "../worktree-backend.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
+import type { WorktreeBackend } from "../worktree/worktree-backend.js";
 
-vi.mock("../worktree-pool.js", async () => {
+vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return { ...actual, isUsableTaskWorktree: vi.fn().mockResolvedValue(true) };
 });
 
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 1, documentsCopied: 1, artifactsCopied: 0 }),
 }));
 

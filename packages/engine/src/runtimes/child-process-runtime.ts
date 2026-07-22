@@ -13,7 +13,7 @@ import type {
   RuntimeStatus,
   RuntimeMetrics,
   ProjectRuntimeEvents,
-} from "../project-runtime.js";
+} from "../project/project-runtime.js";
 import { IpcHost } from "../ipc/ipc-host.js";
 import {
   START_RUNTIME,

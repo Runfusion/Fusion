@@ -2,19 +2,19 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
-import * as branchConflicts from "../branch-conflicts.js";
+import * as branchConflicts from "../execution/branch-conflicts.js";
 import {
   isUsableTaskWorktree,
   relocateReclaimableWorktreeIntoRoot,
   removeWorktree,
-} from "../worktree-pool.js";
+} from "../worktree/worktree-pool.js";
 
 /*
 FNXC:EngineTests 2026-07-20-23:55:
 Reclaim runs real worktree remove/relocate unless the pool is mocked. Mirror the
 self-healing suite mocks so these unit tests stay hermetic.
 */
-vi.mock("../worktree-pool.js", () => ({
+vi.mock("../worktree/worktree-pool.js", () => ({
   isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: false, classification: "missing", reason: "test" }),
   removeWorktree: vi.fn().mockResolvedValue(undefined),

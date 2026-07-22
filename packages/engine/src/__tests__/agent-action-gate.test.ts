@@ -6,7 +6,7 @@ import {
   getExemptToolNames,
   reloadExemptTools,
   resolveGateOutcome,
-} from "../agent-action-gate.js";
+} from "../agents/agent-action-gate.js";
 import type { AgentPermissionPolicy } from "@fusion/core";
 
 const FN_3548_COORDINATION_TOOLS = [

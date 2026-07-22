@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../auto-recovery.js";
+import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/branch-worktree.js";
 
 const branchConflictMocks = vi.hoisted(() => ({
@@ -8,7 +8,7 @@ const branchConflictMocks = vi.hoisted(() => ({
   reanchorBranchToBase: vi.fn(),
 }));
 
-vi.mock("../branch-conflicts.js", () => ({
+vi.mock("../execution/branch-conflicts.js", () => ({
   inspectBranchConflict: branchConflictMocks.inspectBranchConflict,
   classifyBootstrapMisbinding: branchConflictMocks.classifyBootstrapMisbinding,
   reanchorBranchToBase: branchConflictMocks.reanchorBranchToBase,

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, TaskStore, Task } from "@fusion/core";
-import { cleanupOrphanedWorktrees } from "../../worktree-pool.js";
+import { cleanupOrphanedWorktrees } from "../../worktree/worktree-pool.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import { NativeWorktreeBackend, WorktrunkWorktreeBackend } from "../../worktree-backend.js";
+import { NativeWorktreeBackend, WorktrunkWorktreeBackend } from "../../worktree/worktree-backend.js";
 
 const { execSpy, existsSpy, readdirSpy } = vi.hoisted(() => ({
   execSpy: vi.fn(),

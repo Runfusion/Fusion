@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveReviewCheckoutCwd, getTaskReviewCheckoutPath } from "../review-checkout.js";
+import { resolveReviewCheckoutCwd, getTaskReviewCheckoutPath } from "../execution/review-checkout.js";
 
 const FALLBACK = "/some/fallback/worktree";
 const cleanupDirs: string[] = [];

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { RoutineScheduler, type RoutineSchedulerOptions } from "../routine-scheduler.js";
+import { RoutineScheduler, type RoutineSchedulerOptions } from "../scheduling/routine-scheduler.js";
 import type { GlobalRoutineStore, RoutineStore, Routine, TaskStore, RoutineExecutionResult, Settings } from "@fusion/core";
-import type { RoutineRunner } from "../routine-runner.js";
+import type { RoutineRunner } from "../scheduling/routine-runner.js";
 
 // Default settings inline to avoid @fusion/core build dependency during tests
 const DEFAULT_SETTINGS: Settings = {

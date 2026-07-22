@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { PluginRunner, type PluginRunnerOptions } from "../plugin-runner.js";
+import { PluginRunner, type PluginRunnerOptions } from "../plugins/plugin-runner.js";
 import {
   __resetWorkflowExtensionRegistryForTests,
   getWorkflowExtensionRegistry,

@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
 
-vi.mock("../../worktree-pool.js", async () => {
+vi.mock("../../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../../worktree-pool.js");
   return { ...actual, isUsableTaskWorktree: vi.fn().mockResolvedValue(true) };
 });

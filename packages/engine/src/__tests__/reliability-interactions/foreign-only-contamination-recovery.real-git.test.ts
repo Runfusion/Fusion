@@ -5,7 +5,7 @@ import path from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { recoverForeignOnlyContamination } from "../../recovery/foreign-only-contamination.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 
 const execAsync = promisify(exec);
 

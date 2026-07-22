@@ -49,7 +49,7 @@ vi.mock("node:fs", () => ({
 
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { inspectBranchConflict } from "../branch-conflicts.js";
+import { inspectBranchConflict } from "../execution/branch-conflicts.js";
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);

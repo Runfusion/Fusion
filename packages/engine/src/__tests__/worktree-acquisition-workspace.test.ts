@@ -16,8 +16,8 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 import {
   acquireWorkspaceRepoWorktree,
   WorkspaceRepoAcquireBusyError,
-} from "../worktree-acquisition.js";
-import { ActiveSessionRegistry } from "../active-session-registry.js";
+} from "../worktree/worktree-acquisition.js";
+import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

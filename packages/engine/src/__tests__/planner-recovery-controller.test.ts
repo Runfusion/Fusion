@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { AWAITING_APPROVAL_PAUSE_REASON, PLANNER_RECOVERY_MAX_ATTEMPTS } from "@fusion/core";
 import type { Task } from "@fusion/core";
-import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "../planner-recovery-controller.js";
-import type { OverseerStageObservation, OverseerWatchedStage } from "../planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "../overseer/planner-recovery-controller.js";
+import type { OverseerStageObservation, OverseerWatchedStage } from "../overseer/planner-overseer.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {

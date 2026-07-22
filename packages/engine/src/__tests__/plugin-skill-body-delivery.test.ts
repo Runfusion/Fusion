@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import { DefaultResourceLoader, type Skill } from "@earendil-works/pi-coding-agent";
 import type { AgentStore } from "@fusion/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSessionSkillContext } from "../session-skill-context.js";
-import { createSkillsOverrideFromSelection, resolveSessionSkills } from "../skill-resolver.js";
-import type { PluginRunner } from "../plugin-runner.js";
+import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
+import { createSkillsOverrideFromSelection, resolveSessionSkills } from "../cli-runtime/skill-resolver.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
 
 const tempDirs: string[] = [];
 

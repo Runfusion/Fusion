@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { classifyStaleLock, parseIndexLockPath, tryRemoveStaleLock } from "../worktree-stale-lock.js";
+import { classifyStaleLock, parseIndexLockPath, tryRemoveStaleLock } from "../worktree/worktree-stale-lock.js";
 
 const { execMock } = vi.hoisted(() => {
   const mock = vi.fn();

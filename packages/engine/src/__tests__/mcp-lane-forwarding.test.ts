@@ -16,7 +16,7 @@ vi.mock("../pi.js", () => ({
   describeModel: vi.fn(() => "mock-model"),
 }));
 
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
 
 const mcpServers: ResolvedMcpServerDefinition[] = [
   {

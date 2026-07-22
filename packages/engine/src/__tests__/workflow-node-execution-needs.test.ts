@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkflowIrNode } from "@fusion/core";
-import { workflowNodeRequiresWorktree } from "../workflow-node-execution-needs.js";
+import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
 
 function node(overrides: Partial<WorkflowIrNode> = {}): WorkflowIrNode {
   return { id: "node", kind: "prompt", ...overrides };

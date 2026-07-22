@@ -11,7 +11,7 @@ import {
   HEARTBEAT_NO_TASK_PROCEDURE,
   getAgentSoulWords,
 } from "../agent-heartbeat.js";
-import { AgentLogger } from "../agent-logger.js";
+import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import {
   TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
@@ -46,11 +46,11 @@ vi.mock("../pi.js", () => ({
 }));
 import { createFnAgent } from "../pi.js";
 import { heartbeatLog } from "../logger.js";
-import { acquireTaskWorktree } from "../worktree-acquisition.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedAcquireTaskWorktree = vi.mocked(acquireTaskWorktree);
 
-vi.mock("../worktree-acquisition.js", () => ({
+vi.mock("../worktree/worktree-acquisition.js", () => ({
   acquireTaskWorktree: vi.fn(),
 }));
 
@@ -1748,8 +1748,8 @@ describe("executeHeartbeat", () => {
       Also exercise plannerHeartbeatPatrolEnabled:false through HeartbeatMonitor so settings
       resolution → prompt wiring is covered, not only the pure renderers.
       */
-      const { renderHeartbeatNoTaskSystemPrompt, HEARTBEAT_NO_TASK_PROCEDURE } = await import("../agent-heartbeat-prompts.js");
-      const { renderHeartbeatNoTaskProcedure } = await import("../agent-heartbeat-prompts.js");
+      const { renderHeartbeatNoTaskSystemPrompt, HEARTBEAT_NO_TASK_PROCEDURE } = await import("../agents/agent-heartbeat-prompts.js");
+      const { renderHeartbeatNoTaskProcedure } = await import("../agents/agent-heartbeat-prompts.js");
       expect(renderHeartbeatNoTaskSystemPrompt({ plannerHeartbeatPatrolEnabled: false })).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
       expect(renderHeartbeatNoTaskProcedure(HEARTBEAT_NO_TASK_PROCEDURE, { plannerHeartbeatPatrolEnabled: false })).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
 
@@ -2294,7 +2294,7 @@ describe("executeHeartbeat", () => {
   describe("slot-saturation: heartbeat runs on utility lane independent of task-lane semaphore", () => {
     it("executes heartbeat successfully while task-lane semaphore is saturated", async () => {
       // Import AgentSemaphore directly to create a saturated slot fixture
-      const { AgentSemaphore } = await import("../concurrency.js");
+      const { AgentSemaphore } = await import("../concurrency/concurrency.js");
 
       // Create a semaphore with maxConcurrent=0 to simulate fully saturated state
       // The defensive guard in AgentSemaphore.limit returns minimum 1, so we
@@ -2339,7 +2339,7 @@ describe("executeHeartbeat", () => {
     });
 
     it("completes on_demand heartbeat while task-lane slots are fully occupied", async () => {
-      const { AgentSemaphore } = await import("../concurrency.js");
+      const { AgentSemaphore } = await import("../concurrency/concurrency.js");
 
       // Simulate multiple task-lane agents holding all slots
       const taskLaneSemaphore = new AgentSemaphore(2);

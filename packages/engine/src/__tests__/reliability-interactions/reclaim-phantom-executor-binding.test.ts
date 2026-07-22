@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager, STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS } from "../../self-healing.js";
-import { activeSessionRegistry, executingTaskLock } from "../../active-session-registry.js";
-import * as branchConflictModule from "../../branch-conflicts.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import { activeSessionRegistry, executingTaskLock } from "../../agents/active-session-registry.js";
+import * as branchConflictModule from "../../execution/branch-conflicts.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 type AuditRow = { timestamp: string };
 

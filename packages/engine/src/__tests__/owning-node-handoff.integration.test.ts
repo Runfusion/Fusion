@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TaskStore, type OwningNodeHandoffPolicy } from "@fusion/core";
 import { pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { hasPg, makePgTaskStore } from "./reliability-interactions/_helpers.js";
-import { MeshLeaseManager } from "../mesh-lease-manager.js";
-import type { NodeHealthMonitor } from "../node-health-monitor.js";
+import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
+import type { NodeHealthMonitor } from "../project/node-health-monitor.js";
 
 const pgIt = hasPg ? pgDescribe : describe.skip;
 

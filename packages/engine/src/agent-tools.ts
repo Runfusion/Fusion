@@ -15,23 +15,23 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
-import { promoteHeldTask } from "./hold-release.js";
+import { promoteHeldTask } from "./execution/hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
-import { ResearchOrchestrator } from "./research-orchestrator.js";
+import { ResearchOrchestrator } from "./research/research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
-import { ResearchStepRunner } from "./research-step-runner.js";
+import { ResearchStepRunner } from "./research/research-step-runner.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
-import type { AgentReflectionService } from "./agent-reflection.js";
+import type { AgentReflectionService } from "./agents/agent-reflection.js";
 import { createLogger } from "./logger.js";
-import { fetchWebContent, WebFetchError } from "./web-fetch.js";
-import type { RunAuditor } from "./run-audit.js";
-import { computeApprovalDedupeKey } from "./agent-action-gate.js";
+import { fetchWebContent, WebFetchError } from "./util/web-fetch.js";
+import type { RunAuditor } from "./util/run-audit.js";
+import { computeApprovalDedupeKey } from "./agents/agent-action-gate.js";
 import { MessageDeliveryAutoRecoveryHandler } from "./auto-recovery-handlers/message-delivery.js";
-import { emitGoalRetrievalAudit } from "./goal-anchoring-audit.js";
-import { recordRetry } from "./retry-burned-logger.js";
-import { acquireWorkspaceRepoWorktree, WorkspaceRepoAcquireBusyError } from "./worktree-acquisition.js";
-import { validateCodeNodeSources } from "./code-node-runner.js";
+import { emitGoalRetrievalAudit } from "./goals/goal-anchoring-audit.js";
+import { recordRetry } from "./errors/retry-burned-logger.js";
+import { acquireWorkspaceRepoWorktree, WorkspaceRepoAcquireBusyError } from "./worktree/worktree-acquisition.js";
+import { validateCodeNodeSources } from "./execution/code-node-runner.js";
 
 // ── Tool parameter schemas (canonical definitions) ────────────────────────
 
@@ -5351,7 +5351,7 @@ export function createAcquireRepoWorktreeTool(opts: {
   */
   onAcquired?: (worktreePath: string) => void;
   // FNXC:Workspace 2026-06-22 — thread the configured worktree-init runner so sub-repo worktrees run configured setup.
-  runConfiguredCommand?: import("./worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
+  runConfiguredCommand?: import("./worktree/worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
 }): ToolDefinition {
   const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveAgentPrompt } from "@fusion/core";
-import { buildPromptLayers, collapsePromptLayers, type SystemPromptLayers } from "../prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, type SystemPromptLayers } from "../execution/prompt-layers.js";
 
 const DEFAULT_REVIEWER_PROMPT = resolveAgentPrompt("reviewer");
 

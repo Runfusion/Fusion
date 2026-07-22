@@ -24,7 +24,7 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 import { createFnAgent } from "../pi.js";
-vi.mock("../worktree-acquisition.js", () => ({
+vi.mock("../worktree/worktree-acquisition.js", () => ({
   acquireTaskWorktree: vi.fn(async ({ rootDir }: { rootDir: string }) => ({
     worktreePath: `${rootDir}/.worktrees/fn-001`,
     branch: "fusion/fn-001",

@@ -4,7 +4,7 @@ import {
   resolveHeartbeatPromptTemplate,
   resolveHeartbeatScopeDisciplineMode,
   selectHeartbeatProcedure,
-} from "../heartbeat-procedure-resolver.js";
+} from "../agents/heartbeat-procedure-resolver.js";
 
 const project = (mode?: ProjectSettings["heartbeatScopeDiscipline"]) => ({ heartbeatScopeDiscipline: mode });
 const agent = (mode?: unknown) => ({ runtimeConfig: mode === undefined ? {} : { heartbeatScopeDiscipline: mode } }) as Pick<Agent, "runtimeConfig">;

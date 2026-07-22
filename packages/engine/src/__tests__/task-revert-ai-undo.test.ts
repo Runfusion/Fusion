@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAiUndoTask, buildAiUndoTaskDescription, REVERT_OF_METADATA_KEY } from "../task-revert.js";
-import type { CreateAiUndoTaskDeps } from "../task-revert.js";
+import { createAiUndoTask, buildAiUndoTaskDescription, REVERT_OF_METADATA_KEY } from "../execution/task-revert.js";
+import type { CreateAiUndoTaskDeps } from "../execution/task-revert.js";
 import type { Task, TaskCreateInput } from "@fusion/core";
 
 function makeSourceTask(overrides: Partial<Task> = {}): CreateAiUndoTaskDeps["sourceTask"] {

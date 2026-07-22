@@ -5,7 +5,7 @@ import {
   OverseerAdviseRecorder,
   extractAdvisorAssistantText,
   parseAdvisorReplyForAdvice,
-} from "../overseer-advise-tool.js";
+} from "../overseer/overseer-advise-tool.js";
 
 describe("OVERSEER_ADVISOR_SYSTEM_PROMPT", () => {
   it("keeps the JSON reply contract and OMP-style critical silence policy", () => {

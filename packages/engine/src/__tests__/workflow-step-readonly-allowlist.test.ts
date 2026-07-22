@@ -5,7 +5,7 @@ import {
   ReadonlyViolationError,
   filterCustomToolsForReadonly,
   isReadonlyAllowed,
-} from "../workflow-step-tool-policy.js";
+} from "../workflows/workflow-step-tool-policy.js";
 
 describe("workflow-step readonly allowlist policy", () => {
   it("exposes expected readonly allowlist", () => {

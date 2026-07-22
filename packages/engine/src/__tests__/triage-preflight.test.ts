@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { extractCitedConstructs, isBugFixShape, runGhostBugPreflight } from "../triage-preflight.js";
+import { extractCitedConstructs, isBugFixShape, runGhostBugPreflight } from "../triage-domain/triage-preflight.js";
 
 describe("triage-preflight", () => {
   it("isBugFixShape matrix", () => {

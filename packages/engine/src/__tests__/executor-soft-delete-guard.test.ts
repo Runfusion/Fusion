@@ -2,7 +2,7 @@ import "./executor-test-helpers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
-import { executingTaskLock } from "../active-session-registry.js";
+import { executingTaskLock } from "../agents/active-session-registry.js";
 import { executorLog } from "../logger.js";
 import * as childProcess from "node:child_process";
 import { resetExecutorMocks } from "./executor-test-helpers.js";

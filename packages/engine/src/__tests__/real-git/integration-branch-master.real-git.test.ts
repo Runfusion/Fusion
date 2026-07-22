@@ -3,8 +3,8 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectBranchConflict } from "../../branch-conflicts.js";
-import { resolveIntegrationBranch } from "../../integration-branch.js";
+import { inspectBranchConflict } from "../../execution/branch-conflicts.js";
+import { resolveIntegrationBranch } from "../../merge/integration-branch.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;

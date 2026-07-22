@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { RuntimeMetrics, RuntimeStatus, ProjectRuntimeConfig } from "../../project-runtime.js";
+import type { RuntimeMetrics, RuntimeStatus, ProjectRuntimeConfig } from "../../project/project-runtime.js";
 import {
   START_RUNTIME,
   STOP_RUNTIME,
