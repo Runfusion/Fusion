@@ -108,7 +108,10 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
       ),
     });
 
-    await store.updateStep(task.id, 1, "in-progress");
+    await store.updateStep(task.id, 0, "done");
+    const started = await store.updateStep(task.id, 1, "in-progress");
+    expect(started.steps[1].status).toBe("in-progress");
+
     const updated = await store.updateStep(task.id, 2, "in-progress");
 
     expect(updated.steps[2].status).toBe("pending");

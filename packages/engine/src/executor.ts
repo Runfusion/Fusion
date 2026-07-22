@@ -14384,8 +14384,8 @@ export class TaskExecutor {
         RETHINK re-enters the implementation node instead of rewinding the live conversation.
         */
 
-        // If the persisted status doesn't match the requested status, the
-        // store rejected the transition (for example, a completed-step
+        // FNXC:StepLifecycle 2026-07-22-09:50: A persisted-status mismatch means
+        // the store rejected the transition (for example, a completed-step
         // regression or an out-of-order start/completion). FN-5168 treats
         // repeated rebuffs after loop recovery as a deterministic churn signal.
         if (persistedStatus !== status) {

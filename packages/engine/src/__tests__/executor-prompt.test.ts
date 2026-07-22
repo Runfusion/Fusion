@@ -2847,6 +2847,8 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
     expect(store.appendAgentLog).not.toHaveBeenCalled();
   });
 
+  // FNXC:StepLifecycle 2026-07-22-09:50: Rejected starts must clearly preserve
+  // lifecycle invariants so agents do not execute work for a pending step.
   it("explains that a rejected out-of-order start preserves lifecycle invariants", async () => {
     const { store, tool } = makeTool();
     store.getTask.mockResolvedValue(createMockTaskDetail({
