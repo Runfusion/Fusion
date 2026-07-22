@@ -1,5 +1,12 @@
 # @fusion/engine
 
+## 0.73.0-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.1
+- @fusion/pi-claude-cli@0.73.0-beta.1
+
 ## 0.73.0-beta.0
 
 ### Patch Changes
