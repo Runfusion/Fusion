@@ -83,6 +83,17 @@ import {
   resolveMcpServersForStore,
   resolveExecutorThinkingLevel,
   wrapToolsWithActionGate,
+  createTaskArchiveTool,
+  createTaskUnarchiveTool,
+  createTaskDeleteTool,
+  createTaskRetryTool,
+  createTaskPauseTool,
+  createTaskUnpauseTool,
+  createTaskDuplicateTool,
+  createTaskMergeTool,
+  createTraitListTool,
+  createReadEvaluationsTool,
+  createUpdateIdentityTool,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -511,7 +522,7 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
 }
 
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
-  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false } = options;
+  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext } = options;
   const tools: ChatCustomTool[] = [];
 
   if (taskStore) {
@@ -522,8 +533,36 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskSearchTool(taskStore),
       ...createTaskVerificationTools(taskStore, options.actionGateContext),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
-      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Promotion is a mission mutation because it creates canonical roadmap work; dashboard chat exposes it only through the same permanent-agent action gate as all hierarchy writes. */
-      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)), 
+    );
+
+    /*
+    FNXC:ChatTaskMutationGate 2026-07-22-00:00:
+    Task-lifecycle mutations are only exposed when an enforceable action-gate context is
+    present for the bound agent. wrapToolsWithActionGate is a pass-through when the gate
+    context is absent or ephemeral (see pi.ts), so registering these tools without a gate
+    would leave archive/delete/retry/etc. callable with NO task_agent_mutation policy
+    enforcement. Withhold them from the surface instead of advertising unenforceable
+    mutations. fn_task_update, fn_task_add_dep, and fn_task_promote are intentionally NOT
+    bound in project-scoped chat: they target the factory's ambient task id, which project
+    chat does not have (binding "" makes them operate on no task). The executor/heartbeat
+    lanes bind those with a concrete current-task id.
+    */
+    if (actionGateContext) {
+      tools.push(
+        createTaskArchiveTool(taskStore),
+        createTaskUnarchiveTool(taskStore),
+        createTaskDeleteTool(taskStore),
+        createTaskRetryTool(taskStore),
+        createTaskPauseTool(taskStore),
+        createTaskUnpauseTool(taskStore),
+        createTaskDuplicateTool(taskStore),
+        createTaskMergeTool(taskStore, ""),
+      );
+    }
+
+    tools.push(
+      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Mission writes are exposed only through the same permanent-agent action gate as all hierarchy writes. */
+      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)),
       /* FNXC:Ideation 2026-07-30-15:30: Unbound or ephemeral chat exposes only positive ideation reads; mutations require the same durable gate context as Mission writes. */
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
@@ -541,10 +580,21 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
     }
     if (agentId) {
       tools.push(createGetAgentConfigTool(agentStore, agentId));
+      tools.push(createUpdateIdentityTool(agentStore, agentId));
+      /*
+      FNXC:ChatEvaluations 2026-07-22-00:00:
+      Chat has no ReflectionStore/AgentReflectionService, so pass undefined for the
+      reflection store (fn_read_evaluations degrades to ratings-only) and omit
+      fn_reflect_on_performance entirely — matching the heartbeat/executor guard that
+      only binds the reflect tool when a reflection service is available.
+      */
+      tools.push(createReadEvaluationsTool(agentStore, undefined, agentId));
     }
   }
 
   tools.push(createWebFetchTool());
+  tools.push(createTraitListTool());
+  tools.push(createAskQuestionTool());
   return dedupeChatTools(tools);
 }
 
