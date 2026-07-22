@@ -17,7 +17,6 @@
   "packages/core/src/postgres/schema/project.ts": 2227,
   "packages/core/src/postgres/sqlite-migrator.ts": 2308,
   "packages/core/src/store.ts": 2820,
-  "packages/core/src/types.ts": 3074,
   "packages/core/src/types/settings-scope.ts": 2287,
   "packages/dashboard/app/App.tsx": 2136,
   "packages/dashboard/app/components/AgentDetailView.tsx": 5567,
