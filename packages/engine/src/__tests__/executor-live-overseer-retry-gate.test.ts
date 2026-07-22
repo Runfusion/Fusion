@@ -3,6 +3,12 @@
  * Unit coverage for FN-8471 prevention helpers: live-session detection used by
  * overseer retry_step, and execute-family failure park that must not stamp
  * status=failed over a peer live session.
+ *
+ * FNXC:PlannerOversight 2026-07-21-23:20:
+ * Surface Enumeration: overseer liveness covers session + handoff + executing
+ * ownership; handleGraphFailure preserve is scoped to SEPARATE session surfaces
+ * (coding/step/CLI/workflow) — not the dying graph's own executing/graphRouting
+ * markers (CodeRabbit #2393).
  */
 import { describe, expect, it } from "vitest";
 import "./executor-test-helpers.js";
@@ -36,6 +42,89 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
+type Surface = {
+  name: string;
+  install: (executor: TaskExecutor, taskId: string) => void;
+  clear: (executor: TaskExecutor, taskId: string) => void;
+};
+
+/** Surfaces that mark isTaskLiveForOverseerRetry (includes handoff/executing). */
+const OVERSEER_LIVE_SURFACES: Surface[] = [
+  {
+    name: "coding session",
+    install: (e, id) => {
+      (e as any).activeSessions.set(id, { id: "s1" });
+    },
+    clear: (e, id) => {
+      (e as any).activeSessions.delete(id);
+    },
+  },
+  {
+    name: "step executor",
+    install: (e, id) => {
+      (e as any).activeStepExecutors.set(id, {});
+    },
+    clear: (e, id) => {
+      (e as any).activeStepExecutors.delete(id);
+    },
+  },
+  {
+    name: "CLI session",
+    install: (e, id) => {
+      (e as any).activeCliTaskSessions.set(id, {});
+    },
+    clear: (e, id) => {
+      (e as any).activeCliTaskSessions.delete(id);
+    },
+  },
+  {
+    name: "workflow step session",
+    install: (e, id) => {
+      (e as any).activeWorkflowStepSessions.set(id, {});
+    },
+    clear: (e, id) => {
+      (e as any).activeWorkflowStepSessions.delete(id);
+    },
+  },
+  {
+    name: "resumingUnpaused handoff",
+    install: (e, id) => {
+      (e as any).resumingUnpaused.add(id);
+    },
+    clear: (e, id) => {
+      (e as any).resumingUnpaused.delete(id);
+    },
+  },
+  {
+    name: "executing ownership",
+    install: (e, id) => {
+      (e as any).executing.add(id);
+    },
+    clear: (e, id) => {
+      (e as any).executing.delete(id);
+    },
+  },
+];
+
+/**
+ * Peer session surfaces only — handleGraphFailure preserve deliberately excludes
+ * the dying run's own executing/graphRouting so a pure graph fail still parks.
+ */
+const PEER_SESSION_SURFACES: Surface[] = OVERSEER_LIVE_SURFACES.filter((s) =>
+  ["coding session", "step executor", "CLI session", "workflow step session"].includes(s.name),
+);
+
+function settingsForStore() {
+  return {
+    autoMerge: true,
+    maxAutoMergeRetries: 3,
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15000,
+    executorToolFailureRetryCount: 0,
+  };
+}
+
 describe("isTaskLiveForOverseerRetry", () => {
   it("is false when no sessions or execution claims exist", () => {
     resetExecutorMocks();
@@ -43,89 +132,63 @@ describe("isTaskLiveForOverseerRetry", () => {
     expect(executor.isTaskLiveForOverseerRetry("FN-1")).toBe(false);
   });
 
-  it("is true when a coding session surface is registered", () => {
-    resetExecutorMocks();
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    (executor as any).activeSessions.set("FN-1", { id: "s1" });
-    expect(executor.isTaskLiveForOverseerRetry("FN-1")).toBe(true);
-  });
-
-  it("is true when step/CLI session surfaces are registered", () => {
-    resetExecutorMocks();
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    (executor as any).activeStepExecutors.set("FN-2", {});
-    expect(executor.isTaskLiveForOverseerRetry("FN-2")).toBe(true);
-    (executor as any).activeStepExecutors.delete("FN-2");
-    (executor as any).activeCliTaskSessions.set("FN-3", {});
-    expect(executor.isTaskLiveForOverseerRetry("FN-3")).toBe(true);
-  });
-
-  it("is true for resumingUnpaused and executing-only membership", () => {
-    resetExecutorMocks();
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    (executor as any).resumingUnpaused.add("FN-4");
-    expect(executor.isTaskLiveForOverseerRetry("FN-4")).toBe(true);
-    (executor as any).resumingUnpaused.delete("FN-4");
-    (executor as any).executing.add("FN-5");
-    expect(executor.isTaskLiveForOverseerRetry("FN-5")).toBe(true);
-  });
+  it.each(OVERSEER_LIVE_SURFACES.map((s) => [s.name, s] as const))(
+    "is true for %s ownership",
+    (_name, surface) => {
+      resetExecutorMocks();
+      const executor = new TaskExecutor(createMockStore(), "/tmp/test");
+      surface.install(executor, "FN-1");
+      expect(executor.isTaskLiveForOverseerRetry("FN-1")).toBe(true);
+      surface.clear(executor, "FN-1");
+    },
+  );
 });
 
 describe("handleGraphFailure execute-family live session preserve", () => {
-  it("does not park status=failed for step-execute when a peer live session exists", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ column: "in-progress", status: null });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue({
-      autoMerge: true,
-      maxAutoMergeRetries: 3,
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      executorToolFailureRetryCount: 0,
-    });
-    const executor = new TaskExecutor(store, "/tmp/test");
-    (executor as any).activeSessions.set(live.id, { id: "peer-session" });
-    (executor as any).graphRouting.add(live.id);
-    try {
-      await (executor as any).handleGraphFailure(live, {
-        disposition: "failed",
-        outcome: "failure",
-        visitedNodeIds: ["steps#1:step-execute"],
-        context: { "node:steps#1:step-execute:value": "step-failed" },
-      });
-    } finally {
-      (executor as any).graphRouting.delete(live.id);
-      (executor as any).activeSessions.delete(live.id);
-    }
+  it.each(PEER_SESSION_SURFACES.map((s) => [s.name, s] as const))(
+    "does not park status=failed for step-execute when peer %s is live",
+    async (_name, surface) => {
+      resetExecutorMocks();
+      const store = createMockStore();
+      const live = task({ column: "in-progress", status: null });
+      store.getTask.mockResolvedValue(live);
+      store.getSettings.mockResolvedValue(settingsForStore());
+      const executor = new TaskExecutor(store, "/tmp/test");
+      surface.install(executor, live.id);
+      (executor as any).graphRouting.add(live.id);
+      try {
+        await (executor as any).handleGraphFailure(live, {
+          disposition: "failed",
+          outcome: "failure",
+          visitedNodeIds: ["steps#1:step-execute"],
+          context: { "node:steps#1:step-execute:value": "step-failed" },
+        });
+      } finally {
+        (executor as any).graphRouting.delete(live.id);
+        surface.clear(executor, live.id);
+      }
 
-    expect(store.logEntry).toHaveBeenCalledWith(
-      live.id,
-      expect.stringContaining("while a live agent session is still executing"),
-      undefined,
-      undefined,
-    );
-    expect(store.updateTask).not.toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "failed" }),
-      expect.anything(),
-    );
-  });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        live.id,
+        expect.stringContaining("while a live agent session is still executing"),
+        undefined,
+        undefined,
+      );
+      // Match actual updateTask signature (run context is undefined on this path).
+      expect(store.updateTask).not.toHaveBeenCalledWith(
+        live.id,
+        expect.objectContaining({ status: "failed" }),
+        undefined,
+      );
+    },
+  );
 
   it("still parks status=failed for merge-region failure even when a live session exists", async () => {
     resetExecutorMocks();
     const store = createMockStore();
     const live = task({ column: "in-progress", status: null });
     store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue({
-      autoMerge: true,
-      maxAutoMergeRetries: 3,
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      executorToolFailureRetryCount: 0,
-    });
+    store.getSettings.mockResolvedValue(settingsForStore());
     const executor = new TaskExecutor(store, "/tmp/test");
     (executor as any).activeSessions.set(live.id, { id: "peer-session" });
     (executor as any).graphRouting.add(live.id);

@@ -1648,6 +1648,7 @@ export class ProjectEngine {
       // dedup keys from before the stop.
       this.plannerObservationEmitDedup.delete(taskId);
       this.clearPlannerEscalationDedup(taskId);
+      this.clearPlannerLiveRetrySkipLogDedup(taskId);
 
       return { applied: true, reason: "stopped", task: updatedTask };
     } catch (err) {
@@ -1780,6 +1781,22 @@ export class ProjectEngine {
     for (const key of [...this.plannerEscalationEmitDedup]) {
       if (key.startsWith(prefix)) {
         this.plannerEscalationEmitDedup.delete(key);
+      }
+    }
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-21-23:20:
+   * Clear live-retry skip-log dedup keys when oversight stops, is disabled, or the
+   * task leaves the in-flight set — same lifetime as observation/escalation dedup.
+   * Without this, a later live-skip episode on the same (taskId, stage) would never
+   * emit its durable log (Greptile/CodeRabbit on #2393).
+   */
+  private clearPlannerLiveRetrySkipLogDedup(taskId: string): void {
+    const prefix = `${taskId}::`;
+    for (const key of [...this.plannerLiveRetrySkipLogDedup]) {
+      if (key.startsWith(prefix)) {
+        this.plannerLiveRetrySkipLogDedup.delete(key);
       }
     }
   }
@@ -2923,6 +2940,7 @@ export class ProjectEngine {
             this.sessionAdvisorLogCursor.delete(task.id);
             this.plannerObservationEmitDedup.delete(task.id);
             this.clearPlannerEscalationDedup(task.id);
+            this.clearPlannerLiveRetrySkipLogDedup(task.id);
             continue;
           }
           // FN-7743: resolve the executor-stall threshold from the task's
@@ -2985,6 +3003,7 @@ export class ProjectEngine {
           this.sessionAdvisorLogCursor.delete(taskId);
           this.plannerObservationEmitDedup.delete(taskId);
           this.clearPlannerEscalationDedup(taskId);
+          this.clearPlannerLiveRetrySkipLogDedup(taskId);
         }
       }
     } catch {
