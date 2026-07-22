@@ -18,6 +18,14 @@ BEGIN
     RETURN;
   END IF;
 
+  /*
+  FNXC:LegacyAdoption 2026-07-22-10:15:
+  #2387 was permission denied, not a missing bookkeeping table: store open runs
+  as fusion_runtime after the migration connection creates public.fusion_schema_migrations.
+  Schema USAGE is required in addition to table SELECT on clusters that hardened
+  public's default privileges. Keep the write capability restricted to the helper.
+  */
+  GRANT USAGE ON SCHEMA public TO fusion_runtime;
   GRANT SELECT ON public.fusion_schema_migrations TO fusion_runtime;
 
   CREATE OR REPLACE FUNCTION public.fusion_mark_legacy_adoption_drained()

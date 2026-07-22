@@ -75,6 +75,7 @@ import {
   PLANNING_ACTIVE_TIMING_VERSION,
   SQLITE_MIGRATION_RUNTIME_READ_VERSION,
   WORKFLOW_TASK_CONTINUATIONS_VERSION,
+  LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -184,6 +185,16 @@ describe("schema-applier: immutable migration identities", () => {
   it("registers durable symbol locks at the next free migration version", () => {
     expect(SYMBOL_LOCKS_SCHEMA_VERSION).toBe("0025");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(SYMBOL_LOCKS_SCHEMA_VERSION));
+  });
+
+  /*
+  FNXC:LegacyAdoption 2026-07-22-10:45:
+  #2387 requires the runtime-role grants to run as an explicit forward migration;
+  a baseline bump alone would leave already-created embedded clusters warn-spamming.
+  */
+  it("registers runtime drained-marker grants at migration version 0032", () => {
+    expect(LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION).toBe("0032");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION));
   });
 
   /*
@@ -1582,6 +1593,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1639,6 +1651,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     ]);
   });
 
@@ -1829,6 +1842,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     ]);
   });
 
@@ -1900,6 +1914,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     ]);
   });
 
@@ -1971,6 +1986,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PLANNING_ACTIVE_TIMING_VERSION,
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     ]);
   });
 });
