@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
@@ -159,17 +158,21 @@ describe("CLI package.json publishing config", () => {
     expect(deps).toContain("ioredis");
   });
 
-  it("installs the agent-browser binary with the published CLI on Windows", () => {
+  /*
+  FNXC:AgentBrowserPackaging 2026-07-22-12:19:
+  Keep this unit test scoped to publish-manifest wiring. The Windows
+  agent-browser install workflow is authoritative for the packed consumer
+  install, npm-generated .cmd launcher, and native win32 executable invariant.
+  */
+  it("preserves agent-browser publish-manifest wiring", () => {
     const publishedPkg = applyPrepackTransform(pkg);
-    const launcher = join(workspaceRoot, "packages", "cli", "agent-browser.mjs");
 
     expect(pkg.dependencies?.["agent-browser"]).toBe("0.26.0");
     expect(publishedPkg.dependencies?.["agent-browser"]).toBe(pkg.dependencies["agent-browser"]);
     expect(pkg.bin?.["agent-browser"]).toBe("./agent-browser.mjs");
+    expect(publishedPkg.bin?.["agent-browser"]).toBe(pkg.bin["agent-browser"]);
     expect(pkg.files).toContain("agent-browser.mjs");
-    expect(execFileSync(process.execPath, [launcher, "--version"], { encoding: "utf-8" }).trim()).toBe(
-      "agent-browser 0.26.0",
-    );
+    expect(publishedPkg.files).toContain("agent-browser.mjs");
   });
 
   /**
