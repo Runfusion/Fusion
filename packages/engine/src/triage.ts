@@ -816,7 +816,13 @@ export class TriageProcessor {
     is not executable proof: require parsed steps unless the plan explicitly opts
     into the legitimate zero-work contract. Otherwise recovery would release the
     task to parse-steps, whose empty foreach could advance toward merge.
+
+    FNXC:TriageStuckRecovery 2026-07-21-00:15:
+    Explicit `DUPLICATE: FN-NNNN` markers are not implementation specs — they short-circuit
+    to flag/delete/clear in finalizeApprovedTask. Requiring step headings for those markers
+    withheld recovery forever (empty steps) so the marker path never ran.
     */
+    const isExplicitDuplicateRedirect = Boolean(parseExplicitDuplicateMarker(written));
     const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
     const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
       node.kind === "parse-steps"
@@ -824,7 +830,11 @@ export class TriageProcessor {
       && node.config?.parser === "step-headings"
       && node.config?.requireStepsUnlessNoCommits === true
     ) === true;
-    if (requiresPromptImplementationSteps && !promptDeclaresNoCommitsExpected(written)) {
+    if (
+      !isExplicitDuplicateRedirect
+      && requiresPromptImplementationSteps
+      && !promptDeclaresNoCommitsExpected(written)
+    ) {
       const parsedSteps = getStepParser("step-headings")?.parse(written).steps ?? [];
       if (parsedSteps.length === 0) {
         const message = "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected";

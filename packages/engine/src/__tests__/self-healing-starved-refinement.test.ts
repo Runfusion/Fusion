@@ -181,9 +181,24 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
 
       const taskDir = join(root, ".fusion", "tasks", "FN-RG");
       await mkdir(taskDir, { recursive: true });
-      await writeFile(join(taskDir, "PROMPT.md"), "# FN-RG\n\n## File Scope\n- packages/engine/src/self-healing.ts\n", "utf-8");
+      const spec = "# FN-RG\n\n## File Scope\n- packages/engine/src/self-healing.ts\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n";
+      await writeFile(join(taskDir, "PROMPT.md"), spec, "utf-8");
       const processor = new TriageProcessor(store, root);
-      await (processor as any).finalizeApprovedTask(refinement, "# FN-RG\n\n## File Scope\n- packages/engine/src/self-healing.ts\n", { requirePlanApproval: true });
+      /*
+      FNXC:EngineTests 2026-07-21-00:10:
+      finalizeApprovedTask needs getTask + moveTaskIf/withTaskLock for planning-stage CAS and release.
+      */
+      store.getTask = vi.fn().mockImplementation(async (id: string) => (id === "FN-RG" ? refinement : undefined));
+      store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
+      store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+      store.readTaskForMove = vi.fn(async (id: string) => store.getTask(id));
+      store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+        const live = await store.getTask(id);
+        if (live && !predicate(live)) return { moved: false, task: live };
+        await moveTask(id, column);
+        return { moved: true, task: live };
+      });
+      await (processor as any).finalizeApprovedTask(refinement, spec, { requirePlanApproval: true });
       expect(updateTask).toHaveBeenCalledWith("FN-RG", expect.objectContaining({ status: "awaiting-approval" }));
       expect(moveTask).not.toHaveBeenCalled();
       vi.useRealTimers();
@@ -207,7 +222,8 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
     try {
       const taskDir = join(root, ".fusion", "tasks", "FN-RG2");
       await mkdir(taskDir, { recursive: true });
-      await writeFile(join(taskDir, "PROMPT.md"), "# FN-RG2\n\n## File Scope\n- packages/engine/src/self-healing.ts\n", "utf-8");
+      const spec = "# FN-RG2\n\n## File Scope\n- packages/engine/src/self-healing.ts\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n";
+      await writeFile(join(taskDir, "PROMPT.md"), spec, "utf-8");
 
       const updateTask = vi.fn().mockResolvedValue(undefined);
       const moveTask = vi.fn().mockResolvedValue(undefined);
@@ -235,9 +251,19 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
         getTask: vi.fn().mockImplementation(async (id: string) => (id === "FN-RG2" ? refinement : undefined)),
         updateTask,
         moveTask,
+        // FNXC:EngineTests 2026-07-21-00:10: recovery finalize releases via moveTaskIf + withTaskLock.
+        moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+          const live = id === "FN-RG2" ? refinement : undefined;
+          if (live && !predicate(live)) return { moved: false, task: live };
+          await moveTask(id, column);
+          return { moved: true, task: live };
+        }),
+        withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+        readTaskForMove: vi.fn(async (id: string) => (id === "FN-RG2" ? refinement : undefined)),
         logEntry: vi.fn().mockResolvedValue(undefined),
         parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
         parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
         on: () => {},
         off: () => {},
         removeListener: () => {},

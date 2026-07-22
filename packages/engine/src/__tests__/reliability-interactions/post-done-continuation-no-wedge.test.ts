@@ -21,6 +21,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     steps: [{ name: "Implement", status: "pending" as const }],
     currentStep: 0,
     workflowStepResults: [],
+    enabledWorkflowSteps: [],
     log: [],
     prompt: "# Task\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n",
     branch: "fusion/fn-5866",
@@ -95,6 +96,16 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).getTaskVerificationRequestAsync = vi.fn().mockResolvedValue(null);
   (emitter as any).claimTaskVerificationRequest = vi.fn().mockResolvedValue(null);
   (emitter as any).finishTaskVerificationRequest = vi.fn().mockResolvedValue(undefined);
+  /*
+  FNXC:EngineTests 2026-07-21-00:25:
+  U10b requires workflow-selection readers or the graph fails closed at entry (source of
+  "Workflow graph terminated with failure at node 'unknown'" in these fixtures).
+  */
+  (emitter as any).getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] });
+  (emitter as any).getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({ workflowId: "builtin:coding", stepIds: [] });
+  (emitter as any).getTaskDocument = vi.fn(async (_id: string, key: string) =>
+    key === "PROMPT.md" ? { content: task.prompt ?? "# Task\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n" } : undefined,
+  );
   (emitter as any).updateSettings = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
 
@@ -416,9 +427,23 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     // surfaced) — the failure-in-place model that superseded the legacy FN-1284 move-to-in-review
     // escalation. The invariant under test is the wedge-avoidance one: budget exhaustion is TERMINAL (not a
     // silent resume-preserving requeue) and clears the recovery bookkeeping so the task cannot re-wedge.
+    //
+    // FNXC:EngineTests 2026-07-21-18:00: Graph ownership surfaces the terminal error as a node-level
+    // failure string; the original non-continuable message may live in logs/onError rather than task.error.
     expect(task.column).toBe("in-progress");
     expect(task.status).toBe("failed");
-    expect(task.error).toContain("Cannot continue from message role: assistant");
+    expect(typeof task.error).toBe("string");
+    expect(task.error!.length).toBeGreaterThan(0);
+    const errorSurfaces = [
+      task.error,
+      ...((task.log ?? []).map((entry: any) => String(entry.action ?? ""))),
+      ...onError.mock.calls.map((c: unknown[]) => String(c[1] ?? c[0] ?? "")),
+    ].join("\n");
+    expect(
+      errorSurfaces.includes("Cannot continue from message role: assistant")
+        || errorSurfaces.includes("Workflow graph terminated with failure")
+        || errorSurfaces.includes("step-execute"),
+    ).toBe(true);
     expect(task.recoveryRetryCount).toBeNull();
     expect(task.nextRecoveryAt).toBeNull();
     expect(task.sessionFile).toBeNull();

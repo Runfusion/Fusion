@@ -40,6 +40,20 @@ vi.mock("../worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
+/*
+FNXC:EngineTests 2026-07-21-00:10:
+Pool unit tests use temp dirs that are not real git worktrees. installTaskWorktreeIdentityGuard
+resolves git paths and throws there, which the pool catch treats as prepare failure and falls
+through to fresh. No-op the guard so classification + pool wiring stay under test.
+*/
+vi.mock("../worktree-hooks.js", async () => {
+  const actual = await vi.importActual<any>("../worktree-hooks.js");
+  return {
+    ...actual,
+    installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 const cleanupPaths: string[] = [];
 function track(path: string): string {
   cleanupPaths.push(path);
@@ -252,7 +266,7 @@ describe("acquireTaskWorktree", () => {
       expect.objectContaining({ requestingTaskId: "FN-1" }),
     );
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled", branch: "fusion/fn-1" });
-    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith(pooledPath, undefined);
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/pooled", undefined);
   });
 
   it("releases acquired pooled worktree when prepareForTask returns reclaimed path", async () => {

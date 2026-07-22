@@ -63,6 +63,18 @@ function createTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+/*
+FNXC:EngineTests 2026-07-21-00:15:
+recoverApprovedTask withholds non-marker specs without step headings on coding workflows.
+DUPLICATE markers stay single-line; other recovery prompts need executable steps.
+*/
+function executablePrompt(body: string): string {
+  if (body.includes("## Steps") || /^\*\*No commits expected:\*\*/im.test(body) || body.trimStart().startsWith("DUPLICATE:")) {
+    return body;
+  }
+  return `${body.trim()}\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n`;
+}
+
 describe("triage finalize duplicate lineage", () => {
   let rootDir = "";
 
@@ -76,8 +88,24 @@ describe("triage finalize duplicate lineage", () => {
   });
 
   async function runRecovery(task: Task, prompt: string, store: TaskStore): Promise<void> {
-    await writeFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), prompt);
-    vi.mocked(store.getTask).mockResolvedValue(task as any);
+    const taskDir = join(rootDir, ".fusion", "tasks", task.id);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), executablePrompt(prompt));
+    const getTaskMock = store.getTask as ReturnType<typeof vi.fn>;
+    if (!getTaskMock.getMockImplementation?.()) {
+      getTaskMock.mockImplementation(async (id: string) => (id === task.id ? task : undefined));
+    }
+    if (typeof (store as any).getTaskWorkflowSelection !== "function") {
+      (store as any).getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] });
+    }
+    if (typeof (store as any).deleteTaskIf !== "function") {
+      (store as any).deleteTaskIf = vi.fn(async (id: string, predicate: (t: any) => boolean, opts?: any) => {
+        const live = await store.getTask(id);
+        if (!live || !predicate(live)) return { deleted: false };
+        await store.deleteTask?.(id, opts);
+        return { deleted: true };
+      });
+    }
     const processor = new TriageProcessor(store, rootDir);
     await processor.recoverApprovedTask(task);
   }

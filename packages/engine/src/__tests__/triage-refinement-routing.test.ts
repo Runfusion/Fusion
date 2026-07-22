@@ -13,6 +13,18 @@ function withStoreEvents<T extends Record<string, unknown>>(store: T): T & { on:
   };
 }
 
+
+/*
+FNXC:EngineTests 2026-07-21-00:10:
+Finalization/recovery withholds when coding workflow requires step headings and the
+spec has none. Spec fixtures used for finalizeApprovedTask / recoverApprovedTask need
+an executable Steps section (or **No commits expected**).
+*/
+function executableSpec(body: string): string {
+  if (body.includes("## Steps") || /^\*\*No commits expected:\*\*/im.test(body)) return body;
+  return `${body.trim()}\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n`;
+}
+
 function createTriageTask(overrides: Partial<Task> & Pick<Task, "id">): Task {
   const now = "2026-05-15T12:00:00.000Z";
   const { id, ...rest } = overrides;
@@ -98,9 +110,12 @@ describe("refinement routing from triage", () => {
 
     const updates: Array<Record<string, unknown>> = [];
     const moves: string[] = [];
+    const task = createTriageTask({ id: "FN-R2", sourceType: "task_refine", sourceParentTaskId: "FN-001" });
     const store: any = withStoreEvents({
       parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
       parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+      parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+      getTask: vi.fn().mockImplementation(async (id: string) => (id === "FN-R2" ? task : undefined)),
       updateTask: vi.fn().mockImplementation(async (_id: string, update: Record<string, unknown>) => {
         updates.push(update);
       }),
@@ -117,15 +132,12 @@ describe("refinement routing from triage", () => {
     });
     store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
     store.readTaskForMove = vi.fn(async (id: string) => (typeof store.getTask === "function" ? store.getTask(id) : undefined));
-    if (!store.parseFileScopeFromPrompt) store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
-
 
     const processor = new TriageProcessor(store, rootDir);
-    const task = createTriageTask({ id: "FN-R2", sourceType: "task_refine", sourceParentTaskId: "FN-001" });
 
     await (processor as any).finalizeApprovedTask(
       task,
-      "# FN-R2\n\n## File Scope\n- packages/engine/src/triage.ts\n",
+      executableSpec("# FN-R2\n\n## File Scope\n- packages/engine/src/triage.ts\n"),
       { requirePlanApproval: true },
     );
 
@@ -170,7 +182,7 @@ describe("refinement routing from triage", () => {
 
     await (processor as any).finalizeApprovedTask(
       task,
-      "# FN-R3\n\n## File Scope\n- packages/engine/src/triage.ts\n",
+      executableSpec("# FN-R3\n\n## File Scope\n- packages/engine/src/triage.ts\n"),
       { requirePlanApproval: false },
     );
 
@@ -192,7 +204,7 @@ describe("refinement routing from triage", () => {
     const taskId = "FN-R4";
     const taskDir = join(rootDir, ".fusion", "tasks", taskId);
     await mkdir(taskDir, { recursive: true });
-    await writeFile(join(taskDir, "PROMPT.md"), "# FN-R4\n\n## File Scope\n- packages/engine/src/triage.ts\n");
+    await writeFile(join(taskDir, "PROMPT.md"), executableSpec("# FN-R4\n\n## File Scope\n- packages/engine/src/triage.ts\n"));
 
     const task = createTriageTask({
       id: taskId,
