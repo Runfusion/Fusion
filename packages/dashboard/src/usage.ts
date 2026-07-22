@@ -707,6 +707,31 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
           return;
         }
 
+        /*
+         * FNXC:ClaudeUsage 2026-07-19-18:00:
+         * Claude Code 2.1.x can render its settings Usage tab while the CLI is
+         * unauthenticated. That screen contains ordinary session statistics but
+         * no subscription quota percentages, so the old detector waited the
+         * full minute and falsely described the result as a timeout. Surface the
+         * TUI's explicit login state immediately and tell remote-dashboard users
+         * where the login must happen.
+         */
+        const isClaudeLoginRequired = /not logged in\s*[·•-]?\s*run\s*\/login/i.test(clean);
+        const isApiBillingSessionStats =
+          sentCommand &&
+          clean.includes("API Usage Billing") &&
+          clean.includes("Total cost:") &&
+          /Usage:\s*\d+\s+input/i.test(clean);
+        if (isClaudeLoginRequired || isApiBillingSessionStats) {
+          settled = true;
+          clearTimeout(timeout);
+          try { ptyProcess.kill(); } catch {
+            // Kill may fail if process already exited - ignore
+          }
+          reject(new Error("Claude CLI has no subscription quota session on the Fusion server. Run `claude /login` there, then refresh Usage."));
+          return;
+        }
+
         // Auto-approve trust prompt
         if (
           !approvedTrust &&
@@ -873,7 +898,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
  * Includes retry logic with exponential backoff for transient 429 responses.
  * Falls back to parsing `claude /usage` CLI output when rate limited.
  */
-async function fetchClaudeUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
+export async function fetchClaudeUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
     icon: "🟠",
@@ -1226,7 +1251,7 @@ async function loadCodexCredential(): Promise<CodexCredential | null> {
   return null;
 }
 
-async function fetchCodexUsage(): Promise<ProviderUsage> {
+export async function fetchCodexUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Codex",
     icon: "🟢",
@@ -1320,10 +1345,22 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
       };
     };
 
-    // Main rate limits
+    const getWindowLabel = (win: unknown, fallbackLabel: string): string => {
+      if (!win || typeof win !== "object") return fallbackLabel;
+      const durationSeconds = (win as { limit_window_seconds?: unknown }).limit_window_seconds;
+      if (durationSeconds === 7 * 24 * 60 * 60) return "Weekly";
+      if (durationSeconds === 5 * 60 * 60) return "Session (5h)";
+      return fallbackLabel;
+    };
+
+    // Codex has used both positional shapes: primary=session + secondary=weekly,
+    // and primary=weekly with no secondary. Prefer the declared duration so the
+    // same quota keeps its meaning across both API responses.
     if (data.rate_limit) {
-      const primary = parseWindow(data.rate_limit.primary_window, "Session (5h)");
-      const secondary = parseWindow(data.rate_limit.secondary_window, "Weekly");
+      const primaryWindow = data.rate_limit.primary_window;
+      const secondaryWindow = data.rate_limit.secondary_window;
+      const primary = parseWindow(primaryWindow, getWindowLabel(primaryWindow, "Session (5h)"));
+      const secondary = parseWindow(secondaryWindow, getWindowLabel(secondaryWindow, "Weekly"));
       if (primary) usage.windows.push(primary);
       if (secondary) usage.windows.push(secondary);
     }

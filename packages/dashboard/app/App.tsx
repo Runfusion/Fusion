@@ -29,6 +29,8 @@ import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useGitHubStarPromptShown, markGitHubStarPromptShown } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
 import { useTasks } from "./hooks/useTasks";
+import { useBoardWorkflows } from "./hooks/useBoardWorkflows";
+import type { ExecutorColumnFlags } from "./hooks/useExecutorStats";
 import { useProjects } from "./hooks/useProjects";
 import { useAgents } from "./hooks/useAgents";
 import { useNodes } from "./hooks/useNodes";
@@ -528,6 +530,29 @@ function AppInner() {
       sseEnabled: taskSseEnabled,
     }
   );
+  const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
+  const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
+  const footerColumnFlagsByTaskId = useMemo(() => {
+    const index = new Map<string, ExecutorColumnFlags>();
+    // FNXC:ConcurrencyIndicators 2026-08-04-10:00: remote tasks belong to a
+    // different store, so local board-workflow metadata must never be applied to
+    // their ids. Until the remote node supplies its own traits, use only the
+    // documented literal fallback rather than fabricate custom lifecycle state.
+    if (isRemote || !footerBoardWorkflows) return index;
+    const workflowsById = new Map(footerBoardWorkflows.workflows.map((workflow) => [workflow.id, workflow]));
+    // Build traits for the exact local rows supplied to the footer.
+    for (const task of footerTasks) {
+      const workflow = workflowsById.get(footerBoardWorkflows.taskWorkflowIds[task.id] ?? footerBoardWorkflows.defaultWorkflowId);
+      const flags = workflow?.columns.find((column) => column.id === task.column)?.flags;
+      if (flags) index.set(task.id, flags);
+    }
+    return index;
+  }, [footerBoardWorkflows, footerTasks, isRemote]);
+  /*
+  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FN-8453 threads board workflow traits into the footer so custom intake,
+  complete, WIP, and merge columns share the same live-agent predicate as the engine.
+  */
 
   /*
   FNXC:Navigation 2026-06-22-00:00:
@@ -1846,8 +1871,9 @@ function AppInner() {
       {rightDock.modal}
       {executorFooterVisible && currentProject && (
         <ExecutorStatusBar
-          tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
+          tasks={footerTasks}
           projectId={currentProject.id}
+          columnFlagsByTaskId={footerColumnFlagsByTaskId}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
           lastFetchTimeMs={lastFetchTimeMs}

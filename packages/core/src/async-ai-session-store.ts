@@ -306,7 +306,6 @@ export async function claimPlanningSessionTaskCreation(
   const existing = await getAiSession(handle, sessionId);
   if (!existing || existing.type !== "planning") return null;
   const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
-  if (input.validated !== true) return null;
   const inputPayload = { ...input, createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined };
   const rows = await handle.update(schema.project.aiSessions)
     .set({ inputPayload, updatedAt: claimStartedAt })
@@ -411,7 +410,16 @@ export async function updateDraft(
   const result = await handle
     .update(schema.project.aiSessions)
     .set({ inputPayload: payloadValue as Record<string, unknown>, updatedAt: now })
-    .where(and(eq(schema.project.aiSessions.id, id), eq(schema.project.aiSessions.type, "planning")))
+    /*
+    FNXC:PlanningMode 2026-07-21-00:42:
+    A debounced editor write can arrive after Start Planning changes the row to generating.
+    Restrict the mutation atomically so stale draft text cannot erase the generation timestamp.
+    */
+    .where(and(
+      eq(schema.project.aiSessions.id, id),
+      eq(schema.project.aiSessions.type, "planning"),
+      eq(schema.project.aiSessions.status, "draft"),
+    ))
     .returning({ id: schema.project.aiSessions.id });
   return result.length > 0;
 }

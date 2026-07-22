@@ -312,6 +312,20 @@
   --swatch-sample-4: #72c7a1;
 }
 
+.theme-swatch-aurora {
+  --swatch-sample-1: var(--aurora-swatch-sample-1);
+  --swatch-sample-2: var(--aurora-swatch-sample-2);
+  --swatch-sample-3: var(--aurora-swatch-sample-3);
+  --swatch-sample-4: var(--aurora-swatch-sample-4);
+}
+
+.theme-swatch-calm {
+  --swatch-sample-1: var(--calm-swatch-sample-1);
+  --swatch-sample-2: var(--calm-swatch-sample-2);
+  --swatch-sample-3: var(--calm-swatch-sample-3);
+  --swatch-sample-4: var(--calm-swatch-sample-4);
+}
+
 .theme-swatch-silver {
   --swatch-sample-1: #27272a;
   --swatch-sample-2: #3f3f46;
@@ -1137,6 +1151,20 @@
   --swatch-sample-2: #e5eddf;
   --swatch-sample-3: #557a35;
   --swatch-sample-4: #397c49;
+}
+
+[data-theme="light"] .theme-swatch-aurora {
+  --swatch-sample-1: var(--aurora-swatch-sample-1);
+  --swatch-sample-2: var(--aurora-swatch-sample-2);
+  --swatch-sample-3: var(--aurora-swatch-sample-3);
+  --swatch-sample-4: var(--aurora-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-calm {
+  --swatch-sample-1: var(--calm-swatch-sample-1);
+  --swatch-sample-2: var(--calm-swatch-sample-2);
+  --swatch-sample-3: var(--calm-swatch-sample-3);
+  --swatch-sample-4: var(--calm-swatch-sample-4);
 }
 
 [data-theme="light"] .theme-swatch-silver {

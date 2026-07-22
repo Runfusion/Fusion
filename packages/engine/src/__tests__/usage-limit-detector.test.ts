@@ -128,11 +128,23 @@ describe("checkSessionError", () => {
 
 // ── UsageLimitPauser tests ───────────────────────────────────────────
 
-function createMockStore(globalPause = false) {
+function createMockStore(tasks: any[] = []) {
   return {
-    getSettings: vi.fn().mockResolvedValue({ globalPause }),
-    updateSettings: vi.fn().mockResolvedValue({ globalPause: true }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    pauseTask: vi.fn().mockResolvedValue(undefined),
+    listTasks: vi.fn().mockResolvedValue(tasks),
+    getTask: vi.fn().mockImplementation(async (id: string) => tasks.find((task) => task.id === id) ?? {
+      id,
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+    }),
+    getSettings: vi.fn().mockResolvedValue({
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5",
+    }),
   } as any;
 }
 
@@ -141,16 +153,20 @@ describe("UsageLimitPauser", () => {
     vi.clearAllMocks();
   });
 
-  it("calls store.updateSettings({ globalPause: true, globalPauseReason: \"rate-limit\" }) on usage limit hit", async () => {
-    const store = createMockStore();
+  it("pauses only the affected task instead of activating global pause", async () => {
+    const store = createMockStore([
+      { id: "FN-001", column: "todo", modelProvider: "anthropic", modelId: "claude-sonnet" },
+      { id: "FN-002", column: "todo", modelProvider: "openai-codex", modelId: "gpt-5" },
+    ]);
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("executor", "FN-001", "rate_limit_error: Rate limit exceeded");
+    await pauser.onUsageLimitHit("executor", "FN-001", "rate_limit_error: Rate limit exceeded", "anthropic");
 
-    expect(store.updateSettings).toHaveBeenCalledWith({
-      globalPause: true,
-      globalPauseReason: "rate-limit",
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, {
+      pausedReason: "provider-rate-limit:anthropic",
     });
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-002", expect.anything(), expect.anything(), expect.anything());
+    expect(store.updateSettings).toBeUndefined();
   });
 
   it("logs the triggering error on the task via store.logEntry", async () => {
@@ -161,51 +177,91 @@ describe("UsageLimitPauser", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      "Usage limit detected (triage): overloaded_error",
+      "Usage limit detected (triage/unknown): overloaded_error",
     );
   });
 
-  it("is idempotent — calling multiple times only triggers one pause", async () => {
-    const store = createMockStore();
-    // After first call, globalPause will be true
-    store.getSettings.mockResolvedValue({ globalPause: true });
-
+  it("parks active executor tasks on the unavailable provider while other lanes and providers continue", async () => {
+    const store = createMockStore([
+      { id: "FN-001", column: "in-progress", modelProvider: "anthropic", modelId: "claude-sonnet" },
+      { id: "FN-002", column: "in-progress", modelProvider: "anthropic", modelId: "claude-sonnet" },
+      { id: "FN-003", column: "in-progress", modelProvider: "openai-codex", modelId: "gpt-5" },
+      { id: "FN-004", column: "triage", planningModelProvider: "anthropic", planningModelId: "claude-sonnet" },
+    ]);
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("executor", "FN-001", "rate limit");
-    await pauser.onUsageLimitHit("triage", "FN-002", "rate limit");
-    await pauser.onUsageLimitHit("merger", "FN-003", "rate limit");
+    await pauser.onUsageLimitHit("executor", "FN-001", "rate limit", "anthropic");
 
-    // updateSettings should only be called once
-    expect(store.updateSettings).toHaveBeenCalledTimes(1);
+    expect(store.pauseTask).toHaveBeenCalledTimes(2);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, { pausedReason: "provider-rate-limit:anthropic" });
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-002", true, undefined, { pausedReason: "provider-rate-limit:anthropic" });
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-003", expect.anything(), expect.anything(), expect.anything());
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-004", expect.anything(), expect.anything(), expect.anything());
   });
 
-  it("re-triggers pause if globalPause was externally reset to false", async () => {
+  it("parks only active triage tasks whose planning or validator lane uses the unavailable provider", async () => {
+    const store = createMockStore([
+      { id: "FN-010", column: "triage", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet" },
+      { id: "FN-011", column: "triage", planningModelProvider: "openai-codex", planningModelId: "gpt-5", validatorModelProvider: "openai-codex", validatorModelId: "gpt-5" },
+      { id: "FN-012", column: "in-progress", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await pauser.onUsageLimitHit("triage", "FN-010", "429", "anthropic");
+
+    expect(store.pauseTask).toHaveBeenCalledTimes(1);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-010", true, undefined, { pausedReason: "provider-rate-limit:anthropic" });
+  });
+
+  it("uses a recoverable qualified reason when the caller cannot identify the provider", async () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
-    // First hit — triggers pause
-    store.getSettings.mockResolvedValue({ globalPause: true });
     await pauser.onUsageLimitHit("executor", "FN-001", "rate limit");
-    expect(store.updateSettings).toHaveBeenCalledTimes(1);
-
-    // External reset: globalPause set to false
-    store.getSettings.mockResolvedValue({ globalPause: false });
-
-    // Second hit — should trigger again since it was reset
-    await pauser.onUsageLimitHit("executor", "FN-004", "rate limit again");
-    expect(store.updateSettings).toHaveBeenCalledTimes(2);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, {
+      pausedReason: "provider-rate-limit:unknown",
+    });
   });
 
   it("includes agent type in the log entry", async () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("merger", "FN-005", "quota exceeded");
+    await pauser.onUsageLimitHit("merger", "FN-005", "quota exceeded", "Anthropic API");
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-005",
-      expect.stringContaining("merger"),
+      expect.stringContaining("merger/anthropic-api"),
     );
+  });
+
+  it("resumes only exact provider-rate-limit parks after positive provider health", async () => {
+    const store = createMockStore([
+      { id: "FN-101", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+      { id: "FN-102", paused: true, pausedReason: "provider-rate-limit:openai-codex" },
+      { id: "FN-103", paused: true, pausedReason: "manual" },
+      { id: "FN-104", paused: true, userPaused: true, pausedReason: "provider-rate-limit:anthropic" },
+      { id: "FN-105", paused: false, pausedReason: "provider-rate-limit:anthropic" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await expect(pauser.onProviderAvailable("Anthropic")).resolves.toBe(1);
+
+    expect(store.pauseTask).toHaveBeenCalledTimes(1);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-101", false);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-101",
+      "Provider anthropic is available again; resuming task",
+    );
+  });
+
+  it("does nothing when provider health has no matching persisted parks", async () => {
+    const store = createMockStore([
+      { id: "FN-201", paused: true, pausedReason: "provider-rate-limit:openai-codex" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await expect(pauser.onProviderAvailable("anthropic")).resolves.toBe(0);
+    expect(store.pauseTask).not.toHaveBeenCalled();
   });
 });

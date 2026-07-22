@@ -108,13 +108,12 @@ export const registerConfigMcpPiSettingsRoutes: ApiRouteRegistrar = (ctx) => {
       const settings = await scopedStore.getSettingsFast();
       res.json({
         maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2,
-        maxTriageConcurrent: settings.maxTriageConcurrent ?? settings.maxConcurrent ?? 2,
         maxWorktrees: settings.maxWorktrees ?? 4,
         rootDir: scopedStore.getRootDir(),
       });
     } catch {
       const { store: scopedStore } = await getProjectContext(req);
-      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxTriageConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
+      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
     }
   });
 

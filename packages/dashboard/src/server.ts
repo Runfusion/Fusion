@@ -89,6 +89,7 @@ import {
   resolveDashboardPostgresLayer,
   type DashboardTaskIdIntegrityHealth,
 } from "./dashboard-postgres-health.js";
+import { ProviderHealthMonitor } from "./provider-health-monitor.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -2206,6 +2207,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // FUSION_OTEL_METRICS_ENDPOINT is explicitly configured. Held here so the
   // server "close" handler can stop its timer.
   let otelExporter: OtelExporterHandle | null = null;
+  let providerHealthMonitor: ProviderHealthMonitor | null = null;
   dashboardApp.listen = ((...args: Parameters<typeof dashboardApp.listen>) => {
     const normalizedArgs = normalizeListenArgsForTests(args) as Parameters<typeof originalListen>;
 
@@ -2241,11 +2243,31 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       });
     }
 
+    if (!providerHealthMonitor && (options?.engineManager || options?.engine)) {
+      const providerHealthLogger = runtimeLogger.child("provider-health");
+      providerHealthMonitor = new ProviderHealthMonitor({
+        authStorage: options?.authStorage,
+        logger: providerHealthLogger,
+        getStores: () => {
+          const stores = new Set<TaskStore>([store]);
+          const singleEngineStore = options?.engine?.getTaskStore?.();
+          if (singleEngineStore) stores.add(singleEngineStore);
+          for (const projectEngine of options?.engineManager?.getAllEngines?.().values() ?? []) {
+            stores.add(projectEngine.getTaskStore());
+          }
+          return stores;
+        },
+      });
+      providerHealthMonitor.start();
+    }
+
     server.once("close", () => {
       clearAiSessionCleanupInterval();
       aiSessionStore?.stopScheduledCleanup();
       otelExporter?.stop();
       otelExporter = null;
+      providerHealthMonitor?.stop();
+      providerHealthMonitor = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();
       void stopAllDevServers().catch((error) => {
         runtimeLogger.warn("Failed to shutdown dev-server managers", {

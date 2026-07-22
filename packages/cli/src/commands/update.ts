@@ -35,6 +35,91 @@ export type RunUpdateOptions = {
   force?: boolean;
 };
 
+const UPDATE_CLI_OPTIONS = "--check, --global, --json, --channel <stable|beta>, --force";
+
+type UpdateCliParseResult =
+  | { options: RunUpdateOptions; error?: never }
+  | { options?: never; error: string };
+
+/*
+FNXC:UpdateArgumentHonesty 2026-07-21-12:00:
+Update and upgrade must fail closed for unknown or duplicate options. A documented
+flag that ships only in a newer CLI must never become a false “Already up to date.”
+success on an older build, and typos must not silently no-op (FN-8452 / #2368).
+This parser owns argv structure only: it requires a non-flag --channel value but
+passes that raw value to runUpdate for semantic stable/beta validation. Reject
+repeated options rather than silently choosing first or last for the same
+honesty guarantee.
+*/
+export function parseUpdateCliArgs(args: string[]): UpdateCliParseResult {
+  const options: RunUpdateOptions = {};
+  const seen = new Set<string>();
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (seen.has(arg)) {
+      return { error: `Error: duplicate option '${arg}'.` };
+    }
+
+    switch (arg) {
+      case "--check":
+        seen.add(arg);
+        options.check = true;
+        break;
+      case "--global":
+        seen.add(arg);
+        options.global = true;
+        break;
+      case "--json":
+        seen.add(arg);
+        options.json = true;
+        break;
+      case "--force":
+        seen.add(arg);
+        options.force = true;
+        break;
+      case "--channel": {
+        seen.add(arg);
+        const channel = args[index + 1];
+        if (channel === undefined || channel.startsWith("-")) {
+          return { error: "Error: --channel requires a value: stable or beta." };
+        }
+        options.channel = channel;
+        index += 1;
+        break;
+      }
+      default:
+        return { error: `Error: unknown option '${arg}'. Valid options: ${UPDATE_CLI_OPTIONS}.` };
+    }
+  }
+
+  return { options };
+}
+
+type UpdateCommandDependencies = {
+  runUpdate?: (options: RunUpdateOptions) => Promise<void>;
+  writeError?: (message: string) => void;
+  exit?: (code: number) => void;
+};
+
+/**
+ * Dispatch the strict argv parser used by both `fn update` and `fn upgrade`.
+ * Kept injectable so the bin wiring can be tested without a registry request.
+ */
+export async function dispatchUpdateCliArgs(
+  args: string[],
+  dependencies: UpdateCommandDependencies = {},
+): Promise<void> {
+  const parsed = parseUpdateCliArgs(args);
+  if ("error" in parsed) {
+    (dependencies.writeError ?? console.error)(parsed.error);
+    (dependencies.exit ?? process.exit)(1);
+    return;
+  }
+
+  await (dependencies.runUpdate ?? runUpdate)(parsed.options);
+}
+
 type UpdateStatus = {
   currentVersion: string;
   latestVersion: string;
@@ -74,24 +159,26 @@ function readOwnCliVersion(): string | undefined {
   return undefined;
 }
 
-async function fetchChannelTargetVersion(channel: UpdateChannel): Promise<string> {
-  const response = await fetch(REGISTRY_URL);
-  const payload = (await response.json()) as {
-    "dist-tags"?: {
-      latest?: string;
-      beta?: string;
-    };
-  };
+type UpdateDistTags = {
+  latest?: string;
+  beta?: string;
+};
 
-  const targetVersion = resolveUpdateTargetVersion(channel, {
-    latest: payload?.["dist-tags"]?.latest,
-    beta: payload?.["dist-tags"]?.beta,
-  });
+type ChannelTarget = {
+  targetVersion: string;
+  distTags: UpdateDistTags;
+};
+
+async function fetchChannelTargetVersion(channel: UpdateChannel): Promise<ChannelTarget> {
+  const response = await fetch(REGISTRY_URL);
+  const payload = (await response.json()) as { "dist-tags"?: UpdateDistTags };
+  const distTags = payload?.["dist-tags"] ?? {};
+  const targetVersion = resolveUpdateTargetVersion(channel, distTags);
   if (typeof targetVersion !== "string" || targetVersion.length === 0) {
     throw new Error(`Could not determine ${channel} version from npm registry response.`);
   }
 
-  return targetVersion;
+  return { targetVersion, distTags };
 }
 
 // FNXC:UpdateChannels 2026-07-19-16:20: the version comes from the npm
@@ -239,6 +326,45 @@ function printJson(status: UpdateStatus): void {
   console.log(JSON.stringify(status));
 }
 
+/*
+FNXC:UpdateBetaNotice 2026-07-21-12:15:
+Stable, human-readable output may mention but never install a newer beta so
+release-note readers can discover it without changing stable resolution
+(FN-8452 / #2368 suggested fix #3). Show the notice only when channel is stable,
+JSON is off, this run fetched the live registry, beta is non-empty, and beta is
+strictly newer than both current and stable target. Cache-only and registry
+failure paths must never invent a beta notice.
+*/
+function printBetaAvailabilityNotice({
+  channel,
+  jsonOutput,
+  registrySucceeded,
+  betaTag,
+  currentVersion,
+  stableTarget,
+}: {
+  channel: UpdateChannel;
+  jsonOutput: boolean;
+  registrySucceeded: boolean;
+  betaTag: string | undefined;
+  currentVersion: string;
+  stableTarget: string;
+}): void {
+  if (
+    channel !== "stable" ||
+    jsonOutput ||
+    !registrySucceeded ||
+    typeof betaTag !== "string" ||
+    betaTag.length === 0 ||
+    !isVersionNewer(betaTag, currentVersion) ||
+    !isVersionNewer(betaTag, stableTarget)
+  ) {
+    return;
+  }
+
+  console.log(`A newer beta (${betaTag}) is available. To opt in, run \`fn update --channel beta\` or \`npm install -g @runfusion/fusion@beta\`.`);
+}
+
 function getLatestVersionFallback(currentVersion: string, channel: UpdateChannel): string | null {
   const cached = getCachedUpdateStatus(currentVersion);
   if (!cached) return null;
@@ -287,8 +413,13 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   }
 
   let latestVersion: string;
+  let betaTag: string | undefined;
+  let registrySucceeded = false;
   try {
-    latestVersion = await fetchChannelTargetVersion(channel);
+    const target = await fetchChannelTargetVersion(channel);
+    latestVersion = target.targetVersion;
+    betaTag = target.distTags.beta;
+    registrySucceeded = true;
   } catch (error) {
     const fallbackVersion = getLatestVersionFallback(currentVersion, channel);
     if (!fallbackVersion) {
@@ -322,6 +453,7 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
       printJson(checkStatus);
     } else {
       printStatus(checkStatus, true);
+      printBetaAvailabilityNotice({ channel, jsonOutput, registrySucceeded, betaTag, currentVersion, stableTarget: latestVersion });
     }
 
     if (updateAvailable) {
@@ -343,6 +475,7 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
       printJson(status);
     } else {
       printStatus(status, false);
+      printBetaAvailabilityNotice({ channel, jsonOutput, registrySucceeded, betaTag, currentVersion, stableTarget: latestVersion });
     }
     return;
   }
@@ -370,4 +503,5 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   }
 
   printStatus(updatedStatus, false);
+  printBetaAvailabilityNotice({ channel, jsonOutput, registrySucceeded, betaTag, currentVersion, stableTarget: latestVersion });
 }

@@ -21,8 +21,10 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  computeTopLevelConcurrencyClaimed,
+  computeTopLevelConcurrencyClaimedFromStore,
   dropPreHeldExecutorSlot,
+  hasPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
   type AgentSemaphore,
@@ -630,6 +632,11 @@ export class Scheduler {
   private lastHeartbeatWriteMs = 0;
   private idleSemaphoreLeakCandidateSince: number | null = null;
   private readonly lastHighOverlapFanoutWarningKey = new Map<string, string>();
+  /** Coordinator reservations survive the lane poll that selected them. */
+  private readonly coordinatorAdmittedTaskIds = new Set<string>();
+  /** Durable execute candidates refreshed on each scheduler pass for cross-lane ranking. */
+  private readonly coordinatorReadyTasks = new Map<string, Task>();
+  private unregisterAdmissionProvider?: () => void;
 
   /**
    * Async listener guard convention:
@@ -652,6 +659,29 @@ export class Scheduler {
       store: this.store,
       projectId: this.store.getRootDir(),
       logger: schedulerLog,
+    });
+    /*
+    FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+    FN-8453's union must outlive a single scheduler poll. A temporary provider
+    was gone before planning/merge asked for capacity, allowing newer work to
+    overtake ready execute work. The refreshed map is the durable lane view.
+    */
+    const projectId = this.store.getRootDir();
+    this.unregisterAdmissionProvider = projectAdmissionCoordinator.registerProvider(`execute:${projectId}`, {
+      projectId,
+      refresh: async () => [...this.coordinatorReadyTasks.values()]
+        .filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id))
+        .map((task) => ({
+          taskId: task.id,
+          projectId,
+          createdAt: task.createdAt,
+          reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
+          start: async () => {
+            this.coordinatorReadyTasks.delete(task.id);
+            this.coordinatorAdmittedTaskIds.add(task.id);
+            void this.schedule();
+          },
+        })),
     });
     /**
      * Event-driven scheduling: when a task is created, trigger a scheduling
@@ -1075,6 +1105,9 @@ export class Scheduler {
     if (this.options.missionAutopilot) {
       this.options.missionAutopilot.stop();
     }
+    this.unregisterAdmissionProvider?.();
+    this.unregisterAdmissionProvider = undefined;
+    this.coordinatorReadyTasks.clear();
     this.failedTaskIds.clear();
     this.wasNodeBlocked.clear();
     this.wasNodeDispatchValidationBlocked.clear();
@@ -1451,6 +1484,16 @@ export class Scheduler {
       // When a semaphore is provided, factor in its available slots so we
       // don't schedule more tasks than the global limit allows.
       const inProgressTaskIds = inProgress.map((task) => task.id);
+      /*
+      FNXC:ConcurrencyAdmission 2026-08-03-13:00:
+      FN-8453 capacity decisions must enrich task rows from their workflow IR.
+      A custom complete column can retain stale session metadata, so raw task
+      counting here would falsely exhaust executable capacity.
+      */
+      const topLevelClaimedSlots = await computeTopLevelConcurrencyClaimedFromStore({
+        store: this.store,
+        tasks,
+      });
       const computeDispatchCapacityDiagnostic = (startedThisTick: number): ConcurrencyGateDiagnostic => {
         const started = Math.max(0, Math.floor(startedThisTick));
         // U6 (KTD-10): report the default workflow's in-progress capacity as a
@@ -1472,10 +1515,7 @@ export class Scheduler {
           maxWorktrees,
           semaphore: this.options.semaphore,
           inProgressTaskIds,
-          topLevelClaimedSlots: computeTopLevelConcurrencyClaimed({
-            tasks,
-            semaphoreActiveCount: this.options.semaphore?.activeCount,
-          }),
+          topLevelClaimedSlots,
           startedThisTick: started,
           perColumnGates,
         });
@@ -1548,6 +1588,28 @@ export class Scheduler {
         maxAutoMergeRetries,
       });
       todo = sortTasksByPriorityFanoutThenAgeAndId(todo, unblockWeights);
+      /*
+      FNXC:ConcurrencyAdmission 2026-08-03-14:00:
+      FN-8453 makes the coordinator, rather than this lane's priority/fanout
+      ordering, the authority for a free top-level slot. The scheduler exposes
+      its ready tasks to the shared project registry and dispatches only the
+      atomically admitted winner; other lanes refresh in the same admission pass.
+      */
+      const projectId = this.store.getRootDir();
+      this.coordinatorReadyTasks.clear();
+      for (const task of todo) this.coordinatorReadyTasks.set(task.id, task);
+      await projectAdmissionCoordinator.admitOldest({
+        projectId,
+        maxConcurrent,
+        claimed: async () => computeTopLevelConcurrencyClaimedFromStore({ store: this.store, tasks: await this.store.listTasks({ slim: true, includeArchived: false }) }),
+        semaphore: this.options.semaphore,
+      });
+      todo = todo.filter((task) => this.coordinatorAdmittedTaskIds.has(task.id));
+      // FNXC:ConcurrencyAdmission 2026-08-04-10:00: coordinator IDs select one
+      // handoff only. The pre-held semaphore slot remains the durable reservation;
+      // retaining the ID after a retry would bypass oldest-first re-admission.
+      for (const task of todo) this.coordinatorAdmittedTaskIds.delete(task.id);
+      if (todo.length === 0) return;
       const topWeightedTask = todo.find((candidate) => (unblockWeights.get(candidate.id) ?? 0) >= 1);
       if (topWeightedTask) {
         schedulerLog.log(
@@ -2904,10 +2966,9 @@ export class Scheduler {
             }
           }
 
-          const topLevelClaimedSlots = computeTopLevelConcurrencyClaimed({
+          const topLevelClaimedSlots = await computeTopLevelConcurrencyClaimedFromStore({
+            store: this.store,
             tasks,
-            // Prior tryAcquire reservations in this sweep already bump activeCount.
-            semaphoreActiveCount: this.options.semaphore?.activeCount,
           });
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
@@ -2937,7 +2998,8 @@ export class Scheduler {
           }
 
           const sem = this.options.semaphore;
-          if (sem && !sem.tryAcquire()) {
+          const coordinatorReserved = hasPreHeldExecutorSlot(task.id);
+          if (sem && !coordinatorReserved && !sem.tryAcquire()) {
             if (reservedScope) {
               activeScopes.delete(task.id);
               activeScopeColumns.delete(task.id);
@@ -2951,7 +3013,7 @@ export class Scheduler {
             await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
             return null;
           }
-          if (sem) {
+          if (sem && !coordinatorReserved) {
             registerPreHeldExecutorSlot(task.id);
           }
 

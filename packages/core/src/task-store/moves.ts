@@ -1183,6 +1183,25 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
       void store.clearCompletionHandoffAcceptedMarker(id);
     }
+    if (toColumn === "todo" && moveSource === "user" && (fromIsImplementation || fromColumn === "in-review")) {
+      // FNXC:WorkflowTaskCancellation 2026-07-21-11:51:
+      // The task move is already committed here. Continuation cleanup is
+      // best-effort so a storage fault cannot suppress task:moved or strand
+      // transitionPending after a successful operator hard-cancel.
+      try {
+        await store.cancelActiveWorkflowWorkItemsForTask(id, {
+          kinds: ["task"],
+          now: movedAt,
+          lastError: "cancelled-by-user-hard-cancel",
+        });
+      } catch (err) {
+        storeLog.warn("Failed to cancel active task workflow continuation on user todo move (degraded)", {
+          phase: "moveTaskInternal:cancel-task-continuation",
+          taskId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (toColumn === "done") {
       // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-16:00:
       // Backend mode: clearLinkedAgentTaskIds is a sync SQLite operation; skip

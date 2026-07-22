@@ -209,17 +209,11 @@ describe("Planning Mode plan creation E2E", () => {
     __setCreateFnAgent(undefined as never);
   });
 
-  it("requires validation before converting the lean running plan into a task", async () => {
+  it("converts the lean running plan into a task without a separate validation step", async () => {
     const start = await post(app, "/api/planning/start", { initialPlan: "Build secure account recovery" });
     expect(start.status).toBe(201);
     expectRunningPlan(start.body);
     const sessionId = start.body.sessionId as string;
-
-    const createBeforeValidation = await post(app, "/api/planning/create-task", { sessionId });
-    expect(createBeforeValidation.status).toBe(400);
-
-    const validate = await post(app, `/api/planning/${sessionId}/validate`, {});
-    expect(validate).toMatchObject({ status: 200, body: { validated: true } });
 
     const created = await post(app, "/api/planning/create-task", { sessionId });
     expect(created).toMatchObject({ status: 201, body: { task: { id: "FN-E2E-001", title: "Plan: Build secure account recovery" }, alreadyCreated: false } });

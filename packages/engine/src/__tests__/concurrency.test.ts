@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import {
   AgentSemaphore,
+  ProjectAdmissionCoordinator,
+  compareAdmissionCandidates,
   ScopedAgentSemaphore,
   PRIORITY_MERGE,
   PRIORITY_EXECUTE,
@@ -396,7 +398,7 @@ describe("AgentSemaphore", () => {
 
   it("counts persisted top-level slots with the shared in-review running-agent predicate", () => {
     const tasks = [
-      { column: "in-progress" },
+      { column: "in-progress", sessionFile: "/tmp/live" },
       { column: "triage", status: "planning", paused: false },
       { column: "triage", status: "planning", paused: true },
       { column: "in-review", status: "reviewing", paused: false },
@@ -411,9 +413,9 @@ describe("AgentSemaphore", () => {
     expect(persistedTopLevelAgentSlots(tasks)).toBe(7);
   });
 
-  it("claims top-level concurrency as max(live running agents, semaphore active, pending specify)", () => {
+  it("claims only this project's live agents and pending planners", () => {
     const tasks = [
-      { column: "in-progress" },
+      { column: "in-progress", sessionFile: "/tmp/live" },
       { column: "triage", status: "planning", paused: false },
       { column: "triage", status: "planning", paused: false },
       { column: "triage", status: "planning", paused: false },
@@ -423,9 +425,10 @@ describe("AgentSemaphore", () => {
 
     // 4 planning + 1 in-progress = 5 live holders (the reported over-cap symptom).
     expect(computeTopLevelConcurrencyClaimed({ tasks })).toBe(5);
-    // Prefer the larger of live holders and in-memory activeCount.
+    // Host semaphore activity belongs to the process-wide pool, not this
+    // project's maxConcurrent accounting.
     expect(computeTopLevelConcurrencyClaimed({ tasks, semaphoreActiveCount: 2 })).toBe(5);
-    expect(computeTopLevelConcurrencyClaimed({ tasks: [], semaphoreActiveCount: 3, pendingSpecifyCount: 2 })).toBe(3);
+    expect(computeTopLevelConcurrencyClaimed({ tasks: [], semaphoreActiveCount: 3, pendingSpecifyCount: 2 })).toBe(2);
     expect(computeTopLevelConcurrencyClaimed({ tasks: [], semaphoreActiveCount: 1, pendingSpecifyCount: 2 })).toBe(2);
   });
 
@@ -580,8 +583,8 @@ describe("AgentSemaphore", () => {
     for (let i = 0; i < 6; i++) await sem.acquire();
     // Two genuinely running tasks persist; four held slots are leaked.
     const tasks = [
-      { column: "in-progress" },
-      { column: "in-progress" },
+      { column: "in-progress", sessionFile: "/tmp/live" },
+      { column: "in-progress", sessionFile: "/tmp/live" },
     ] as Task[];
 
     const first = recoverIdleSemaphoreLeakCandidate({
@@ -627,7 +630,7 @@ describe("AgentSemaphore", () => {
     const sem = new AgentSemaphore(4);
     await sem.acquire();
     sem.acquireNestedSlot(); // legitimate nested overshoot: active=2, persisted=1
-    const tasks = [{ column: "in-progress" }] as Task[];
+    const tasks = [{ column: "in-progress", sessionFile: "/tmp/live" }] as Task[];
 
     const candidate = recoverIdleSemaphoreLeakCandidate({
       semaphore: sem,
@@ -666,7 +669,7 @@ describe("AgentSemaphore", () => {
     for (let i = 0; i < 5; i++) await sem.acquire(); // 5 persisted running tasks
     await sem.acquire(); // 1 leaked slot (no persisted task backs it)
     sem.acquireNestedSlot(); // live nested run starts: active=7, nested=1
-    const tasks = Array.from({ length: 5 }, () => ({ column: "in-progress" })) as Task[];
+    const tasks = Array.from({ length: 5 }, () => ({ column: "in-progress", sessionFile: "/tmp/live" })) as Task[];
 
     const first = recoverIdleSemaphoreLeakCandidate({
       semaphore: sem,
@@ -704,7 +707,7 @@ describe("AgentSemaphore", () => {
     // both held slots — no excess, no candidate.
     const result = recoverIdleSemaphoreLeakCandidate({
       semaphore: sem,
-      tasks: [{ column: "in-progress" }] as Task[],
+      tasks: [{ column: "in-progress", sessionFile: "/tmp/live" }] as Task[],
       candidateSinceMs: 999,
       inFlightCount: 1,
       nowMs: 700_000,
@@ -1056,5 +1059,105 @@ describe("AgentSemaphore resilience (FN-978)", () => {
     // Release the second one
     sem.release();
     expect(sem.activeCount).toBe(0);
+  });
+});
+
+
+describe("ProjectAdmissionCoordinator", () => {
+  it("admits the oldest same-project candidate atomically and partitions projects", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const started: string[] = [];
+    const candidates = [
+      { taskId: "FN-20", projectId: "a", createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("new"); } },
+      { taskId: "FN-10", projectId: "a", createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("old"); } },
+      { taskId: "FN-1", projectId: "b", createdAt: "2026-01-03T00:00:00.000Z", start: async () => { started.push("other-project"); } },
+    ];
+    const sem = new AgentSemaphore(2);
+    await Promise.all([
+      coordinator.admitOldest({ projectId: "a", maxConcurrent: 1, claimed: () => 0, refresh: async () => candidates, semaphore: sem }),
+      coordinator.admitOldest({ projectId: "a", maxConcurrent: 1, claimed: () => started.length, refresh: async () => candidates, semaphore: sem }),
+    ]);
+    expect(started).toEqual(["old"]);
+    sem.release();
+    await coordinator.admitOldest({ projectId: "b", maxConcurrent: 1, claimed: () => 0, refresh: async () => candidates, semaphore: sem });
+    expect(started).toEqual(["old", "other-project"]);
+  });
+
+  it("releases a rejected handoff and retains an accepted reservation until lane transfer", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const semaphore = new AgentSemaphore(1);
+    const rejected = await coordinator.admitOldest({
+      projectId: "project-a",
+      maxConcurrent: 1,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [{
+        taskId: "FN-1", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+        start: async () => false,
+      }],
+    });
+    expect(rejected).toBeUndefined();
+    expect(semaphore.activeCount).toBe(0);
+
+    let releaseStart!: () => void;
+    const startBlocked = new Promise<void>((resolve) => { releaseStart = resolve; });
+    const first = coordinator.admitOldest({
+      projectId: "project-a",
+      maxConcurrent: 1,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [{
+        taskId: "FN-2", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+        start: async () => { await startBlocked; },
+      }],
+    });
+    await Promise.resolve();
+    const second = coordinator.admitOldest({
+      projectId: "project-a",
+      maxConcurrent: 1,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [{
+        taskId: "FN-3", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z",
+        start: async () => true,
+      }],
+    });
+    releaseStart();
+    expect(await first).toBe("FN-2");
+    expect(await second).toBeUndefined();
+    coordinator.releaseReservation("FN-2");
+    semaphore.release();
+  });
+
+  it("refreshes every registered lane before selecting the cross-lane oldest task", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const started: string[] = [];
+    coordinator.registerProvider("planning", {
+      projectId: "project-a",
+      refresh: async () => [{
+        taskId: "FN-20", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z",
+        start: async () => { started.push("planner"); },
+      }],
+    });
+    coordinator.registerProvider("execute", {
+      projectId: "project-a",
+      refresh: async () => [{
+        taskId: "FN-10", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+        start: async () => { started.push("executor"); },
+      }],
+    });
+
+    await coordinator.admitOldest({ projectId: "project-a", maxConcurrent: 1, claimed: () => 0 });
+    expect(started).toEqual(["executor"]);
+  });
+
+  it("uses a stable total order for invalid timestamps and malformed ids", () => {
+    const ordered = [
+      { taskId: "bad", createdAt: "not-a-date" },
+      { taskId: "FN-12", createdAt: "2026-01-01T00:00:00.000Z" },
+      { taskId: "FN-2", createdAt: "2026-01-01T00:00:00.000Z" },
+      { taskId: "also-bad" },
+    ].sort(compareAdmissionCandidates);
+    expect(ordered.map((item) => item.taskId)).toEqual(["FN-2", "FN-12", "also-bad", "bad"]);
   });
 });

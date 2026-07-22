@@ -2,6 +2,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
@@ -16,6 +18,7 @@ vi.mock("@fusion/engine", () => ({
 import {
   __resetPlanningState,
   __setCreateFnAgent,
+  __setPlanningNtfyHelpers,
   createSession,
   createSessionWithAgent,
   formatInitialRunningPlanRequestForAgent,
@@ -186,59 +189,117 @@ describe("reactive Planning Mode question contract", () => {
   });
 
   /*
-  FNXC:PlanningMode 2026-07-18-17:30:
-  A model completion is never a Planning Mode terminal state. This exercises the real
-  createSession/submitResponse agent seam so regression coverage proves the running plan,
-  Other steering, and explicit-only validation invariant rather than only testing normalization.
+  FNXC:PlanningMode 2026-07-21-09:15:
+  Planning questions belong to the planning surface. Exercise both the initial and follow-up
+  streaming/non-streaming seams so neither can duplicate its question in the dashboard user's mailbox, while configured ntfy notifications remain available outside the planning view.
   */
-  it("delivers planning-clarification metadata that can reopen the exact session", async () => {
-    installScriptedAgent([payload({
-      ...FIRST_QUESTION,
-      runningPlan: {
-        title: "Secure account recovery delivery",
-        description: "Build a reviewed recovery workflow with audit coverage.",
-        keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
-      },
-    })]);
-    let resolveDelivered: ((message: Record<string, unknown>) => void) | undefined;
-    const delivered = new Promise<Record<string, unknown>>((resolve) => {
-      resolveDelivered = resolve;
-    });
+  it("keeps initial and follow-up questions out of Mailbox while preserving ntfy", async () => {
+    installScriptedAgent([
+      payload({
+        ...FIRST_QUESTION,
+        runningPlan: {
+          title: "Secure account recovery delivery",
+          description: "Build a reviewed recovery workflow with audit coverage.",
+          keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+        },
+      }),
+      payload({
+        ...SECOND_QUESTION,
+        runningPlan: {
+          title: "Secure account recovery delivery",
+          description: "Build a reviewed recovery workflow with audit coverage.",
+          keyDeliverables: ["Implement recovery workflow", "Verify audit coverage"],
+        },
+      }),
+    ]);
     const messageStore = {
       getInbox: vi.fn(async () => []),
-      sendMessage: vi.fn(async (message: Record<string, unknown>) => resolveDelivered?.(message)),
+      sendMessage: vi.fn(async () => undefined),
     };
-    const sessionId = await createSessionWithAgent(
+    let notificationCount = 0;
+    let resolveNotifications!: () => void;
+    const notificationsDelivered = new Promise<void>((resolveNotificationsPromise) => {
+      resolveNotifications = resolveNotificationsPromise;
+    });
+    const sendNtfyNotification = vi.fn(async () => {
+      notificationCount += 1;
+      if (notificationCount === 2) resolveNotifications();
+    });
+    __setPlanningNtfyHelpers({
+      isNtfyEventEnabled: () => true,
+      buildNtfyClickUrl: () => "http://localhost/planning",
+      sendNtfyNotification,
+    });
+    const created = await createSession(
       "127.0.0.11",
       "Plan mailbox navigation",
+      MOCK_TASK_STORE,
+      "/tmp/project",
+      undefined,
+      undefined,
+      {
+        clarificationEnabled: true,
+        messageStore: messageStore as never,
+        ntfyConfig: { enabled: true, topic: "planning-tests", events: ["planning-awaiting-input"] },
+      },
+    );
+    await submitResponse(created.sessionId, { scope: "secure" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    await notificationsDelivered;
+
+    expect((await getSession(created.sessionId))?.currentQuestion?.id).toBe(SECOND_QUESTION.id);
+    expect(messageStore.getInbox).not.toHaveBeenCalled();
+    expect(messageStore.sendMessage).not.toHaveBeenCalled();
+    expect(sendNtfyNotification).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps streamed initial and follow-up questions out of Mailbox", async () => {
+    installScriptedAgent([
+      payload({ ...FIRST_QUESTION, runningPlan: normalizePlanningSummaryPayload({ title: "Streaming plan", description: "Initial plan" }) }),
+      payload({ ...SECOND_QUESTION, runningPlan: normalizePlanningSummaryPayload({ title: "Streaming plan", description: "Updated plan" }) }),
+    ]);
+    const messageStore = {
+      getInbox: vi.fn(async () => []),
+      sendMessage: vi.fn(async () => undefined),
+    };
+    const sessionId = await createSessionWithAgent(
+      "127.0.0.12",
+      "Plan streaming mailbox silence",
       "/tmp/project",
       MOCK_TASK_STORE,
       undefined,
       undefined,
       undefined,
-      { clarificationEnabled: true, messageStore: messageStore as never },
+      { clarificationEnabled: true, messageStore },
     );
-
-    const initialPlanReady = new Promise<void>((resolve) => {
+    const initialQuestionReady = new Promise<void>((resolveQuestion) => {
       planningStreamManager.subscribe(sessionId, (event) => {
-        if (event.type === "summary") resolve();
+        if (event.type === "question") resolveQuestion();
       });
     });
     planningStreamManager.consumeInitialTurn(sessionId)?.();
-    await initialPlanReady;
-    const message = await delivered;
+    await initialQuestionReady;
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    await submitResponse(sessionId, { scope: "secure" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
-    expect(message).toMatchObject({
-      type: "system",
-      content: expect.stringContaining(FIRST_QUESTION.question),
-      metadata: {
-        kind: "planning-clarification",
-        sessionId,
-        questionId: FIRST_QUESTION.id,
-      },
-    });
+    expect((await getSession(sessionId))?.currentQuestion?.id).toBe(SECOND_QUESTION.id);
+    expect(messageStore.getInbox).not.toHaveBeenCalled();
+    expect(messageStore.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("keeps planning route and session sources free of mailbox delivery wiring", () => {
+    const planningSource = readFileSync(resolve(__dirname, "..", "planning.ts"), "utf8");
+    const planningRoutesSource = readFileSync(resolve(__dirname, "..", "routes", "register-planning-subtask-routes.ts"), "utf8");
+
+    expect(planningSource).not.toMatch(/\.(?:getInbox|sendMessage)\(/);
+    expect(planningRoutesSource).not.toMatch(/\bMessageStore\b|getMessageStore\(/);
+  });
+
+  /*
+  FNXC:PlanningMode 2026-07-18-17:30:
+  A model completion is never a Planning Mode terminal state. This exercises the real
+  createSession/submitResponse agent seam so regression coverage proves the running plan,
+  Other steering, and explicit-only validation invariant rather than only testing normalization.
+  */
   it("generates a durable initial plan with one question and validates only on user action", async () => {
     const prompts = installScriptedAgent([
       payload({
