@@ -35,6 +35,7 @@ import type {
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
+  SEAM_SKILL_NAME_CONTEXT_KEY,
   SEAM_THINKING_LEVEL_CONTEXT_KEY,
   SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
@@ -5546,6 +5547,15 @@ export class TaskExecutor {
    */
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
 
+  /**
+   * FNXC:WorkflowStepSkills 2026-07-22-00:00:
+   * FN-8490 pins the canonical `config.executor: "skill"` + trimmed
+   * `config.skillName` request only for the pass-initiating foreach instance.
+   * The implementation pass is shared across instances, so this template-constant
+   * value must settle with the same lifecycle as governing-node and thinking pins.
+   */
+  private graphSeamSkillName = new Map<string, string>();
+
   /** Tasks currently being orchestrated by the graph runner. Process-wide for
    *  the same reason as executingTaskLock (FN-4811): duplicate execute()
    *  invocations can arrive from different TaskExecutor instances in one
@@ -5994,6 +6004,7 @@ export class TaskExecutor {
       this.graphUnattendedRuns.delete(task.id);
       this.graphSeamGoverningNodeId.delete(task.id);
       this.graphSeamThinkingLevel.delete(task.id);
+      this.graphSeamSkillName.delete(task.id);
       this.graphExecuteSelfRequeued.delete(task.id);
       // Per-instance keys: clear every instance slot owned by this task.
       const ctxPrefix = `${task.id}:`;
@@ -6792,6 +6803,7 @@ export class TaskExecutor {
     instanceId?: string,
     governingNodeId?: string,
     thinkingLevel?: ThinkingLevel,
+    skillName?: string,
   ): Promise<{ success: boolean; error?: string }> {
     const active = this.foreachActiveForTask(task.id, instanceId);
     /*
@@ -6826,6 +6838,9 @@ export class TaskExecutor {
       if (thinkingLevel) {
         this.graphSeamThinkingLevel.set(task.id, thinkingLevel);
       }
+      if (skillName) {
+        this.graphSeamSkillName.set(task.id, skillName);
+      }
       phase = this.runImplementationPhase(task);
       this.graphStepRunOnce.set(task.id, phase);
       void phase
@@ -6837,6 +6852,9 @@ export class TaskExecutor {
           }
           if (thinkingLevel && this.graphSeamThinkingLevel.get(task.id) === thinkingLevel) {
             this.graphSeamThinkingLevel.delete(task.id);
+          }
+          if (skillName && this.graphSeamSkillName.get(task.id) === skillName) {
+            this.graphSeamSkillName.delete(task.id);
           }
         });
     }
@@ -6935,6 +6953,7 @@ export class TaskExecutor {
     active: ForeachActiveContext,
     governingNodeId?: string,
     thinkingLevel?: ThinkingLevel,
+    skillName?: string,
   ): Promise<RunTaskStepResult> {
     const worktreePath = active.worktreePath || live.worktree;
     const runStep = (idx: number) =>
@@ -6944,6 +6963,7 @@ export class TaskExecutor {
         active.instanceId,
         governingNodeId,
         thinkingLevel,
+        skillName,
       );
 
     /*
@@ -7078,12 +7098,15 @@ export class TaskExecutor {
         }
         this.graphStepActiveContext.set(this.graphActiveContextKey(task.id, active.instanceId), active);
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
+        const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
         return await this.runProjectedGraphTaskStep(
           task,
           live,
           stepIndex,
           active,
           typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
+          undefined,
+          typeof seamSkillName === "string" && seamSkillName.trim() ? seamSkillName.trim() : undefined,
         );
       },
       resetTaskStep: async (ctx, task, stepIndex, baselineSha, checkpointId) => {
@@ -7680,6 +7703,7 @@ export class TaskExecutor {
         // foreach (overwrite mid-build, or clear while the shared pass is live).
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
         const seamThinkingLevel = context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
+        const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
         const result = await this.runProjectedGraphTaskStep(
           seamTask,
           live,
@@ -7689,6 +7713,7 @@ export class TaskExecutor {
           typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)
             ? (seamThinkingLevel as ThinkingLevel)
             : undefined,
+          typeof seamSkillName === "string" && seamSkillName.trim() ? seamSkillName.trim() : undefined,
         );
         // Capture baseline/checkpoint back into the reserved active context so the
         // foreach sub-walk threads them to later template nodes (step-review/reset).
@@ -11619,6 +11644,39 @@ export class TaskExecutor {
         projectRootDir: this.rootDir,
         pluginRunner: this.options.pluginRunner,
       });
+      const graphSeamSkillName = this.graphSeamSkillName.get(task.id);
+      const ceSkillsDir = typeof taskEnv?.FUSION_CE_SKILLS_DIR === "string" && taskEnv.FUSION_CE_SKILLS_DIR.trim()
+        ? taskEnv.FUSION_CE_SKILLS_DIR.trim()
+        : typeof process.env.FUSION_CE_SKILLS_DIR === "string" && process.env.FUSION_CE_SKILLS_DIR.trim()
+          ? process.env.FUSION_CE_SKILLS_DIR.trim()
+          : undefined;
+      let stepSessionSkillSelection = skillContext.skillSelectionContext;
+      if (graphSeamSkillName) {
+        const bare = graphSeamSkillName.includes(":")
+          ? graphSeamSkillName.slice(graphSeamSkillName.lastIndexOf(":") + 1)
+          : graphSeamSkillName;
+        const existing = stepSessionSkillSelection?.requestedSkillNames ?? [];
+        stepSessionSkillSelection = {
+          projectRootDir: stepSessionSkillSelection?.projectRootDir ?? this.rootDir,
+          ...(stepSessionSkillSelection?.sessionPurpose
+            ? { sessionPurpose: stepSessionSkillSelection.sessionPurpose }
+            : { sessionPurpose: "executor" }),
+          requestedSkillNames: [...new Set([...existing, graphSeamSkillName, bare])],
+        };
+      }
+      const stepSessionAdditionalSkillPaths = mergeAdditionalSkillPaths(
+        skillContext.additionalSkillPaths,
+        graphSeamSkillName && ceSkillsDir ? [ceSkillsDir] : undefined,
+      );
+      if (
+        graphSeamSkillName
+        && !isWorkflowStepSkillDiscoverable(graphSeamSkillName, stepSessionAdditionalSkillPaths, ceSkillsDir)
+      ) {
+        await this.store.logEntry(
+          task.id,
+          `[skill-load] Foreach step-execute requests skill '${graphSeamSkillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
+        );
+      }
 
       // Graph-owned stepwise runs force step-session physics for the run (KTD-2/
       // KTD-8): the discrete per-step boundary the foreach driver needs exists only
@@ -11678,8 +11736,8 @@ export class TaskExecutor {
           mcpServers: await this.resolveMcpServers(stepIdentityAgent?.id),
           workflowStepThinkingLevel: this.graphSeamThinkingLevel.get(task.id),
           // FNXC:PluginSkills 2026-07-12-00:00: Step sessions must forward plugin skill body dirs alongside requested names; otherwise plugin-provided SKILL.md bodies are invisible to the inner createFnAgent loader.
-          skillSelection: skillContext.skillSelectionContext,
-          additionalSkillPaths: skillContext.additionalSkillPaths,
+          skillSelection: stepSessionSkillSelection,
+          additionalSkillPaths: stepSessionAdditionalSkillPaths,
           // Pass agentStore and messageStore for delegation and messaging tools
           agentStore: this.options.agentStore,
           messageStore: this.options.messageStore,

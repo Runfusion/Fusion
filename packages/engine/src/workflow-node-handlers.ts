@@ -55,6 +55,14 @@ export {
 // silent no-op).
 export const SEAM_THINKING_LEVEL_CONTEXT_KEY = "workflow:seamThinkingLevel";
 
+/**
+ * FNXC:WorkflowStepSkills 2026-07-22-00:00:
+ * FN-8490 makes a foreach step-execute skill executor a first-class session
+ * resource request. Only the canonical config-bag pair activates it, so a root
+ * node field or a prose skill reference cannot accidentally pin a session skill.
+ */
+export const SEAM_SKILL_NAME_CONTEXT_KEY = "workflow:seamSkillName";
+
 export type WorkflowSeamName =
   | "planning"
   | "execute"
@@ -273,6 +281,17 @@ export function resolveSeamName(node: { config?: Record<string, unknown> }): Wor
  * Prompt/script handler: seam-configured nodes delegate to the legacy seam;
  * custom nodes run through the injected custom-node runner.
  */
+function stampStepExecuteSkillName(node: WorkflowIrNode, context: Record<string, unknown>): void {
+  const skillName = node.config?.executor === "skill" && typeof node.config.skillName === "string"
+    ? node.config.skillName.trim()
+    : "";
+  if (skillName) {
+    context[SEAM_SKILL_NAME_CONTEXT_KEY] = skillName;
+  } else {
+    delete context[SEAM_SKILL_NAME_CONTEXT_KEY];
+  }
+}
+
 export function createPromptLikeHandler(
   seams: WorkflowLegacySeams,
   runCustomNode?: WorkflowCustomNodeRunner,
@@ -316,6 +335,7 @@ export function createPromptLikeHandler(
       } else {
         delete context.context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
       }
+      stampStepExecuteSkillName(node, context.context);
       return seams.stepExecute(context.task, context.context);
     }
     if (seam) {
@@ -357,6 +377,7 @@ export function createPrimitivePromptLikeHandler(
         active.stepIndex,
         node.id,
       );
+      stampStepExecuteSkillName(node, context.context);
       const result = await primitives.runTaskStep(
         primitiveContextForNode(node, context.task, context.context, undefined, context.signal),
         context.task,
