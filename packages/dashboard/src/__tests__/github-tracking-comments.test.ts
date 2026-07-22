@@ -42,6 +42,7 @@ vi.mock("../cli-package-version.js", async (importOriginal) => ({
 class MockStore extends EventEmitter {
   logEntry: Mock;
   getTask: Mock;
+  updateTask: Mock;
   getSettings: Mock;
   getGlobalSettingsStore: Mock;
 
@@ -50,6 +51,7 @@ class MockStore extends EventEmitter {
     this.logEntry = vi.fn().mockResolvedValue(undefined);
     // Null preserves the event snapshot unless a test supplies a newer authoritative row.
     this.getTask = vi.fn().mockResolvedValue(null);
+    this.updateTask = vi.fn().mockResolvedValue(undefined);
     this.getSettings = vi.fn().mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "ghp_test" });
     this.getGlobalSettingsStore = vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) }));
   }
@@ -572,16 +574,119 @@ describe("GitHubTrackingCommentService", () => {
     expect(mockCommentOnIssue.mock.calls[0]?.[3]).not.toContain("Commit:");
   });
 
-  it("does not refetch or duplicate a comment for in-progress and same-column transitions", async () => {
+  it("does not duplicate a comment for in-progress and same-column transitions", async () => {
     service.start();
 
     store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
     store.emit("task:moved", { task: createTask(), from: "done", to: "done" });
     await flushAsync();
 
-    expect(store.getTask).not.toHaveBeenCalled();
+    expect(store.getTask).toHaveBeenCalledTimes(1);
     expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
     expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain("🚧 In progress");
+  });
+
+  it("posts only one in-progress comment when a task leaves and re-enters the column", async () => {
+    service.start();
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(mockCommentOnIssue.mock.calls[0]?.[3]).toContain("🚧 In progress");
+  });
+
+  it("does not repost an in-progress comment after the service restarts", async () => {
+    service.start();
+    service.stop();
+    service = new GitHubTrackingCommentService(store as unknown as TaskStore);
+    service.start();
+
+    store.getTask.mockResolvedValueOnce(createTask({
+      githubTracking: {
+        enabled: true,
+        inProgressCommentedAt: "2026-07-21T12:00:00.000Z",
+        issue: {
+          owner: "owner",
+          repo: "repo",
+          number: 42,
+          url: "https://github.com/owner/repo/issues/42",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    }));
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).not.toHaveBeenCalled();
+  });
+
+  it("does not repost for legacy tasks whose success is recorded only in the task log", async () => {
+    service.start();
+    store.getTask.mockResolvedValueOnce(createTask({
+      log: [{
+        timestamp: "2026-07-21T12:00:00.000Z",
+        action: "Posted GitHub tracking comment",
+        outcome: "owner/repo#42 (in-progress)",
+      }],
+    }));
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).not.toHaveBeenCalled();
+  });
+
+  it("allows a later in-progress transition to retry after GitHub rejects the first post", async () => {
+    service.start();
+    mockCommentOnIssue.mockRejectedValueOnce(new Error("rate limited"));
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(2);
+    expect(store.updateTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("records durable success when the marker write fails after GitHub accepts the comment", async () => {
+    service.start();
+    store.updateTask.mockRejectedValueOnce(new Error("store unavailable"));
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      "Posted GitHub tracking comment",
+      "owner/repo#42 (in-progress)",
+    );
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-1",
+      "Failed to post GitHub tracking comment",
+      "store unavailable",
+    );
+
+    service.stop();
+    service = new GitHubTrackingCommentService(store as unknown as TaskStore);
+    service.start();
+    store.getTask.mockResolvedValueOnce(createTask({
+      log: [{
+        timestamp: "2026-07-21T12:00:00.000Z",
+        action: "Posted GitHub tracking comment",
+        outcome: "owner/repo#42 (in-progress)",
+      }],
+    }));
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
   });
 
   it("writes success logs", async () => {

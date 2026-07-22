@@ -74,13 +74,21 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const css = loadPlanningCss();
     const desktopRule = findRule(css, ".planning-workspace");
     expect(desktopRule).toMatch(/grid-template-areas\s*:\s*"question plan"\s*;/);
+    // FNXC:PlanningMode 2026-07-21-16:47: interview panes sit flush — no outer workspace gutter or inter-pane gap.
+    expect(desktopRule).toMatch(/padding\s*:\s*0\s*;/);
+    expect(desktopRule).toMatch(/gap\s*:\s*0\s*;/);
     expect(findRule(css, ".planning-plan-pane")).toMatch(/grid-area\s*:\s*plan\s*;/);
     expectSomeRule(css, ".planning-question-pane", /grid-area\s*:\s*question\s*;/);
+    expectSomeRule(css, ".planning-question-pane", /border-right\s*:\s*solid var\(--btn-border-width\)/);
+    expect(findRule(css, ".planning-plan-pane,\n.planning-question-pane")).toMatch(/border-radius\s*:\s*0\s*;/);
 
     const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
     expect(findRule(mobileCss, ".planning-workspace--mobile-tab-question,\n  .planning-workspace--mobile-tab-plan")).toMatch(/"tabs"\s*"content"/);
     expect(findRule(mobileCss, ".planning-workspace-tabs")).toMatch(/display\s*:\s*grid\s*;/);
     expect(findRule(mobileCss, ".planning-workspace--mobile-tab-question .planning-plan-pane,\n  .planning-workspace--mobile-tab-plan .planning-question-pane")).toMatch(/display\s*:\s*none\s*;/);
+    // Mobile restores a compact card inset because only one pane is visible at a time.
+    expect(findRule(mobileCss, ".planning-workspace")).toMatch(/padding\s*:\s*var\(--space-md\)\s*;/);
+    expect(findRule(mobileCss, ".planning-question-pane")).toMatch(/border-right\s*:\s*none\s*;/);
   });
 
   it("keeps desktop planning content flush inside both panes with compact aligned action rows", () => {

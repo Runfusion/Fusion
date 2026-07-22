@@ -631,7 +631,15 @@ export class ProjectEngine {
     // bypass, so a graph merge node can't override an autoMerge-off project.
     this.runtime.setMergeRequester?.((taskId, options) => this.requestInterpreterMerge(taskId, options));
 
-    const projectId = this.runtime.getTaskStore().getRootDir?.() ?? this.config.workingDirectory;
+    /*
+    FNXC:ConcurrencyAdmission 2026-07-21-17:35:
+    FN-8453 registered merge admission in the constructor using
+    runtime.getTaskStore(), but the TaskStore is only created in runtime.start().
+    That threw "TaskStore not initialized" during ensureEngine, left the singleton
+    lock held, and every later start failed with "blocked by lockfile". Use the
+    constructor config id (store is still read later inside refresh once started).
+    */
+    const projectId = this.config.projectId || this.config.workingDirectory;
     /*
     FNXC:ConcurrencyAdmission 2026-08-06-16:20:
     FN-8453/#2359 requires the actual durable merge queue to refresh on every

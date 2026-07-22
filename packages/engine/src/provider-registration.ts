@@ -28,6 +28,7 @@ import {
   type DashboardAuthStorage,
 } from "./provider-auth.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
+import { refreshFusionModelRegistry, type RefreshableModelRegistry } from "./model-registry-refresh.js";
 
 export interface SeedDashboardProvidersStore {
   getGlobalSettingsStore(): {
@@ -70,7 +71,14 @@ export async function seedDashboardProviders(
 
   mergeBuiltInZaiProviderModels(modelRegistry, (message) => log("extensions", message));
   mergeBuiltInGrokProviderModels(modelRegistry, (message) => log("extensions", message));
-  await modelRegistry.refresh();
+  /*
+  FNXC:ModelRegistry 2026-07-21-17:15:
+  Bound the post-seed refresh so a hung remote catalog cannot leave desktop/CLI
+  startup stuck after built-in providers are already registered.
+  */
+  await refreshFusionModelRegistry(modelRegistry as RefreshableModelRegistry, {
+    log: (message) => log("extensions", message),
+  });
 
   try {
     const globalSettings = await store.getGlobalSettingsStore().getSettings();

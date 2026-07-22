@@ -326,14 +326,17 @@ function makeFakeStore(
         db: {
           execute: async (q: unknown) => {
             const text = sqlText(q);
-            if (text.includes("SELECT")) {
-              if (opts?.markerReadThrows) throw new Error("marker read boom");
-              return markerPresent ? [{ version: "legacy-adoption-drained" }] : [];
-            }
-            if (text.includes("INSERT")) {
+            // FNXC:LegacyAdoption 2026-07-21-17:30: write path calls the SECURITY DEFINER
+            // helper (SELECT public.fusion_mark_legacy_adoption_drained()); the read path is
+            // SELECT version FROM … WHERE version = ….
+            if (text.includes("fusion_mark_legacy_adoption_drained")) {
               markerWrites.push(text);
               markerPresent = true;
               return [];
+            }
+            if (text.includes("SELECT") && text.includes("version")) {
+              if (opts?.markerReadThrows) throw new Error("marker read boom");
+              return markerPresent ? [{ version: "legacy-adoption-drained" }] : [];
             }
             return [];
           },
@@ -404,10 +407,9 @@ describe("adoptLegacyTaskRowsOnOpen — drained-marker completion short-circuit"
     expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
     // The sweep still ran (marker was absent) …
     expect(listCalls.length).toBe(1);
-    // … and a clean drain recorded the durable marker exactly once, upsert-style.
+    // … and a clean drain recorded the durable marker exactly once via the SECURITY DEFINER helper.
     expect(markerWrites.length).toBe(1);
-    expect(markerWrites[0]).toContain("INSERT");
-    expect(markerWrites[0]).toContain("ON CONFLICT");
+    expect(markerWrites[0]).toContain("fusion_mark_legacy_adoption_drained");
   });
 
   it("skips the sweep entirely when the marker is present", async () => {

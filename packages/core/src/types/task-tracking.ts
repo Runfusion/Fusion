@@ -113,6 +113,8 @@ export interface TaskGithubTracking {
   repoOverride?: string;
   /** Linked GitHub issue. Set after issue creation succeeds. Cleared via unlinkGithubIssue(). */
   issue?: TaskGithubTrackedIssue;
+  /** ISO-8601 timestamp of the task's one permitted in-progress tracking comment. */
+  inProgressCommentedAt?: string;
   /** ISO-8601 of the most recent manual unlink, retained for audit. */
   unlinkedAt?: string;
 }
@@ -142,4 +144,3 @@ export interface TaskSourceIssue {
    */
   closedAt?: string;
 }
-
