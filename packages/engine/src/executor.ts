@@ -10917,6 +10917,20 @@ export class TaskExecutor {
   private async executeCore(task: Task): Promise<void> {
     this.completionFinalizedTaskIds.delete(task.id);
     await this.clearStalePauseAbortBeforeDispatch(task);
+    /*
+    FNXC:ExecutorSoftDelete 2026-07-20-23:30:
+    Soft-delete refuse belongs in routing, not only inside runImplementation. After U10b the
+    graph owns every execute() call, so a deletedAt check that lives only under the
+    implementation seam never fires for graph entry (cursor capture / selection / fail-closed
+    parks run first). Refuse here before graph ownership so soft-deleted cards never start a
+    workflow run; runImplementation keeps the same check as defense-in-depth for graph-owned
+    re-entry that already holds the process lock.
+    */
+    if (task.deletedAt) {
+      executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      return;
+    }
     if (this.graphRouting.has(task.id)) {
       // Duplicate dispatch while the graph runner owns this task — drop it,
       // mirroring the executingTaskLock duplicate-invocation behavior.

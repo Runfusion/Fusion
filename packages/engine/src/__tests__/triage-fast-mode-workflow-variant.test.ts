@@ -31,6 +31,12 @@ vi.mock("../pi.js", () => ({
   // must expose the export so the planning path can reach finalization
   // (moveTask todo) instead of throwing on a missing mock member.
   formatModelMarkerDetails: vi.fn((model: string) => model),
+  /*
+  FNXC:EngineTests 2026-07-22-03:20:
+  Catch blocks use `err instanceof ModelFallbackExhaustedError`; wholesale pi mock
+  must export the class or planning failures throw on the instanceof check itself.
+  */
+  ModelFallbackExhaustedError: class ModelFallbackExhaustedError extends Error {},
 }));
 
 vi.mock("@fusion/core", async (importOriginal) => {
@@ -66,13 +72,38 @@ function createDetail(task: Task): TaskDetail {
 }
 
 function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
-    getTask: vi.fn().mockResolvedValue(createDetail(task)),
+  /*
+  FNXC:EngineTests 2026-07-20-23:40:
+  Finalization rewrites PROMPT hygiene under withTaskLock + readTaskForMove (FN-8361).
+  Minimal mocks that omit those methods fail closed inside runIfStillPlanningUnderTaskLock
+  and never reach moveTask(todo). Mirror the production lock surface so planning tests can
+  finish the approve path.
+  */
+  let live = createDetail(task);
+  const store: any = {
+    getTask: vi.fn(async () => live),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
-    moveTask: vi.fn(),
-    moveTaskIf: vi.fn().mockResolvedValue({ moved: true }),
-    updateTask: vi.fn().mockResolvedValue(undefined),
+    moveTask: vi.fn(async (id: string, column: string) => {
+      if (id === live.id) live = { ...live, column, status: null } as typeof live;
+      return live;
+    }),
+    /*
+    FNXC:EngineTests 2026-07-20-23:50:
+    finalizeApprovedTask releases triage→todo only via moveTaskIf + planning-stage predicate
+    (FN-8361 family). A bare moveTask mock never runs; implement moveTaskIf so the approve
+    path can complete and tests can still assert the moveTaskIf/column outcome.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: Task) => boolean) => {
+      if (id !== live.id || !predicate(live as Task)) return { moved: false, task: live };
+      live = { ...live, column, status: null } as typeof live;
+      store.moveTask(id, column);
+      return { moved: true, task: live };
+    }),
+    updateTask: vi.fn(async (id: string, updates: Partial<Task>) => {
+      if (id === live.id) live = { ...live, ...updates } as typeof live;
+      return live;
+    }),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({
@@ -84,8 +115,6 @@ function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Pa
       ...settings,
     } as Settings),
     updateSettings: vi.fn(),
-    withTaskLock: vi.fn(async (_taskId, operation) => operation()),
-    readTaskForMove: vi.fn().mockResolvedValue(createDetail(task)),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
@@ -97,10 +126,19 @@ function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Pa
     getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
     getWorkflowSettingValues: vi.fn().mockResolvedValue({}),
     getWorkflowSettingsProjectId: vi.fn().mockReturnValue("default"),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    readTaskForMove: vi.fn(async () => live),
     on: vi.fn(),
     emit: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  if (!(overrides as { withTaskLock?: unknown }).withTaskLock) {
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+  }
+  if (!(overrides as { readTaskForMove?: unknown }).readTaskForMove) {
+    store.readTaskForMove = vi.fn(async () => live);
+  }
+  return store as TaskStore;
 }
 
 function mockSession(capture: { basePrompt?: string; customTools?: any[] } = {}) {
@@ -132,17 +170,41 @@ async function captureBasePrompt(task: Task, store: TaskStore): Promise<string> 
 async function runPlanningSession(task: Task, store: TaskStore, rootDir: string): Promise<void> {
   const capture: { customTools?: any[] } = {};
   mockSession(capture);
-  vi.mocked(store.updateTask).mockImplementation(async (_taskId, patch) => {
-    if (typeof patch.prompt !== "string") return;
-    const promptDir = join(rootDir, ".fusion", "tasks", task.id);
-    await mkdir(promptDir, { recursive: true });
-    await writeFile(join(promptDir, "PROMPT.md"), patch.prompt, "utf8");
+  /*
+  FNXC:EngineTests 2026-07-22-03:20:
+  Keep write-through on live task state while also materializing PROMPT.md. A prompt-only
+  updateTask mock left finalize reading an empty prompt and withholds coding recovery.
+  Executable Steps satisfy the recoverApprovedTask step-heading gate after U10b.
+  Capture the prior mockImplementation (not bind the mock) so re-wrapping cannot recurse.
+  */
+  const priorUpdate = (store.updateTask as ReturnType<typeof vi.fn>).getMockImplementation?.()
+    ?? (async () => undefined);
+  vi.mocked(store.updateTask).mockImplementation(async (taskId, patch) => {
+    const result = await priorUpdate(taskId, patch);
+    if (typeof patch.prompt === "string") {
+      const promptDir = join(rootDir, ".fusion", "tasks", task.id);
+      await mkdir(promptDir, { recursive: true });
+      await writeFile(join(promptDir, "PROMPT.md"), patch.prompt, "utf8");
+    }
+    return result;
   });
   mockPromptWithFallback.mockImplementationOnce(async () => {
     const promptWriter = capture.customTools?.find((tool) => tool.name === "fn_task_prompt_write");
     expect(promptWriter).toBeDefined();
     await promptWriter.execute("persist-plan", {
-      content: "# Task: FN-6236\n\n## Mission\n\nVerify fast policy.\n",
+      content: [
+        "# Task: FN-6236",
+        "",
+        "## Mission",
+        "",
+        "Verify fast policy.",
+        "",
+        "## Steps",
+        "",
+        "### Step 0: Implement",
+        "- [ ] do the work",
+        "",
+      ].join("\n"),
     });
     await expect(readFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), "utf8"))
       .resolves.toContain("Verify fast policy");

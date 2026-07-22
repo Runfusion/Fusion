@@ -236,13 +236,19 @@ export function renderHeartbeatNoTaskSystemPrompt(options: { plannerHeartbeatPat
   if (options.plannerHeartbeatPatrolEnabled !== false) {
     return HEARTBEAT_NO_TASK_SYSTEM_PROMPT;
   }
+  /*
+  FNXC:HeartbeatPatrol 2026-07-20-23:55:
+  Idle-patrol-off rewrites must track the current mission-lineage no-task prompt copy (FN-8307).
+  Stale pre-lineage needles silently no-oped after the wording change, so disabled patrol still
+  encouraged task creation. Keep these replace sources in lockstep with HEARTBEAT_NO_TASK_SYSTEM_PROMPT.
+  */
   return HEARTBEAT_NO_TASK_SYSTEM_PROMPT
     .replace(
-      "2. Do ONE useful action: analyze, create follow-up tasks, delegate work, or update memory.",
+      "2. Do ONE useful action: analyze, create approved mission-linked follow-up work, delegate approved mission work, or update memory.",
       "2. Do ONE useful action: analyze, respond to direct messages or explicit operator requests, delegate already-requested work, or update memory.",
     )
     .replace(
-      "4. Use fn_task_create to spawn follow-up work — but first scan the board/context for an existing open task covering the same work; do not duplicate.",
+      "4. Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference; first scan the board/context for an existing open task covering the same work.",
       `4. ${TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION}`,
     )
     .replace(
@@ -250,7 +256,7 @@ export function renderHeartbeatNoTaskSystemPrompt(options: { plannerHeartbeatPat
       "",
     )
     .replace(
-      "- **fn_task_create:** create executable work when ownership is not predetermined.",
+      "- **fn_task_create:** create executable work only when it carries an approved Feature → Slice → Milestone → Mission reference.",
       `- **Idle patrol disabled:** ${TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION}`,
     )
     .replace(

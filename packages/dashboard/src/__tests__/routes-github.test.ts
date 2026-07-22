@@ -1974,6 +1974,15 @@ describe("projectId store scoping regressions", () => {
       initialPlan: "Scoped initial plan",
       history: [],
       thinkingOutput: "",
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
+      summary: {
+        title: "Scoped planned task",
+        description: "Create task in scoped project",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: [],
+      },
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);
@@ -2010,6 +2019,8 @@ describe("projectId store scoping regressions", () => {
       id: "plan-session-2",
       initialPlan: "Scoped multi task plan",
       history: [],
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-tasks requires validated sessions.
+      validated: true,
       summary: {
         title: "Plan",
         description: "Plan description",

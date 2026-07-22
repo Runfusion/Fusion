@@ -2989,6 +2989,14 @@ describe("HeartbeatTriggerScheduler", () => {
       const mockTaskStore = {
         createTask: vi.fn().mockResolvedValue({ id: "FN-200", description: "New task created", dependencies: [] }),
         findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+        // FNXC:EngineTests 2026-07-20-23:55: FN-8307 lineage admission for fn_task_create.
+        getMissionStore: vi.fn().mockReturnValue({
+          getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+          getFeatureByTaskId: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+          getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+          getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+          getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+        }),
         logEntry: vi.fn().mockResolvedValue({}),
         getTask: vi.fn().mockResolvedValue({
           id: "FN-001",
@@ -3013,7 +3021,10 @@ describe("HeartbeatTriggerScheduler", () => {
       const taskCreateTool = tools.find(t => t.name === "fn_task_create");
       expect(taskCreateTool).toBeDefined();
 
-      const result = await taskCreateTool!.execute("call-1", { description: "New task created" }, undefined as any, undefined as any, undefined as any);
+      const result = await taskCreateTool!.execute("call-1", {
+        description: "New task created",
+        mission_lineage: { mission_id: "M-001", slice_id: "SL-001", feature_id: "F-001" },
+      }, undefined as any, undefined as any, undefined as any);
 
       // Verify logEntry was called with runContext for the created task
       expect(mockTaskStore.logEntry).toHaveBeenCalledWith(
@@ -3034,6 +3045,13 @@ describe("HeartbeatTriggerScheduler", () => {
         getSettings: vi.fn().mockResolvedValue({}),
         findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
         findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([canonical]),
+        getMissionStore: vi.fn().mockReturnValue({
+          getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+          getFeatureByTaskId: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
+          getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+          getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+          getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+        }),
         createTask: vi.fn(),
         logEntry: vi.fn().mockResolvedValue({}),
       } as unknown as import("@fusion/core").TaskStore;
@@ -3044,6 +3062,7 @@ describe("HeartbeatTriggerScheduler", () => {
 
       const result = await tool.execute("call-replay", {
         description: "Add GitHub Discussions as an optional filing target",
+        mission_lineage: { mission_id: "M-001", slice_id: "SL-001", feature_id: "F-001" },
       }, undefined as any, undefined as any, undefined as any);
 
       expect((result.details as { wasDuplicate?: boolean }).wasDuplicate).toBe(true);
