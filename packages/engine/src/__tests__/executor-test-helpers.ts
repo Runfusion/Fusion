@@ -55,6 +55,7 @@ vi.mock("../logger.js", () => {
     ipcLog: createMockLogger(),
     projectManagerLog: createMockLogger(),
     hybridExecutorLog: createMockLogger(),
+    piLog: createMockLogger(),
     formatError: (err: unknown) => {
       if (err instanceof Error) {
         const message = err.message || err.name || "Error";

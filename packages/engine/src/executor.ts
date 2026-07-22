@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
@@ -320,6 +320,36 @@ import type { AgentBrowserExec } from "./executor/browser-probe.js";
 function mergeAdditionalSkillPaths(...pathGroups: Array<string[] | undefined>): string[] | undefined {
   const merged = Array.from(new Set(pathGroups.flatMap((paths) => paths ?? [])));
   return merged.length > 0 ? merged : undefined;
+}
+
+/**
+ * FNXC:WorkflowSteps 2026-08-08-00:00:
+ * FN-8461 / GitHub #2388 require workflow skill-load warnings to describe a true
+ * named-skill delivery failure, not an optional Compound Engineering source being
+ * absent. Plugin body directories are paired with their parent discovery roots,
+ * so check the requested bare name against each merged source; unrelated paths
+ * must never hide a missing requested skill.
+ */
+function isWorkflowStepSkillDiscoverable(
+  skillName: string,
+  additionalSkillPaths: string[] | undefined,
+  ceSkillsDir: string | undefined,
+): boolean {
+  // A configured CE root remains a viable source by contract: deployments can
+  // inject a synthetic install root before its skill tree is materialized locally.
+  if (ceSkillsDir) return true;
+
+  const bareSkillName = skillName.includes(":")
+    ? skillName.slice(skillName.lastIndexOf(":") + 1)
+    : skillName;
+  if (!bareSkillName || basename(bareSkillName) !== bareSkillName || bareSkillName === "." || bareSkillName === "..") {
+    return false;
+  }
+
+  return (additionalSkillPaths ?? []).some((skillPath) =>
+    (basename(skillPath) === bareSkillName && existsSync(join(skillPath, "SKILL.md")))
+    || existsSync(join(skillPath, bareSkillName, "SKILL.md")),
+  );
 }
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
@@ -16811,19 +16841,22 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           requestedSkillNames: mergedNames,
         };
       }
-      // FNXC:WorkflowSteps 2026-06-20-23:35:
-      // A named skill with no discovery path silently degrades to the role-fallback
-      // skill (the exact pre-fix bug this change exists to kill). If the injected
-      // FUSION_CE_SKILLS_DIR never arrived (degraded/throwing plugin, missing install
-      // dir), warn loudly so an env-threading regression is visible on a board run
-      // instead of failing silent with a green hand-fed test.
-      if (workflowStep.skillName && workflowStep.skillName.trim() && !ceSkillsDir) {
+      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
+      // FNXC:WorkflowSteps 2026-08-08-00:00:
+      // FN-8461 / GitHub #2388: workflow steps resolve skills from enabled-plugin
+      // body directories and the optional CE install root. Warn only after merging
+      // those sources when THIS named skill remains undiscoverable: a non-empty path
+      // array for another skill is not viable, while an actual plugin body makes CE
+      // env absence expected rather than misleading operator-facing noise.
+      if (
+        workflowStep.skillName?.trim()
+        && !isWorkflowStepSkillDiscoverable(workflowStep.skillName.trim(), additionalSkillPaths, ceSkillsDir)
+      ) {
         await this.store.logEntry(
           task.id,
-          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but FUSION_CE_SKILLS_DIR is unset — the skill cannot be discovered; the step runs with role-fallback skills only.`,
+          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
         );
       }
-      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
       const logBrowserVerificationActivity = async (message: string) => {
         await this.store.logEntry(task.id, message);
         await this.store.appendAgentLog(task.id, message, "status", undefined, "reviewer");
