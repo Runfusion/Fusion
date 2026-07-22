@@ -491,528 +491,136 @@ export interface TaskCommentInput {
   author: string;
 }
 
-export type TaskReviewMode = "pull-request" | "direct";
-export type TaskReviewSource = "github-pr" | "reviewer-agent";
-export type TaskReviewDecision = "approved" | "changes-requested" | "commented" | "pending";
-export type TaskReviewVerdict = "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE";
-export type TaskReviewerType = "plan" | "code";
-export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
+// ── task-review ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-21-12:00: Peels live in types/task-review.ts
 
-export interface LegacyTaskReviewItem {
-  id: string;
-  source: TaskReviewSource;
-  status: TaskReviewItemStatus;
-  summary: string;
-  body?: string;
-  filePath?: string;
-  line?: number;
-  commentUrl?: string;
-  reviewer?: string;
-  createdAt: string;
-  updatedAt: string;
-  addressedAt?: string;
-  failedReason?: string;
-}
+import type {
+  TaskReviewMode,
+  TaskReviewSource,
+  TaskReviewDecision,
+  TaskReviewVerdict,
+  TaskReviewerType,
+  TaskReviewItemStatus,
+  PrCheckState,
+  ReviewAddressingStatus,
+  TaskReviewRefreshSource,
+  TaskReviewRefreshStatus,
+  TaskReviewItem,
+  LegacyTaskReviewItem,
+  TaskReview,
+  PrCheckStatus,
+  TaskReviewAuthor,
+  PrTaskReviewSummaryReviewer,
+  PrTaskReviewSummary,
+  TaskReviewStateItem,
+  ReviewAddressingSnapshot,
+  ReviewAddressingRecord,
+  ReviewerTaskReviewSummary,
+  TaskReviewState,
+  TaskReviewSummary,
+  TaskReviewDataItem,
+  TaskReviewData,
+} from "./types/task-review.js";
+export type {
+  TaskReviewMode,
+  TaskReviewSource,
+  TaskReviewDecision,
+  TaskReviewVerdict,
+  TaskReviewerType,
+  TaskReviewItemStatus,
+  PrCheckState,
+  ReviewAddressingStatus,
+  TaskReviewRefreshSource,
+  TaskReviewRefreshStatus,
+  TaskReviewItem,
+  LegacyTaskReviewItem,
+  TaskReview,
+  PrCheckStatus,
+  TaskReviewAuthor,
+  PrTaskReviewSummaryReviewer,
+  PrTaskReviewSummary,
+  TaskReviewStateItem,
+  ReviewAddressingSnapshot,
+  ReviewAddressingRecord,
+  ReviewerTaskReviewSummary,
+  TaskReviewState,
+  TaskReviewSummary,
+  TaskReviewDataItem,
+  TaskReviewData,
+};
 
-export interface TaskReview {
-  mode: TaskReviewMode;
-  source: TaskReviewSource;
-  decision: TaskReviewDecision;
-  summary?: string;
-  latestRefreshAt?: string;
-  selectedItemIds?: string[];
-  items: LegacyTaskReviewItem[];
-}
+// ── documents-artifacts ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-21-12:00: Peels live in types/documents-artifacts.ts
 
-export type PrCheckState =
-  | "success"
-  | "pending"
-  | "failure"
-  | "cancelled"
-  | "timed_out"
-  | "action_required"
-  | "neutral"
-  | "skipped"
-  | "stale"
-  | "startup_failure";
+import {
+  isReviewArtifact,
+  parseReviewArtifactsModeOverride,
+  resolveReviewArtifactsMode,
+  classifyReviewArtifactTask,
+  isReviewArtifactGenerationEligible,
+  validateDocumentKey,
+  buildResearchDocumentKey,
+  REPORT_ATTACHMENT_SOURCE,
+  LIVE_DEMO_ARTIFACT_MIME_TYPE,
+  DOCUMENT_KEY_RE,
+  REPO_OVERRIDE_RE,
+} from "./types/documents-artifacts.js";
+export {
+  isReviewArtifact,
+  parseReviewArtifactsModeOverride,
+  resolveReviewArtifactsMode,
+  classifyReviewArtifactTask,
+  isReviewArtifactGenerationEligible,
+  validateDocumentKey,
+  buildResearchDocumentKey,
+  REPORT_ATTACHMENT_SOURCE,
+  LIVE_DEMO_ARTIFACT_MIME_TYPE,
+  DOCUMENT_KEY_RE,
+  REPO_OVERRIDE_RE,
+};
 
-export interface PrCheckStatus {
-  name: string;
-  required: boolean;
-  state: PrCheckState;
-  detailsUrl?: string;
-  startedAt?: string;
-  completedAt?: string;
-}
-
-export interface TaskReviewAuthor {
-  login: string;
-}
-
-export interface PrTaskReviewSummaryReviewer {
-  login: string;
-  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING";
-  submittedAt?: string;
-}
-
-export interface PrTaskReviewSummary {
-  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-  reviewers: PrTaskReviewSummaryReviewer[];
-  blockingReasons: string[];
-  checks: PrCheckStatus[];
-}
-
-export interface TaskReviewStateItem {
-  id: string;
-  threadId?: string;
-  githubCommentId?: number;
-  path?: string;
-  diffSide?: string;
-  body: string;
-  author: TaskReviewAuthor;
-  createdAt: string;
-  updatedAt?: string;
-  state?: string;
-  htmlUrl?: string;
-  isResolved?: boolean;
-  source?: TaskReviewSource;
-  reviewType?: TaskReviewerType;
-  verdict?: TaskReviewVerdict;
-  step?: number;
-  summary?: string;
-}
-
-export type ReviewAddressingStatus = "queued" | "in-progress" | "addressed" | "failed";
-
-export interface ReviewAddressingSnapshot {
-  itemId: string;
-  sourceMode: "pull-request" | "reviewer-agent";
-  source: "pr-review" | "reviewer-agent";
-  summary: string;
-  body: string;
-  authorLogin?: string;
-  filePath?: string;
-  lineNumber?: number;
-  threadId?: string;
-  url?: string;
-}
-
-export interface ReviewAddressingRecord {
-  itemId: string;
-  status: ReviewAddressingStatus;
-  selectedAt: string;
-  startedAt?: string;
-  completedAt?: string;
-  error?: string;
-  stale?: boolean;
-  snapshot?: ReviewAddressingSnapshot;
-}
-
-export interface ReviewerTaskReviewSummary {
-  verdict?: TaskReviewVerdict;
-  reviewType?: TaskReviewerType;
-  summary?: string;
-}
-
-export type TaskReviewRefreshSource = "manual" | "auto" | "initial-load";
-export type TaskReviewRefreshStatus = "idle" | "refreshing" | "ready" | "error";
-
-export interface TaskReviewState {
-  source: "pull-request" | "reviewer-agent";
-  lastRefreshedAt?: string;
-  refreshSource?: TaskReviewRefreshSource;
-  refreshStatus?: TaskReviewRefreshStatus;
-  refreshError?: string;
-  summary?: PrTaskReviewSummary | ReviewerTaskReviewSummary;
-  items: TaskReviewStateItem[];
-  addressing: ReviewAddressingRecord[];
-}
-
-export interface TaskReviewSummary {
-  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-  reviewers?: PrTaskReviewSummaryReviewer[];
-  blockingReasons?: string[];
-  checks?: PrCheckStatus[];
-  verdict?: TaskReviewVerdict;
-  reviewType?: TaskReviewerType;
-  summary?: string;
-}
-
-export interface TaskReviewDataItem {
-  itemId: string;
-  sourceMode: "pull-request" | "reviewer-agent";
-  title: string;
-  body: string;
-  author: string;
-  createdAt: string | null;
-  updatedAt: string | null;
-  url?: string;
-  filePath?: string;
-  line?: number;
-  threadId?: string;
-  reviewState?: string | null;
-  isResolved?: boolean;
-  progressStatus?: "queued" | "in-progress" | "addressed" | "failed" | null;
-}
-
-export type TaskReviewItem = TaskReviewDataItem;
-
-export interface TaskReviewData {
-  mode: "pull-request" | "reviewer-agent";
-  refreshable: boolean;
-  fetchedAt: string | null;
-  summary: TaskReviewSummary | null;
-  items: TaskReviewItem[];
-}
-
-export interface TaskDocument {
-  /** UUID primary key */
-  id: string;
-  /** Task this document belongs to */
-  taskId: string;
-  /** Document key (e.g., "plan", "notes", "research"). Alphanumeric, hyphens, underscores. */
-  key: string;
-  /** Document body content */
-  content: string;
-  /** Monotonically increasing revision number (starts at 1) */
-  revision: number;
-  /** Who created/last-edited this revision: "user" | "agent" | "system" */
-  author: string;
-  /** Optional extensible metadata (JSON object) */
-  metadata?: Record<string, unknown>;
-  /** ISO-8601 creation timestamp */
-  createdAt: string;
-  /** ISO-8601 last-update timestamp */
-  updatedAt: string;
-}
-
-export interface TaskDocumentRevision {
-  /** Auto-increment row ID */
-  id: number;
-  /** Task this revision belongs to */
-  taskId: string;
-  /** Document key */
-  key: string;
-  /** Snapshot of document content at this revision */
-  content: string;
-  /** Revision number of this snapshot */
-  revision: number;
-  /** Author who created this revision */
-  author: string;
-  /** Optional metadata snapshot */
-  metadata?: Record<string, unknown>;
-  /** ISO-8601 timestamp when this revision was archived */
-  createdAt: string;
-}
-
-export interface TaskDocumentCreateInput {
-  /** Document key. Must match /^[a-zA-Z0-9_-]{1,64}$/ */
-  key: string;
-  /** Document body content */
-  content: string;
-  /** Author (defaults to "user" if not provided) */
-  author?: string;
-  /** Optional extensible metadata */
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * TaskDocument extended with its parent task metadata for display in the documents view.
- */
-export interface TaskDocumentWithTask extends TaskDocument {
-  /** Title of the parent task */
-  taskTitle?: string;
-  /** Description of the parent task */
-  taskDescription?: string;
-  /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
-  taskColumn?: string;
-}
-
-/** Supported artifact media classes for the persisted artifact registry. */
-export type ArtifactType = "document" | "image" | "video" | "audio" | "other";
-
-/**
- * FNXC:ReportPipeline 2026-07-19-10:00:
- * Report screenshots are local image artifacts with this explicit provenance.
- * Only the reference may reach report egress; screenshot pixels never do.
- */
-export const REPORT_ATTACHMENT_SOURCE = "report-attachment";
-
-/**
- * FNXC:ArtifactRegistry 2026-06-19-22:04:
- * Agents need a first-class registry for multi-type artifacts that are visible across agents and tasks. Store binary media on disk and persist only metadata plus relative URIs in SQLite so query paths stay lightweight and never inline binary bytes.
- */
-export interface Artifact {
-  /** UUID primary key */
-  id: string;
-  /** Artifact media class used for filtering and presentation */
-  type: ArtifactType;
-  /** Human-readable artifact title */
-  title: string;
-  /** Optional longer description or caption */
-  description?: string;
-  /** Optional MIME type for inline text or binary media */
-  mimeType?: string;
-  /** Optional content size in bytes, set from binary data when persisted on disk */
-  sizeBytes?: number;
-  /** Relative stored path; task artifacts are anchored at the task dir, while task-less registry artifacts are anchored at `.fusion/` */
-  uri?: string;
-  /** Optional inline text body for text/document artifacts */
-  content?: string;
-  /** Agent, user, or system identifier that registered the artifact */
-  authorId: string;
-  /** Class of actor that registered the artifact */
-  authorType: "agent" | "user" | "system";
-  /** Optional task this artifact is associated with */
-  taskId?: string;
-  /** Optional extensible metadata (JSON object) */
-  metadata?: Record<string, unknown>;
-  /** ISO-8601 creation timestamp */
-  createdAt: string;
-  /** ISO-8601 last-update timestamp */
-  updatedAt: string;
-}
-
-export interface ArtifactCreateInput {
-  /** Artifact media class used for filtering and presentation */
-  type: ArtifactType;
-  /** Human-readable artifact title */
-  title: string;
-  /** Optional longer description or caption */
-  description?: string;
-  /** Optional MIME type for inline text or binary media */
-  mimeType?: string;
-  /** Optional content size in bytes for inline or externally referenced content */
-  sizeBytes?: number;
-  /** Optional relative URI when content is already stored outside SQLite */
-  uri?: string;
-  /** Optional inline text body for text/document artifacts */
-  content?: string;
-  /** Agent, user, or system identifier registering the artifact */
-  authorId: string;
-  /** Class of actor registering the artifact */
-  authorType: "agent" | "user" | "system";
-  /** Optional task this artifact is associated with */
-  taskId?: string;
-  /** Optional extensible metadata (JSON object) */
-  metadata?: Record<string, unknown>;
-  /** Optional binary payload; the store persists it on disk and records a relative URI */
-  data?: Buffer;
-}
-
-/** Artifact extended with optional parent task metadata for cross-task registry views. */
-export interface ArtifactWithTask extends Artifact {
-  /** Title of the parent task */
-  taskTitle?: string;
-  /** Description of the parent task */
-  taskDescription?: string;
-  /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
-  taskColumn?: string;
-}
-
-
-/*
-FNXC:ReviewArtifacts 2026-07-17-12:00:
-Remote-desktop producers can register a document descriptor through the existing
-artifact registry by assigning this MIME type. The descriptor remains a document
-in the gallery, avoiding a raw external-session link while still making the
-review deliverable visible on both review surfaces.
-*/
-export const LIVE_DEMO_ARTIFACT_MIME_TYPE = "application/vnd.runfusion.live-demo+json";
-
-/*
-FNXC:ReviewArtifacts 2026-07-17-12:00:
-Review surfaces admit feature videos and explicitly marked live-demo descriptors.
-Ordinary documents remain excluded; the marker uses the existing persisted
-mimeType field because agent artifact registration already forwards it without
-requiring a parallel schema or metadata-registration path.
-*/
-export function isReviewArtifact(artifact: Pick<Artifact, "type" | "mimeType">): boolean {
-  return artifact.type === "video"
-    || (artifact.type === "document" && artifact.mimeType?.toLowerCase().split(";", 1)[0] === LIVE_DEMO_ARTIFACT_MIME_TYPE);
-}
-
-/** Reads the persisted PROMPT.md override without adding task-store persistence. */
-export function parseReviewArtifactsModeOverride(prompt: string | undefined): ReviewArtifactsMode | undefined {
-  if (!prompt) return undefined;
-  const match = prompt.match(/^\*\*Review Artifacts:\*\*\s*(off|user-facing|on)\s*$/im);
-  return match?.[1]?.toLowerCase() as ReviewArtifactsMode | undefined;
-}
-
-/** Resolves review-artifact generation policy: PROMPT header → project setting → conservative default. */
-export function resolveReviewArtifactsMode(
-  settings: Pick<ProjectSettings, "reviewArtifacts">,
-  prompt?: string,
-): ReviewArtifactsMode {
-  return parseReviewArtifactsModeOverride(prompt) ?? settings.reviewArtifacts ?? "off";
-}
-
-export type ReviewArtifactTaskClassification = "user-facing" | "backend" | "trivial";
-
-/*
-FNXC:ReviewArtifacts 2026-07-17-13:00:
-The `user-facing` policy must be a real generation gate, not a label that
-producers reinterpret. Triage may declare a task classification in PROMPT.md;
-otherwise a task with the standard frontend UX contract is user-facing and all
-other work conservatively remains backend. This keeps trivial/backend work from
-silently producing review media while allowing `on` or the existing mode header
-to explicitly opt in.
-*/
-export function classifyReviewArtifactTask(prompt: string | undefined): ReviewArtifactTaskClassification {
-  const explicit = prompt?.match(/^\*\*Review Artifact Task Type:\*\*\s*(user-facing|backend|trivial)\s*$/im)?.[1]?.toLowerCase();
-  if (explicit === "user-facing" || explicit === "backend" || explicit === "trivial") return explicit;
-  if (/^##\s+Frontend UX Criteria\s*$/im.test(prompt ?? "")) return "user-facing";
-  return "backend";
-}
-
-/**
- * Determines whether an automatic review-artifact producer may generate media
- * for a task. A mode marker still wins policy resolution; task classification
- * controls the `user-facing` mode only.
- */
-export function isReviewArtifactGenerationEligible(
-  settings: Pick<ProjectSettings, "reviewArtifacts">,
-  prompt?: string,
-  classification = classifyReviewArtifactTask(prompt),
-): boolean {
-  const mode = resolveReviewArtifactsMode(settings, prompt);
-  return mode === "on" || (mode === "user-facing" && classification === "user-facing");
-}
-
-/**
- * FNXC:NativeStructureEmbed 2026-07-16-12:00:
- * Chat and mail share this compact reference contract so their consumers never invent
- * incompatible structure identifiers. `roadmap-item` is resolved through the roadmap plugin's
- * PostgreSQL-safe adapter and is missing-only because roadmap entities have no soft-delete state.
- */
-export interface NativeStructureRef {
-  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal" | "roadmap-item";
-  id: string;
-  projectId?: string;
-}
-
-/**
- * FNXC:NativeStructureEmbed 2026-07-16-12:00:
- * Dashboard destinations are callback/view-state based rather than HTML routes. Consumers use
- * this stable descriptor with their navigation callback; it is intentionally not a URL.
- *
- * FNXC:NativeStructureEmbed 2026-07-19-12:30:
- * Roadmap-item descriptors carry optional hierarchy context for the hosted `roadmaps` view;
- * consumers pass this object to onOpen instead of manufacturing a deep-link URL.
- */
-export interface NativeStructureOpenTarget {
-  view: "missions" | "insights" | "evals" | "goals" | "roadmaps";
-  id: string;
-  missionId?: string;
-  roadmapId?: string;
-  milestoneId?: string;
-}
-
-/**
- * FNXC:NativeStructureEmbed 2026-07-18-18:15:
- * A previewable native structure projected by the dashboard read layer.
- */
-export interface NativeStructurePreviewPayload {
-  available: true;
-  kind: NativeStructureRef["kind"];
-  kindLabel: string;
-  title: string;
-  excerpt: string;
-  openTarget: NativeStructureOpenTarget;
-}
-
-/**
- * FNXC:NativeStructureEmbed 2026-07-18-18:15:
- * A native structure whose existing lifecycle state makes it unavailable for preview.
- */
-export interface NativeStructureUnavailablePayload {
-  available: false;
-  kind: NativeStructureRef["kind"];
-  id: string;
-  reason: "missing" | "soft-deleted";
-}
-
-/**
- * FNXC:NativeStructureEmbed 2026-07-16-12:00:
- * Unavailability is a typed result so shared consumers show a safe placeholder instead of
- * crashing. Eval results have no archive lifecycle and therefore only return `missing`.
- */
-export type NativeStructurePreviewResult = NativeStructurePreviewPayload | NativeStructureUnavailablePayload;
-
-/**
- * Goal-citation Slice 2 success-signal surfaces where goal IDs are extracted.
- */
-export type GoalCitationSurface = "agent_log" | "task_document";
-
-/**
- * A unique extracted goal ID and the index of its first appearance in source text.
- */
-export interface GoalCitationMatch {
-  goalId: string;
-  index: number;
-}
-
-/**
- * Input payload for recording a single observed goal citation in the Slice 2 success-signal trail.
- * `snippet` must be a bounded source-text substring (≤200 chars), never the full source body.
- */
-export interface GoalCitationInput {
-  goalId: string;
-  agentId: string;
-  taskId?: string;
-  surface: GoalCitationSurface;
-  sourceRef: string;
-  snippet: string;
-  timestamp?: string;
-}
-
-/**
- * Persisted goal-citation audit row used to measure Slice 2 anchoring success signal.
- * `snippet` is always a bounded substring (≤200 chars), not full source content.
- */
-export interface GoalCitation extends Required<Pick<GoalCitationInput, "goalId" | "agentId" | "surface" | "sourceRef" | "snippet">> {
-  id: number;
-  taskId?: string;
-  timestamp: string;
-}
-
-/**
- * Filter contract for querying goal-citation success-signal rows across scanned surfaces.
- * Snippet payloads remain bounded substrings (≤200 chars) of original text.
- */
-export interface GoalCitationFilter {
-  goalId?: string;
-  agentId?: string;
-  taskId?: string;
-  surface?: GoalCitationSurface;
-  startTime?: string;
-  endTime?: string;
-  limit?: number;
-}
-
-export const DOCUMENT_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-
-/** Shared GitHub owner/repo slug validation for repo override inputs. */
-export const REPO_OVERRIDE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-
-export function validateDocumentKey(key: string): void {
-  if (!DOCUMENT_KEY_RE.test(key)) {
-    throw new Error(
-      `Invalid document key: "${key}". Must be 1-64 characters: letters, digits, hyphens, or underscores.`,
-    );
-  }
-}
-
-/** Build canonical research enrichment document key from a run id. */
-export function buildResearchDocumentKey(runId: string): string {
-  const sanitizedRunId = runId.replace(/[^A-Za-z0-9_-]/g, "");
-  if (!sanitizedRunId) {
-    throw new Error("Invalid research run id: sanitized run id is empty");
-  }
-  const key = `research-${sanitizedRunId}`;
-  validateDocumentKey(key);
-  return key;
-}
+import type {
+  ArtifactType,
+  ReviewArtifactTaskClassification,
+  NativeStructurePreviewResult,
+  GoalCitationSurface,
+  TaskDocument,
+  TaskDocumentRevision,
+  TaskDocumentCreateInput,
+  TaskDocumentWithTask,
+  Artifact,
+  ArtifactCreateInput,
+  ArtifactWithTask,
+  NativeStructureRef,
+  NativeStructureOpenTarget,
+  NativeStructurePreviewPayload,
+  NativeStructureUnavailablePayload,
+  GoalCitationMatch,
+  GoalCitationInput,
+  GoalCitation,
+  GoalCitationFilter,
+} from "./types/documents-artifacts.js";
+export type {
+  ArtifactType,
+  ReviewArtifactTaskClassification,
+  NativeStructurePreviewResult,
+  GoalCitationSurface,
+  TaskDocument,
+  TaskDocumentRevision,
+  TaskDocumentCreateInput,
+  TaskDocumentWithTask,
+  Artifact,
+  ArtifactCreateInput,
+  ArtifactWithTask,
+  NativeStructureRef,
+  NativeStructureOpenTarget,
+  NativeStructurePreviewPayload,
+  NativeStructureUnavailablePayload,
+  GoalCitationMatch,
+  GoalCitationInput,
+  GoalCitation,
+  GoalCitationFilter,
+};
 
 export interface MergeDetails {
   commitSha?: string;
@@ -6107,7 +5715,6 @@ export interface MigrationResult {
   /** Errors encountered during migration */
   errors: Array<{ path: string; error: string }>;
 }
-
 
 // ── Messaging Types ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-18-00:35: Keep stable re-exports after main
