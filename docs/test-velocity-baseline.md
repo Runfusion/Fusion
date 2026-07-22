@@ -5,7 +5,7 @@
 ## Latest baseline
 
 - Cycle: **2026-W30**
-- Captured at: **2026-07-22T21:58:46.970Z**
+- Captured at: **2026-07-22T22:40:53.357Z**
 - Timing snapshot: `scripts/test-timings.json` captured at **2026-06-27T05:41:42.568Z**
 - Quarantine ledger: `scripts/lib/test-quarantine.json`
 
@@ -13,9 +13,9 @@
 
 | Metric | Current | Delta vs previous |
 |---|---:|---:|
-| Merge gate wall-time (`pnpm test:gate`) | 29.3s | -15.9s |
-| Boot smoke wall-time (`pnpm smoke:boot`) | 24.0s | +5.8s |
-| Changed-only test wall-time (`pnpm test`) | 35.7s | -1.0s |
+| Merge gate wall-time (`pnpm test:gate`) | 9.1s | -20.1s |
+| Boot smoke wall-time (`pnpm smoke:boot`) | 18.5s | -5.6s |
+| Changed-only test wall-time (`pnpm test`) | 14.9s | -20.7s |
 | Quarantine / flake count | 2 | 0 |
 | Deletion-due quarantines | 0 | n/a |
 
@@ -72,16 +72,16 @@
 
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
-| Previous | 2026-07-22T20:52:05.508Z | 45.2s | 18.3s | 36.7s | 2 |
-| Latest | 2026-07-22T21:58:46.970Z | 29.3s | 24.0s | 35.7s | 2 |
-| Delta | — | -15.9s | +5.8s | -1.0s | 0 |
+| Previous | 2026-07-22T21:58:46.970Z | 29.3s | 24.0s | 35.7s | 2 |
+| Latest | 2026-07-22T22:40:53.357Z | 9.1s | 18.5s | 14.9s | 2 |
+| Delta | — | -20.1s | -5.6s | -20.7s | 0 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 29.3s (-15.9s), boot smoke 24.0s (+5.8s), pnpm test 35.7s (-1.0s), quarantine ledger 2 (0). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 9.1s (-20.1s), boot smoke 18.5s (-5.6s), pnpm test 14.9s (-20.7s), quarantine ledger 2 (0). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh
