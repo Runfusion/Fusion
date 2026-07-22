@@ -635,6 +635,32 @@ describe("Test-release workflow (.github/workflows/test-release.yml)", () => {
   });
 });
 
+describe("Windows agent-browser install workflow", () => {
+  let workflow: any;
+  let content: string;
+
+  beforeAll(() => {
+    const result = loadWorkflow("windows-agent-browser-install.yml");
+    workflow = result.parsed;
+    content = result.content;
+  });
+
+  it("runs a packed consumer install on Windows for relevant pull requests", () => {
+    expect(workflow.on?.pull_request?.branches).toContain("main");
+    expect(workflow.on?.pull_request?.paths).toContain("packages/cli/package.json");
+    expect(workflow.jobs?.["install-smoke"]?.["runs-on"]).toBe("windows-latest");
+    expect(findCompositeSetupStep(workflow.jobs?.["install-smoke"]?.steps ?? [])).toBeDefined();
+  });
+
+  it("executes npm's generated cmd shim and checks the native win32 executable", () => {
+    expect(content).toContain("pnpm pack --pack-destination");
+    expect(content).toContain("Packed Fusion manifest lost the agent-browser pin");
+    expect(content).toContain("npm install --ignore-scripts --no-audit --no-fund");
+    expect(content).toContain("node_modules/.bin/agent-browser.cmd");
+    expect(content).toContain("agent-browser-win32-x64.exe");
+  });
+});
+
 describe("Code signing — Release workflow secrets", () => {
   let content: string;
 

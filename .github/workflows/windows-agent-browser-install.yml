@@ -1,0 +1,103 @@
+name: Windows agent-browser install
+
+# Exercise the published npm boundary on Windows. Source-tree launcher tests do
+# not prove that npm generated a working .cmd shim or that the dependency kept
+# its native Windows executable after packing and consumer installation.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-agent-browser-install.yml"
+      - "packages/cli/agent-browser.mjs"
+      - "packages/cli/package.json"
+      - "packages/cli/scripts/prepare-publish-manifest.mjs"
+
+concurrency:
+  group: windows-agent-browser-install-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  install-smoke:
+    name: Windows agent-browser install
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Pack Fusion CLI
+        shell: pwsh
+        working-directory: packages/cli
+        run: |
+          $packDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-pack"
+          New-Item -ItemType Directory -Force -Path $packDir | Out-Null
+          pnpm pack --pack-destination $packDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $agentBrowserRoot = Join-Path $PWD "node_modules/agent-browser"
+          npm pack $agentBrowserRoot --ignore-scripts --pack-destination $packDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install packed CLI and execute npm shim
+        shell: pwsh
+        run: |
+          $packDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-pack"
+          $fixtureDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-fixture"
+          $fixturePackDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-fixture-pack"
+          $installDir = Join-Path $env:RUNNER_TEMP "fusion-agent-browser-consumer"
+          $tarball = Get-ChildItem $packDir -Filter "runfusion-fusion-*.tgz" | Select-Object -First 1
+          if (!$tarball) { Write-Error "Packed Fusion CLI tarball was not created"; exit 1 }
+          $agentBrowserTarball = Get-ChildItem $packDir -Filter "agent-browser-*.tgz" | Select-Object -First 1
+          if (!$agentBrowserTarball) { Write-Error "Packed agent-browser dependency was not created"; exit 1 }
+
+          New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $fixturePackDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          tar -xzf $tarball.FullName -C $fixtureDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Derive a minimal install fixture from the real Fusion tarball so the
+          # smoke exercises its packed launcher and bin declaration without
+          # downloading Fusion's unrelated production dependency graph.
+          $fixturePackage = Join-Path $fixtureDir "package"
+          node -e "const { existsSync, readFileSync, writeFileSync } = require('node:fs'); const { join } = require('node:path'); const root = process.argv[1]; const dep = process.argv[2].replaceAll('\\', '/'); const file = join(root, 'package.json'); const pkg = JSON.parse(readFileSync(file, 'utf8')); if (pkg.dependencies?.['agent-browser'] !== '0.26.0') throw new Error('Packed Fusion manifest lost the agent-browser pin'); if (pkg.bin?.['agent-browser'] !== './agent-browser.mjs') throw new Error('Packed Fusion manifest lost the agent-browser bin'); if (!existsSync(join(root, 'agent-browser.mjs'))) throw new Error('Packed Fusion tarball omitted agent-browser.mjs'); pkg.dependencies = { 'agent-browser': 'file:' + dep }; delete pkg.devDependencies; delete pkg.peerDependencies; delete pkg.peerDependenciesMeta; delete pkg.scripts; writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');" $fixturePackage $agentBrowserTarball.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm pack $fixturePackage --ignore-scripts --pack-destination $fixturePackDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $fixtureTarball = Get-ChildItem $fixturePackDir -Filter "runfusion-fusion-*.tgz" | Select-Object -First 1
+          if (!$fixtureTarball) { Write-Error "Minimal Fusion install fixture was not created"; exit 1 }
+
+          Push-Location $installDir
+          try {
+            npm init --yes | Out-Null
+            npm install --ignore-scripts --no-audit --no-fund $fixtureTarball.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            $shim = Join-Path $installDir "node_modules/.bin/agent-browser.cmd"
+            if (!(Test-Path $shim)) { Write-Error "npm did not generate agent-browser.cmd"; exit 1 }
+            $normalizedShim = (Get-Content $shim -Raw).Replace("\", "/")
+            if (!$normalizedShim.Contains("@runfusion/fusion/agent-browser.mjs")) {
+              Write-Error "agent-browser.cmd does not target Fusion's packed launcher"
+              exit 1
+            }
+            $version = (& $shim --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($version -ne "agent-browser 0.26.0") {
+              Write-Error "Unexpected agent-browser version: $version"
+              exit 1
+            }
+
+            node -e "const { existsSync } = require('node:fs'); const { createRequire } = require('node:module'); const { dirname, join } = require('node:path'); const fromFusion = createRequire(require.resolve('@runfusion/fusion/package.json')); const pkg = fromFusion.resolve('agent-browser/package.json'); const exe = join(dirname(pkg), 'bin', 'agent-browser-win32-x64.exe'); if (!existsSync(exe)) { console.error('Missing native Windows executable: ' + exe); process.exit(1); } console.log(exe);"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
