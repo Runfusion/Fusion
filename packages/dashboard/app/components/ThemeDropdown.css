@@ -108,6 +108,10 @@ FN-8200 gives the Settings-only current-theme selector breathing room before the
   color: var(--accent);
 }
 
+/*
+FNXC:DashboardTheming 2026-07-21-12:10:
+FN-8471 keeps the shared filter inside the existing popover so the Settings and Command Center variants retain identical desktop and mobile containment. The global input primitive supplies the tokenized field baseline; these selectors add only component layout, focus, and empty-state behavior.
+*/
 .theme-dropdown-popover {
   position: absolute;
   z-index: 10002;
@@ -118,6 +122,33 @@ FN-8200 gives the Settings-only current-theme selector breathing room before the
   border-radius: var(--radius-md);
   background: var(--surface-1);
   box-shadow: var(--shadow-lg);
+  display: grid;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter {
+  display: block;
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter .input {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter .input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.theme-dropdown-no-results {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .theme-dropdown-list {
@@ -126,6 +157,7 @@ FN-8200 gives the Settings-only current-theme selector breathing room before the
   max-block-size: min(60vh, calc(var(--space-2xl) * 12));
   overflow-y: auto;
   overscroll-behavior: contain;
+  min-inline-size: 0;
 }
 
 .theme-dropdown-option {

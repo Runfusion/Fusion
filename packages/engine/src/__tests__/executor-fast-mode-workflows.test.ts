@@ -10,10 +10,13 @@ import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
 import { WorkflowGraphTaskRunner } from "../workflow-graph-task-runner.js";
+import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflow-node-handlers.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
   mockedExistsSync,
+  mockedExec,
+  mockedStatSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
 
@@ -183,6 +186,193 @@ describe("fast mode workflow/runtime invariants", () => {
       data: {
         worktreePath: "/tmp/right",
         branchName: "fusion/fn-6226",
+      },
+    });
+  });
+
+  it("does not project a fresh graph step or capture its baseline before the executor creates its worktree", async () => {
+    let liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: undefined,
+      branch: undefined,
+      baseCommitSha: undefined,
+    });
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => liveTask);
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    const runGraphTaskStep = vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+      expect(store.updateStep).not.toHaveBeenCalled();
+      liveTask = {
+        ...liveTask,
+        worktree: "/tmp/project-root/.worktrees/fresh-step",
+        branch: "fusion/fn-6226",
+        baseCommitSha: "fresh-worktree-base",
+        steps: [{ name: "Preflight", status: "done" }],
+      };
+      return { success: true };
+    });
+
+    const result = await (executor as any)
+      .createAuthoritativeWorkflowPrimitives({ experimentalFeatures: { workflowGraphExecutor: true } })
+      .runTaskStep(
+        {
+          run: { taskId: liveTask.id },
+          node: {
+            node: { id: "steps#0:step-execute" },
+            context: {
+              [FOREACH_ACTIVE_CONTEXT_KEY]: {
+                foreachNodeId: "steps",
+                stepIndex: 0,
+                instanceId: "steps#0",
+              },
+            },
+          },
+        },
+        liveTask,
+        0,
+      );
+
+    expect(runGraphTaskStep).toHaveBeenCalledTimes(1);
+    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      outcome: "success",
+      baselineSha: "fresh-worktree-base",
+      checkpointId: undefined,
+    });
+  });
+
+  it("defers truthy missing and non-directory worktrees until acquisition", async () => {
+    for (const [worktree, exists, directory] of [
+      ["/tmp/fn-8464-missing-worktree", false, false],
+      ["/tmp/fn-8464-file-worktree", true, false],
+    ]) {
+      let liveTask = task({
+        steps: [{ name: "Preflight", status: "pending" }],
+        worktree,
+        baseCommitSha: undefined,
+      });
+      const store = createMockStore();
+      store.getTask.mockImplementation(async () => liveTask);
+      mockedExistsSync.mockReturnValue(exists);
+      mockedStatSync.mockReturnValue({ isDirectory: () => directory } as any);
+      const executor = new TaskExecutor(store, "/tmp/project-root");
+      vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+        expect(store.updateStep).not.toHaveBeenCalled();
+        liveTask = { ...liveTask, worktree: "/tmp/acquired", baseCommitSha: "acquired-base" };
+        return { success: true };
+      });
+
+      const result = await (executor as any).runProjectedGraphTaskStep(
+        liveTask,
+        liveTask,
+        0,
+        { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+      );
+
+      expect(result).toMatchObject({ outcome: "success", baselineSha: "acquired-base" });
+      expect(mockedExec).not.toHaveBeenCalled();
+    }
+  });
+
+  it("defers a worktree whose directory stat throws instead of propagating a cwd race", async () => {
+    let liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: "/tmp/fn-8464-stat-race",
+      baseCommitSha: undefined,
+    });
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => liveTask);
+    mockedStatSync.mockImplementation(() => {
+      throw new Error("simulated removal race");
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+      expect(store.updateStep).not.toHaveBeenCalled();
+      liveTask = { ...liveTask, worktree: "/tmp/acquired", baseCommitSha: "acquired-base" };
+      return { success: true };
+    });
+
+    await expect(
+      (executor as any).runProjectedGraphTaskStep(
+        liveTask,
+        liveTask,
+        0,
+        { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+      ),
+    ).resolves.toMatchObject({ outcome: "success", baselineSha: "acquired-base" });
+    expect(mockedExec).not.toHaveBeenCalled();
+  });
+
+  it("captures a pre-step baseline when the projected worktree is a directory", async () => {
+    const liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: "/tmp/fn-8464-existing-worktree",
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(liveTask);
+    mockedExistsSync.mockReturnValue(true);
+    mockedStatSync.mockReturnValue({ isDirectory: () => true } as any);
+    mockedExec.mockImplementation((_command: string, _options: unknown, callback: any) => {
+      callback(null, "existing-head\n", "");
+      return {} as any;
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    const runGraphTaskStep = vi
+      .spyOn(executor as any, "runGraphTaskStep")
+      .mockResolvedValue({ success: true });
+
+    const result = await (executor as any).runProjectedGraphTaskStep(
+      liveTask,
+      liveTask,
+      0,
+      { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+    );
+
+    expect(result).toMatchObject({ outcome: "success", baselineSha: "existing-head" });
+    expect(runGraphTaskStep).toHaveBeenCalledOnce();
+    expect(store.updateStep).toHaveBeenCalledWith("FN-6226", 0, "in-progress", { source: "graph" });
+    expect(mockedExec).toHaveBeenCalledWith("git rev-parse HEAD", { cwd: liveTask.worktree }, expect.any(Function));
+  });
+
+  it("applies missing-worktree step ordering through the legacy graph seam", async () => {
+    let liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: "/tmp/fn-8464-legacy-missing-worktree",
+      baseCommitSha: undefined,
+    });
+    mockedExistsSync.mockReturnValue(false);
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => liveTask);
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+      expect(store.updateStep).not.toHaveBeenCalled();
+      liveTask = {
+        ...liveTask,
+        worktree: "/tmp/project-root/.worktrees/fresh-step",
+        baseCommitSha: "fresh-worktree-base",
+        steps: [{ name: "Preflight", status: "done" }],
+      };
+      return { success: true };
+    });
+    const active = {
+      foreachNodeId: "steps",
+      stepIndex: 0,
+      instanceId: "steps#0",
+    };
+
+    const result = await executor.createAuthoritativeWorkflowSeams({} as any).stepExecute?.(
+      liveTask,
+      { [FOREACH_ACTIVE_CONTEXT_KEY]: active },
+    );
+
+    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      outcome: "success",
+      contextPatch: {
+        [FOREACH_ACTIVE_CONTEXT_KEY]: {
+          baselineSha: "fresh-worktree-base",
+          checkpointId: undefined,
+        },
       },
     });
   });

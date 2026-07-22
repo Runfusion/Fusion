@@ -37,6 +37,19 @@ export type FeatureStatus = (typeof FEATURE_STATUSES)[number];
 export const FEATURE_LOOP_STATES = ["idle", "implementing", "validating", "needs_fix", "passed", "blocked"] as const;
 export type FeatureLoopState = (typeof FEATURE_LOOP_STATES)[number];
 
+/**
+ * FNXC:MissionRecovery 2026-07-19-14:30:
+ * Startup recovery re-drives work interrupted during validation by moving the feature back to implementing. Both mission-store backends must share this transition table so recovery cannot be accepted by the engine but rejected by persistence.
+ */
+export const FEATURE_LOOP_TRANSITIONS: Readonly<Record<FeatureLoopState, readonly FeatureLoopState[]>> = {
+  idle: ["implementing"],
+  implementing: ["validating"],
+  validating: ["implementing", "needs_fix", "passed", "blocked"],
+  needs_fix: ["implementing"],
+  passed: [],
+  blocked: [],
+};
+
 /** Status values for a validator run */
 export const VALIDATOR_RUN_STATUSES = ["running", "passed", "failed", "blocked", "error"] as const;
 export type ValidatorRunStatus = (typeof VALIDATOR_RUN_STATUSES)[number];

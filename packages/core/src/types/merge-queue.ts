@@ -43,6 +43,15 @@ export const WORKFLOW_WORK_ITEM_STATES = [
 
 export type WorkflowWorkItemState = (typeof WORKFLOW_WORK_ITEM_STATES)[number];
 
+/** FNXC:WorkflowContinuations 2026-07-21-12:30:
+ * States that keep a workflow work item eligible for continuation ownership. */
+export const ACTIVE_WORKFLOW_WORK_ITEM_STATES: readonly WorkflowWorkItemState[] = [
+  "runnable",
+  "running",
+  "held",
+  "retrying",
+];
+
 export interface WorkflowWorkItem {
   id: string;
   runId: string;
@@ -56,6 +65,12 @@ export interface WorkflowWorkItem {
   leaseExpiresAt: string | null;
   lastError: string | null;
   blockedReason: string | null;
+  stableWorkflowRunId: string | null;
+  continuationSequence: number | null;
+  waitReason: "planning" | "capacity" | null;
+  sourceColumn: string | null;
+  targetColumn: string | null;
+  irHash: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +88,12 @@ export interface WorkflowWorkItemUpsertInput {
   leaseExpiresAt?: string | null;
   lastError?: string | null;
   blockedReason?: string | null;
+  stableWorkflowRunId?: string | null;
+  continuationSequence?: number | null;
+  waitReason?: "planning" | "capacity" | null;
+  sourceColumn?: string | null;
+  targetColumn?: string | null;
+  irHash?: string | null;
   now?: string;
 }
 

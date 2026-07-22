@@ -442,6 +442,8 @@ export type DatabaseMutationType =
   | "task:steering-comment:add"
   | "task:assign"
   | "task:checkout"
+  /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
+  | "task:required-artifact-missing"
   | "agent:auto-recover-error-state"
   | "agent:reset-error-state-on-startup"
   | "agent:error-retry-exhausted"

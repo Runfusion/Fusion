@@ -26,6 +26,7 @@
  */
 
 import { exec } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
 import type { TaskStore } from "@fusion/core";
@@ -383,7 +384,30 @@ export function makeAncestryBlastRadiusGuard(opts: {
 
 // ── Defaults (production adapters over real git/session) ─────────────────
 
+/**
+ * FNXC:BaselineCwdGating 2026-07-21-19:21:
+ * A truthy task worktree path does not prove a checkout exists as a directory.
+ * Missing or non-directory cwd values make Node report the misleading `spawn /bin/sh ENOENT`
+ * during FN-8464 baseline capture (Runfusion/Fusion#2386). This check is total: empty,
+ * missing, non-directory, or any filesystem race/access error defers capture without failing
+ * graph step projection.
+ */
+export function isUsableWorktreeDirectory(candidate: string | undefined | null): boolean {
+  if (!candidate) return false;
+  try {
+    return existsSync(candidate) && statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function defaultGitRevParse(worktreePath: string): Promise<string | undefined> {
+  /*
+   * FNXC:BaselineCwdGating 2026-07-21-19:21:
+   * Keep this defense at the git seam as callers beyond graph projection may pass stale paths.
+   * Never spawn git until the shared total directory check proves its cwd is usable.
+   */
+  if (!isUsableWorktreeDirectory(worktreePath)) return undefined;
   const { stdout } = await execAsync("git rev-parse HEAD", { cwd: worktreePath });
   const sha = stdout.trim();
   return sha.length > 0 ? sha : undefined;

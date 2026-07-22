@@ -6,7 +6,7 @@ lacks an adoption-table row — so a status added during the cutover window is c
 at build time instead of mass-parking rows `paused` at upgrade. Plus adoption-action
 + reviewLevel-backfill unit coverage (fixture rows resume owned; never both fields).
 */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -306,7 +306,7 @@ bookkeeping table → no marker, sweep always runs).
 */
 function makeFakeStore(
   rows: Array<Partial<Task> & { id: string }>,
-  opts?: { backend?: boolean; markerPresent?: boolean; markerReadThrows?: boolean },
+  opts?: { backend?: boolean; markerPresent?: boolean; markerReadThrows?: boolean; markerWriteThrows?: boolean; markerError?: Error },
 ) {
   const listCalls: Array<{ limit?: number; offset?: number }> = [];
   const markerWrites: string[] = [];
@@ -326,14 +326,18 @@ function makeFakeStore(
         db: {
           execute: async (q: unknown) => {
             const text = sqlText(q);
-            if (text.includes("SELECT")) {
-              if (opts?.markerReadThrows) throw new Error("marker read boom");
-              return markerPresent ? [{ version: "legacy-adoption-drained" }] : [];
-            }
-            if (text.includes("INSERT")) {
+            // FNXC:LegacyAdoption 2026-07-21-17:30: write path calls the SECURITY DEFINER
+            // helper (SELECT public.fusion_mark_legacy_adoption_drained()); the read path is
+            // SELECT version FROM … WHERE version = ….
+            if (text.includes("fusion_mark_legacy_adoption_drained")) {
+              if (opts?.markerWriteThrows) throw opts.markerError ?? new Error("marker write boom");
               markerWrites.push(text);
               markerPresent = true;
               return [];
+            }
+            if (text.includes("SELECT") && text.includes("version")) {
+              if (opts?.markerReadThrows) throw opts.markerError ?? new Error("marker read boom");
+              return markerPresent ? [{ version: "legacy-adoption-drained" }] : [];
             }
             return [];
           },
@@ -404,10 +408,9 @@ describe("adoptLegacyTaskRowsOnOpen — drained-marker completion short-circuit"
     expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(0);
     // The sweep still ran (marker was absent) …
     expect(listCalls.length).toBe(1);
-    // … and a clean drain recorded the durable marker exactly once, upsert-style.
+    // … and a clean drain recorded the durable marker exactly once via the SECURITY DEFINER helper.
     expect(markerWrites.length).toBe(1);
-    expect(markerWrites[0]).toContain("INSERT");
-    expect(markerWrites[0]).toContain("ON CONFLICT");
+    expect(markerWrites[0]).toContain("fusion_mark_legacy_adoption_drained");
   });
 
   it("skips the sweep entirely when the marker is present", async () => {
@@ -450,5 +453,35 @@ describe("adoptLegacyTaskRowsOnOpen — drained-marker completion short-circuit"
 
     expect(await adoptLegacyTaskRowsOnOpen(store)).toBe(1);
     expect(rows[0].status).toBeNull();
+  });
+
+  it("reports a permanent marker privilege failure once per SQLSTATE class", async () => {
+    const cause = Object.assign(new Error("permission denied for table fusion_schema_migrations"), {code: "42501"});
+    const markerError = new Error("Failed query: SELECT version FROM public.fusion_schema_migrations", {cause});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const {store} = makeFakeStore([{id: "task-1", status: "done"}], {
+        backend: true,
+        markerReadThrows: true,
+        markerWriteThrows: true,
+        markerError,
+      });
+
+      await adoptLegacyTaskRowsOnOpen(store);
+      await adoptLegacyTaskRowsOnOpen(store);
+
+      const diagnostics = stderr.mock.calls.filter(([message]) =>
+        String(message).includes("Legacy-adoption drained-marker infrastructure is unavailable"),
+      );
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.[1]).toMatchObject({
+        operation: "read",
+        sqlstate: "42501",
+        sqlstateClass: "42",
+        hint: expect.stringContaining("schema baseline 0032+"),
+      });
+    } finally {
+      stderr.mockRestore();
+    }
   });
 });

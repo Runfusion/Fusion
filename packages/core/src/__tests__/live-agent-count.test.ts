@@ -1,64 +1,70 @@
 import { describe, expect, it } from "vitest";
-import { countRunningAgentTasks, deriveRunningAgentCounts, isRunningAgentTask } from "../live-agent-count.js";
-import type { Task } from "../types.js";
+import {
+  countRunningAgentTasks,
+  deriveRunningAgentCounts,
+  enrichRunningAgentTaskShapeFromFlags,
+  isRunningAgentTask,
+  isWaitingAgentTask,
+} from "../live-agent-count.js";
+import type { RunningAgentTaskShape } from "../live-agent-count.js";
 
-function task(overrides: Pick<Task, "column"> & Partial<Pick<Task, "status" | "paused">>): Pick<Task, "column" | "status" | "paused"> {
-  return {
-    column: overrides.column,
-    status: overrides.status,
-    paused: overrides.paused,
-  };
+function task(overrides: Partial<RunningAgentTaskShape> & Pick<RunningAgentTaskShape, "column">): RunningAgentTaskShape {
+  return { columnTerminalKind: "none", ...overrides };
 }
 
 describe("live agent count predicates", () => {
-  it("identifies tasks that hold top-level running-agent slots", () => {
-    expect(isRunningAgentTask(task({ column: "in-progress" }))).toBe(true);
-    expect(isRunningAgentTask(task({ column: "triage", status: "planning", paused: false }))).toBe(true);
-    expect(isRunningAgentTask(task({ column: "triage", status: "planning", paused: true }))).toBe(false);
+  it("counts live planners in every non-terminal workflow lane", () => {
+    expect(isRunningAgentTask(task({ column: "todo", status: "planning" }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "ideas", status: "planning" }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "ideas", status: "planning", paused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "ideas", status: "planning", userPaused: true }))).toBe(false);
+  });
 
+  it("counts unpaused WIP cards as running without requiring sessionFile", () => {
+    // sessionFile is not a DB/board field; WIP membership + not paused is the production signal.
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "working", columnCountsTowardWip: true }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, sessionFile: "/tmp/run" }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, checkedOutBy: "agent-a" }))).toBe(true);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, paused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, userPaused: true }))).toBe(false);
+  });
+
+  it("counts only active review/merge statuses and excludes terminal columns", () => {
     for (const status of ["merging", "merging-pr", "merging-fix", "reviewing", "landing", "fixing"]) {
-      expect(isRunningAgentTask(task({ column: "in-review", status, paused: false }))).toBe(true);
+      expect(isRunningAgentTask(task({ column: "review", status, columnIsReviewOrMerge: true }))).toBe(true);
     }
-
-    expect(isRunningAgentTask(task({ column: "in-review", paused: false }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "in-review", status: "pending", paused: false }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "in-review", status: "reviewing", paused: true }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "done" }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "todo" }))).toBe(false);
-    expect(isRunningAgentTask(task({ column: "archived" }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "review", status: "pending", columnIsReviewOrMerge: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "ideas", status: "merging", columnIsReviewOrMerge: false }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "shipped", sessionFile: "/tmp/stale", columnCountsTowardWip: true, columnTerminalKind: "complete" }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "working", columnCountsTowardWip: true, columnTerminalKind: "none" }))).toBe(true);
   });
 
-  it("counts only tasks that satisfy the shared running-agent predicate", () => {
+  it("enriches terminal, waiting, and WIP traits from board flags", () => {
+    const complete = enrichRunningAgentTaskShapeFromFlags(task({ column: "shipped", sessionFile: "/tmp/stale" }), { complete: true, countsTowardWip: true });
+    expect(complete.columnTerminalKind).toBe("complete");
+    expect(isRunningAgentTask(complete)).toBe(false);
+
+    const intake = enrichRunningAgentTaskShapeFromFlags(task({ column: "ideas" }), { intake: true });
+    expect(isWaitingAgentTask(intake)).toBe(true);
+    expect(isWaitingAgentTask({ ...intake, status: "planning" })).toBe(false);
+    expect(isWaitingAgentTask(enrichRunningAgentTaskShapeFromFlags(task({ column: "hold" }), { hold: true }))).toBe(true);
+  });
+
+  it("counts only the shared predicate", () => {
     expect(countRunningAgentTasks([
+      task({ column: "in-progress", sessionFile: "/tmp/run" }),
       task({ column: "in-progress" }),
-      task({ column: "triage", status: "planning", paused: false }),
-      task({ column: "triage", status: "planning", paused: true }),
-      task({ column: "in-review", status: "merging", paused: false }),
-      task({ column: "in-review", status: "merging-pr", paused: false }),
-      task({ column: "in-review", status: "merging-fix", paused: false }),
-      task({ column: "in-review", status: "reviewing", paused: false }),
-      task({ column: "in-review", status: "landing", paused: false }),
-      task({ column: "in-review", status: "fixing", paused: false }),
-      task({ column: "in-review", status: "fixing", paused: true }),
-      task({ column: "todo" }),
-      task({ column: "done" }),
-      task({ column: "archived" }),
-    ])).toBe(8);
+      task({ column: "triage", status: "planning" }),
+      task({ column: "in-review", status: "merging", columnIsReviewOrMerge: true }),
+      task({ column: "done", sessionFile: "/tmp/stale" }),
+    ])).toBe(4);
   });
 
-  it("normalizes display counts for zero, one, multi-project, unopened, and oversubscribed states", () => {
-    expect(deriveRunningAgentCounts({})).toEqual({ currentlyActive: 0, projectsActive: {} });
-    expect(deriveRunningAgentCounts({ proj_zero: 0, proj_one: 1 })).toEqual({
+  it("normalizes aggregate display counts", () => {
+    expect(deriveRunningAgentCounts({ proj_zero: 0, proj_one: 1, proj_nan: Number.NaN })).toEqual({
       currentlyActive: 1,
       projectsActive: { proj_one: 1 },
-    });
-    expect(deriveRunningAgentCounts({ proj_a: 2, proj_b: 4, proj_unopened: 0 })).toEqual({
-      currentlyActive: 6,
-      projectsActive: { proj_a: 2, proj_b: 4 },
-    });
-    expect(deriveRunningAgentCounts({ proj_over_limit: 12, proj_negative: -3, proj_nan: Number.NaN })).toEqual({
-      currentlyActive: 12,
-      projectsActive: { proj_over_limit: 12 },
     });
   });
 });

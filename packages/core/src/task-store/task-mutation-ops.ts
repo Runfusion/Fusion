@@ -1,5 +1,7 @@
 /**
- * remaining-ops-2 operations.
+ * FNXC:CodeOrganization 2026-07-21-12:00:
+ * Domain rename from remaining-ops-2: task JSON/config writes, atomic updates, tracking reconcile,
+ * attachments, and related mutation helpers.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure

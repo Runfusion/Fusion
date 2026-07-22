@@ -70,6 +70,20 @@ function stripAtMediaBlocks(css: string): string {
   return out;
 }
 
+function mediaBlockFor(css: string, query: string): string {
+  const start = css.indexOf(`@media ${query}`);
+  if (start === -1) return "";
+  const open = css.indexOf("{", start);
+  let depth = 1;
+  let index = open + 1;
+  while (index < css.length && depth > 0) {
+    if (css[index] === "{") depth++;
+    else if (css[index] === "}") depth--;
+    index++;
+  }
+  return css.slice(open + 1, index - 1);
+}
+
 function setSheetViewport(isSheetWidth: boolean): void {
   vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
     matches: query === "(max-width: 768px)" ? isSheetWidth : query === "(max-height: 480px)",
@@ -180,6 +194,47 @@ describe("FloatingWindow", () => {
     // Headerless and chat variants replace only body overflow; the inherited gutter remains intact for their inner scrollers.
     expect(cssRuleFor(floatingWindowCss, ".floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
     expect(cssRuleFor(floatingWindowCss, ".floating-window--chat.floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
+  });
+
+  it("removes only tablet task-detail resize clearance and handles for empty and populated popups", () => {
+    const tabletBlock = mediaBlockFor(floatingWindowCss, "(min-width: 769px) and (max-width: 1024px)");
+    const mobileBlock = mediaBlockFor(floatingWindowCss, "(max-width: 768px)");
+    const desktopCss = stripAtMediaBlocks(floatingWindowCss);
+
+    expect(cssRuleFor(tabletBlock, ".floating-window--task-detail .floating-window__body")).toContain("margin-inline-end: 0;");
+    expect(cssRuleFor(tabletBlock, ".floating-window--task-detail .floating-window__resize-handle")).toContain("display: none;");
+    expect(desktopCss.match(/(?:^|\n)\.floating-window__body\s*\{[^}]*\}/)?.[0]).toContain("margin-inline-end: var(--space-lg);");
+    expect(cssRulesForClass(desktopCss, "floating-window--task-detail").some((rule) => /margin-inline-end|display:\s*none/.test(rule))).toBe(false);
+
+    // Mobile remains a full-screen sheet with its independent no-gutter/no-handle contract.
+    expect(cssRuleFor(mobileBlock, ".floating-window--task-detail")).toContain("width: 100vw !important;");
+    expect(cssRuleFor(mobileBlock, ".floating-window--task-detail")).toContain("border-radius: 0;");
+    expect(cssRuleFor(mobileBlock, ".floating-window--task-detail .floating-window__body")).toContain("margin-inline-end: 0;");
+    expect(cssRuleFor(mobileBlock, ".floating-window--task-detail .floating-window__resize-handle")).toContain("display: none;");
+    expect(mobileBlock).toContain(".floating-window--task-detail .task-detail-content--embedded > .modal-header");
+    expect(mobileBlock).toContain("cursor: default;");
+    expect(mobileBlock).toContain("touch-action: auto;");
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 834 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1112 });
+    setSheetViewport(false);
+    render(
+      <>
+        <FloatingWindow windowKey="tablet-empty" title="Empty task" onClose={() => {}} className="floating-window--task-detail">
+          <div aria-label="empty task detail" />
+        </FloatingWindow>
+        <FloatingWindow windowKey="tablet-populated" title="Populated task" onClose={() => {}} className="floating-window--task-detail">
+          <div aria-label="populated task detail">{Array.from({ length: 40 }, (_, index) => <p key={index}>Scrollable detail {index}</p>)}</div>
+        </FloatingWindow>
+      </>,
+    );
+
+    for (const key of ["tablet-empty", "tablet-populated"]) {
+      const panel = screen.getByTestId(`floating-window-${key}`);
+      expect(panel).toHaveClass("floating-window--task-detail");
+      expect(Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(834);
+      expect(screen.getByTestId(`floating-window-body-${key}`)).toHaveClass("floating-window__body");
+    }
   });
 
   it("keeps task-detail long content clear of right handles while preserving short-content right-edge resize", () => {
@@ -950,6 +1005,6 @@ describe("FloatingWindow", () => {
     expect(mobileBlock).toContain("width: 100vw !important;");
     expect(mobileBlock).toContain("height: 100dvh !important;");
     expect(mobileBlock).toContain(".floating-window--chat .floating-window__resize-handle");
-    expect(floatingWindowCss).not.toMatch(/@media\s*\(min-width:\s*769px\)[\s\S]*\.floating-window--chat[\s\S]*100dvh/);
+    expect(mediaBlockFor(floatingWindowCss, "(min-width: 769px) and (max-width: 1024px)")).not.toContain(".floating-window--chat");
   });
 });

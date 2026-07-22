@@ -39,7 +39,6 @@
  * PostgreSQL. Run locally with PG on 5432 to exercise the PG paths.
  */
 
-import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -229,43 +228,66 @@ function uniqueDbName(prefix = "fusion_test"): string {
 
 /**
  * FNXC:FixPgTestsAndCi 2026-06-26-09:05:
- * Async admin DDL (CREATE/DROP DATABASE) via psql. Replaces the prior
- * execSync call that violated AGENTS.md's execSync ban (only short git
- * plumbing may use execSync) and could hang the vitest worker with no
- * timeout. Now uses async exec with a bounded timeout.
+ * Async admin DDL (CREATE/DROP DATABASE). Replaces the prior execSync call
+ * that violated AGENTS.md's execSync ban (only short git plumbing may use
+ * execSync) and could hang the vitest worker with no timeout.
  *
- * The statement is passed via stdin (`-f -`) to avoid shell-escaping hazards
- * on database names; the connection target comes from PG_TEST_URL_BASE so CI
- * can point at a non-default host/port/user without editing the harness.
+ * FNXC:PgTestHarness 2026-07-18-17:27:
+ * Do not shell out to `psql` for CREATE/DROP DATABASE. Under loaded engine
+ * suites, orphaned `psql -f -` children outlived the 30s test timeout and
+ * failed the vitest subprocess guard (workflow-graph-task-runner CU-U2).
+ * Route admin DDL through the same short-lived postgres.js maintenance
+ * connection as template lifecycle so no shell children are tracked.
+ * Bounded by Promise.race so a stuck catalog lock cannot hang the worker.
+ *
+ * FNXC:PgTestHarness 2026-07-22-03:15:
+ * Client-side Promise.race alone left in-flight `client.unsafe(statement)`
+ * running after timeout — a delayed DROP DATABASE WITH (FORCE) could still
+ * complete and kill later tests' connections. Own the maintenance client so
+ * timeout can SET statement_timeout (server cancel) and force-close the
+ * socket before the caller returns.
  */
-function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Connect to the 'postgres' maintenance database on the same server.
-    const maintUrl = new URL(PG_TEST_URL_BASE);
-    maintUrl.pathname = "/postgres";
-    const args = [
-      `psql`,
-      `"${maintUrl.toString()}"`,
-      "-v",
-      "ON_ERROR_STOP=1",
-      "-f",
-      "-",
-    ];
-    const child = exec(
-      args.join(" "),
-      { stdio: ["pipe", "pipe", "pipe"], env: process.env, timeout: timeoutMs },
-      (error, _stdout, stderr) => {
-        if (error) {
-          reject(new Error(`adminExec psql failed: ${error.message}\nstderr: ${stderr}`));
-          return;
-        }
-        resolve();
-      },
-    );
-    if (child.stdin) {
-      child.stdin.end(statement);
+async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
+  let timedOut = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let client: ReturnType<typeof postgres> | undefined;
+  try {
+    await Promise.race([
+      (async () => {
+        const maintUrl = new URL(PG_TEST_URL_BASE);
+        maintUrl.pathname = "/postgres";
+        client = postgres(maintUrl.toString(), {
+          max: 1,
+          prepare: false,
+          onnotice: () => {},
+        });
+        // Server-side cancel slightly before the JS race so PG stops the statement.
+        const serverTimeoutMs = Math.max(1_000, timeoutMs - 500);
+        await client.unsafe(`SET statement_timeout = ${serverTimeoutMs}`);
+        await client.unsafe(statement);
+      })(),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          // Force-close the socket so a late DROP/CREATE cannot outlive this call.
+          void client?.end({ timeout: 0 }).catch(() => {});
+          reject(new Error(`adminExec timed out after ${timeoutMs}ms: ${statement}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    if (timedOut) {
+      throw error;
     }
-  });
+    throw new Error(
+      `adminExec failed: ${error instanceof Error ? error.message : String(error)}\nstatement: ${statement}`,
+    );
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (client) {
+      await client.end({ timeout: 5 }).catch(() => {});
+    }
+  }
 }
 
 /**
@@ -395,8 +417,8 @@ function isPidAlive(pid: number): boolean {
 /**
  * Open a short-lived admin connection to the maintenance ("postgres") database
  * on the same server, run `fn`, and always close. Used for template lifecycle
- * (listing/sweeping/creating template DBs) where we need query results back —
- * unlike `adminExecAsync`, which fires psql and returns no rows.
+ * (listing/sweeping/creating template DBs) and for adminExecAsync DDL that needs
+ * no result rows.
  */
 async function withMaintenanceSql<T>(
   fn: (client: ReturnType<typeof postgres>) => Promise<T>,
@@ -660,20 +682,40 @@ export async function createTaskStoreForTest(options?: {
      * PostgreSQL can retain a just-closed baseline connection briefly. Terminate
      * stale template sessions immediately before copying; the module-local copy
      * mutex ensures this never interrupts a sibling copy using the same source.
+     *
+     * FNXC:PgTestHarness 2026-07-18-17:40:
+     * Keep terminate + DROP + CREATE TEMPLATE on one maintenance session and
+     * retry the short "source database is being accessed by other users" window
+     * (seen after switching admin DDL off shell psql). Split sessions left a race
+     * where a late-closing baseline/pool client reattached between terminate and
+     * CREATE DATABASE ... TEMPLATE.
      */
-    await withMaintenanceSql(async (client) => {
-      await client`
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE datname = ${template} AND pid <> pg_backend_pid()
-      `;
-    });
-    try {
-      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`);
-    } catch {
-      // may not exist — safe to ignore
+    const maxAttempts = 5;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await withMaintenanceSql(async (client) => {
+          await client`
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = ${template} AND pid <> pg_backend_pid()
+          `;
+          await client.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
+          await client.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+        });
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const contended = /being accessed by other users/i.test(message);
+        if (!contended || attempt === maxAttempts) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+      }
     }
-    await adminExecAsync(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+    if (lastError) throw lastError;
   });
   const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
 
@@ -731,7 +773,8 @@ export async function createTaskStoreForTest(options?: {
       // best-effort
     }
     try {
-      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`);
+      // FNXC:PgTestHarness 2026-07-18-17:27: FORCE so open pool sockets cannot block drop after close races.
+      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
     } catch {
       // best-effort
     }

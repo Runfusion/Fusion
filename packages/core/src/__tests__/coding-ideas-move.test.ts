@@ -67,4 +67,22 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     const moved = await store.moveTask(task.id, "todo", { moveSource: "engine" });
     expect(moved.column).toBe("todo");
   });
+
+  it("cancels an active task continuation when a user sends implementation back to todo", async () => {
+    const store = harness.store();
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    await store.moveTask(task.id, "todo", { moveSource: "user" });
+    await store.moveTask(task.id, "in-progress", { moveSource: "user" });
+    const continuation = await store.upsertWorkflowWorkItem({
+      runId: `${task.id}:continuation:test`,
+      taskId: task.id,
+      nodeId: "steps",
+      kind: "task",
+      state: "running",
+    });
+
+    await store.moveTask(task.id, "todo", { moveSource: "user" });
+
+    expect((await store.getWorkflowWorkItem(continuation.id))?.state).toBe("cancelled");
+  });
 });

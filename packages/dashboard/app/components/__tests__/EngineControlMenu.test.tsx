@@ -304,20 +304,16 @@ describe("EngineControlMenu", () => {
     await openMenu();
 
     const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
-    const maxTriage = screen.getByLabelText(/max triage concurrent/i);
     const maxWorktrees = screen.getByLabelText(/max worktrees/i);
 
     vi.useFakeTimers();
 
     expect(maxConcurrent).toHaveAttribute("max", "60");
     expect(maxConcurrent).toHaveValue("60");
-    expect(maxTriage).toHaveAttribute("max", "70");
-    expect(maxTriage).toHaveValue("70");
     expect(maxWorktrees).toHaveAttribute("max", "80");
     expect(maxWorktrees).toHaveValue("80");
 
     fireEvent.change(maxConcurrent, { target: { value: "9" } });
-    fireEvent.change(maxTriage, { target: { value: "4" } });
     fireEvent.change(maxWorktrees, { target: { value: "8" } });
 
     await act(async () => {
@@ -325,7 +321,6 @@ describe("EngineControlMenu", () => {
     });
 
     expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max concurrent tasks from 60 to 9");
-    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max triage concurrent from 70 to 4");
     expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max worktrees from 80 to 8");
     expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
 
@@ -335,7 +330,7 @@ describe("EngineControlMenu", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
-      { maxConcurrent: 9, maxTriageConcurrent: 4, maxWorktrees: 8 },
+      { maxConcurrent: 9, maxWorktrees: 8 },
       "proj_123",
     ));
     expect(apiMocks.fetchSettings).toHaveBeenCalledTimes(2);
@@ -351,7 +346,6 @@ describe("EngineControlMenu", () => {
     await openMenu();
 
     expect(await screen.findByLabelText(/max concurrent tasks/i)).toHaveAttribute("max", "50");
-    expect(screen.getByLabelText(/max triage concurrent/i)).toHaveAttribute("max", "50");
     expect(screen.getByLabelText(/max worktrees/i)).toHaveAttribute("max", "50");
   });
 
@@ -699,7 +693,7 @@ describe("EngineControlMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: /save change/i }));
 
     await waitFor(() => expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
-      { maxConcurrent: 50, maxTriageConcurrent: 1, maxWorktrees: 4 },
+      { maxConcurrent: 50, maxWorktrees: 4 },
       "proj_123",
     ));
   });

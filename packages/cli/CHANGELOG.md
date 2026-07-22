@@ -1,5 +1,102 @@
 # @runfusion/fusion
 
+## 0.73.0-beta.2
+
+### Patch Changes
+
+- 757b423: summary: Settings Check for updates now finds newer beta releases when the beta channel is selected.
+  category: fix
+  dev: Settings footer and GET /api/updates/check now force-refresh through channel-aware performUpdateCheck (updateChannel + npm beta dist-tag) instead of always querying registry latest with prerelease-blind compare.
+
+## 0.73.0-beta.1
+
+### Minor Changes
+
+- eef5eb7: summary: Unify max concurrency across planning/execution/review and simplify board capacity indicators.
+  category: feature
+  dev: maxConcurrent caps all top-level working agents per project; maxTriageConcurrent removed from UI (Settings, Command Center, Engine Control) and admission; free slots admit oldest createdAt via per-project atomic admission coordinator across lanes; footer Waiting/Running/Blocked; column headers show executing/total via shared Running predicate; Running counts unpaused WIP membership (sessionFile is not a DB/board field — do not require it); nested runNested helpers remain parent-internal soft-breach by design.
+- 527f734: summary: Let operators select the Aurora dashboard theme.
+  category: feature
+  dev: Adds persisted Aurora registry entries, first-paint validation, and dark/light palette tokens.
+- 0908e75: summary: Add the Calm dashboard theme with slate, sage, and misty light palettes.
+  category: feature
+  dev: Adds persisted calm theme tokens, first-paint validation, and shared selector support.
+- d486bf4: summary: Add the Dawn indigo-and-amber dashboard color theme.
+  category: feature
+  dev: Adds persisted Dawn theme tokens, first-paint support, and shared selector previews.
+- 83209e6: summary: Add a simple Ideas-to-Done workflow with truthful, resumable column transitions.
+  category: feature
+  dev: Persists capacity-boundary continuations and resumes the graph at the deferred node after scheduler release.
+
+### Patch Changes
+
+- 63c4742: summary: Allow planning sessions to persist PROMPT.md without an approval gate.
+  category: fix
+  dev: Classify `fn_task_prompt_write` as coordination-exempt in both gate paths so permanent-agent unknown-tool fail-safe no longer requires approval for plan/spec writes.
+- f49f5eb: summary: Report when the server Claude CLI needs login instead of waiting a minute and showing a false usage timeout.
+  category: fix
+  dev: Detects Claude Code 2.1.x unauthenticated and API-billing session-stat screens during the PTY quota fallback and exits immediately.
+- 7353b7b: summary: Let task planning persist complete specifications before Plan Review starts.
+  category: fix
+  dev: Triage sessions now use the coding tool surface so `fn_task_prompt_write` remains available.
+- 5f0502e: summary: Reject unknown `fn update` flags and document the beta install bootstrap.
+  category: fix
+  dev: Strict argv allow-list for update/upgrade; duplicate options rejected; optional stable-channel beta availability notice; docs for npm @beta bootstrap (FN-8452 / #2368).
+- 6489716: summary: Stop false CE skill-load warnings when plugin skills resolve without FUSION_CE_SKILLS_DIR.
+  category: fix
+  dev: executeWorkflowStep warns [skill-load] only when the named skill is not discoverable after multi-source merge (plugin body dirs and/or FUSION_CE_SKILLS_DIR); unrelated plugin paths do not suppress a missing-name warning; successful non-CE plugin skill nodes no longer warn on unset FUSION_CE_SKILLS_DIR (GitHub #2388 / FN-8461).
+- 190dc07: summary: Stop legacy-adoption drained-marker warn spam on every CLI open under embedded Postgres.
+  category: fix
+  dev: Grant fusion_runtime public schema usage plus SELECT and a restricted SECURITY DEFINER marker write; permanently unavailable marker infrastructure logs once per process.
+- 315bc1a: summary: Accept root-level File Scope files with extensions such as global.json and solution files.
+  category: fix
+  dev: isValidFileScopeEntry no longer requires a slash; letter-leading final extensions share create/update validation with classification. Regression coverage tracks GitHub #2389.
+- 080a8e7: summary: Stop spurious per-task `spawn /bin/sh ENOENT` noise during step baseline capture.
+  category: fix
+  dev: Graph step projection now defers missing, non-directory, and stat-error worktrees until a real checkout exists (FN-8464 / issue #2386).
+- 51fc34f: summary: Ignore stale flat skill-toggle keys so session skills match the Skills view after category layouts.
+  category: fix
+  dev: Session skillsOverride matches +/- patterns by skills/-relative path (not bareSkillName alone); legacy flat disables no longer suppress nested skillFiles bodies (GitHub #2385 / FN-8465).
+- c94920d: summary: Allow session Read tool to open host-advertised plugin skill body paths under worktree boundary.
+  category: fix
+  dev: Worktree-bound pi sessions treat one normalized AgentOptions.additionalSkillPaths list as a read-only boundary exception for read/glob/grep and as DefaultResourceLoader skill roots (GitHub #2384 / FN-8466); skill-root write/edit remain blocked.
+- 859475d: summary: Keep plugin enable state consistent across UI and loaders after toggle.
+  category: fix
+  dev: Unify project_plugin_states reads so host/engine/UI use the same per-project enablement key (issue #2383 / FN-8467).
+- 746d33e: summary: Load each enabled plugin once per process startup (no duplicate onLoad).
+  category: fix
+  dev: Host CLI and InProcessRuntime share a single-load authority with concurrency-safe single-flight so path-registered plugins no longer double-fire onLoad on fn dashboard/serve/daemon startup.
+- 824762c: summary: Stop workflow-definition creates from failing when a WF-id is already taken.
+  category: fix
+  dev: createWorkflowDefinition allocates past occupied global workflows.id values and retries id-PK unique conflicts instead of leaking Postgres 23505 to plugins/API callers (multi-project / stale next_workflow_definition_id).
+- c71a954: summary: Keep healthy AI providers running and resume provider-paused tasks when capacity returns.
+  category: fix
+  dev: Provider-scoped parks recover from daemon-side authenticated usage and capacity health transitions without task-call probes.
+- 8f7f527: summary: Keep unresolved merge-review blockers active across concurrent-main rebuilds and later retries.
+  category: fix
+  dev: Carries prior blocking reasons into rebuilt merge and review prompts so a smaller residual diff cannot incorrectly finalize a task as done.
+- de2cad7: summary: Recover missing workflow plans before review instead of approving or stranding tasks.
+  category: fix
+  dev: Verifies prompt persistence, distinguishes storage outages, gates workflow entry, and retries planning with audit events.
+- 0e29d9d: summary: Resume mission features that were interrupted during validation after an engine restart.
+  category: fix
+  dev: Shares one feature-loop transition contract across synchronous and PostgreSQL mission stores.
+- 3845535: summary: Automatically retry interrupted Planning sessions when operators return to them.
+  category: fix
+  dev: Uses session-scoped retry ownership across persisted, polled, and SSE error recovery.
+- 4eb532f: summary: Send only one in-progress update per Fusion task on its linked GitHub tracking issue.
+  category: fix
+  dev: Persists the successful in-progress notification marker and retains legacy task-log deduplication.
+- 634295c: summary: Stop Planning Mode questions from filling Mailbox and tighten desktop planning pane spacing.
+  category: fix
+  dev: Removes planning mailbox delivery and redundant desktop pane/footer insets.
+- 3b9d508: summary: Replace the Planning Sessions toggle with a consistent Back-to-sessions control.
+  category: fix
+  dev: Uses the existing session-list transition across desktop and compact Planning layouts.
+- dc834e5: summary: Preserve workflow lifecycle state and start execution steps only after worktree creation.
+  category: fix
+  dev: Adds shared active-state semantics, lifecycle records, and worktree-first graph step projection.
+
 ## 0.73.0-beta.0
 
 ### Minor Changes

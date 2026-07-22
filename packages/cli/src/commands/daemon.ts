@@ -37,6 +37,7 @@ import {
   setHostExtensionPaths,
   createFusionAuthStorage,
   createFusionModelRegistry,
+  refreshFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import {
@@ -705,7 +706,13 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
-    await modelRegistry.refresh();
+    /*
+    FNXC:ModelRegistry 2026-07-21-17:15:
+    Bound post-extension refresh so a hung remote catalog cannot leave daemon stuck before listen.
+    */
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => console.log(`[extensions] ${message}`),
+    });
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
@@ -722,7 +729,9 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    await modelRegistry.refresh();
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => console.log(`[extensions] ${message}`),
+    });
   }
 
   void syncStartupModels({

@@ -308,7 +308,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("classifies an in-review typed plan interruption as stale without operator-action parking", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "plan",
@@ -345,7 +345,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("fire-time guard skips in-review graph re-entry when a graph run is already active", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "execute",
@@ -360,7 +360,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("does NOT auto-recover an explicit user pause even with an interrupted-node marker", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review", userPaused: true });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "plan",
@@ -375,7 +375,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("auto-recovers an in-review paused-aborted execute node through graph re-entry", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "execute",
@@ -411,7 +411,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
   it("classifies a stale in-review plan pause/resume replay as benign without re-entering planning", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review", graphResumeRetryCount: 2 });
     (executor as any).addActiveWorktree(task.id, task.worktree);
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
     const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
@@ -452,7 +452,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       status: "failed",
       error: "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'plan' — operator action required; retry or explicitly unpause/resume after inspecting the task",
     });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       visitedNodeIds: ["plan"],
@@ -476,7 +476,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
   it("auto-retries a stale in-review parse pause/resume replay instead of requiring operator action", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review", graphResumeRetryCount: 0 });
     (executor as any).addActiveWorktree(task.id, task.worktree);
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       visitedNodeIds: ["parse"],
@@ -518,7 +518,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       status: "failed",
       error: "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'parse' — operator action required; retry or explicitly unpause/resume after inspecting the task",
     });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       visitedNodeIds: ["parse"],
@@ -550,7 +550,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
         timestamp: now,
       }],
     });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
     const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
@@ -630,7 +630,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("STILL parks a genuine in-review node failure with no paused-node audit", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       visitedNodeIds: ["plan"],
@@ -647,7 +647,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("classifies a global-pause in-review plan interruption after global resume", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" }, "global-pause");
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "plan",
@@ -672,7 +672,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("classifies a global-pause in-review plan replay without an interrupted-node marker after global resume", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" }, "global-pause");
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       visitedNodeIds: ["plan"],
@@ -697,7 +697,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       globalPause: true,
       maxAutoMergeRetries: 3,
     });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "plan",
@@ -712,7 +712,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("does NOT auto-recover an autoMerge:false in-review interrupted node", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review", autoMerge: false });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "plan",
@@ -727,7 +727,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
 
   it("does NOT auto-recover an exhausted in-review interrupted node", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review", graphResumeRetryCount: 2 });
-    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, {
       interruptedNodeId: "execute",

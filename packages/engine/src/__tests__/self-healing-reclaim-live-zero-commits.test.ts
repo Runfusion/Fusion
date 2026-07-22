@@ -17,13 +17,51 @@ vi.mock("node:child_process", async () => {
   return { exec: execFn, execSync: vi.fn(), execFile: vi.fn() };
 });
 
+/*
+FNXC:EngineTests 2026-07-21-00:20:
+Reclaim path uses removeWorktree + relocate + classify; mock the pool so unit tests do not hang on real git or fail identity classification.
+
+FNXC:EngineTests 2026-07-21-18:00:
+RemovalReason must be re-exported — product passes RemovalReason.SelfHealingBranchConflict into removeWorktree; a missing mock export aborts the destructive path before removeWorktree runs.
+*/
+vi.mock("../worktree-pool.js", () => ({
+  isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
+  classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: false, classification: "missing", reason: "test" }),
+  removeWorktree: vi.fn().mockResolvedValue(undefined),
+  relocateReclaimableWorktreeIntoRoot: vi.fn(async ({ sourcePath }: { sourcePath: string }) => ({
+    kind: "ready",
+    path: sourcePath,
+    relocated: false,
+  })),
+  getRegisteredWorktreePaths: vi.fn().mockReturnValue([]),
+  getRegisteredWorktreeBranchMap: vi.fn().mockReturnValue(new Map()),
+  resolveWorktreeBackend: vi.fn().mockReturnValue({ kind: "native" }),
+  scanIdleWorktrees: vi.fn().mockResolvedValue([]),
+  scanOrphanedBranches: vi.fn().mockResolvedValue([]),
+  RemovalReason: {
+    HardCancel: "hard-cancel",
+    ExecutorTransientRetry: "executor-transient-retry",
+    ExecutorStuckKilled: "executor-stuck-killed",
+    ExecutorDispose: "executor-dispose",
+    StepSessionCleanup: "step-session-cleanup",
+    MergerPostMerge: "merger-post-merge",
+    MergerCleanup: "merger-cleanup",
+    SelfHealingReclaim: "self-healing-reclaim",
+    SelfHealingStaleActiveBranch: "self-healing-stale-active-branch",
+    SelfHealingBranchConflict: "self-healing-branch-conflict",
+    SelfHealingIdleSweep: "self-healing-idle-sweep",
+    PoolPrune: "pool-prune",
+  },
+}));
+
 import { SelfHealingManager } from "../self-healing.js";
 import * as branchConflicts from "../branch-conflicts.js";
-import * as worktreePool from "../worktree-pool.js";
+import { isUsableTaskWorktree, removeWorktree, relocateReclaimableWorktreeIntoRoot } from "../worktree-pool.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
-  (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false });
+  // FNXC:EngineTests 2026-07-21-00:20: reclaim candidates are filtered by allowsAutoMergeProcessing.
+  (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, autoMerge: true });
   (emitter as any).listTasks = vi.fn();
   (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
@@ -39,7 +77,15 @@ describe("self-healing reclaim live zero commits", () => {
   beforeEach(() => {
     store = createStore();
     manager = new SelfHealingManager(store, { rootDir: "/tmp/test" });
-    vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
+    vi.mocked(isUsableTaskWorktree).mockResolvedValue(true);
+    vi.mocked(removeWorktree).mockResolvedValue(undefined as never);
+    vi.mocked(relocateReclaimableWorktreeIntoRoot).mockImplementation(async ({ sourcePath }: { sourcePath: string }) => ({
+      kind: "ready" as const,
+      path: sourcePath,
+      relocated: false,
+    }));
+    // FNXC:EngineTests 2026-07-21-00:20: in-review reclaim requires backward-move triple proof ok.
+    vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true });
     execMock.mockReset();
     execMock.mockResolvedValue("");
   });
@@ -60,7 +106,15 @@ describe("self-healing reclaim live zero commits", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(execMock).toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
+    /*
+    FNXC:EngineTests 2026-07-21-17:58:
+    Fully-subsumed live reclaim deletes via removeWorktree (worktree-pool), then prunes and deletes the branch with execAsync — not a raw `git worktree remove` from self-healing.
+    */
+    expect(removeWorktree).toHaveBeenCalledWith(expect.objectContaining({
+      worktreePath: "/tmp/live",
+      rootDir: "/tmp/test",
+      taskId: "FN-9001",
+    }));
     expect(execMock).toHaveBeenCalledWith("git worktree prune", expect.anything());
     expect(execMock).toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
     expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, paused: false }));
@@ -136,12 +190,11 @@ describe("self-healing reclaim live zero commits", () => {
   });
 
   it("parks task without corrupting branch/worktree when worktree removal fails", async () => {
-    execMock.mockImplementation(async (command: string) => {
-      if (command.includes("git worktree remove --force")) {
-        throw new Error("remove failed");
-      }
-      return "";
-    });
+    /*
+    FNXC:EngineTests 2026-07-21-17:58:
+    Removal failure is surface from removeWorktree (pool), not raw exec of `git worktree remove`.
+    */
+    vi.mocked(removeWorktree).mockRejectedValueOnce(new Error("remove failed"));
     (store.listTasks as any)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])

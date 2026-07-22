@@ -545,6 +545,12 @@ CREATE TABLE IF NOT EXISTS project.workflow_work_items (
   lease_expires_at text,
   last_error text,
   blocked_reason text,
+  stable_workflow_run_id text,
+  continuation_sequence integer,
+  wait_reason text,
+  source_column text,
+  target_column text,
+  ir_hash text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
   CONSTRAINT workflow_work_items_task_id_fkey
@@ -2028,4 +2034,3 @@ CREATE INDEX IF NOT EXISTS "idxArchivedTasksCreatedAt"
 -- GIN index on the archive search_vector (VAL-SEARCH-005).
 CREATE INDEX IF NOT EXISTS "idxArchivedTasksSearchVector"
   ON archive.archived_tasks USING gin(search_vector);
-

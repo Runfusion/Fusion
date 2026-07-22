@@ -243,6 +243,146 @@ describe("parseReviewVerdict", () => {
 });
 
 describe("runAiMerge", () => {
+  it("carries blocking review reasons across a concurrent-main rebuild", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blocker = "server pages still bypass the live authorization guard";
+    const { store } = makeStore(dir);
+    const mergeAgent = realMergeAgent("fusion/fn-1");
+    const reviewPrompts: string[] = [];
+    let reviewCount = 0;
+    const reviewAgent = vi.fn(async (_cwd: string, prompt: string) => {
+      reviewPrompts.push(prompt);
+      reviewCount++;
+      if (reviewCount === 1) {
+        return `${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`;
+      }
+      if (reviewCount === 2) {
+        writeFileSync(join(dir, "concurrent.txt"), "main advanced\n");
+        git(dir, "add concurrent.txt");
+        git(dir, "commit -q -m 'main: concurrent advance'");
+      }
+      return "REVIEW_VERDICT: approve";
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent,
+      reviewAgent,
+    });
+
+    expect(result.merged).toBe(true);
+    expect(reviewPrompts).toHaveLength(3);
+    expect(reviewPrompts[2]).toContain(blocker);
+    expect(reviewPrompts[2]).toContain("complete resulting tree");
+  });
+
+  it("rechecks a durable blocker when a later merge retry starts", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blocker = "server pages still bypass the live authorization guard";
+    const { store } = makeStore(dir, {
+      log: [{
+        action: `AI merge BLOCKED after 3 corrective pass(es) — unresolved correctness concern: ${blocker}`,
+        timestamp: new Date().toISOString(),
+      }],
+    });
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent,
+    });
+
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blocker);
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain("complete resulting tree");
+  });
+
+  it("reviews a durable blocker even when the retried branch has zero commits ahead", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const blocker = "the integrated tree still bypasses authorization";
+    const { store } = makeStore(dir, {
+      log: [{
+        action: `AI merge BLOCKED after 1 corrective pass(es) — unresolved correctness concern: ${blocker}`,
+        timestamp: new Date().toISOString(),
+      }],
+    });
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* zero-ahead corrective review */ }),
+      reviewAgent,
+    });
+
+    expect(reviewAgent).toHaveBeenCalledOnce();
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blocker);
+  });
+
+  it("reviews an empty corrective rebuild before accepting it as a no-op", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blocker = "the merged tree still bypasses authorization";
+    const { store } = makeStore(dir);
+    const integrationTipBefore = git(dir, "rev-parse main");
+    let mergeCount = 0;
+    const mergeAgent = vi.fn(async (cwd: string) => {
+      mergeCount++;
+      if (mergeCount === 1) await realMergeAgent("fusion/fn-1")(cwd, "");
+      /*
+      FNXC:MergeReviewBlockers 2026-07-21-21:50:
+      The corrective pass deliberately leaves the clean-room tree at the integration tip so the regression proves an empty rebuild still receives review and cannot advance the integration ref.
+      */
+    });
+    const reviewAgent = vi.fn()
+      .mockResolvedValueOnce(`${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(mergeAgent).toHaveBeenCalledTimes(2);
+    expect(reviewAgent).toHaveBeenCalledTimes(2);
+    expect(reviewAgent.mock.calls[1]?.[1]).toContain(blocker);
+    expect(result.merged).toBe(false);
+    expect(git(dir, "rev-parse main")).toBe(integrationTipBefore);
+  });
+
+  it("keeps earlier blockers when later reviews discover different failures", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blockerX = "authorization is bypassed";
+    const blockerY = "audit metadata is missing";
+    const { store } = makeStore(dir, {}, { merger: { mode: "ai", maxReviewPasses: 2 } });
+    const reviewAgent = vi.fn()
+      .mockResolvedValueOnce(`${blockerX}\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce(`${blockerY}\nREVIEW_VERDICT: reject`)
+      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent,
+    });
+
+    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerX);
+    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerY);
+  });
+
+  it("recovers every blocker from interrupted per-pass rejection logs", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const blockerX = "authorization is bypassed";
+    const blockerY = "audit metadata is missing";
+    const { store } = makeStore(dir, {
+      log: [
+        { action: `AI merge review (pass 1): rejected (blocking) — ${blockerX}` },
+        { action: `AI merge review (pass 2): rejected (blocking) — ${blockerY}` },
+      ],
+    });
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent,
+    });
+
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerX);
+    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerY);
+  });
+
   it("merges a clean branch, advances main, and finalizes the task", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store, emitted } = makeStore(dir);

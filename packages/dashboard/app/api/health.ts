@@ -104,8 +104,16 @@ export function startEngine(projectId?: string): Promise<EngineStatusResponse> {
   return api<EngineStatusResponse>(withProjectId("/engine/start", projectId), { method: "POST" });
 }
 
+/*
+ * FNXC:UpdateChannels 2026-07-21-20:33:
+ * Settings footer "Check for updates" used to call GET /updates/check, which
+ * always resolved npm dist-tag `latest` and ignored GlobalSettings.updateChannel.
+ * Force-refresh through the channel-aware /update-check/refresh route so beta
+ * users discover X.Y.Z-beta.N targets (and so a deliberate click always
+ * re-queries the registry instead of serving a stale TTL cache).
+ */
 export function checkForUpdates(): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>("/updates/check");
+  return api<UpdateCheckResponse>("/update-check/refresh", { method: "POST" });
 }
 
 

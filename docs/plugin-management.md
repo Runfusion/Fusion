@@ -118,9 +118,9 @@ Expected outcome: Plugin is installed from the specified path and visible in plu
 2. Toggle plugin enable/disable controls.
 3. Use reload controls when available.
 
-> Enable/disable is project-scoped and only affects the current project.
+> Enable/disable is project-scoped and only affects the current project. Fusion resolves the toggle response, plugin list, lifecycle updates, and loaders from the same normalized project root, so the manager reflects the new state immediately without a restart.
 
-Expected outcome: Plugin transitions between runtime states (`started` / `stopped`) and reflects transitions in the manager.
+Expected outcome: Plugin transitions between runtime states (`started` / `stopped`) and reflects transitions in the manager immediately.
 
 ### CLI
 

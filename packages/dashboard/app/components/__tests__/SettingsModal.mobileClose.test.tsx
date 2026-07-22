@@ -107,10 +107,15 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     const { container } = renderModal({ presentation: "modal" });
     await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-    const closeButtons = screen.getAllByRole("button", { name: "Close" });
-    expect(closeButtons).toHaveLength(1);
+    /*
+    FNXC:DashboardTests 2026-07-20-23:45:
+    Standalone Settings keeps the header `modal-close` affordance and a footer Close action.
+    Both may be named "Close"; the invariant is a single header modal-close and no
+    mobile-embedded close control (that only appears when presentation is embedded).
+    */
     expect(container.querySelectorAll(".modal-close")).toHaveLength(1);
     expect(container.querySelector(".settings-embedded-mobile-close")).toBeNull();
+    expect(container.querySelector(".modal-close")?.getAttribute("aria-label")).toMatch(/close/i);
   });
 
   it("keeps the task-definition input-language toggle reachable in Project Models on mobile", async () => {

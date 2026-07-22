@@ -1172,6 +1172,15 @@ body {
 .dot-triage {
   background: var(--triage);
 }
+
+/*
+FNXC:CodingIdeasWorkflow 2026-07-21-23:42:
+The non-legacy Coding (Ideas) manual-intake ID already uses the shared Column dot.
+Map it to the established triage token so the decorative header indicator remains visible across themes.
+*/
+.dot-ideas {
+  background: var(--triage);
+}
 .dot-todo {
   background: var(--todo);
 }

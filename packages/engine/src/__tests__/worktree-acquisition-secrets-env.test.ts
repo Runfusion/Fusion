@@ -21,7 +21,20 @@ vi.mock("../worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 0, documentsCopied: 0, artifactsCopied: 0 }),
 }));
 
+/*
+FNXC:EngineTests 2026-07-21-00:10:
+Pool unit tests use non-git temp paths; identity guard would throw and fall through to fresh.
+*/
+vi.mock("../worktree-hooks.js", async () => {
+  const actual = await vi.importActual<any>("../worktree-hooks.js");
+  return {
+    ...actual,
+    installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
+import { classifyTaskWorktree } from "../worktree-pool.js";
 
 describe("worktree-acquisition secrets env hook", () => {
   const task = { id: "FN-1", title: "t", description: "d", branch: null, worktree: null } as any;
@@ -29,6 +42,7 @@ describe("worktree-acquisition secrets env hook", () => {
 
   beforeEach(() => {
     writeSecretsEnvFile.mockReset().mockResolvedValue({ outcome: "skipped", filename: ".env", reason: "disabled" });
+    vi.mocked(classifyTaskWorktree).mockResolvedValue({ ok: true } as any);
     store = { updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined) };
   });
 
@@ -43,7 +57,7 @@ describe("worktree-acquisition secrets env hook", () => {
         prepareForTask: vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath: "/tmp/pool", reclaimed: false }),
         release: vi.fn(),
       } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fresh-fallback", branch: "fusion/fn-1" }),
       secretsStore: undefined,
     });
     expect(writeSecretsEnvFile).toHaveBeenCalledWith(expect.objectContaining({ worktreeSource: "pool", secretsStore: undefined }));

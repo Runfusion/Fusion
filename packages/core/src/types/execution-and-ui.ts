@@ -121,6 +121,12 @@ export const COLOR_THEMES = [
   "cobalt",
   "clay",
   "moss",
+  // FNXC:DashboardTheming 2026-07-20-00:00: Aurora is a persisted dashboard theme; keep this ID and order synchronized with selector metadata and web/desktop first-paint validators so saved selections survive validation before React hydrates.
+  "aurora",
+  // FNXC:DashboardTheming 2026-07-20-00:00: Calm is persisted; keep its ID and order synchronized across core, selectors, and both pre-hydration validators so saved selections survive validation before React hydrates.
+  "calm",
+  // FNXC:DashboardTheming 2026-07-20-00:00: Dawn is persisted immediately after Calm; keep this ID and order synchronized across core, selectors, and both first-paint validators so saved selections survive pre-hydration validation.
+  "dawn",
   "shadcn",
   // FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default for unset installs; keep it adjacent to the shadcn base so dashboard options and bootstrap validators preserve published theme order while explicit legacy ids remain valid.
   "shadcn-ember",

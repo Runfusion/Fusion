@@ -8,6 +8,37 @@
    Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
+/* Aurora, Calm, and Dawn swatches stay globally resolvable while a different theme is active. */
+:root {
+  --aurora-swatch-sample-1: #0a1022;
+  --aurora-swatch-sample-2: #162044;
+  --aurora-swatch-sample-3: #65e6c7;
+  --aurora-swatch-sample-4: #8d8cff;
+  --calm-swatch-sample-1: #111d2b;
+  --calm-swatch-sample-2: #1b2a3a;
+  --calm-swatch-sample-3: #8fc9b5;
+  --calm-swatch-sample-4: #7da9c4;
+  --dawn-swatch-sample-1: #151229;
+  --dawn-swatch-sample-2: #2a2248;
+  --dawn-swatch-sample-3: #efb66a;
+  --dawn-swatch-sample-4: #c8a4ff;
+}
+
+[data-theme="light"] {
+  --aurora-swatch-sample-1: #f4f8ff;
+  --aurora-swatch-sample-2: #dfeaf8;
+  --aurora-swatch-sample-3: #197d72;
+  --aurora-swatch-sample-4: #5652b8;
+  --calm-swatch-sample-1: #f4f8fb;
+  --calm-swatch-sample-2: #e1ebf0;
+  --calm-swatch-sample-3: #2f7260;
+  --calm-swatch-sample-4: #396f91;
+  --dawn-swatch-sample-1: #fff8f2;
+  --dawn-swatch-sample-2: #f1ddd7;
+  --dawn-swatch-sample-3: #9b5618;
+  --dawn-swatch-sample-4: #704eaa;
+}
+
 /* OCEAN - Deep blues and cyans */
 [data-color-theme="ocean"] {
   --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
@@ -7367,4 +7398,232 @@ FN-8151 adds Cobalt, Clay, and Moss with complete dark and light token ramps. Ke
   --accent: #557a35;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-20-00:00:
+Aurora gives operators navy/teal/violet dark surfaces and misty light surfaces. Literal palette values stay in these canonical tokens, while globally defined swatch variables keep the unselected option accurate in either mode.
+*/
+[data-color-theme="aurora"] {
+  --bg: #0a1022;
+  --surface: #101a35;
+  --card: #162044;
+  --card-hover: #202d58;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #2b3b6b;
+  --text: #eaf5ff;
+  --text-muted: #b2c5e4;
+  --text-dim: #7891ba;
+
+  --todo: #7aa7ff;
+  --in-progress: #65d8e6;
+  --in-progress-rgb: 101, 216, 230;
+  --in-review: #9b8cff;
+  --triage: #f2bc67;
+  --done: #8295b7;
+  --color-success: #65e6c7;
+  --color-warning: #f2bc67;
+  --color-error: #fb7e96;
+  --color-info: #65b9ff;
+
+  --cta-bg: #2a9d91;
+  --cta-border: #65e6c7;
+  --cta-text: #07171c;
+  --cta-bg-hover: #3db9a8;
+  --cta-border-hover: #98f2dc;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #65e6c7;
+  --accent-text: #07171c;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="aurora"][data-theme="light"] {
+  --bg: #f4f8ff;
+  --surface: #e9f1fb;
+  --card: #ffffff;
+  --card-hover: #dce9f8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #bdcde2;
+  --text: #102644;
+  --text-muted: #48617f;
+  --text-dim: #7087a1;
+
+  --todo: #366cb7;
+  --in-progress: #197d8c;
+  --in-progress-rgb: 25, 125, 140;
+  --in-review: #5a4fb1;
+  --triage: #9a6515;
+  --done: #617a98;
+  --color-success: #197d72;
+  --color-warning: #9a6515;
+  --color-error: #bd3e59;
+  --color-info: #246fae;
+
+  --cta-bg: #197d72;
+  --cta-border: #12675e;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #126b62;
+  --cta-border-hover: #0e554e;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #197d72;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-20-00:00:
+Calm provides low-stimulation slate-and-sage dark surfaces and misty light surfaces. Literal palette values stay in canonical theme tokens here, while global preview values keep the unselected option accurate in either mode.
+*/
+[data-color-theme="calm"] {
+  --bg: #111d2b;
+  --surface: #172536;
+  --card: #1b2a3a;
+  --card-hover: #26394a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #34495a;
+  --text: #e8f0f2;
+  --text-muted: #b3c5c8;
+  --text-dim: #819aa3;
+
+  --todo: #8aaed0;
+  --in-progress: #79b9bb;
+  --in-progress-rgb: 121, 185, 187;
+  --in-review: #a79bc9;
+  --triage: #d5af6c;
+  --done: #8b9daa;
+  --color-success: #8fc9b5;
+  --color-warning: #d5af6c;
+  --color-error: #d98798;
+  --color-info: #7da9c4;
+
+  --cta-bg: #5b9984;
+  --cta-border: #8fc9b5;
+  --cta-text: #10241f;
+  --cta-bg-hover: #70ad98;
+  --cta-border-hover: #b1dfce;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 28%, transparent);
+  --accent: #8fc9b5;
+  --accent-text: #10241f;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+[data-color-theme="calm"][data-theme="light"] {
+  --bg: #f4f8fb;
+  --surface: #e9f1f5;
+  --card: #ffffff;
+  --card-hover: #dce8ee;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #bfd0d8;
+  --text: #193242;
+  --text-muted: #4e6773;
+  --text-dim: #728994;
+
+  --todo: #396f91;
+  --in-progress: #2f726f;
+  --in-progress-rgb: 47, 114, 111;
+  --in-review: #665b91;
+  --triage: #8e641d;
+  --done: #647c89;
+  --color-success: #2f7260;
+  --color-warning: #8e641d;
+  --color-error: #ad4357;
+  --color-info: #396f91;
+
+  --cta-bg: #2f7260;
+  --cta-border: #245b4d;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #265f51;
+  --cta-border-hover: #1d493e;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #2f7260;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-20-00:00:
+Dawn pairs deep indigo and plum dark surfaces with muted peach, amber, and violet accents; its light mode uses dawn-white surfaces, plum text, and readable deep amber actions. Global preview values above remain independent of the active theme so unselected Dawn rows retain all four swatch colors.
+*/
+[data-color-theme="dawn"] {
+  --bg: #151229;
+  --surface: #201a38;
+  --card: #2a2248;
+  --card-hover: #352a57;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #4b3d6e;
+  --text: #fff1e4;
+  --text-muted: #d7c0c3;
+  --text-dim: #9f8498;
+
+  --todo: #8ea8ff;
+  --in-progress: #8dbde8;
+  --in-progress-rgb: 141, 189, 232;
+  --in-review: #c8a4ff;
+  --triage: #efb66a;
+  --done: #a391aa;
+  --color-success: #a7d49b;
+  --color-warning: #efb66a;
+  --color-error: #f18a9c;
+  --color-info: #8dbde8;
+
+  --cta-bg: #d88745;
+  --cta-border: #f3be7b;
+  --cta-text: #29150f;
+  --cta-bg-hover: #e89a57;
+  --cta-border-hover: #ffdaa3;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #efb66a;
+  --accent-text: #29150f;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="dawn"][data-theme="light"] {
+  --bg: #fff8f2;
+  --surface: #faeee8;
+  --card: #ffffff;
+  --card-hover: #f1ddd7;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #d9bec4;
+  --text: #382137;
+  --text-muted: #6e5265;
+  --text-dim: #967987;
+
+  --todo: #4969ae;
+  --in-progress: #326d94;
+  --in-progress-rgb: 50, 109, 148;
+  --in-review: #704eaa;
+  --triage: #9b5618;
+  --done: #806d7b;
+  --color-success: #397447;
+  --color-warning: #9b5618;
+  --color-error: #b23d58;
+  --color-info: #326d94;
+
+  --cta-bg: #9b5618;
+  --cta-border: #7b4212;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #7f4614;
+  --cta-border-hover: #63350f;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #9b5618;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
 }

@@ -43,10 +43,22 @@ interface EngineOverseerInternals {
 }
 
 /** Extracts the real `ProjectEngine` prototype methods FN-7551 wired without running its heavy constructor/`start()`. */
-function makeEngineInternals(): EngineOverseerInternals {
-  const engineLike = Object.create(ProjectEngine.prototype) as unknown as EngineOverseerInternals;
+function makeEngineInternals(opts?: {
+  isTaskLiveForOverseerRetry?: (taskId: string) => boolean;
+}): EngineOverseerInternals & { runtime: { getExecutor: () => { isTaskLiveForOverseerRetry?: (id: string) => boolean } | undefined } } {
+  const engineLike = Object.create(ProjectEngine.prototype) as unknown as EngineOverseerInternals & {
+    runtime: { getExecutor: () => { isTaskLiveForOverseerRetry?: (id: string) => boolean } | undefined };
+  };
   engineLike.plannerObservationEmitDedup = new Map();
   engineLike.plannerEscalationEmitDedup = new Set();
+  (engineLike as { plannerLiveRetrySkipLogDedup: Set<string> }).plannerLiveRetrySkipLogDedup = new Set();
+  // FNXC:PlannerOversight 2026-07-21-22:56: retry_step reads runtime.getExecutor for the live-session gate.
+  engineLike.runtime = {
+    getExecutor: () =>
+      opts?.isTaskLiveForOverseerRetry
+        ? { isTaskLiveForOverseerRetry: opts.isTaskLiveForOverseerRetry }
+        : { isTaskLiveForOverseerRetry: () => false },
+  };
   return engineLike;
 }
 
@@ -155,6 +167,41 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
     expect(retryEntry?.stage).toBe("executor");
     expect(retryEntry?.attemptCount).toBe(1);
     expect(retryEntry?.attemptLimit).toBe(3);
+  });
+
+  /*
+  FNXC:PlannerOversight 2026-07-21-22:56:
+  FN-8471: when a live coding/step session still owns the task, retry_step must
+  not moveTask→todo (hard-cancel thrash) and must not burn the recovery budget.
+  */
+  it("failed executor with a live session skips retry_step bounce and does not burn attempt budget", async () => {
+    const task = await seedTask("in-progress");
+    const internals = makeEngineInternals({
+      isTaskLiveForOverseerRetry: (id) => id === task.id,
+    });
+    const handlers = internals.buildPlannerRecoveryHandlers(store);
+    const controller = new PlannerRecoveryController({
+      snapshotProvider: {
+        getSnapshot: () =>
+          observation({ taskId: task.id, stage: "executor", signal: "failed", sources: [] }),
+      },
+      handlers,
+    });
+
+    const decision = await controller.tick(task);
+    expect(decision?.action).toBe("retry_step");
+
+    const refreshed = await store.getTask(task.id);
+    expect(refreshed?.column).toBe("in-progress");
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    expect(timeline.find((e) => e.action === "retry")).toBeUndefined();
+    // Exact budget invariant — two burns would still leave room under limit 3.
+    expect(controller.getAttemptCount(task.id, "executor")).toBe(0);
+    const second = await controller.tick(task);
+    expect(second?.action).toBe("retry_step");
+    expect(second?.exhausted).not.toBe(true);
+    expect(controller.getAttemptCount(task.id, "executor")).toBe(0);
   });
 
   it("failed executor WITH an error source (failed-check) dispatches request_targeted_fix and emits a request-fix entry", async () => {

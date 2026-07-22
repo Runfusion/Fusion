@@ -15,7 +15,7 @@ vi.mock("../task-store/async-persistence.js", async (importOriginal) => ({
 }));
 
 import { TombstonedTaskResurrectionError } from "../task-store/errors.js";
-import { _maybeAutoArchiveSameAgentDuplicateBackendImpl } from "../task-store/remaining-ops-2.js";
+import { _maybeAutoArchiveSameAgentDuplicateBackendImpl } from "../task-store/task-mutation-ops.js";
 import { resolveSameAgentDuplicateIntake } from "../task-store/task-creation.js";
 
 const NOW = new Date().toISOString();

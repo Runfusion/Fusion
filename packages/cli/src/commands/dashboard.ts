@@ -68,6 +68,7 @@ import {
   setHostExtensionPaths,
   createFusionAuthStorage,
   createFusionModelRegistry,
+  refreshFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import { DefaultPackageManager, SettingsManager, discoverAndLoadExtensions, createExtensionRuntime } from "@earendil-works/pi-coding-agent";
@@ -1790,7 +1791,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
-    await modelRegistry.refresh();
+    /*
+    FNXC:ModelRegistry 2026-07-21-17:15:
+    Unbounded modelRegistry.refresh() left the TUI on "Loading extensions…" forever when a remote
+    catalog fetch hung. Bound the post-extension refresh so dashboard startup always continues.
+    */
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => logSink.log(message, "extensions"),
+    });
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
@@ -1808,7 +1816,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const message = error instanceof Error ? error.message : String(error);
     logSink.log(`Failed to discover extensions: ${message}`, "extensions");
     createExtensionRuntime();
-    await modelRegistry.refresh();
+    await refreshFusionModelRegistry(modelRegistry, {
+      log: (message) => logSink.log(message, "extensions"),
+    });
   }
 
   void syncStartupModels({

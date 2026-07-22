@@ -182,6 +182,8 @@ describe("planning routes github tracking background dispatch", () => {
     createIssueSpy.mockImplementation(createIssue.wrapped);
 
     sessions.set("plan-1", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Planned task",
         description: "Planned task description",
@@ -222,6 +224,8 @@ describe("planning routes github tracking background dispatch", () => {
     createIssueSpy.mockRejectedValue(new Error("github down"));
 
     sessions.set("plan-2", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Planned task 2",
         description: "Planned task description 2",
@@ -255,6 +259,8 @@ describe("planning routes github tracking background dispatch", () => {
     });
 
     sessions.set("plan-2-sync", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Planned task 2",
         description: "Planned task description 2",
@@ -288,6 +294,8 @@ describe("planning routes github tracking background dispatch", () => {
     createIssueSpy.mockImplementation(createIssue.wrapped);
 
     sessions.set("plan-3", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Plan",
         description: "Plan",
@@ -333,6 +341,8 @@ describe("planning routes github tracking background dispatch", () => {
     createIssueSpy.mockRejectedValue(new Error("github down"));
 
     sessions.set("plan-3-reject", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Plan",
         description: "Plan",
@@ -372,6 +382,8 @@ describe("planning routes github tracking background dispatch", () => {
     });
 
     sessions.set("plan-3-sync", {
+      // FNXC:PlanningMode 2026-07-19-01:45: FN-8341 create-task requires validated sessions.
+      validated: true,
       summary: {
         title: "Plan",
         description: "Plan",

@@ -14,8 +14,16 @@ import type {
   GithubIssueAction,
   CliSession,
   NotificationPayload,
+  WorkflowWorkItem,
 } from "@fusion/core";
-import { AsyncCentralClaimStore, ChatStore, isEphemeralAgent } from "@fusion/core";
+import {
+  AsyncCentralClaimStore,
+  ChatStore,
+  computeWorkflowIrPin,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
+  isEphemeralAgent,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
@@ -40,7 +48,7 @@ import type {
 import { runtimeLog } from "../logger.js";
 import { getActiveNotificationService } from "../notifier.js";
 import { StuckTaskDetector } from "../stuck-task-detector.js";
-import type { UsageLimitPauser } from "../usage-limit-detector.js";
+import { UsageLimitPauser } from "../usage-limit-detector.js";
 import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../mesh-lease-manager.js";
@@ -53,11 +61,90 @@ import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
+import { resolvePreReleasePlanReviewNode } from "../hold-release.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
 export const CLI_AGENT_AWAITING_INPUT_EVENT = "cli-agent-awaiting-input" as const;
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
+
+export interface PlanningContinuationCandidate {
+  item: WorkflowWorkItem;
+  task: Task | null | undefined;
+}
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * A planning continuation is only dispatchable when its live task can still
+ * enter plan-review. Soft-deleted, archived, and done cards must be treated as
+ * non-dispatchable so their orphaned work items can be cancelled instead of
+ * blocking later due rows (FN-8470 tombstone starved FN-8471 plan-review).
+ */
+export function isPlanningContinuationTaskDispatchable(
+  task: Task | null | undefined,
+): task is Task {
+  if (task == null) return false;
+  if (task.paused === true || task.userPaused === true) return false;
+  if (task.deletedAt) return false;
+  if (task.column === "archived" || task.column === "done") return false;
+  return true;
+}
+
+/** Outcome of resolving one due work item for the planning-continuation drain. */
+export type PlanningContinuationResolution =
+  | { kind: "actionable"; item: WorkflowWorkItem; task: Task }
+  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" }
+  | {
+      kind: "orphan";
+      item: WorkflowWorkItem;
+      reason: "task-not-found" | "task-terminal";
+    };
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * Classify a due work item after a per-item task load. Lookup failures and
+ * terminal/missing tasks become orphans (cancel); paused planning items stay
+ * held without cancel; non-planning due rows are skipped by this drain.
+ */
+export function resolvePlanningContinuationCandidate(
+  item: WorkflowWorkItem,
+  task: Task | null | undefined,
+  opts?: { taskLookupFailed?: boolean },
+): PlanningContinuationResolution {
+  if (opts?.taskLookupFailed === true || task == null) {
+    return { kind: "orphan", item, reason: "task-not-found" };
+  }
+  if (task.deletedAt || task.column === "archived" || task.column === "done") {
+    return { kind: "orphan", item, reason: "task-terminal" };
+  }
+  if (item.waitReason !== "planning") {
+    return { kind: "skip", item, reason: "not-planning" };
+  }
+  if (task.paused === true || task.userPaused === true) {
+    return { kind: "skip", item, reason: "paused" };
+  }
+  if (!isPlanningContinuationTaskDispatchable(task)) {
+    return { kind: "skip", item, reason: "paused" };
+  }
+  return { kind: "actionable", item, task };
+}
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-12:30:
+ * Select due planning continuations whose task remains dispatchable.
+ *
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * Also exclude soft-deleted / archived / done tasks so archive-fallback rows
+ * returned by getTask cannot re-enter plan-review after the card left the board.
+ */
+export function selectActionablePlanningContinuations(
+  candidates: readonly PlanningContinuationCandidate[],
+): Array<{ item: WorkflowWorkItem; task: Task }> {
+  return candidates.flatMap((candidate) => {
+    const resolved = resolvePlanningContinuationCandidate(candidate.item, candidate.task);
+    return resolved.kind === "actionable" ? [{ item: resolved.item, task: resolved.task }] : [];
+  });
+}
 
 export interface CliAgentAwaitingInputNotificationInfo {
   sessionId: string;
@@ -228,6 +315,8 @@ export class InProcessRuntime
   private missionExecutionLoop?: MissionExecutionLoop;
   private missionAutopilot?: MissionAutopilot;
   private triageProcessor?: TriageProcessor;
+  private workflowContinuationTimer?: ReturnType<typeof setInterval>;
+  private workflowContinuationDrainActive = false;
   private messageStore?: MessageStore;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
@@ -324,6 +413,12 @@ export class InProcessRuntime
           `TaskStore initialized on PostgreSQL (${backendBoot.backend.mode}) for project ${this.config.projectId}`,
         );
       }
+
+      /*
+      FNXC:ProviderRateLimitIsolation 2026-07-19-19:10:
+      Every project runtime owns one usage-limit coordinator and shares it across executor, triage, reviewer, and merger surfaces. Runtime isolation replaced the old dashboard-level construction site; constructing it here prevents a silently undefined pauser while keeping a provider outage local to the affected project/task.
+      */
+      this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore);
 
       // Initialize MessageStore early so TaskExecutor receives send_message capability.
       // FNXC:RuntimeSatelliteAsync 2026-06-24-12:45:
@@ -971,6 +1066,7 @@ export class InProcessRuntime
         {
           semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
+          usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
           pluginRunner: this.pluginRunner,
           onSpecifyStart: (t) => {
@@ -980,6 +1076,39 @@ export class InProcessRuntime
           onSpecifyComplete: (t) => {
             this.recordActivity();
             runtimeLog.log(`Specified ${t.id} → todo`);
+            void (async () => {
+              const live = await this.taskStore.getTask(t.id);
+              if (!live || live.paused || live.userPaused) return;
+              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
+              const planReview = resolvePreReleasePlanReviewNode(ir);
+              if (!planReview || planReview.column !== live.column) return;
+
+              /*
+              FNXC:PlanReview 2026-07-21-12:20:
+              Specification completion creates a planning continuation only
+              when the review node belongs to the card's current column and no
+              active continuation already owns the task.
+              */
+              const active = await this.taskStore.listWorkflowWorkItemsForTask(live.id, { kinds: ["task"] });
+              if (!active.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) {
+                await this.taskStore.replaceActiveTaskWorkflowContinuation({
+                  runId: `${live.id}:planning-continuation:${planReview.id}:${active.length}`,
+                  taskId: live.id,
+                  nodeId: planReview.id,
+                  kind: "task",
+                  state: "runnable",
+                  stableWorkflowRunId: `${live.id}:${ir.name}`,
+                  continuationSequence: active.length,
+                  waitReason: "planning",
+                  sourceColumn: live.column,
+                  targetColumn: live.column,
+                  irHash: computeWorkflowIrPin(ir, planReview.id).irHash,
+                });
+              }
+              this.kickWorkflowContinuationProcessor();
+            })().catch((error) => {
+              runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
+            });
           },
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
@@ -1218,6 +1347,11 @@ export class InProcessRuntime
       }
 
       this.setStatus("active");
+      this.workflowContinuationTimer = setInterval(() => {
+        this.kickWorkflowContinuationProcessor();
+      }, 2_000);
+      this.workflowContinuationTimer.unref?.();
+      this.kickWorkflowContinuationProcessor();
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -1274,6 +1408,10 @@ export class InProcessRuntime
     this.backendShutdown = undefined;
     let stopError: Error | undefined;
     try {
+      if (this.workflowContinuationTimer) {
+        clearInterval(this.workflowContinuationTimer);
+        this.workflowContinuationTimer = undefined;
+      }
       // 1. Remove concurrency change listener (if we registered one)
       if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
         this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
@@ -1793,6 +1931,97 @@ export class InProcessRuntime
    */
   getMissionExecutionLoop(): MissionExecutionLoop | undefined {
     return this.missionExecutionLoop;
+  }
+
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-12:20:
+   * Wake the durable task-continuation consumer in a microtask so triage can
+   * release its own execution slot before continuation dispatch begins.
+   */
+  private kickWorkflowContinuationProcessor(): void {
+    queueMicrotask(() => {
+      void this.drainWorkflowContinuations().catch((error) => {
+        runtimeLog.error("Workflow continuation processor failed:", error);
+      });
+    });
+  }
+
+  private async drainWorkflowContinuations(): Promise<void> {
+    /*
+    FNXC:WorkflowScheduling 2026-07-21-12:20:
+    A single runtime drain owns selection at a time. Concurrent wakeups collapse
+    behind this guard and the recurring processor supplies the next bounded pass.
+
+    FNXC:WorkflowScheduling 2026-07-21-22:31:
+    Per-item task loads must not abort the pass. getTask throws for soft-deleted
+    rows without an archive snapshot; one orphan earlier in created_at FIFO used
+    to prevent every later planning continuation from dispatching (FN-8470 → FN-8471).
+    Cancel orphaned work items so they leave the due set and free the limit:20 window.
+    */
+    if (this.workflowContinuationDrainActive || this.status !== "active") return;
+    this.workflowContinuationDrainActive = true;
+    try {
+      const items = await this.taskStore.listDueWorkflowWorkItems({
+        kinds: ["task"],
+        states: ["runnable", "retrying"],
+        limit: 20,
+      });
+      for (const item of items) {
+        let task: Task | undefined;
+        let taskLookupFailed = false;
+        try {
+          task = await this.taskStore.getTask(item.taskId);
+        } catch (error) {
+          taskLookupFailed = true;
+          runtimeLog.warn(
+            `Workflow continuation ${item.id}: getTask(${item.taskId}) failed — treating as orphan: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed });
+        if (resolved.kind === "orphan") {
+          await this.cancelOrphanedWorkflowWorkItem(resolved.item, resolved.reason);
+          continue;
+        }
+        if (resolved.kind !== "actionable") continue;
+        void this.executor.execute(resolved.task).catch((error) => {
+          runtimeLog.error(`Workflow continuation ${resolved.item.id} failed:`, error);
+        });
+      }
+    } finally {
+      this.workflowContinuationDrainActive = false;
+    }
+  }
+
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-22:31:
+   * Terminalize a due work item whose task can no longer host graph work so the
+   * FIFO due poll no longer revisits it every 2s. Fail-soft: a transition race
+   * must not abort the rest of the drain.
+   */
+  private async cancelOrphanedWorkflowWorkItem(
+    item: WorkflowWorkItem,
+    reason: "task-not-found" | "task-terminal",
+  ): Promise<void> {
+    if (typeof this.taskStore.transitionWorkflowWorkItem !== "function") return;
+    try {
+      await this.taskStore.transitionWorkflowWorkItem(item.id, "cancelled", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: `orphaned-continuation:${reason}`,
+        blockedReason: reason,
+      });
+      runtimeLog.log(
+        `Cancelled orphaned workflow work item ${item.id} (task=${item.taskId}, node=${item.nodeId}, reason=${reason})`,
+      );
+    } catch (error) {
+      runtimeLog.warn(
+        `Failed to cancel orphaned workflow work item ${item.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   /**

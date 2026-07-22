@@ -34,7 +34,7 @@ import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
+import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";
@@ -929,6 +929,15 @@ export async function getWorkflowStepImpl(store: TaskStore, id: string): Promise
     return template ? store.toBuiltInWorkflowStep(template) : undefined;
   }
 
+/** Test-only seam for proving the narrow retry handles a post-allocation race. */
+export let workflowDefinitionBeforeInsertForTesting: ((id: string, backendMode: boolean) => void | Promise<void>) | undefined;
+
+export function __setWorkflowDefinitionBeforeInsertForTesting(
+  hook: typeof workflowDefinitionBeforeInsertForTesting,
+): void {
+  workflowDefinitionBeforeInsertForTesting = hook;
+}
+
 export async function createWorkflowDefinitionImpl(store: TaskStore, input: WorkflowDefinitionInput,): Promise<WorkflowDefinition> {
     // Rollback compat (#1405): with the flag OFF, persist a pure-v1-equivalent
     // graph in the v1 shape so a binary downgrade can still load the row.
@@ -943,71 +952,72 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
       store.assertWorkflowIrTraitsValid(ir);
       const layout = input.layout ?? {};
       const now = new Date().toISOString();
-      // FNXC:SqliteFinalRemoval 2026-06-28:
-      // Backend mode (PG) allocates the WF-id from project.config via the async
-      // counter; the sync store.nextWorkflowDefinitionId() reads a SQLite __meta
-      // row that does not exist in PG. The id is computed up front so the
-      // definition object is identical across both branches.
-      const id = store.backendMode
-        ? await nextWorkflowDefinitionIdAsyncImpl(store)
-        : store.nextWorkflowDefinitionId();
-      const definition: WorkflowDefinition = {
-        id,
-        name,
-        description: input.description ?? "",
-        icon: normalizeWorkflowIcon(input.icon),
-        // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
-        // unchanged; default to "workflow" when the caller omits the kind.
-        kind: input.kind === "fragment" ? "fragment" : "workflow",
-        ir,
-        layout,
-        createdAt: now,
-        updatedAt: now,
-      };
+      /*
+      FNXC:WorkflowDefinitionIdAllocator 2026-07-21-12:00:
+      The global occupancy scan prevents stale per-project counters, but cannot
+      close a multi-process race after allocation. Retry only a confirmed
+      `workflows.id` PK conflict: withConfigLock serializes this process, not
+      another process, and retrying every unique error would hide unrelated
+      constraints from plugin and API callers.
+      */
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const id = store.backendMode
+          ? await nextWorkflowDefinitionIdAsyncImpl(store)
+          : store.nextWorkflowDefinitionId();
+        const definition: WorkflowDefinition = {
+          id,
+          name,
+          description: input.description ?? "",
+          icon: normalizeWorkflowIcon(input.icon),
+          kind: input.kind === "fragment" ? "fragment" : "workflow",
+          ir,
+          layout,
+          createdAt: now,
+          updatedAt: now,
+        };
 
-      if (store.backendMode) {
-        // FNXC:SqliteFinalRemoval 2026-06-28:
-        // PG INSERT via Drizzle. ir/layout are jsonb columns, so the OBJECT is
-        // passed directly (no serializeWorkflowIr/JSON.stringify — that is the
-        // SQLite TEXT path). Mirrors updateWorkflowDefinitionImpl's backend
-        // branch; bumpLastModified is skipped in backend mode.
-        await store.asyncLayer!.db.insert(schema.project.workflows).values({
-          id: definition.id,
-          name: definition.name,
-          description: definition.description,
-          icon: definition.icon ?? null,
-          ir: (flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)) as unknown as object,
-          layout: definition.layout as unknown as object,
-          kind: definition.kind,
-          createdAt: definition.createdAt,
-          updatedAt: definition.updatedAt,
-        });
+        try {
+          await workflowDefinitionBeforeInsertForTesting?.(id, store.backendMode);
+          if (store.backendMode) {
+            await store.asyncLayer!.db.insert(schema.project.workflows).values({
+              id: definition.id,
+              name: definition.name,
+              description: definition.description,
+              icon: definition.icon ?? null,
+              ir: (flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)) as unknown as object,
+              layout: definition.layout as unknown as object,
+              kind: definition.kind,
+              createdAt: definition.createdAt,
+              updatedAt: definition.updatedAt,
+            });
+          } else {
+            store.db
+              .prepare(
+                `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              )
+              .run(
+                definition.id,
+                definition.name,
+                definition.description,
+                definition.icon ?? null,
+                serializeWorkflowIr(flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+                JSON.stringify(definition.layout),
+                definition.kind,
+                definition.createdAt,
+                definition.updatedAt,
+              );
+          }
+        } catch (error) {
+          if (!isWorkflowDefinitionIdPrimaryKeyCollision(error)) throw error;
+          continue;
+        }
+
         store.workflowDefinitionsCache = null;
+        if (!store.backendMode) store.db.bumpLastModified();
         return definition;
       }
-
-      store.db
-        .prepare(
-          `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          definition.id,
-          definition.name,
-          definition.description,
-          definition.icon ?? null,
-          serializeWorkflowIr(
-            flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir),
-          ),
-          JSON.stringify(definition.layout),
-          definition.kind,
-          definition.createdAt,
-          definition.updatedAt,
-        );
-
-      store.workflowDefinitionsCache = null;
-      store.db.bumpLastModified();
-      return definition;
+      throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
     });
   }
 

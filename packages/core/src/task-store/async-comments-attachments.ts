@@ -656,7 +656,7 @@ export async function listArtifacts(
  * FNXC:Documents 2026-06-27-12:05:
  * Cross-task document registry query backing the dashboard `/api/documents`
  * list in PG backend mode (previously the sync `store.db` JOIN 500'd). Async
- * equivalent of the sync `getAllDocumentsImpl` (remaining-ops-4.ts): INNER JOIN
+ * equivalent of the sync `getAllDocumentsImpl` (workflow-task-create-ops.ts): INNER JOIN
  * `task_documents` to `tasks`, filtered to live (non-soft-deleted) parent tasks
  * (`ACTIVE_TASK_FILTER` mirrors `TaskStore.ACTIVE_TASKS_WHERE`), newest-updated
  * first, returning the `TaskDocumentWithTask` shape (doc + joined task

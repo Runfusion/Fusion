@@ -21,8 +21,10 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  computeTopLevelConcurrencyClaimed,
+  computeTopLevelConcurrencyClaimedFromStore,
   dropPreHeldExecutorSlot,
+  hasPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
   type AgentSemaphore,
@@ -136,9 +138,11 @@ function isIgnoredOverlapPath(path: string, ignorePath: string): boolean {
 function computeAutoClaimFingerprint(task: Task): string {
   const dependencies = [...(task.dependencies ?? [])].sort().join(",");
   const sortAt = task.columnMovedAt ?? task.createdAt;
+  /** FNXC:TaskDispatch 2026-07-19-14:40: `userPaused` is a durable operator stop even when legacy `paused` is false; candidacy caching and every dispatch selector must treat either flag as parked. */
   return [
     task.column,
     task.paused === true ? "1" : "0",
+    task.userPaused === true ? "1" : "0",
     task.assignedAgentId ?? "",
     task.checkedOutBy ?? "",
     task.deletedAt ?? "",
@@ -630,6 +634,11 @@ export class Scheduler {
   private lastHeartbeatWriteMs = 0;
   private idleSemaphoreLeakCandidateSince: number | null = null;
   private readonly lastHighOverlapFanoutWarningKey = new Map<string, string>();
+  /** Coordinator reservations survive the lane poll that selected them. */
+  private readonly coordinatorAdmittedTaskIds = new Set<string>();
+  /** Durable execute candidates refreshed on each scheduler pass for cross-lane ranking. */
+  private readonly coordinatorReadyTasks = new Map<string, Task>();
+  private unregisterAdmissionProvider?: () => void;
 
   /**
    * Async listener guard convention:
@@ -652,6 +661,29 @@ export class Scheduler {
       store: this.store,
       projectId: this.store.getRootDir(),
       logger: schedulerLog,
+    });
+    /*
+    FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+    FN-8453's union must outlive a single scheduler poll. A temporary provider
+    was gone before planning/merge asked for capacity, allowing newer work to
+    overtake ready execute work. The refreshed map is the durable lane view.
+    */
+    const projectId = this.store.getRootDir();
+    this.unregisterAdmissionProvider = projectAdmissionCoordinator.registerProvider(`execute:${projectId}`, {
+      projectId,
+      refresh: async () => [...this.coordinatorReadyTasks.values()]
+        .filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id))
+        .map((task) => ({
+          taskId: task.id,
+          projectId,
+          createdAt: task.createdAt,
+          reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
+          start: async () => {
+            this.coordinatorReadyTasks.delete(task.id);
+            this.coordinatorAdmittedTaskIds.add(task.id);
+            void this.schedule();
+          },
+        })),
     });
     /**
      * Event-driven scheduling: when a task is created, trigger a scheduling
@@ -876,7 +908,7 @@ export class Scheduler {
       // When a previously-paused task is unpaused in a schedulable column,
       // trigger a scheduling pass immediately instead of waiting for the next
       // poll interval (up to 15 seconds).
-      if (task.paused) {
+      if (task.paused || task.userPaused) {
         this.pausedTaskIds.add(task.id);
       } else if (this.pausedTaskIds.has(task.id)) {
         // Task was paused, now unpaused — trigger scheduling
@@ -1075,6 +1107,9 @@ export class Scheduler {
     if (this.options.missionAutopilot) {
       this.options.missionAutopilot.stop();
     }
+    this.unregisterAdmissionProvider?.();
+    this.unregisterAdmissionProvider = undefined;
+    this.coordinatorReadyTasks.clear();
     this.failedTaskIds.clear();
     this.wasNodeBlocked.clear();
     this.wasNodeDispatchValidationBlocked.clear();
@@ -1451,6 +1486,16 @@ export class Scheduler {
       // When a semaphore is provided, factor in its available slots so we
       // don't schedule more tasks than the global limit allows.
       const inProgressTaskIds = inProgress.map((task) => task.id);
+      /*
+      FNXC:ConcurrencyAdmission 2026-08-03-13:00:
+      FN-8453 capacity decisions must enrich task rows from their workflow IR.
+      A custom complete column can retain stale session metadata, so raw task
+      counting here would falsely exhaust executable capacity.
+      */
+      const topLevelClaimedSlots = await computeTopLevelConcurrencyClaimedFromStore({
+        store: this.store,
+        tasks,
+      });
       const computeDispatchCapacityDiagnostic = (startedThisTick: number): ConcurrencyGateDiagnostic => {
         const started = Math.max(0, Math.floor(startedThisTick));
         // U6 (KTD-10): report the default workflow's in-progress capacity as a
@@ -1472,10 +1517,7 @@ export class Scheduler {
           maxWorktrees,
           semaphore: this.options.semaphore,
           inProgressTaskIds,
-          topLevelClaimedSlots: computeTopLevelConcurrencyClaimed({
-            tasks,
-            semaphoreActiveCount: this.options.semaphore?.activeCount,
-          }),
+          topLevelClaimedSlots,
           startedThisTick: started,
           perColumnGates,
         });
@@ -1484,7 +1526,7 @@ export class Scheduler {
 
       const now = Date.now();
       let todo = tasks.filter((t) => {
-        if (t.column !== "todo" || t.paused) return false;
+        if (t.column !== "todo" || t.paused || t.userPaused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
         // FNXC:CodingIdeasWorkflow 2026-07-04-10:45: a todo task with status "planning" is being specified in place by the triage service (merged planner/capacity column in Coding (Ideas)); it must not be dispatched until planning finishes and the status clears.
@@ -1548,6 +1590,28 @@ export class Scheduler {
         maxAutoMergeRetries,
       });
       todo = sortTasksByPriorityFanoutThenAgeAndId(todo, unblockWeights);
+      /*
+      FNXC:ConcurrencyAdmission 2026-08-03-14:00:
+      FN-8453 makes the coordinator, rather than this lane's priority/fanout
+      ordering, the authority for a free top-level slot. The scheduler exposes
+      its ready tasks to the shared project registry and dispatches only the
+      atomically admitted winner; other lanes refresh in the same admission pass.
+      */
+      const projectId = this.store.getRootDir();
+      this.coordinatorReadyTasks.clear();
+      for (const task of todo) this.coordinatorReadyTasks.set(task.id, task);
+      await projectAdmissionCoordinator.admitOldest({
+        projectId,
+        maxConcurrent,
+        claimed: async () => computeTopLevelConcurrencyClaimedFromStore({ store: this.store, tasks: await this.store.listTasks({ slim: true, includeArchived: false }) }),
+        semaphore: this.options.semaphore,
+      });
+      todo = todo.filter((task) => this.coordinatorAdmittedTaskIds.has(task.id));
+      // FNXC:ConcurrencyAdmission 2026-08-04-10:00: coordinator IDs select one
+      // handoff only. The pre-held semaphore slot remains the durable reservation;
+      // retaining the ID after a retry would bypass oldest-first re-admission.
+      for (const task of todo) this.coordinatorAdmittedTaskIds.delete(task.id);
+      if (todo.length === 0) return;
       const topWeightedTask = todo.find((candidate) => (unblockWeights.get(candidate.id) ?? 0) >= 1);
       if (topWeightedTask) {
         schedulerLog.log(
@@ -1920,7 +1984,11 @@ export class Scheduler {
           schedulerLog.log(`Task ${task.id} no longer in "todo" (column=${freshTask?.column ?? "N/A"}) — skipping dispatch`);
           continue;
         }
-        if (freshTask.paused) {
+        /*
+        FNXC:UserPausedDispatch 2026-07-21-21:30:
+        The final fresh-read dispatch gate must honor both pause representations because an operator can set userPaused after the scheduler's initial queue snapshot but before worktree allocation.
+        */
+        if (freshTask.paused || freshTask.userPaused) {
           schedulerLog.log(`Task ${task.id} is paused — skipping dispatch`);
           continue;
         }
@@ -2203,21 +2271,26 @@ export class Scheduler {
           continue;
         }
 
-        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
-        await this.store.updateTask(task.id, {
-          status: null,
-          blockedBy: null,
-          executionStartBranch: baseBranch ?? undefined,
-          effectiveNodeId: effectiveNode.nodeId ?? null,
-          effectiveNodeSource: effectiveNode.source,
-          mergeRetries: 0,
-        });
         try {
-          await this.store.moveTask(task.id, "in-progress", {
-            moveSource: "scheduler",
-            allocateWorktree: (reservedNames) =>
-              this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
-          });
+          /*
+          FNXC:UserPausedDispatch 2026-07-21-21:45:
+          Scheduler dispatch predicates the todo-to-in-progress transition on both pause flags under the task lock. No awaited routing, metadata, or worktree preparation gap may let a concurrent operator pause lose to stale scheduler state.
+          */
+          const move = await this.store.moveTaskIf(
+            task.id,
+            "in-progress",
+            (live) => live.column === "todo" && live.paused !== true && live.userPaused !== true,
+            {
+              moveSource: "scheduler",
+              allocateWorktree: (reservedNames) =>
+                this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
+            },
+          );
+          if (!move.moved) {
+            schedulerLog.log(`Task ${task.id} became paused or left todo before dispatch — skipping`);
+            continue;
+          }
+          Object.assign(task, move.task);
         } catch (error) {
           if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
             await this.store.updateTask(task.id, { status: "queued" });
@@ -2227,6 +2300,15 @@ export class Scheduler {
           }
           throw error;
         }
+        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
+        await this.store.updateTask(task.id, {
+          status: null,
+          blockedBy: null,
+          executionStartBranch: baseBranch ?? undefined,
+          effectiveNodeId: effectiveNode.nodeId ?? null,
+          effectiveNodeSource: effectiveNode.source,
+          mergeRetries: 0,
+        });
         await this.store.updateTask(task.id, {
           dispatchStormCount: nextDispatchStormCount,
           lastDispatchAt: dispatchTimestamp,
@@ -2904,10 +2986,9 @@ export class Scheduler {
             }
           }
 
-          const topLevelClaimedSlots = computeTopLevelConcurrencyClaimed({
+          const topLevelClaimedSlots = await computeTopLevelConcurrencyClaimedFromStore({
+            store: this.store,
             tasks,
-            // Prior tryAcquire reservations in this sweep already bump activeCount.
-            semaphoreActiveCount: this.options.semaphore?.activeCount,
           });
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
@@ -2937,7 +3018,8 @@ export class Scheduler {
           }
 
           const sem = this.options.semaphore;
-          if (sem && !sem.tryAcquire()) {
+          const coordinatorReserved = hasPreHeldExecutorSlot(task.id);
+          if (sem && !coordinatorReserved && !sem.tryAcquire()) {
             if (reservedScope) {
               activeScopes.delete(task.id);
               activeScopeColumns.delete(task.id);
@@ -2951,7 +3033,7 @@ export class Scheduler {
             await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
             return null;
           }
-          if (sem) {
+          if (sem && !coordinatorReserved) {
             registerPreHeldExecutorSlot(task.id);
           }
 

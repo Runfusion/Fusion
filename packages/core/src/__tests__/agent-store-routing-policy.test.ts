@@ -224,6 +224,22 @@ pgTest("task→agent routing policy (issue #2015)", () => {
   });
 
   describe("selectNextTaskForAgent bind compatibility", () => {
+    it("does not select a remembered-owner todo task when only userPaused remains true", async () => {
+      const executor = await agentStore.createAgent({ name: "Exec", role: "executor" });
+      const task = await h.store().createTask({ description: "manually parked work" });
+      await h.store().updateTask(task.id, { assignedAgentId: executor.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
+      await h.store().moveTask(task.id, "todo", { moveSource: "user" });
+
+      const parked = await h.store().getTask(task.id);
+      expect(parked).toMatchObject({ assignedAgentId: executor.id, userPaused: true });
+      expect(parked?.paused).not.toBe(true);
+      await expect(
+        h.store().selectNextTaskForAgent(executor.id, { id: executor.id, role: executor.role }),
+      ).resolves.toBeNull();
+    });
+
     it("does not re-select a mis-bound in-progress implementation task for a role-incompatible agent", async () => {
       const liaison = await agentStore.createAgent({ name: "Liaison", role: "custom" });
       const task = await h.store().createTask({ description: "mis-bound work" });

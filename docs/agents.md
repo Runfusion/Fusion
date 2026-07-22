@@ -404,7 +404,7 @@ The Task Detail Activity → Raw Logs model header prefers runtime provenance ma
 
 - `Executor using model: <provider>/<modelId>`
 - `Reviewer using model: <provider>/<modelId>`
-- `Triage using model: <provider>/<modelId>`
+- `Planning using model: <provider>/<modelId>` (legacy `Triage using model: <provider>/<modelId>` rows remain parseable)
 
 When the lane resolves a thinking level, the same row appends ` (thinking effort: <level>)`, for example `Executor using model: openai/gpt-4o (thinking effort: high)`. Dashboard parsers ignore parenthesized diagnostics for provider icons/effective-model headers while Raw Logs and Activity rows keep the full text visible.
 
@@ -931,6 +931,10 @@ Agent-backed dashboard chat sessions (including plugin-runtime agents such as He
 Dashboard Chat, Chat Room responders, and task-detail Planner Chat run at the interactive project checkout with coding workspace tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. Use them for user-directed file changes and shell investigation. When a durable agent is bound, its permanent-agent permission policy still governs file writes/deletes and command execution; unbound model Chat has no durable-principal policy gate. Chat must keep the checkout branch sticky: inspect Git freely, but do not use `git checkout` or `git switch` unless the operator explicitly requests it.
 
 Task-detail Planner Chat is included because it is a `task-planner:<taskId>` ChatManager session. This does not change the readonly planning/mission interview lanes or WhatsApp plugin chat. Chat verification remains limited to its existing allowlisted profiles rather than accepting arbitrary shell commands.
+
+### Worktree session file boundary
+
+Pi sessions started in an isolated task worktree reject filesystem paths outside that worktree. The established project-memory and task-attachment exceptions remain unchanged. Separately, when Fusion advertises skill bodies through `AgentOptions.additionalSkillPaths` (including enabled plugin skill roots), it allows only `read`, `glob`, and `grep` to access those exact normalized roots. `write`, `edit`, and Bash working directories remain worktree-bound for skill roots; this is not a general `~/.fusion/plugins` exception.
 
 ```bash
 fn message inbox

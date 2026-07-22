@@ -79,19 +79,6 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
       />
       <SettingsNumberRow
         descriptor={{
-          key: "maxTriageConcurrent",
-          label: t("settings.scheduling.maxTriageConcurrent", "Max Triage Concurrent"),
-          help: t("settings.scheduling.maximumConcurrentPlanningAgents", "Maximum concurrent planning agents. Default: 2."),
-          scope: "project",
-          min: 1,
-          max: 10,
-          disabled: concurrencyLoading,
-        }}
-        value={form.maxTriageConcurrent ?? null}
-        onChange={(v) => setForm((f) => ({ ...f, maxTriageConcurrent: v ?? undefined } as SettingsFormState))}
-      />
-      <SettingsNumberRow
-        descriptor={{
           key: "pollIntervalMs",
           label: t("settings.scheduling.pollIntervalMs", "Poll Interval (ms)"),
           help: t("settings.scheduling.pollIntervalMsHint", "Default: 15000 (15 seconds)."),

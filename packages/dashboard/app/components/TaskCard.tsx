@@ -39,11 +39,11 @@ import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
-import { getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
-import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -1326,10 +1326,17 @@ function TaskCardComponent({
   /*
   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:05:
   FN-7831 requires the card header to show a distinct "Reviewing" badge while the optional `plan-review` workflow step is actively running, even while the card remains in Planning/`triage`. Use the shared predicate so TaskCard stays in sync with ListView.
+
+  FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+  Extend the same additive header-badge pattern to Code Review / Browser Verification while the card is in In-review. Lane-owned optional gates never appear in the WIP bullet list; they surface only as this badge while running.
   */
   const planReviewRunning = useMemo(
     () => isPlanReviewRunning(task),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+  );
+  const optionalGateBadge = useMemo(
+    () => getRunningOptionalGateBadge(task),
+    [task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
   // CLI agent session badges (U11) — distinct from staleness/stall badges.
   const cliWaitingOnInput = cliSessionState?.agentState === "waitingOnInput";
@@ -1356,6 +1363,21 @@ function TaskCardComponent({
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
   const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck });
+  /*
+  FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+  Match FN-8055: optional-gate badges pulse only while the card is agent-active (queue/pause/stuck gates suppress the badge).
+  */
+  const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-21-22:18:
+  Ready is the idle capacity-hold signal for Coding (Ideas) Todo cards that already have steps and no task.status. Plan Review (and any other agent-active work) also runs in Todo with status often cleared to null first, so Ready must suppress while plan-review is running or the card is agent-active — otherwise operators see both Ready and Reviewing on the same card.
+  */
+  const showReadyBadge = !isPaused
+    && task.column === "todo"
+    && !visualStatus
+    && (task.steps?.length ?? 0) > 0
+    && !planReviewRunning
+    && !isAgentActive;
   // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
   // On touch-primary devices the `draggable` attribute still arms the browser's
   // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
@@ -1455,8 +1477,12 @@ function TaskCardComponent({
     }
     return providers;
   }, [task.modelProvider, task.validatorModelProvider, task.planningModelProvider]);
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
+  In-progress card progress is WIP implementation only. Plan Review (Todo) and Code Review / other review-lane gates must not appear as checklist rows or inflate completed/total while the card is in In progress; badges still use full progress helpers (isPlanReviewRunning / running step labels).
+  */
   const unifiedProgress = useMemo(
-    () => getUnifiedTaskProgress(task),
+    () => getUnifiedTaskProgress(task, { scope: "implementation" }),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
   /*
@@ -2947,9 +2973,8 @@ function TaskCardComponent({
     && Boolean(task.recentAgentActivityAt)
     && isAgentActive;
   const showStatusBadge = !isPaused
-    && (Boolean(visualStatus) || isTransientPlannerActive)
-    && visualStatus !== "queued"
-    && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
+    && (hasTaskStatusBadge(visualStatus) || isTransientPlannerActive)
+    && visualStatus !== "queued";
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
@@ -2958,8 +2983,8 @@ function TaskCardComponent({
     || showOversightBadge;
   const hasHeaderBadges = Boolean(isPaused)
     || showStatusBadge
-    || (planReviewRunning && isAgentActive)
-    || Boolean(!isPaused && task.column === "todo" && !visualStatus && (task.steps?.length ?? 0) > 0)
+    || showOptionalGateBadge
+    || showReadyBadge
     || Boolean(hasInReviewStall && stallCopy)
     || cliWaitingOnInput
     || cliNeedsAttention
@@ -3124,24 +3149,37 @@ function TaskCardComponent({
                         : getTaskStatusLabel(visualStatus!, t, getRunningWorkflowStepLabel(task))}
           </span>
         )}
-        {planReviewRunning && isAgentActive && (
+        {showOptionalGateBadge && optionalGateBadge && (
           /*
           FNXC:TaskCardPlanReviewBadge 2026-07-11-12:06:
           The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/stuck/status affordances.
+
+          FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+          Same additive pattern for Code Review / Browser Verification in In-review. Label is the gate's own name (Plan Review keeps the short "Reviewing" copy). These gates stay out of the WIP bullet list.
           */
           <span
             className="card-status-badge card-status-badge--reviewing pulsing"
-            data-testid={`card-reviewing-${task.id}`}
-            title={t("tasks.planReviewingTitle", "Plan Review in progress")}
+            data-testid={`card-${optionalGateBadge.testId}-${task.id}`}
+            data-optional-gate={optionalGateBadge.workflowStepId}
+            title={
+              optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+                ? t("tasks.planReviewingTitle", "Plan Review in progress")
+                : t("tasks.optionalGateRunningTitle", "{{name}} in progress", { name: optionalGateBadge.name })
+            }
           >
-            {t("tasks.reviewing", "Reviewing")}
+            {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
+              ? t("tasks.reviewing", "Reviewing")
+              : optionalGateBadge.label}
           </span>
         )}
         {/*
         FNXC:CodingIdeasWorkflow 2026-07-04-11:10:
         In the merged planner/capacity "todo" column (Coding (Ideas)), a planned task with no active status is ready and waiting for an in-progress slot. Show a "Ready" badge so operators can distinguish planned cards from freshly promoted unplanned ones. Tasks still being planned surface the "planning" status badge above instead.
+
+        FNXC:CodingIdeasWorkflow 2026-07-21-22:18:
+        Suppress Ready while Plan Review (or other agent-active work) is live — finalize often clears status before plan-review, which previously stacked Ready + Reviewing on the same Todo card.
         */}
-        {!isPaused && task.column === "todo" && !visualStatus && (task.steps?.length ?? 0) > 0 && (
+        {showReadyBadge && (
           <span className="card-status-badge card-status-badge--todo ready" data-testid={`card-ready-${task.id}`}>
             {t("tasks.ready", "Ready")}
           </span>

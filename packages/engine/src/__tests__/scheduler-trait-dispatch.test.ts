@@ -89,6 +89,12 @@ function storeWith(tasks: Task[], ir: WorkflowIr, settings: Record<string, unkno
     moveTask: vi.fn(async (id: string, column: Task["column"]) => {
       const cur = byId.get(id); if (cur) cur.column = column; return cur as Task;
     }),
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      const cur = byId.get(id)!;
+      if (!await predicate(cur) || cur.column === column) return { task: cur, moved: false };
+      cur.column = column;
+      return { task: cur, moved: true };
+    }),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
     getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
@@ -132,14 +138,14 @@ describe("hold/release sweep — capacity (U4)", () => {
     const first = await runHoldReleaseSweep(store, { now: () => Date.now() });
     expect(first.released).toEqual([]); // saturated (1/1)
     expect(first.held.some((h) => h.taskId === "H" && h.reason === "downstream-full")).toBe(true);
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
 
     // Free the slot (occupant leaves in-progress) and sweep again.
     occupant.column = "done";
     const second = await runHoldReleaseSweep(store, { now: () => Date.now() });
     expect(second.released).toEqual(["H"]);
-    expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("H", "in-progress", expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("H", "in-progress", expect.any(Function), expect.anything());
   });
 
   it("counts a mid-transition (transitionPending) card toward the cap (scenario 2, countPending)", async () => {
@@ -169,8 +175,8 @@ describe("hold/release sweep — capacity (U4)", () => {
     inB.column = "done";
     const result2 = await runHoldReleaseSweep(store, { now: () => Date.now() });
     expect(result2.released).toEqual(["H"]);
-    expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("H", "wip-a", expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("H", "wip-a", expect.any(Function), expect.anything());
   });
 
   it("never releases a paused or user-paused card (scenario 5)", async () => {
@@ -180,7 +186,7 @@ describe("hold/release sweep — capacity (U4)", () => {
 
     const result = await runHoldReleaseSweep(store, { now: () => Date.now() });
     expect(result.released).toEqual([]);
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
   });
 });
 
@@ -212,7 +218,7 @@ describe("no-hold workflow saturation (scenario 4)", () => {
     const result = await runHoldReleaseSweep(store, { now: () => Date.now() });
     // intake is not a hold column → not managed by the sweep at all.
     expect(result.released).toEqual([]);
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
   });
 
   it("the in-txn capacity policy rejects a move into a saturated shared pool (the gate for no-hold moves)", () => {

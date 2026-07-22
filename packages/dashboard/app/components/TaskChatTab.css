@@ -539,11 +539,16 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
   gap: var(--space-sm);
 }
 
+/*
+FNXC:TaskDetailChat 2026-07-21-23:42:
+FN-8473 requires the Activity Live steering input to share the transcript panel's --radius-lg so the composer does not look sharper than the panel above it.
+*/
 .task-chat-input {
   min-height: calc(var(--space-2xl) + var(--space-sm));
   max-height: var(--task-chat-composer-max-height, 40vh);
   resize: none;
   flex: 1 1 auto;
+  border-radius: var(--radius-lg);
 }
 
 /*

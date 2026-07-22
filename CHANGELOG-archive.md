@@ -4,294 +4,45 @@ Archived release notes before 0.60.0. This file is auto-synced from each `packag
 
 ## 0.59.0
 
-### @fusion/dashboard
+### Highlights
+- New Assignment Policy setting keeps liaison agents from ever being routed product tasks
+- Switch a chat's model, agent, or thinking level mid-conversation — no need to start over
+- Command Center gets a System tab with rebuild/restart controls, live logs, and a Plugins tab
+- Agents auto-recover from OAuth token-rotation and heartbeat errors instead of parking for manual retry
+- Copy-to-clipboard actions across the dashboard now work reliably on mobile and non-HTTPS origins
 
-#### Patch Changes
+### New
+- Assignment Policy per-agent setting (auto/explicit-only/none) blocks liaison agents from receiving product tasks
+- Switch a chat's model, agent, or thinking level mid-conversation from the composer's brain icon
+- Set a per-project Chat default (model or agent), with prompt-each-time or always-use-default behavior for new chats
+- Command Center System tab adds rebuild & restart, engine/agent restarts, backups, and live logs, plus a new Plugins tab; the dashboard now runs supervised by default so restarts are seamless
+- Thinking Level controls added throughout: schedules and routines, insights, chat rooms, mission interviews, planning mode, reviewer/planning task fields, and agent/bulk task model selectors
+- `fn workflow validate` dry-runs a custom workflow without creating or mutating it
+- `fn plugin publish --dry-run` preflight validates a plugin before publishing
+- Artifact-registration mail notifications show an inline preview and a "View task" link
+- Git Manager gets a Commit and Push button
+- Terminal Preferences supports custom shortcut buttons (label + injected key sequence), available in both the floating terminal and the embedded task-detail terminal
+- Release notes now open with AI-written Highlights, and the release process prints a ready-to-post engagement tweet draft
+- One-time banners and an inbox notice announce the upcoming SQLite to embedded-Postgres storage migration, with a Discord "Get help" link
 
-- @fusion/core@0.59.0
-- @fusion/engine@0.59.0
-- @fusion/i18n@0.39.24
-- @fusion-plugin-examples/cli-printing-press@0.1.41
-- @fusion-plugin-examples/compound-engineering@0.1.24
-- @fusion-plugin-examples/dependency-graph@0.1.55
-- @fusion-plugin-examples/grok-runtime@0.2.2
-- @fusion-plugin-examples/roadmap@0.1.43
-- @fusion-plugin-examples/cursor-runtime@0.1.43
-- @fusion-plugin-examples/droid-runtime@0.1.50
-- @fusion-plugin-examples/hermes-runtime@0.2.74
-- @fusion-plugin-examples/openclaw-runtime@0.2.74
-- @fusion-plugin-examples/paperclip-runtime@0.2.74
-
-### @fusion/desktop
-
-#### Patch Changes
-
-- @fusion/core@0.59.0
-- @fusion/dashboard@0.59.0
-- @fusion/engine@0.59.0
-
-### @fusion/engine
-
-#### Patch Changes
-
-- @fusion/core@0.59.0
-- @fusion/pi-claude-cli@0.59.0
-
-### @fusion/plugin-sdk
-
-#### Patch Changes
-
-- @fusion/core@0.59.0
-
-### @runfusion/fusion
-
-#### Minor Changes
-
-- 8b60181: summary: Add per-agent Assignment Policy; guard every task-routing path so liaison agents can never receive product tasks.
-  category: feature
-  dev: New `runtimeConfig.assignmentPolicy` ("auto" | "explicit-only" | "none") enforced via shared `evaluateImplementationTaskBind` at `claimTaskForAgent`, the previously unguarded `checkoutTask`/`assignTask` primitives, `selectNextTaskForAgent` (including the in-progress re-selection branch), scheduler auto-assign pool, heartbeat auto-claim, `fn_delegate_task`, CLI agent-id validation, and dashboard assign/checkout routes. "none" is not bypassable by `override=true`/`executorRoleOverride`. Fixes Runfusion/Fusion#2015.
-- 9bb7459: summary: Add a one-time banner announcing the upcoming SQLite→embedded-Postgres storage change.
-  category: feature
-  dev: New self-contained `StorageMigrationNoticeBanner` in the dashboard banner cluster; permanent dismissal via `localStorage` key `fusion:storage-migration-notice-dismissed`.
-- bc30ce8: summary: Deliver plugin skill bodies to agent sessions and the Skills view.
-  category: fix
-  dev: Threads plugin skill discovery paths into sessions and reads plugin SKILL.md files from disk.
-- 0c97c16: summary: Honor plugin skillFiles paths so plugin skills can live in category subdirectories.
-  category: fix
-  dev: Adds traversal-guarded plugin skill body path resolution and carries pluginRoot through skill discovery.
-- 95a808a: summary: Artifact-registration mail notifications now show an inline preview and open link.
-  category: feature
-  dev: MailboxView/MailboxModal render a shared MailboxArtifactAttachment from message.metadata (artifactId/artifactType/mimeType) via artifactMediaUrl; notifyArtifactRegistered now also emits metadata.mimeType.
-- 8884f50: summary: Add a Commit and Push button to the Git Manager commit form.
-  category: feature
-  dev: Adds a GitManagerModal commit-and-push handler that reuses createCommit and pushBranch.
-- b77e123: summary: Let users define custom terminal shortcut buttons (label + injected sequence) from the terminal Preferences panel.
-  category: feature
-  dev: Adds a customShortcuts list to the client-local terminalPreferences (kb-terminal-preferences localStorage), a decodeTerminalShortcutSequence escape decoder (\n/\t/\r/\e/\x1b/\\), custom shortcut buttons in TerminalModal's shortcut panel injecting via the focus-preserving sendLiteralShortcut path, and add/edit/remove management UI in the preferences panel. Client-only; no server schema.
-- a4dde88: summary: Storage update banner now has a Get help (Discord) button and notes project DBs move to the central Fusion database.
-  category: feature
-  dev: Adds `storageMigrationNotice.getHelp`/`getHelpLabel` i18n keys and a hardened Discord link in `StorageMigrationNoticeBanner`; revised body copy in `en/app.json` and component default.
-- ee1d978: summary: Show user-defined custom terminal shortcuts in the embedded Task Detail terminal's mobile key bar.
-  category: feature
-  dev: SessionTerminal now reads the shared terminalPreferences.customShortcuts (FN-7872, kb-terminal-preferences localStorage) and renders each as a mobile accessory-bar button that injects decodeTerminalShortcutSequence(value) via the focus-preserving keepFocus + sendInput path, clearing sticky Ctrl; buttons update live on the storage event and are suppressed in read-only/replay sessions. Mobile-only; no new store; TerminalModal and the preferences helper are unchanged.
-- c745990: summary: Deliver a one-time inbox notice about the upcoming Postgres storage migration on first 0.59 startup.
-  category: feature
-  dev: New best-effort, idempotent `deliverPostgresMigrationNoticeIfNeeded` in `@fusion/engine`, invoked from `ProjectEngine.start()`; gated to version `0.59.x` via injected `cliPackageVersion` (threaded through `EngineManagerOptions`/`ProjectEngineOptions`); idempotency via inbox `metadata.kind = "postgres-migration-notice"` marker. Links to Discord (`https://discord.gg/ksrfuy7WYR`).
-- 23cb061: summary: Change a chat's thinking level mid-conversation from the composer
-  category: feature
-  dev: Extends `PATCH /api/chat/sessions/:id` with an optional `thinkingLevel` field (validated via existing `validateThinkingLevel`); adds `useChat().setSessionThinkingLevel` and the new `ChatThinkingLevelControl` component (Brain-icon trigger + popover) wired into `ChatView`'s direct-session composer, gated to non-CLI model-loop sessions only.
-- 635d782: summary: Add per-step Thinking Level controls to schedule and routine AI actions.
-  category: feature
-  dev: Adds AutomationStep.thinkingLevel persistence and route validation; runtime application is tracked separately.
-- 7a51f95: summary: Add a persisted Thinking Level selector for manual insight generation.
-  category: feature
-  dev: Threads insight run thinkingLevel through dashboard API metadata and retry generation.
-- 9f8db7d: summary: Schedule and routine AI steps now apply the chosen thinking level at run time.
-  category: feature
-  dev: Threads AutomationStep.thinkingLevel into createFnAgent (defaultThinkingLevel) across cron-runner, routine-runner, and the dashboard inline ai-prompt path, and maps it onto create-task steps' task thinkingLevel (FN-7903, follow-up to FN-7900).
-- 03bca17: summary: Add a project Chat default (model or agent) with prompt-each-time or always-use-default New Chat behavior.
-  category: feature
-  dev: Adds project chatNewSessionMode/chatDefaultKind/chatDefaultAgentId/chatDefaultModelProvider/chatDefaultModelId/chatDefaultThinkingLevel settings, a Project Models "Chat" subsection, and a shared ChatView handleNewChat() flow.
-- 8835c6c: summary: Switch an active chat's model or agent mid-conversation from the brain-icon popup.
-  category: feature
-  dev: Extends PATCH /api/chat/sessions/:id with validated modelProvider+modelId and agentId, adds chat-store updateSession agentId clause, useChat.setSessionModel, and a Model/Agent section in the brain popup (ChatThinkingLevelControl).
-- daf3f15: summary: Add a Chat Room thinking-effort override for all room responders.
-  category: feature
-  dev: Adds chat_rooms.thinkingLevel persistence, API/client wiring, and room responder defaultThinkingLevel resolution.
-- 1ea185d: summary: Add `fn workflow validate` to dry-run a custom workflow IR without creating or mutating it.
-  category: feature
-  dev: Adds the `fn_workflow_validate` agent tool, `POST /api/workflows/validate`, and the `fn workflow validate <id> | --file <path>` CLI command. Reuses the same parseWorkflowIr/trait/code-node/column-agent validation as create/update; performs no persistence.
-- 3326984: summary: Add `fn plugin publish --dry-run` preflight that validates a plugin before publishing.
-  category: feature
-  dev: New `runPluginPublish`/`collectPluginPreflight`/`classifyVersionBump` in packages/cli/src/commands/plugin-publish.ts; reuses loadManifestFromPath + resolvePluginEntryFile. Non-mutating; no registry/network calls.
-- 2aefaad: summary: Artifact-registration mail notifications now include a "View task" link to open the producing task.
-  category: feature
-  dev: MailboxArtifactAttachment renders a metadata-driven View-task affordance (message.metadata.taskId + onOpenTask); MainContent wires MailboxView's onOpenTask via fetchTaskDetail -> openDetailTask.
-- 9ba8a2e: summary: Add separate Reviewer and Planning thinking-level selectors on task details.
-  category: feature
-  dev: Adds validatorThinkingLevel and planningThinkingLevel task fields with runtime lane fallback to task.thinkingLevel.
-- c110b72: summary: Add persisted thinking-level controls to Mission Interview and Planning mode.
-  category: feature
-  dev: Threads optional thinkingLevel through mission/planning session inputPayload, routes, clients, and agent defaults.
-- edfe57c: summary: Release notes open with AI Highlights, and the release script prints a ready-to-post engagement tweet.
-  category: feature
-  dev: distillReleaseNotes calls `claude -p --model sonnet` for Highlights + notes + ≤280-char X draft (engagement-oriented, varies per release); soft deterministic fallback if Claude is offline. release.mjs prints the draft after publish and on --dry-run.
-- a227b19: summary: Add Command Center System controls (rebuild & restart, engine/agent restarts, backups, live logs) and a Plugins tab.
-  category: feature
-  dev: New `/api/system/*` routes gated by `ServerOptions.systemControl`/`systemLogs`; `fn dashboard` is now supervised by default (attached foreground child, `--no-supervise` opts out) and restart uses `FUSION_RESTART_EXIT_CODE` (86) honored by the supervisor, `scripts/dev-with-memory.mjs`, and Electron `app.relaunch()` on desktop; rebuild controls only render from a source checkout; new Command Center "Plugins" tab reuses PluginManager.
-- b983149: summary: Add thinking-level controls to agent and bulk task model selectors.
-  category: feature
-  dev: Dashboard agent detail/onboarding model pickers and List bulk model updates now persist thinkingLevel.
-
-#### Patch Changes
-
-- c4fad2d: summary: Agents now auto-recover from transient OAuth token-rotation 401 errors instead of parking for operator action.
-  category: fix
-  dev: Adds `isTransientAuthCredentialError` to the shared transient-error classifier (401 `authentication_error` / "Invalid authentication credentials" / token-expired shapes are transient and not operator-actionable; OAuth scope-grant and API-key failures still park). Heartbeat prompts now run under `withRateLimitRetry` so mid-run token rotations retry in-run. Heartbeat failure classification uses the error message instead of the stack-bearing detail. Self-healing un-parks agents previously paused with `error-unrecoverable` whose lastError now classifies recoverable.
-- 382a4d5: summary: Center the Chat composer attach and model icons with the message input box.
-  category: fix
-  dev: ChatView.css sizes .chat-attach-btn and .chat-thinking-level-root to --chat-input-control-size so they center with the single-line input across desktop/tablet/mobile while staying bottom-aligned when multi-line (FN-7917).
-- d4bbbcc: summary: Ideas-intake cards no longer auto-process on restart; replan and Retry work from Todo; All-workflows shows every card.
-  category: fix
-  dev: Store init records a `store:open` run-audit provenance stamp (pid/ppid/execPath/entry/cwd/node version) so mystery DB mutations are attributable to their process; init also now always runs the workflow-aware integrity pass instead of the retired flag-off evacuation (`evacuateCustomColumnsToLegacy` remains toggle-only), with a mis-mapping guard so stale selections are never physically rehomed into auto-triaged lanes; engine replan/stale-spec/fs-validation rebounds resolve `resolveReplanTargetColumn` instead of hardcoding `triage`; `needs-replan` counts as unplanned for hold-release dispatch; triage discovers `needs-replan` todo cards and refinement seed prompts via `isUnplannedSeedPrompt`/`buildRefinementSeedPrompt`; Board's aggregate grouping renders column-orphaned tasks (hidden columns stay hidden) and the FN-7591 refetch also fires on present-but-unrepresentable mappings.
-- 0a74059: summary: Update the dashboard TUI splash tagline to "software factory".
-  category: fix
-  dev: FUSION_TAGLINE in packages/cli/src/commands/dashboard-tui/logo.ts changed from "multi node agent orchestrator" to "software factory"; smoke-test assertion updated to match.
-- e559b2b: summary: Keep chat history stable while an agent is mid-turn so prior user and agent messages no longer flicker away.
-  category: fix
-  dev: useChat mid-turn message stability — intermediate chat:session:updated / tool-call / streaming events no longer blank or reflow the rendered `messages` thread (FN-7853, sibling of FN-6496/FN-6599 reattach fixes).
-- 139ae7e: summary: Agent chat exposes the same tools on desktop and browser; messaging tools no longer silently drop.
-  category: fix
-  dev: Project-scoped chat (getOrCreateScopedChatManager/resolveScopedChatManager) now wires and refreshes the engine MessageStore, mirroring setPluginRunner, so fn_send_message/fn_read_messages survive lazy engine boot; a reduced-tool-schema condition now emits a diagnostic/agent-visible signal instead of failing silently per call (FN-7854).
-- 729298f: summary: Reloading a path-registered plugin now refreshes its version and settings schema.
-  category: fix
-  dev: PluginLoader.loadPlugin/reloadPlugin reconcile persisted version/settingsSchema from the freshly-imported manifest (generalizing the bundled-plugin refresh); PluginUpdateInput/updatePlugin now accept settingsSchema. Preserves per-project enablement and setting values. FN-7855.
-- c13d2ee: summary: Per-project plugin-skill toggles now apply to agent sessions, not just the Skills view.
-  category: fix
-  dev: collectPluginSkillNames now resolves effective enablement via the shared @fusion/core resolver (getSkillSettingState), matching discoverSkills; fixes issue #2016 (FN-7858).
-- 67cc025: summary: Agent inspection tools now show why agents are in error or paused.
-  category: fix
-  dev: fn_agent_show and fn_list_agents surface lastError, pauseReason, and recovery counters for error/paused agents. Durable non-recoverable heartbeat errors are parked paused with error-unrecoverable and emit agent:error-parked-unrecoverable instead of sitting indefinitely in bare error.
-- 20c6db9: summary: Unpausing (and pausing) a task now updates the board immediately.
-  category: fix
-  dev: useTasks pauseTask/unpauseTask patch shared task state + SWR cache on API success (FN-7861), mirroring retryTask/bypassReview; no longer waits for SSE/poll.
-- b8c18be: summary: Make artifact preview popups full-screen sheets on mobile.
-  category: fix
-  dev: Adds mobile CSS and a CSS-contract regression test for artifact FloatingWindow viewers.
-- ad3d26d: summary: Restore reliable mobile header dragging for movable floating modals.
-  category: fix
-  dev: Reasserts the FloatingWindow mobile touch-action contract and covers touch pointer dragging.
-- 9905832: summary: Fix cramped spacing on the Command Center System tab (logs and controls).
-  category: fix
-  dev: System tab now wraps SystemControlsArea + SystemStatsArea in a flex container so all sections share the --space-lg rhythm; adds a gap after Server logs.
-- 504dc69: summary: Durable agents retry generic heartbeat failures instead of parking as unrecoverable on first error.
-  category: fix
-  dev: `isHeartbeatErrorRecoverable` now gates on operator-actionable and stale-module errors rather than requiring a transient-pattern match.
-- 56c7452: summary: Shorten the Settings "Reset Settings" button to "Reset" on mobile.
-  category: fix
-  dev: SettingsModal reset button now uses settings.reset.buttonShort at viewportMode==="mobile"; confirmation dialog unchanged.
-- b84bd11: summary: Keep the System tab refresh button inline with its title and far right on mobile.
-  category: fix
-  dev: Scopes a cc-system-controls-header row+space-between override so the shared .cc-area-section-header mobile column collapse no longer pushes the refresh button below the title.
-- e92a342: summary: Fix "Copy diagnostics" crash on non-secure origins (mobile/HTTP).
-  category: fix
-  dev: Command Center System tab now routes diagnostics copy through copyTextToClipboard (secure-context guard + execCommand fallback) instead of navigator.clipboard.writeText, which was undefined outside secure contexts.
-- 2e7fce2: summary: Durable agents in error state are cleared and retried automatically on engine restart.
-  category: fix
-  dev: New SelfHealingManager.resetDurableAgentErrorStateOnStartup() runs first in runStartupRecovery(): it resets the shared heartbeatErrorRecovery/durableErrorRecovery budget+cooldown, clears lastError, flips eligible error and error-retry-exhausted-parked durable agents to active, re-arms the heartbeat, and emits agent:reset-error-state-on-startup — bypassing the steady-state staleness/cooldown/exhaustion gates while preserving operator-actionable / stale-module / user-paused / error-unrecoverable suppression (FN-7884).
-- 6ea5396: summary: Fix copy actions crashing or mis-reporting on non-secure origins (mobile/HTTP).
-  category: fix
-  dev: Migrated remaining dashboard copy handlers (agent id, secrets, git manager, CLI binary, PR conflicts, stash ref, login instructions, agent-error modal) and the reports plugin share-blocks panel from direct navigator.clipboard.writeText to the shared copyTextToClipboard helper (secure-context guard + execCommand fallback, boolean result handling). Added ./app/utils/copyToClipboard subpath export from @fusion/dashboard.
-- db9a945: summary: Fix chat "Copy response" falsely reporting failure on non-secure origins (mobile/HTTP).
-  category: fix
-  dev: Migrated ChatView handleCopyResponse from direct navigator clipboard access to the shared copyTextToClipboard helper (secure-context guard + execCommand fallback, boolean-driven success/error feedback), the last direct clipboard caller found during the FN-7885 preflight.
-- ddf2f3d: summary: Restore task deletion from the right-dock Tasks list.
-  category: fix
-  dev: Threads the shared delete handler through right-dock task-card hosts and adds regression coverage for delete menu activation.
-- 02fdb4c: summary: Fix pinned terminal rendering underneath the status footer.
-  category: fix
-  dev: `.terminal-below-host` now reserves `--executor-footer-height` via a new `footerVisible` prop + `.terminal-below-host--with-footer` CSS modifier (matching `.project-content--with-footer`/`.left-sidebar-nav--with-footer`/`.right-dock--with-footer`), so the pinned/below terminal panel no longer sits underneath the fixed `ExecutorStatusBar`.
-- 41168e2: summary: Chat thinking-level Default entries now show the real project default.
-  category: fix
-  dev: ChatView fetches Settings.defaultThinkingLevel for New Chat and ChatThinkingLevelControl labels.
-- 313956d: summary: Fix the in-chat model selector on tablet and mobile.
-  category: fix
-  dev: The brain popup's pointerdown outside-close now treats the portaled CustomModelDropdown menu (.model-combobox-dropdown--portal) as inside, so a model tap registers instead of closing the popup; ChatView.css re-anchors the mobile popover to fit the viewport. CustomModelDropdown is unchanged.
-- e84fda9: summary: Make Chat go-to-top contextual and inline, with the edit pencil compact beside timestamps.
-  category: feature
-  dev: StandardChatMessageItem gains an isTopClipped prop; ChatView measures clipped message tops on scroll to gate go-to-top visibility. Edit pencil moved from a standalone row into the timestamp footer.
-- 87aab43: summary: Fix jerky tablet drag for the terminal and other movable modals.
-  category: fix
-  dev: Reassert drag-handle `touch-action: none` coverage for headerless floating-window delegates and test the tablet touch-drag contract across movable modal surfaces.
-- 30d2e36: summary: Keep the task refinement feedback dialog open after selecting Refine.
-  category: fix
-  dev: Routes the nested Task Detail refine overlay through useOverlayDismiss and adds regression coverage.
-- 2956002: summary: Fix the in-chat model/thinking popup being cut off inside a narrow floating Chat window.
-  category: fix
-  dev: The popover's viewport-fitting inset is now keyed on ChatView's .chat-view--narrow class (surface width, incl. floating window / compact dock) instead of only @media (max-width: 768px) (browser viewport), so a narrow floating Chat window on a wide viewport no longer clips the popup. CustomModelDropdown is unchanged.
-- 1f9dcea: summary: Mailbox artifact "View task" now opens the same movable, resizable task window used elsewhere.
-  category: fix
-  dev: MainContent mailbox onOpenTask routes fetchTaskDetail -> popOutTaskDetail (floating-window--task-detail) instead of the docked openDetailTask modal, matching DocumentsView's artifact-task path.
-- b10f823: summary: Task card priority badges now show icon-only so they no longer wrap to a new line.
-  category: fix
-  dev: Updates the board TaskCard priority badge to keep labels in title, aria-label, and visually-hidden text.
-- 23c732b: summary: Keep project MCP tools available across fresh executors and approval resumes.
-  category: fix
-  dev: Executor MCP bootstrap now fails with sanitized diagnostics and resumes approved calls exactly once.
-- f23619c: summary: Pausing an in-progress task now sticks — the pause survives session teardown instead of auto-resuming.
-  category: fix
-  dev: New `preservePause` moveTask option; the executor pause teardown passes it so the todo re-queue keeps `paused`/`pausedByAgentId`/`pausedReason`. The graph-failure classifier now labels a preserved task pause as operator intent (never "engine abort during pause/resume" auto-continue), and the benign re-queue log says "parked … awaiting explicit unpause" for paused rows.
-- 27110ed: summary: Remove the "Connected" label and shortcut help text from the terminal footer.
-  category: fix
-  dev: Drops the terminal footer helpText locale key and orphaned shortcut CSS.
-- 5f43297: summary: Fix terminal workspace drop-down rendering behind the floating terminal modal.
-  category: fix
-  dev: Keeps the portaled TerminalModal workspace picker above floatingZ and hidden until positioned.
-
-### runfusion.ai
-
-#### Patch Changes
-
-- Updated dependencies [8b60181]
-- Updated dependencies [c4fad2d]
-- Updated dependencies [382a4d5]
-- Updated dependencies [d4bbbcc]
-- Updated dependencies [0a74059]
-- Updated dependencies [9bb7459]
-- Updated dependencies [e559b2b]
-- Updated dependencies [139ae7e]
-- Updated dependencies [729298f]
-- Updated dependencies [bc30ce8]
-- Updated dependencies [c13d2ee]
-- Updated dependencies [67cc025]
-- Updated dependencies [0c97c16]
-- Updated dependencies [20c6db9]
-- Updated dependencies [95a808a]
-- Updated dependencies [b8c18be]
-- Updated dependencies [8884f50]
-- Updated dependencies [b77e123]
-- Updated dependencies [ad3d26d]
-- Updated dependencies [a4dde88]
-- Updated dependencies [ee1d978]
-- Updated dependencies [9905832]
-- Updated dependencies [504dc69]
-- Updated dependencies [c745990]
-- Updated dependencies [56c7452]
-- Updated dependencies [b84bd11]
-- Updated dependencies [e92a342]
-- Updated dependencies [2e7fce2]
-- Updated dependencies [6ea5396]
-- Updated dependencies [db9a945]
-- Updated dependencies [ddf2f3d]
-- Updated dependencies [02fdb4c]
-- Updated dependencies [23cb061]
-- Updated dependencies [635d782]
-- Updated dependencies [7a51f95]
-- Updated dependencies [9f8db7d]
-- Updated dependencies [41168e2]
-- Updated dependencies [03bca17]
-- Updated dependencies [8835c6c]
-- Updated dependencies [daf3f15]
-- Updated dependencies [1ea185d]
-- Updated dependencies [3326984]
-- Updated dependencies [313956d]
-- Updated dependencies [e84fda9]
-- Updated dependencies [87aab43]
-- Updated dependencies [2aefaad]
-- Updated dependencies [30d2e36]
-- Updated dependencies [2956002]
-- Updated dependencies [1f9dcea]
-- Updated dependencies [b10f823]
-- Updated dependencies [23c732b]
-- Updated dependencies [f23619c]
-- Updated dependencies [9ba8a2e]
-- Updated dependencies [c110b72]
-- Updated dependencies [edfe57c]
-- Updated dependencies [27110ed]
-- Updated dependencies [a227b19]
-- Updated dependencies [5f43297]
-- Updated dependencies [b983149]
-  - @runfusion/fusion@0.59.0
+### Fixed
+- Agents auto-recover from transient OAuth token-rotation and generic heartbeat errors instead of parking, and are automatically un-parked on engine restart
+- Ideas-intake cards no longer auto-process on restart; replan and Retry work correctly from Todo, and All-workflows shows every card
+- Chat history no longer flickers while an agent is mid-turn
+- Agent chat tools for sending and reading messages now work consistently on desktop and browser
+- Plugin skills: reloading a path-registered plugin refreshes its version and settings, per-project skill toggles now apply to agent sessions, and skill bodies in subdirectories are delivered correctly
+- Agent inspection tools now show why an agent is in error or paused
+- Copy-to-clipboard actions (diagnostics, secrets, git, CLI binary, chat responses, and more) now work reliably on mobile and non-HTTPS origins
+- Pausing a task now sticks and survives session teardown instead of auto-resuming; pause/unpause updates the board immediately
+- Task deletion restored from the right-dock Tasks list
+- Pinned terminal no longer renders underneath the status footer; terminal workspace drop-down no longer renders behind the floating terminal
+- Mobile/tablet polish: chat composer icons centered with the input box, artifact preview popups go full-screen on mobile, movable modals drag reliably on mobile/tablet, task priority badges no longer wrap, Settings "Reset" label shortened on mobile, and Command Center System tab spacing/alignment fixed
+- In-chat model/thinking popup no longer gets clipped in narrow floating chat windows or on tablet/mobile
+- Mailbox artifact "View task" now opens the same movable task window used elsewhere
+- Task refinement feedback dialog stays open after selecting Refine
+- Project MCP tools stay available across fresh executors and approval resumes
+- Dashboard TUI splash tagline updated to "software factory"
+- Removed stale "Connected" label and shortcut help text from the terminal footer
 
 ## 0.58.0
 
@@ -14134,6 +13885,22 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.31-beta.2
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.73.0-beta.2
+
+## 0.39.31-beta.1
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.73.0-beta.1
+
 ## 0.39.31-beta.0
 
 ### @fusion/i18n
@@ -14384,6 +14151,22 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.57-beta.2
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.57-beta.2
+
+## 0.11.57-beta.1
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.57-beta.1
 
 ## 0.11.57-beta.0
 

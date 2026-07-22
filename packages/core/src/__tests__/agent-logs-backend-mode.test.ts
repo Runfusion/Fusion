@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { appendAgentLogBatchImpl, flushAgentLogBufferImpl } from "../task-store/agent-logs.js";
 import { appendAgentLogImpl } from "../task-store/workflow-integrity.js";
-import { getAgentLogCountImpl, getAgentLogsImpl } from "../task-store/remaining-ops-7.js";
-import { dbImpl } from "../task-store/remaining-ops-5.js";
+import { getAgentLogCountImpl, getAgentLogsImpl } from "../task-store/task-artifacts-ops.js";
+import { dbImpl } from "../task-store/task-id-integrity.js";
 import { readAgentLogEntries } from "../agent-log-file-store.js";
 
 /**

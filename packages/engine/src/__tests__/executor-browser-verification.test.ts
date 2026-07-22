@@ -305,10 +305,15 @@ describe("browser-verification workflow-step browser capability", () => {
 
   it("returns a Plan Review revision for flagged external-integration evidence gaps without launching a session", async () => {
     const store = createMockStore();
+    const promptWithExternalCli = "## Mission\nAdd an external CLI.\n\n## Steps\n- Download and run `wt` from https://github.com/worktrunk/worktrunk/releases/latest/download/wt-linux-x64.tar.gz\n";
     store.getTask.mockResolvedValue({
       ...baseTask(),
-      prompt: "## Mission\nAdd an external CLI.\n\n## Steps\n- Download and run `wt` from https://github.com/worktrunk/worktrunk/releases/latest/download/wt-linux-x64.tar.gz\n",
+      prompt: promptWithExternalCli,
     });
+    // FNXC:EngineTests 2026-07-20-23:55: Plan Review evidence uses readTaskArtifact → getTaskDocument first.
+    store.getTaskDocument = vi.fn(async (_id: string, key: string) =>
+      key === "PROMPT.md" ? { content: promptWithExternalCli } : undefined,
+    );
     const executor = makeExecutor(store);
 
     const result = await (executor as any).executeWorkflowStep(

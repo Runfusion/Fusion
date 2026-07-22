@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
 import type {
   Mission,
   Milestone,
@@ -1230,11 +1230,53 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const feature = await getFeature(this.db, featureId);
     if (!feature) throw new Error(`Feature ${featureId} not found`);
     const current = feature.loopState ?? "idle";
-    const valid: Record<FeatureLoopState, FeatureLoopState[]> = { idle: ["implementing"], implementing: ["validating"], validating: ["needs_fix", "passed", "blocked"], needs_fix: ["implementing"], passed: [], blocked: [] };
-    if (!valid[current].includes(newState)) throw new Error(`Invalid loop state transition from '${current}' to '${newState}'. Allowed transitions from '${current}': ${valid[current].join(", ") || "none"}`);
+    const allowedNextStates = FEATURE_LOOP_TRANSITIONS[current] || [];
+    if (!allowedNextStates.includes(newState)) throw new Error(`Invalid loop state transition from '${current}' to '${newState}'. Allowed transitions from '${current}': ${allowedNextStates.join(", ") || "none"}`);
     if (newState === "implementing" && (feature.implementationAttemptCount ?? 0) >= DEFAULT_IMPLEMENTATION_RETRY_BUDGET) {
       await this.updateFeature(featureId, { loopState: "blocked" });
       throw new Error(`Feature ${featureId} has exhausted its retry budget (${DEFAULT_IMPLEMENTATION_RETRY_BUDGET} attempts). Transitioning to 'blocked' state.`);
+    }
+
+    /*
+    FNXC:MissionRecovery 2026-07-21-21:30:
+    Recovering validating to implementing must terminalize the interrupted validator run in the same transaction as the feature transition. A stale reaper or delayed validator completion must not overwrite the resumed feature with an outcome from the abandoned validation cycle.
+    */
+    if (current === "validating" && newState === "implementing" && feature.lastValidatorRunId) {
+      const run = await getValidatorRun(this.db, feature.lastValidatorRunId);
+      if (run?.status === "running") {
+        const now = new Date().toISOString();
+        const interruptedRun: MissionValidatorRun = {
+          ...run,
+          status: "error",
+          summary: "Interrupted validation was superseded by loop-state recovery",
+          completedAt: now,
+          updatedAt: now,
+        };
+        const won = await this.layer.transactionImmediate(async (tx) => {
+          const terminalRun = await transitionRunningValidatorRun(tx, interruptedRun);
+          if (!terminalRun) return false;
+          await updateFeature(tx, {
+            ...feature,
+            loopState: "implementing",
+            lastValidatorStatus: "error",
+            updatedAt: now,
+          });
+          return true;
+        });
+        if (won) {
+          const updated = await getFeature(this.db, featureId);
+          if (!updated) throw new Error(`Feature ${featureId} not found after recovery`);
+          this.emit("feature:updated", updated);
+          this.emit("validator-run:completed", interruptedRun, "error", Math.max(0, Date.parse(now) - Date.parse(run.startedAt)));
+          return updated;
+        }
+
+        const freshFeature = await getFeature(this.db, featureId);
+        const freshCurrent = freshFeature?.loopState ?? "idle";
+        if (freshCurrent !== "validating") {
+          throw new Error(`Invalid loop state transition from '${freshCurrent}' to '${newState}'. Allowed transitions from '${freshCurrent}': ${(FEATURE_LOOP_TRANSITIONS[freshCurrent] || []).join(", ") || "none"}`);
+        }
+      }
     }
     return this.updateFeature(featureId, { loopState: newState });
   }
