@@ -196,7 +196,10 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     const roleCompatibleAssignedTasks = assignedTasks.filter(isBindCompatible);
 
-    const todoCandidates = roleCompatibleAssignedTasks.filter((task) => task.column === "todo" && task.paused !== true);
+    /** FNXC:TaskDispatch 2026-07-19-14:40: remembered ownership must not reselect an operator-parked task when `userPaused` remains true but legacy `paused` is false. */
+    const todoCandidates = roleCompatibleAssignedTasks.filter(
+      (task) => task.column === "todo" && task.paused !== true && task.userPaused !== true,
+    );
 
     const readyTodo = todoCandidates
       .filter((task) => {

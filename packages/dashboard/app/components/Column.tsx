@@ -287,9 +287,15 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   The project setting is an explicit show/hide control: worktree grouping and labels render only when enabled and only for the board's WIP/processing column. Turning it off must leave plain task cards with no legacy group shell in either legacy or workflow-mode columns.
   */
   const showWorktreeGroups = showWorktreeGrouping === true && isWipProcessingColumn;
-  const activeTaskCount = useMemo(() => tasks.filter((task) =>
-    isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags)),
-  ).length, [tasks, columnFlags]);
+  /*
+  FNXC:BoardColumnCount 2026-07-21-19:30:
+  Column header is executing/total (e.g. 3/4). Executing uses the same Running predicate as the
+  footer (unpaused WIP, live planners, active review). Total is the card count in this lane.
+  */
+  const activeTaskCount = useMemo(
+    () => tasks.filter((task) => isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))).length,
+    [tasks, columnFlags],
+  );
   // When search is active, skip pagination so all matching tasks are visible
   const shouldPaginate = !isArchived && !isSearchActive && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
 
@@ -660,7 +666,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       <div className="column-header">
         <div className={`column-dot dot-${column}`} />
         <h2>{workflowMode ? (columnDisplayName ?? COLUMN_LABELS[column] ?? column) : COLUMN_LABELS[column]}</h2>
-        <span className={`column-count${countFlashing ? " count-flash" : ""}`}><span>{activeTaskCount}</span>/<span>{tasks.length}</span></span>
+        <span
+          className={`column-count${countFlashing ? " count-flash" : ""}`}
+          aria-label={t("column.executingOfTotal", "{{active}} executing of {{total}}", { active: activeTaskCount, total: tasks.length })}
+        >
+          <span>{activeTaskCount}</span>/<span>{tasks.length}</span>
+        </span>
         {(workflowMode ? isReviewColumn : column === "in-review") && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
             {/*

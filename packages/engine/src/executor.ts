@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
@@ -198,7 +198,13 @@ import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js
 import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { StepSessionExecutor } from "./step-session-executor.js";
-import { makeAncestryBlastRadiusGuard, resetStepToBaseline, runTaskStep, type RunTaskStepResult } from "./step-runner.js";
+import {
+  isUsableWorktreeDirectory,
+  makeAncestryBlastRadiusGuard,
+  resetStepToBaseline,
+  runTaskStep,
+  type RunTaskStepResult,
+} from "./step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree-acquisition.js";
 import { resolveCapturedBaseCommitSha } from "./base-commit-capture.js";
@@ -320,6 +326,36 @@ import type { AgentBrowserExec } from "./executor/browser-probe.js";
 function mergeAdditionalSkillPaths(...pathGroups: Array<string[] | undefined>): string[] | undefined {
   const merged = Array.from(new Set(pathGroups.flatMap((paths) => paths ?? [])));
   return merged.length > 0 ? merged : undefined;
+}
+
+/**
+ * FNXC:WorkflowSteps 2026-08-08-00:00:
+ * FN-8461 / GitHub #2388 require workflow skill-load warnings to describe a true
+ * named-skill delivery failure, not an optional Compound Engineering source being
+ * absent. Plugin body directories are paired with their parent discovery roots,
+ * so check the requested bare name against each merged source; unrelated paths
+ * must never hide a missing requested skill.
+ */
+function isWorkflowStepSkillDiscoverable(
+  skillName: string,
+  additionalSkillPaths: string[] | undefined,
+  ceSkillsDir: string | undefined,
+): boolean {
+  // A configured CE root remains a viable source by contract: deployments can
+  // inject a synthetic install root before its skill tree is materialized locally.
+  if (ceSkillsDir) return true;
+
+  const bareSkillName = skillName.includes(":")
+    ? skillName.slice(skillName.lastIndexOf(":") + 1)
+    : skillName;
+  if (!bareSkillName || basename(bareSkillName) !== bareSkillName || bareSkillName === "." || bareSkillName === "..") {
+    return false;
+  }
+
+  return (additionalSkillPaths ?? []).some((skillPath) =>
+    (basename(skillPath) === bareSkillName && existsSync(join(skillPath, "SKILL.md")))
+    || existsSync(join(skillPath, bareSkillName, "SKILL.md")),
+  );
 }
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
@@ -6853,7 +6889,13 @@ export class TaskExecutor {
         thinkingLevel,
       );
 
-    if (!worktreePath) {
+    /*
+     * FNXC:BaselineCwdGating 2026-07-21-19:21:
+     * FN-8464 requires graph step projection to defer until this candidate is a real directory.
+     * A stale, non-directory, or inaccessible truthy path must follow fresh-worktree ordering so
+     * runTaskStep never spawns baseline git with an unusable cwd; acquisition supplies baseCommitSha.
+     */
+    if (!worktreePath || !isUsableWorktreeDirectory(worktreePath)) {
       const result = await runStep(stepIndex);
       const refreshed = await this.store.getTask(task.id).catch(() => live);
       return {
@@ -10875,6 +10917,20 @@ export class TaskExecutor {
   private async executeCore(task: Task): Promise<void> {
     this.completionFinalizedTaskIds.delete(task.id);
     await this.clearStalePauseAbortBeforeDispatch(task);
+    /*
+    FNXC:ExecutorSoftDelete 2026-07-20-23:30:
+    Soft-delete refuse belongs in routing, not only inside runImplementation. After U10b the
+    graph owns every execute() call, so a deletedAt check that lives only under the
+    implementation seam never fires for graph entry (cursor capture / selection / fail-closed
+    parks run first). Refuse here before graph ownership so soft-deleted cards never start a
+    workflow run; runImplementation keeps the same check as defense-in-depth for graph-owned
+    re-entry that already holds the process lock.
+    */
+    if (task.deletedAt) {
+      executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      return;
+    }
     if (this.graphRouting.has(task.id)) {
       // Duplicate dispatch while the graph runner owns this task — drop it,
       // mirroring the executingTaskLock duplicate-invocation behavior.
@@ -16811,19 +16867,22 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           requestedSkillNames: mergedNames,
         };
       }
-      // FNXC:WorkflowSteps 2026-06-20-23:35:
-      // A named skill with no discovery path silently degrades to the role-fallback
-      // skill (the exact pre-fix bug this change exists to kill). If the injected
-      // FUSION_CE_SKILLS_DIR never arrived (degraded/throwing plugin, missing install
-      // dir), warn loudly so an env-threading regression is visible on a board run
-      // instead of failing silent with a green hand-fed test.
-      if (workflowStep.skillName && workflowStep.skillName.trim() && !ceSkillsDir) {
+      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
+      // FNXC:WorkflowSteps 2026-08-08-00:00:
+      // FN-8461 / GitHub #2388: workflow steps resolve skills from enabled-plugin
+      // body directories and the optional CE install root. Warn only after merging
+      // those sources when THIS named skill remains undiscoverable: a non-empty path
+      // array for another skill is not viable, while an actual plugin body makes CE
+      // env absence expected rather than misleading operator-facing noise.
+      if (
+        workflowStep.skillName?.trim()
+        && !isWorkflowStepSkillDiscoverable(workflowStep.skillName.trim(), additionalSkillPaths, ceSkillsDir)
+      ) {
         await this.store.logEntry(
           task.id,
-          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but FUSION_CE_SKILLS_DIR is unset — the skill cannot be discovered; the step runs with role-fallback skills only.`,
+          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
         );
       }
-      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
       const logBrowserVerificationActivity = async (message: string) => {
         await this.store.logEntry(task.id, message);
         await this.store.appendAgentLog(task.id, message, "status", undefined, "reviewer");

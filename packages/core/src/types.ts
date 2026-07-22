@@ -5716,6 +5716,7 @@ export interface MigrationResult {
   errors: Array<{ path: string; error: string }>;
 }
 
+
 // ── Messaging Types ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-18-00:35: Keep stable re-exports after main
 // landed task-proposal metadata + ephemeral policy on the mailbox contract.

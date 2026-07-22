@@ -425,13 +425,23 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       */
       const isIntakeColumn = task.column === "triage"
         || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn);
+      const usedBootstrapPrompt = !options?.promptOverride && isIntakeColumn;
       const prompt = options?.promptOverride
         ?? (isIntakeColumn
           ? buildBootstrapPrompt(id, task.title, task.description)
           : store.generateSpecifiedPrompt(task));
-      const validation = validateFileScopeInPromptContent(prompt);
-      if (validation.invalid.length > 0) {
-        throw new InvalidFileScopeError(id, validation.invalid);
+      /*
+      FNXC:FileScopeClassification 2026-07-21-18:05:
+      Bootstrap intake prompts are freeform descriptions (GitHub issue bodies, paste dumps).
+      Do not hard-fail create on incidental `## File Scope` tokens in that prose — triage
+      will write a real planned PROMPT.md later. Strict validation still applies to
+      promptOverride and generateSpecifiedPrompt paths.
+      */
+      if (!usedBootstrapPrompt) {
+        const validation = validateFileScopeInPromptContent(prompt);
+        if (validation.invalid.length > 0) {
+          throw new InvalidFileScopeError(id, validation.invalid);
+        }
       }
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "PROMPT.md"), prompt);
@@ -985,19 +995,29 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     */
     const isIntakeColumn = task.column === "triage"
       || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn);
+    const usedBootstrapPrompt = !options?.promptOverride && isIntakeColumn;
     const prompt = options?.promptOverride
       ?? (isIntakeColumn
         ? buildBootstrapPrompt(id, task.title, task.description)
         : store.generateSpecifiedPrompt(task));
-    const validation = validateFileScopeInPromptContent(prompt);
-    if (validation.invalid.length > 0) {
-      if (store.isWatching) store.taskCache.delete(id);
-      store.deleteTaskById(id);
-      const { rm } = await import("node:fs/promises");
-      if (existsSync(dir)) {
-        await rm(dir, { recursive: true, force: true });
+    /*
+    FNXC:FileScopeClassification 2026-07-21-18:05:
+    Bootstrap intake prompts are freeform descriptions (GitHub issue bodies, paste dumps).
+    Do not hard-fail create on incidental `## File Scope` tokens in that prose — triage
+    will write a real planned PROMPT.md later. Strict validation still applies to
+    promptOverride and generateSpecifiedPrompt paths.
+    */
+    if (!usedBootstrapPrompt) {
+      const validation = validateFileScopeInPromptContent(prompt);
+      if (validation.invalid.length > 0) {
+        if (store.isWatching) store.taskCache.delete(id);
+        store.deleteTaskById(id);
+        const { rm } = await import("node:fs/promises");
+        if (existsSync(dir)) {
+          await rm(dir, { recursive: true, force: true });
+        }
+        throw new InvalidFileScopeError(id, validation.invalid);
       }
-      throw new InvalidFileScopeError(id, validation.invalid);
     }
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "PROMPT.md"), prompt);

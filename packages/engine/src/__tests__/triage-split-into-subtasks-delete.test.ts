@@ -161,6 +161,7 @@ describe("triage split/delete lineage forwarding", () => {
     Default triageDuplicateResolution is prompt (flag, not delete). This suite
     still covers the delete path when operators opt in.
     */
+    const deleteTask = vi.fn().mockResolvedValue(undefined);
     const store = createStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -179,10 +180,23 @@ describe("triage split/delete lineage forwarding", () => {
         if (id === "FN-4894") {
           return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
         }
-        return createTask({ attachments: [], comments: [] } as any);
+        return createTask({ id: "FN-001", attachments: [], comments: [], status: "planning" } as any);
       }),
-      deleteTask: vi.fn().mockResolvedValue(undefined),
-    });
+      deleteTask,
+      /*
+      FNXC:EngineTests 2026-07-21-00:10:
+      Duplicate opt-in delete uses deleteTaskIf under planning-stage CAS (not bare deleteTask).
+      */
+      deleteTaskIf: vi.fn(async (id: string, predicate: (t: any) => boolean, opts?: any) => {
+        const live = await (store as any).getTask(id);
+        if (!live || !predicate(live)) return { deleted: false };
+        await deleteTask(id, opts);
+        return { deleted: true };
+      }),
+      withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+      readTaskForMove: vi.fn(async (id: string) => (store as any).getTask(id)),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+    } as any);
 
     const rootDir = await mkdtemp(join(tmpdir(), "triage-dup-"));
     try {
@@ -194,7 +208,7 @@ describe("triage split/delete lineage forwarding", () => {
         createTask({ id: "FN-001", log: [{ timestamp: new Date().toISOString(), action: "Spec review: APPROVE" }] as any }),
       );
 
-      expect(store.deleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      expect(deleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
         removeLineageReferences: true,
         auditContext: expect.objectContaining({
           agentId: "triage",

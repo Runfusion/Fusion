@@ -2,6 +2,7 @@
  * Unit tests for skill resolver.
  */
 
+import { resolvePluginSkillEnabled } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
@@ -1150,6 +1151,78 @@ describe("createSkillsOverrideFromSelection", () => {
         d.type === "info" && d.message.includes("not found")
       );
       expect(notFoundInfoDiagnostics).toHaveLength(0);
+    });
+
+    it("keeps nested skills available when legacy flat exclusions are ignored by the Skills view", () => {
+      const settings = { skills: ["-api-versioning/SKILL.md"] };
+      const dir = createMockProjectDir(settings);
+      const selection = resolveSessionSkills({ projectRootDir: dir });
+      const result = createSkillsOverrideFromSelection(selection, {
+        sessionPurpose: "executor",
+      })({
+        skills: [
+          { name: "api-versioning", filePath: "/plugins/foo/skills/api/api-versioning/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "unrelated", filePath: "/plugins/foo/skills/other/unrelated/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      });
+
+      expect(resolvePluginSkillEnabled(
+        settings,
+        "foo",
+        "api-versioning",
+        true,
+        "skills/api/api-versioning/SKILL.md",
+      )).toBe(true);
+      expect(result.skills.map((skill) => skill.name)).toEqual(["api-versioning", "unrelated"]);
+      expect(result.diagnostics.some((diagnostic) =>
+        diagnostic.message.includes("api-versioning/SKILL.md") && diagnostic.message.includes("disabled"),
+      )).toBe(false);
+    });
+
+    it("does not let a legacy flat enable create an empty allow-list for nested skills", () => {
+      const settings = { skills: ["+api-versioning/SKILL.md"] };
+      const dir = createMockProjectDir(settings);
+      const selection = resolveSessionSkills({ projectRootDir: dir });
+      const result = createSkillsOverrideFromSelection(selection)({
+        skills: [
+          { name: "api-versioning", filePath: "/plugins/foo/skills/api/api-versioning/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "unrelated", filePath: "/plugins/foo/skills/other/unrelated/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      });
+
+      expect(resolvePluginSkillEnabled(
+        settings,
+        "foo",
+        "api-versioning",
+        true,
+        "skills/api/api-versioning/SKILL.md",
+      )).toBe(true);
+      expect(result.skills.map((skill) => skill.name)).toEqual(["api-versioning", "unrelated"]);
+      expect(result.diagnostics.some((diagnostic) =>
+        diagnostic.message.includes("api-versioning/SKILL.md") && diagnostic.message.includes("not found"),
+      )).toBe(false);
+    });
+
+    it.each([
+      "-api/api-versioning/SKILL.md",
+      "-skills/api/api-versioning/SKILL.md",
+    ])("excludes nested skills for the canonical path %s", (pattern) => {
+      const dir = createMockProjectDir({ skills: [pattern] });
+      const selection = resolveSessionSkills({ projectRootDir: dir });
+      const result = createSkillsOverrideFromSelection(selection)({
+        skills: [
+          { name: "api-versioning", filePath: "/plugins/foo/skills/api/api-versioning/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      });
+
+      expect(result.skills).toEqual([]);
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("disabled by project execution settings"),
+      }));
     });
 
     it("exclusion patterns with /SKILL.md suffix correctly exclude pi-discovered skills", () => {

@@ -15,6 +15,8 @@ import {
   createMockStore,
   mockedCreateFnAgent,
   mockedExistsSync,
+  mockedExec,
+  mockedStatSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
 
@@ -239,12 +241,106 @@ describe("fast mode workflow/runtime invariants", () => {
     });
   });
 
-  it("applies fresh-worktree step ordering through the legacy graph seam", async () => {
+  it("defers truthy missing and non-directory worktrees until acquisition", async () => {
+    for (const [worktree, exists, directory] of [
+      ["/tmp/fn-8464-missing-worktree", false, false],
+      ["/tmp/fn-8464-file-worktree", true, false],
+    ]) {
+      let liveTask = task({
+        steps: [{ name: "Preflight", status: "pending" }],
+        worktree,
+        baseCommitSha: undefined,
+      });
+      const store = createMockStore();
+      store.getTask.mockImplementation(async () => liveTask);
+      mockedExistsSync.mockReturnValue(exists);
+      mockedStatSync.mockReturnValue({ isDirectory: () => directory } as any);
+      const executor = new TaskExecutor(store, "/tmp/project-root");
+      vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+        expect(store.updateStep).not.toHaveBeenCalled();
+        liveTask = { ...liveTask, worktree: "/tmp/acquired", baseCommitSha: "acquired-base" };
+        return { success: true };
+      });
+
+      const result = await (executor as any).runProjectedGraphTaskStep(
+        liveTask,
+        liveTask,
+        0,
+        { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+      );
+
+      expect(result).toMatchObject({ outcome: "success", baselineSha: "acquired-base" });
+      expect(mockedExec).not.toHaveBeenCalled();
+    }
+  });
+
+  it("defers a worktree whose directory stat throws instead of propagating a cwd race", async () => {
     let liveTask = task({
       steps: [{ name: "Preflight", status: "pending" }],
-      worktree: undefined,
+      worktree: "/tmp/fn-8464-stat-race",
       baseCommitSha: undefined,
     });
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => liveTask);
+    mockedStatSync.mockImplementation(() => {
+      throw new Error("simulated removal race");
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async () => {
+      expect(store.updateStep).not.toHaveBeenCalled();
+      liveTask = { ...liveTask, worktree: "/tmp/acquired", baseCommitSha: "acquired-base" };
+      return { success: true };
+    });
+
+    await expect(
+      (executor as any).runProjectedGraphTaskStep(
+        liveTask,
+        liveTask,
+        0,
+        { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+      ),
+    ).resolves.toMatchObject({ outcome: "success", baselineSha: "acquired-base" });
+    expect(mockedExec).not.toHaveBeenCalled();
+  });
+
+  it("captures a pre-step baseline when the projected worktree is a directory", async () => {
+    const liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: "/tmp/fn-8464-existing-worktree",
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(liveTask);
+    mockedExistsSync.mockReturnValue(true);
+    mockedStatSync.mockReturnValue({ isDirectory: () => true } as any);
+    mockedExec.mockImplementation((_command: string, _options: unknown, callback: any) => {
+      callback(null, "existing-head\n", "");
+      return {} as any;
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+    const runGraphTaskStep = vi
+      .spyOn(executor as any, "runGraphTaskStep")
+      .mockResolvedValue({ success: true });
+
+    const result = await (executor as any).runProjectedGraphTaskStep(
+      liveTask,
+      liveTask,
+      0,
+      { foreachNodeId: "steps", stepIndex: 0, instanceId: "steps#0" },
+    );
+
+    expect(result).toMatchObject({ outcome: "success", baselineSha: "existing-head" });
+    expect(runGraphTaskStep).toHaveBeenCalledOnce();
+    expect(store.updateStep).toHaveBeenCalledWith("FN-6226", 0, "in-progress", { source: "graph" });
+    expect(mockedExec).toHaveBeenCalledWith("git rev-parse HEAD", { cwd: liveTask.worktree }, expect.any(Function));
+  });
+
+  it("applies missing-worktree step ordering through the legacy graph seam", async () => {
+    let liveTask = task({
+      steps: [{ name: "Preflight", status: "pending" }],
+      worktree: "/tmp/fn-8464-legacy-missing-worktree",
+      baseCommitSha: undefined,
+    });
+    mockedExistsSync.mockReturnValue(false);
     const store = createMockStore();
     store.getTask.mockImplementation(async () => liveTask);
     const executor = new TaskExecutor(store, "/tmp/project-root");

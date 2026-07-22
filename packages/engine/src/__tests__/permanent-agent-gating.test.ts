@@ -65,6 +65,7 @@ const FN_3548_COORDINATION_TOOLS = [
   "fn_task_log",
   "fn_task_document_write",
   "fn_task_document_read",
+  "fn_task_prompt_write",
   "fn_artifact_register",
   "fn_artifact_list",
   "fn_artifact_view",
@@ -101,6 +102,7 @@ describe("permanent-agent-gating", () => {
     expect(classifyPermanentAgentToolCall("fn_task_import_github_issue").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_update_identity").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_task_document_write").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_task_prompt_write")).toEqual({ category: "none", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_artifact_register").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_artifact_list").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_artifact_view").category).toBe("none");

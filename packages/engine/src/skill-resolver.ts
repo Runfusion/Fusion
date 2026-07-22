@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
-import { getProjectRootFromWorktree } from "@fusion/core";
+import { getProjectRootFromWorktree, normalizeStoredSkillPath } from "@fusion/core";
 import { piLog } from "./logger.js";
 
 // ── Project Root Resolution ──────────────────────────────────────────────────
@@ -173,21 +173,59 @@ function isExclusionPattern(pattern: string): boolean {
 }
 
 /**
- * Extract the bare skill name for matching purposes.
- *
- * Fusion conventions use two-segment names like "web-research/SKILL.md" (from
- * extractSkillName and normalizeAgentSkills), but pi-coding-agent sets Skill.name
- * to just the parent directory (e.g. "web-research"). This helper strips common
- * suffixes so both sides can be compared:
- *
- *   "web-research/SKILL.md"           → "web-research"
- *   "skills/web-research/SKILL.md"    → "web-research"
- *   "web-research"                    → "web-research"
- *   "/abs/path/skills/web-research/SKILL.md" → left unchanged (absolute paths
- *     are matched by filePath comparison, not by this helper)
+ * Return the canonical body path beneath a discovered skill's `skills/` root.
+ * A path without that root is only eligible for exact filePath matching.
  */
-function bareSkillName(name: string): string {
-  return name.replace(/\/SKILL\.md$/i, "");
+function skillBodyRelativePath(filePath: string): string | undefined {
+  const normalizedFilePath = filePath.replaceAll("\\", "/");
+  const lowerCasePath = normalizedFilePath.toLowerCase();
+  const segmentIndex = lowerCasePath.lastIndexOf("/skills/");
+
+  if (segmentIndex >= 0) {
+    return normalizedFilePath.slice(segmentIndex + "/skills/".length);
+  }
+  if (lowerCasePath.startsWith("skills/")) {
+    return normalizedFilePath.slice("skills/".length);
+  }
+  return undefined;
+}
+
+/**
+ * FNXC:SkillResolution 2026-07-21-00:00:
+ * GitHub #2385 / FN-8465 requires session filtering to use the same skills-relative body-path identity as the Skills view. Legacy `-name/SKILL.md` entries must not suppress a re-categorized `skills/category/name/SKILL.md` body merely because pi exposes the same bare Skill.name.
+ */
+function skillMatchesExecutionPattern(skill: Skill, pattern: string): boolean {
+  if (skill.filePath === pattern) {
+    return true;
+  }
+
+  const bodyRelativePath = skillBodyRelativePath(skill.filePath);
+  return bodyRelativePath !== undefined
+    && normalizeStoredSkillPath(bodyRelativePath).toLowerCase()
+      === normalizeStoredSkillPath(pattern).toLowerCase();
+}
+
+/**
+ * FNXC:SkillResolution 2026-07-21-00:00:
+ * Legacy flat `+name/SKILL.md` keys must be ignored as well as legacy disables.
+ * Otherwise an unmatched stale allow key activates the session allow-list and
+ * suppresses re-categorized skills even though the Skills view shows them enabled.
+ */
+function isLegacyFlatPatternForNestedSkill(skill: Skill, pattern: string): boolean {
+  const bodyRelativePath = skillBodyRelativePath(skill.filePath);
+  if (!bodyRelativePath) return false;
+
+  const bodySegments = normalizeStoredSkillPath(bodyRelativePath)
+    .toLowerCase()
+    .split("/");
+  const patternSegments = normalizeStoredSkillPath(pattern)
+    .toLowerCase()
+    .split("/");
+
+  return bodySegments.length > 2
+    && patternSegments.length === 2
+    && bodySegments.at(-2) === patternSegments[0]
+    && bodySegments.at(-1) === patternSegments[1];
 }
 
 /**
@@ -398,34 +436,31 @@ export function createSkillsOverrideFromSelection(
     // Determine the effective filter criteria
     // When requestedSkillNames is provided without patterns, filter by name
     // When patterns are provided, filter by file path
-    const hasPatterns = allowedSkillPaths.size > 0;
     const hasRequestedNames = Boolean(requestedSkillNames && requestedSkillNames.length > 0);
+
+    // A stale flat enable must not turn into an empty allow-list after a body
+    // moved to a category. Keep truly missing configured patterns intact so
+    // their existing missing-pattern diagnostic and filtering semantics remain.
+    const effectiveAllowedSkillPaths = new Set(
+      [...allowedSkillPaths].filter((pattern) => !base.skills.some(
+        (skill) => isLegacyFlatPatternForNestedSkill(skill, pattern),
+      )),
+    );
+    const hasPatterns = effectiveAllowedSkillPaths.size > 0;
 
     // Filter skills
     // Skills must match the inclusion criteria AND not be in the exclusion list
     const hasExcluded = excludedSkillPaths.size > 0;
     let filteredSkills: Skill[];
-    // Build a name-based lookup for pattern/exclusion matching.
-    // Settings patterns are relative (e.g. "web-research/SKILL.md") but
-    // skill.filePath is absolute. Match against skill.name instead so
-    // that patterns written by toggleExecutionSkill() actually resolve.
-    //
-    // pi-coding-agent sets Skill.name to the parent directory name
-    // (e.g. "web-research") while Fusion uses two-segment names
-    // (e.g. "web-research/SKILL.md"). bareSkillName() normalizes
-    // both sides so the comparison succeeds.
-    const skillNameMatches = (skill: Skill, pattern: string): boolean =>
-      bareSkillName(skill.name).toLowerCase() === bareSkillName(pattern).toLowerCase()
-      || skill.filePath === pattern;
     const isExcluded = (skill: Skill): boolean => {
-      for (const ep of excludedSkillPaths) {
-        if (skillNameMatches(skill, ep)) return true;
+      for (const excludedPath of excludedSkillPaths) {
+        if (skillMatchesExecutionPattern(skill, excludedPath)) return true;
       }
       return false;
     };
     const isAllowed = (skill: Skill): boolean => {
-      for (const ap of allowedSkillPaths) {
-        if (skillNameMatches(skill, ap)) return true;
+      for (const allowedPath of effectiveAllowedSkillPaths) {
+        if (skillMatchesExecutionPattern(skill, allowedPath)) return true;
       }
       return false;
     };
@@ -454,10 +489,8 @@ export function createSkillsOverrideFromSelection(
 
     // Check for excluded paths that DO match a discovered skill (disabled)
     const purpose = sessionPurpose ? ` [${sessionPurpose}]` : "";
-    const discoveredBareNames = new Set(base.skills.map((s) => bareSkillName(s.name).toLowerCase()));
-    const discoveredFilePaths = new Set(base.skills.map((s) => s.filePath));
     const hasDiscoveredMatch = (pattern: string): boolean =>
-      discoveredBareNames.has(bareSkillName(pattern).toLowerCase()) || discoveredFilePaths.has(pattern);
+      base.skills.some((skill) => skillMatchesExecutionPattern(skill, pattern));
 
     for (const excludedPath of excludedSkillPaths) {
       if (hasDiscoveredMatch(excludedPath)) {
@@ -470,7 +503,7 @@ export function createSkillsOverrideFromSelection(
     }
 
     // Check for configured patterns (allowed paths) that don't match any discovered skill
-    for (const allowedPath of allowedSkillPaths) {
+    for (const allowedPath of effectiveAllowedSkillPaths) {
       if (!hasDiscoveredMatch(allowedPath)) {
         newDiagnostics.push({
           type: "info" as ResourceDiagnostic["type"],

@@ -55,6 +55,7 @@ vi.mock("../logger.js", () => {
     ipcLog: createMockLogger(),
     projectManagerLog: createMockLogger(),
     hybridExecutorLog: createMockLogger(),
+    piLog: createMockLogger(),
     formatError: (err: unknown) => {
       if (err instanceof Error) {
         const message = err.message || err.name || "Error";
@@ -317,6 +318,7 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   realpathSync: vi.fn((path: string) => path),
   lstatSync: vi.fn(() => ({ isSymbolicLink: () => false, isDirectory: () => true })),
+  statSync: vi.fn(() => ({ isDirectory: () => true })),
 }));
 
 export const mockExecuteAll: Mock<() => Promise<unknown[]>> = vi.fn().mockResolvedValue([]);
@@ -391,7 +393,7 @@ import { findWorktreeUser } from "../merger.js";
 import { StepSessionExecutor } from "../step-session-executor.js";
 import { withRateLimitRetry } from "../rate-limit-retry.js";
 import { exec, execSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
 import { classifyTaskWorktree, describeRegisteredWorktrees, isUsableTaskWorktree } from "../worktree-pool.js";
 import { classifyStaleLock, tryRemoveStaleLock } from "../worktree-stale-lock.js";
@@ -409,6 +411,7 @@ export const mockedExec = vi.mocked(exec);
 export const mockedExecSync = vi.mocked(execSync);
 export const mockedExistsSync = vi.mocked(existsSync);
 export const mockedRealpathSync = vi.mocked(realpathSync);
+export const mockedStatSync = vi.mocked(statSync);
 export const mockedHydrateWorktreeDb = vi.mocked(hydrateWorktreeDb);
 export const mockedClassifyTaskWorktree = vi.mocked(classifyTaskWorktree);
 export const mockedDescribeRegisteredWorktrees = vi.mocked(describeRegisteredWorktrees);
@@ -749,6 +752,8 @@ export function resetExecutorMocks() {
   vi.clearAllMocks();
   mockedExec.mockReset();
   mockedExecSync.mockReset();
+  mockedStatSync.mockReset();
+  mockedStatSync.mockReturnValue({ isDirectory: () => true } as ReturnType<typeof statSync>);
   mockedIsUsableTaskWorktree.mockResolvedValue(true);
   mockedClassifyTaskWorktree.mockImplementation(async (rootDir: string, worktreePath: string) => {
     const usable = await mockedIsUsableTaskWorktree(rootDir, worktreePath);

@@ -178,6 +178,12 @@ describe("StandardChatSurface native structure embeds", () => {
   });
 
   it("routes roadmap references to the shared unavailable placeholder", async () => {
+    /*
+    FNXC:DashboardTests 2026-07-20-23:45:
+    roadmap-item previews share the unavailable placeholder path; mock the preview
+    fetch so the embed does not crash on an undefined Promise from the API stub.
+    */
+    fetchPreview.mockResolvedValue({ available: false, kind: "roadmap-item", id: "R-001", reason: "missing" });
     renderMessage({ content: "fusion://roadmap-item/R-001" });
     await waitFor(() => expect(screen.getByTestId("native-structure-preview-unavailable")).toHaveAttribute("data-reason", "missing"));
   });

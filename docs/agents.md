@@ -932,6 +932,10 @@ Dashboard Chat, Chat Room responders, and task-detail Planner Chat run at the in
 
 Task-detail Planner Chat is included because it is a `task-planner:<taskId>` ChatManager session. This does not change the readonly planning/mission interview lanes or WhatsApp plugin chat. Chat verification remains limited to its existing allowlisted profiles rather than accepting arbitrary shell commands.
 
+### Worktree session file boundary
+
+Pi sessions started in an isolated task worktree reject filesystem paths outside that worktree. The established project-memory and task-attachment exceptions remain unchanged. Separately, when Fusion advertises skill bodies through `AgentOptions.additionalSkillPaths` (including enabled plugin skill roots), it allows only `read`, `glob`, and `grep` to access those exact normalized roots. `write`, `edit`, and Bash working directories remain worktree-bound for skill roots; this is not a general `~/.fusion/plugins` exception.
+
 ```bash
 fn message inbox
 fn message outbox

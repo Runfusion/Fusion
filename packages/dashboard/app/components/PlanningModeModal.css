@@ -1664,8 +1664,11 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
 /*
 FNXC:PlanningMode 2026-07-21-09:15:
 Desktop Planning panes already own their framed surfaces, so their scroll content must sit flush and their action rows must share a compact baseline. Scope these overrides to Planning's pane wrappers and desktop breakpoint so shared Mission/Milestone interview classes and compact safe-area padding retain their existing presentation.
+
+FNXC:PlanningMode 2026-07-21-18:41:
+Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell below the 1025px flush gate, so the right plan pane still stacked scroll padding + card chrome. Lower the gate to 769px so tablet inherits the flush pane treatment; phone (≤768) keeps its own mobile flush block.
 */
-@media (min-width: 1025px) {
+@media (min-width: 769px) {
   .planning-question-pane .planning-question-scroll,
   .planning-plan-pane .planning-plan-scroll {
     padding: 0;
@@ -2213,14 +2216,13 @@ mobile and desktop offer the same View task / Return to sessions choices.
   }
 
   /*
-  FNXC:PlanningMode 2026-07-21-16:47:
-  Mobile keeps a compact card inset and rounded panes because only one pane is visible at a time;
-  clear the desktop column divider so a solo question/plan card is not edged by a right border.
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Mobile question and plan-review panes were double-inset: workspace gutter + scroll padding + nested card chrome on top of the pane frame. Drop the outer gutter and pane chrome so content sits flush edge-to-edge like desktop, keep a light tab strip inset, and leave readable content padding on the question panel / plan document only. Clear the desktop column divider so a solo question/plan card is not edged by a right border.
   */
   .planning-workspace {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-md);
-    padding: var(--space-md);
+    gap: 0;
+    padding: 0;
   }
 
   .planning-question-pane {
@@ -2240,6 +2242,7 @@ mobile and desktop offer the same View task / Return to sessions choices.
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-xs);
+    margin: var(--space-sm) var(--space-sm) 0;
     padding: var(--space-xs);
     border: solid var(--btn-border-width) var(--border);
     border-radius: var(--radius-lg);
@@ -2287,9 +2290,33 @@ mobile and desktop offer the same View task / Return to sessions choices.
 
   .planning-plan-pane,
   .planning-question-pane {
-    border: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-sm);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Scope flush scroll overrides to Planning's pane wrappers so shared Mission/Milestone interview
+  classes keep their existing mobile view-scroll padding.
+  */
+  .planning-question-pane .planning-question-scroll,
+  .planning-plan-pane .planning-plan-scroll {
+    padding: 0;
+  }
+
+  .planning-question-pane .planning-question-panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 0;
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+  }
+
+  .planning-plan-pane .planning-plan-document {
+    width: 100%;
+    padding: var(--space-lg);
+    border-radius: 0;
+    box-shadow: none;
   }
 
   /* FNXC:PlanningMode 2026-06-22-15:30: this legacy full-viewport sheet sizing

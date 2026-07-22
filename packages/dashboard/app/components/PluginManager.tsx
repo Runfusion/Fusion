@@ -297,15 +297,25 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const [togglingBuiltinRuntimeId, setTogglingBuiltinRuntimeId] = useState<string | null>(null);
   const { confirm } = useConfirm();
 
-  const loadPlugins = useCallback(async () => {
+  const loadPlugins = useCallback(async (background = false, mutationResponse?: PluginInstallation) => {
     try {
-      setLoading(true);
+      if (!background) setLoading(true);
       const data = await fetchPlugins(projectId);
-      setPlugins(data);
+      /*
+      FNXC:PluginEnablementScope 2026-07-21-16:30:
+      A successful project-scoped toggle response is authoritative for its immediate confirmation
+      refresh. Preserve it when that refresh returns a stale or host-scoped list so a completed
+      enable/disable request cannot flip the switch back until a later explicit refresh or SSE event.
+      */
+      setPlugins(mutationResponse
+        ? data.some((entry) => entry.id === mutationResponse.id)
+          ? data.map((entry) => entry.id === mutationResponse.id ? mutationResponse : entry)
+          : [...data, mutationResponse]
+        : data);
     } catch (err) {
       addToast(t("plugins.loadFailed", "Failed to load plugins: {{error}}", { error: err instanceof Error ? err.message : String(err) }), "error");
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [projectId, addToast]);
 
@@ -563,6 +573,13 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const handleEnable = async (plugin: PluginInstallation) => {
     try {
       const enabledPlugin = await enablePlugin(plugin.id, projectId);
+      /*
+      FNXC:PluginEnablementScope 2026-07-21-12:00:
+      Apply the project-scoped enable response before the background list refresh. This keeps the
+      switch truthful even when lifecycle SSE races the refresh; SSE filtering below rejects
+      events attributed to another project instead of overwriting this project’s enabled state.
+      */
+      setPlugins((previous) => previous.map((entry) => entry.id === enabledPlugin.id ? enabledPlugin : entry));
       if (enabledPlugin.state === "error") {
         addToast(t("plugins.enableFailed", "Failed to enable {{name}}: {{error}}", { name: plugin.name, error: enabledPlugin.error ?? t("plugins.unknownError", "unknown error") }), "error");
         await loadPlugins();
@@ -570,7 +587,9 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       }
 
       addToast(t("plugins.enabledForProject", "{{name}} enabled for this project", { name: plugin.name }), "success");
-      await loadPlugins();
+      // FNXC:PluginEnablementScope 2026-07-21-16:30: Preserve this authoritative
+      // response if the single confirmation refresh races a stale scoped-list read.
+      await loadPlugins(true, enabledPlugin);
     } catch (err) {
       addToast(t("plugins.enablePluginFailed", "Failed to enable plugin: {{error}}", { error: err instanceof Error ? err.message : String(err) }), "error");
     }
@@ -578,9 +597,10 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
 
   const handleDisable = async (plugin: PluginInstallation) => {
     try {
-      await disablePlugin(plugin.id, projectId);
+      const disabledPlugin = await disablePlugin(plugin.id, projectId);
+      setPlugins((previous) => previous.map((entry) => entry.id === disabledPlugin.id ? disabledPlugin : entry));
       addToast(t("plugins.disabledForProject", "{{name}} disabled for this project", { name: plugin.name }), "success");
-      await loadPlugins();
+      await loadPlugins(true, disabledPlugin);
     } catch (err) {
       addToast(t("plugins.disablePluginFailed", "Failed to disable plugin: {{error}}", { error: err instanceof Error ? err.message : String(err) }), "error");
     }
@@ -1252,7 +1272,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       <div className="plugin-manager-header">
         <span className="plugin-manager-header-title">{t("plugins.installedPlugins", "Installed Plugins")}</span>
         <div className="plugin-manager-actions">
-          <button className="btn btn-sm" onClick={loadPlugins} title={t("plugins.refresh", "Refresh")} aria-label={t("plugins.refreshPluginList", "Refresh plugin list")}>
+          <button className="btn btn-sm" onClick={() => void loadPlugins()} title={t("plugins.refresh", "Refresh")} aria-label={t("plugins.refreshPluginList", "Refresh plugin list")}>
             <RefreshCw size={14} className={loading ? "spin" : ""} />
             {t("plugins.refresh", "Refresh")}
           </button>

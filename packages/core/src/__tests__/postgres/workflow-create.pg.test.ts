@@ -12,6 +12,11 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import type { TaskStore } from "../../store.js";
+import * as schema from "../../postgres/schema/index.js";
+import { writeProjectConfig } from "../../task-store/async-settings.js";
+import { __setWorkflowDefinitionBeforeInsertForTesting } from "../../task-store/remaining-ops-1.js";
 
 import {
   pgDescribe,
@@ -31,6 +36,15 @@ pgTest("workflow definition create (PostgreSQL backend mode)", () => {
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
   afterAll(h.afterAll);
+
+  function boundLayer(projectId: string): AsyncDataLayer {
+    return { ...h.layer(), projectId };
+  }
+
+  async function boundStore(projectId: string): Promise<TaskStore> {
+    const { TaskStore: TaskStoreCtor } = await import("../../store.js");
+    return new TaskStoreCtor(h.rootDir(), undefined, { asyncLayer: boundLayer(projectId) });
+  }
 
   it("creates, updates, and deletes a workflow definition through the async layer", async () => {
     const store = h.store();
@@ -87,5 +101,59 @@ pgTest("workflow definition create (PostgreSQL backend mode)", () => {
     expect(await store.getWorkflowDefinition(created.id)).toBeUndefined();
     // The sibling survives the delete (independent rows).
     expect(await store.getWorkflowDefinition(second.id)).toBeDefined();
+  });
+
+  it("skips a globally occupied id when another project's counter is stale", async () => {
+    const projectA = "proj_workflow_allocator_a";
+    const projectB = "proj_workflow_allocator_b";
+    const now = new Date().toISOString();
+    await h.adminDb().insert(schema.project.workflows).values({
+      id: "WF-002",
+      name: "project A occupied workflow",
+      description: "",
+      icon: null,
+      ir: BUILTIN_CODING_WORKFLOW_IR as unknown as object,
+      layout: {},
+      kind: "workflow",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await writeProjectConfig(boundLayer(projectB), {}, { nextWorkflowDefinitionId: 2 });
+
+    const storeB = await boundStore(projectB);
+    const created = await storeB.createWorkflowDefinition({ name: "project B workflow", ir: BUILTIN_CODING_WORKFLOW_IR });
+
+    expect(created.id).toBe("WF-003");
+    expect(await storeB.getWorkflowDefinition(created.id)).toMatchObject({ id: created.id });
+    expect(await (await boundStore(projectA)).getWorkflowDefinition("WF-002")).toMatchObject({ name: "project A occupied workflow" });
+  });
+
+  it("retries an id primary-key collision injected after allocation", async () => {
+    const now = new Date().toISOString();
+    let injected = false;
+    __setWorkflowDefinitionBeforeInsertForTesting(async (id, backendMode) => {
+      if (injected || !backendMode) return;
+      injected = true;
+      await h.adminDb().insert(schema.project.workflows).values({
+        id,
+        name: "race winner",
+        description: "",
+        icon: null,
+        ir: BUILTIN_CODING_WORKFLOW_IR as unknown as object,
+        layout: {},
+        kind: "workflow",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    try {
+      const created = await h.store().createWorkflowDefinition({ name: "race retry", ir: BUILTIN_CODING_WORKFLOW_IR });
+      expect(injected).toBe(true);
+      expect(created.id).toBe("WF-002");
+      expect(await h.store().getWorkflowDefinition("WF-001")).toMatchObject({ name: "race winner" });
+      expect(await h.store().getWorkflowDefinition(created.id)).toMatchObject({ name: "race retry" });
+    } finally {
+      __setWorkflowDefinitionBeforeInsertForTesting(undefined);
+    }
   });
 });

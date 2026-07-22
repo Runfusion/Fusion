@@ -36,7 +36,12 @@ function createEventedStore(overrides: Record<string, any> = {}) {
 }
 
 function createFinalizeStore(overrides: Partial<TaskStore> = {}): TaskStore {
-  return {
+  /*
+  FNXC:EngineTests 2026-07-20-23:40:
+  Finalization rewrites PROMPT under withTaskLock (FN-8361). Stubs that omit the lock
+  surface fail closed and never reach moveTask / status-null pause parking assertions.
+  */
+  const store: any = {
     listTasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn().mockResolvedValue(createTask()),
     getSettings: vi.fn().mockResolvedValue({ requirePlanApproval: false } as Settings),
@@ -45,12 +50,40 @@ function createFinalizeStore(overrides: Partial<TaskStore> = {}): TaskStore {
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:EngineTests 2026-07-20-23:50:
+    Finalization releases via moveTaskIf; wire it to moveTask so happy-path assertions
+    still observe the column transition while paused guards short-circuit earlier.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: Task) => boolean) => {
+      const live = await store.getTask(id);
+      if (!live || !predicate(live as Task)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: { ...live, column, status: null } };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn().mockResolvedValue(undefined),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    readTaskForMove: vi.fn(async (id: string) => store.getTask(id)),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
-  } as unknown as TaskStore;
+  };
+  if (!(overrides as { withTaskLock?: unknown }).withTaskLock) {
+    store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+  }
+  if (!(overrides as { readTaskForMove?: unknown }).readTaskForMove) {
+    store.readTaskForMove = vi.fn(async (id: string) => store.getTask(id));
+  }
+  if (!(overrides as { moveTaskIf?: unknown }).moveTaskIf) {
+    store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (t: Task) => boolean) => {
+      const live = await store.getTask(id);
+      if (!live || !predicate(live as Task)) return { moved: false, task: live };
+      await store.moveTask(id, column);
+      return { moved: true, task: { ...live, column, status: null } };
+    });
+  }
+  return store as TaskStore;
 }
 
 function createTask(overrides: Partial<Task> = {}): Task {

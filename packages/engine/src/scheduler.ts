@@ -138,9 +138,11 @@ function isIgnoredOverlapPath(path: string, ignorePath: string): boolean {
 function computeAutoClaimFingerprint(task: Task): string {
   const dependencies = [...(task.dependencies ?? [])].sort().join(",");
   const sortAt = task.columnMovedAt ?? task.createdAt;
+  /** FNXC:TaskDispatch 2026-07-19-14:40: `userPaused` is a durable operator stop even when legacy `paused` is false; candidacy caching and every dispatch selector must treat either flag as parked. */
   return [
     task.column,
     task.paused === true ? "1" : "0",
+    task.userPaused === true ? "1" : "0",
     task.assignedAgentId ?? "",
     task.checkedOutBy ?? "",
     task.deletedAt ?? "",
@@ -906,7 +908,7 @@ export class Scheduler {
       // When a previously-paused task is unpaused in a schedulable column,
       // trigger a scheduling pass immediately instead of waiting for the next
       // poll interval (up to 15 seconds).
-      if (task.paused) {
+      if (task.paused || task.userPaused) {
         this.pausedTaskIds.add(task.id);
       } else if (this.pausedTaskIds.has(task.id)) {
         // Task was paused, now unpaused — trigger scheduling
@@ -1524,7 +1526,7 @@ export class Scheduler {
 
       const now = Date.now();
       let todo = tasks.filter((t) => {
-        if (t.column !== "todo" || t.paused) return false;
+        if (t.column !== "todo" || t.paused || t.userPaused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
         // FNXC:CodingIdeasWorkflow 2026-07-04-10:45: a todo task with status "planning" is being specified in place by the triage service (merged planner/capacity column in Coding (Ideas)); it must not be dispatched until planning finishes and the status clears.
@@ -1982,7 +1984,11 @@ export class Scheduler {
           schedulerLog.log(`Task ${task.id} no longer in "todo" (column=${freshTask?.column ?? "N/A"}) — skipping dispatch`);
           continue;
         }
-        if (freshTask.paused) {
+        /*
+        FNXC:UserPausedDispatch 2026-07-21-21:30:
+        The final fresh-read dispatch gate must honor both pause representations because an operator can set userPaused after the scheduler's initial queue snapshot but before worktree allocation.
+        */
+        if (freshTask.paused || freshTask.userPaused) {
           schedulerLog.log(`Task ${task.id} is paused — skipping dispatch`);
           continue;
         }
@@ -2265,21 +2271,26 @@ export class Scheduler {
           continue;
         }
 
-        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
-        await this.store.updateTask(task.id, {
-          status: null,
-          blockedBy: null,
-          executionStartBranch: baseBranch ?? undefined,
-          effectiveNodeId: effectiveNode.nodeId ?? null,
-          effectiveNodeSource: effectiveNode.source,
-          mergeRetries: 0,
-        });
         try {
-          await this.store.moveTask(task.id, "in-progress", {
-            moveSource: "scheduler",
-            allocateWorktree: (reservedNames) =>
-              this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
-          });
+          /*
+          FNXC:UserPausedDispatch 2026-07-21-21:45:
+          Scheduler dispatch predicates the todo-to-in-progress transition on both pause flags under the task lock. No awaited routing, metadata, or worktree preparation gap may let a concurrent operator pause lose to stale scheduler state.
+          */
+          const move = await this.store.moveTaskIf(
+            task.id,
+            "in-progress",
+            (live) => live.column === "todo" && live.paused !== true && live.userPaused !== true,
+            {
+              moveSource: "scheduler",
+              allocateWorktree: (reservedNames) =>
+                this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
+            },
+          );
+          if (!move.moved) {
+            schedulerLog.log(`Task ${task.id} became paused or left todo before dispatch — skipping`);
+            continue;
+          }
+          Object.assign(task, move.task);
         } catch (error) {
           if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
             await this.store.updateTask(task.id, { status: "queued" });
@@ -2289,6 +2300,15 @@ export class Scheduler {
           }
           throw error;
         }
+        schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
+        await this.store.updateTask(task.id, {
+          status: null,
+          blockedBy: null,
+          executionStartBranch: baseBranch ?? undefined,
+          effectiveNodeId: effectiveNode.nodeId ?? null,
+          effectiveNodeSource: effectiveNode.source,
+          mergeRetries: 0,
+        });
         await this.store.updateTask(task.id, {
           dispatchStormCount: nextDispatchStormCount,
           lastDispatchAt: dispatchTimestamp,

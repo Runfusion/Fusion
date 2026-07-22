@@ -325,20 +325,66 @@ Safety rules:
 - SQLite (non-backend) mode has no bookkeeping table → no marker, sweep always runs.
 */
 /*
-FNXC:LegacyAdoption 2026-07-21-17:30:
-Drizzle wraps Postgres errors as "Failed query: <SQL> params: …" while the real
-SQLSTATE lives on err.cause. Walk a short cause chain so drained-marker failures
-surface as permission denied / missing function instead of opaque query text.
+FNXC:LegacyAdoption 2026-07-22-10:30:
+#2387's Drizzle wrapper says only "Failed query" while PostgreSQL puts the
+actionable SQLSTATE on a nested cause. Preserve that chain in the diagnostic and
+only report permanent marker infrastructure classes once per process: a CLI
+process may open many stores, but repeated permission-denied spam hides real
+startup failures. Read failures still fail open to preserve adoption correctness.
 */
+const reportedLegacyAdoptionMarkerFailureClasses = new Set<string>();
+const PERMANENT_LEGACY_ADOPTION_MARKER_SQLSTATES = new Set(["42501", "42P01", "42883", "3F000"]);
+
+type StoreOpenDbError = {cause?: unknown; code?: unknown; message?: unknown};
+
+function getStoreOpenDbErrorSqlstate(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; current !== undefined && current !== null && depth < 4; depth += 1) {
+    if (typeof current !== "object") break;
+    const candidate = current as StoreOpenDbError;
+    if (typeof candidate.code === "string" && /^[0-9A-Z]{5}$/.test(candidate.code)) return candidate.code;
+    current = candidate.cause;
+  }
+  return undefined;
+}
+
 function describeStoreOpenDbError(error: unknown): string {
   const parts: string[] = [];
   let current: unknown = error;
   for (let depth = 0; current !== undefined && current !== null && depth < 4; depth += 1) {
-    const message = current instanceof Error ? current.message : String(current);
-    parts.push(message.length > 400 ? `${message.slice(0, 200)} … ${message.slice(-120)}` : message);
-    current = current instanceof Error ? current.cause : undefined;
+    const candidate = typeof current === "object" ? current as StoreOpenDbError : undefined;
+    const message = current instanceof Error
+      ? current.message
+      : typeof candidate?.message === "string" ? candidate.message : String(current);
+    const sqlstate = typeof candidate?.code === "string" && /^[0-9A-Z]{5}$/.test(candidate.code)
+      ? ` [SQLSTATE ${candidate.code}]`
+      : "";
+    parts.push(`${message.length > 400 ? `${message.slice(0, 200)} … ${message.slice(-120)}` : message}${sqlstate}`);
+    current = candidate?.cause;
   }
   return parts.join(" ⇐ ");
+}
+
+function reportLegacyAdoptionMarkerFailure(operation: "read" | "write", error: unknown): void {
+  const sqlstate = getStoreOpenDbErrorSqlstate(error);
+  if (sqlstate && PERMANENT_LEGACY_ADOPTION_MARKER_SQLSTATES.has(sqlstate)) {
+    const sqlstateClass = sqlstate.slice(0, 2);
+    if (reportedLegacyAdoptionMarkerFailureClasses.has(sqlstateClass)) return;
+    reportedLegacyAdoptionMarkerFailureClasses.add(sqlstateClass);
+    storeLog.error("Legacy-adoption drained-marker infrastructure is unavailable; sweeping will continue", {
+      phase: "init:legacy-adoption",
+      operation,
+      sqlstate,
+      sqlstateClass,
+      error: describeStoreOpenDbError(error),
+      hint: "Apply schema baseline 0032+ and verify fusion_runtime has public schema USAGE, bookkeeping SELECT, and marker-helper EXECUTE.",
+    });
+    return;
+  }
+  storeLog.warn(`Legacy-adoption drained-marker ${operation} failed${operation === "read" ? " — sweeping anyway" : ""}`, {
+    phase: "init:legacy-adoption",
+    error: describeStoreOpenDbError(error),
+  });
 }
 
 async function hasLegacyAdoptionDrainedMarker(store: TaskStore): Promise<boolean> {
@@ -351,10 +397,7 @@ async function hasLegacyAdoptionDrainedMarker(store: TaskStore): Promise<boolean
     return rows.length > 0;
   } catch (error) {
     // Fail-open toward correctness: an unreadable marker means sweep.
-    storeLog.warn("Legacy-adoption drained-marker read failed — sweeping anyway", {
-      phase: "init:legacy-adoption",
-      error: describeStoreOpenDbError(error),
-    });
+    reportLegacyAdoptionMarkerFailure("read", error);
     return false;
   }
 }
@@ -372,10 +415,7 @@ async function writeLegacyAdoptionDrainedMarker(store: TaskStore): Promise<void>
     await db.execute(sql`SELECT public.${sql.identifier(LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION)}()`);
   } catch (error) {
     // Non-fatal: the next fully-clean drain writes it again.
-    storeLog.warn("Legacy-adoption drained-marker write failed", {
-      phase: "init:legacy-adoption",
-      error: describeStoreOpenDbError(error),
-    });
+    reportLegacyAdoptionMarkerFailure("write", error);
   }
 }
 

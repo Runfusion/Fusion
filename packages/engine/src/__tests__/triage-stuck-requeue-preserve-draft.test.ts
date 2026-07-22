@@ -116,6 +116,16 @@ function createMutableStore(initialTask: Task, settings: Partial<Settings> = {},
       currentTask = { ...currentTask, column, status: null } as Task;
       return currentTask;
     }),
+    /*
+    FNXC:EngineTests 2026-07-20-23:50:
+    Finalization releases via moveTaskIf (planning-stage CAS), not bare moveTask.
+    */
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (t: Task) => boolean) => {
+      if (!predicate(currentTask)) return { moved: false, task: currentTask };
+      currentTask = { ...currentTask, column, status: null } as Task;
+      await (store as any).moveTask(_id, column);
+      return { moved: true, task: currentTask };
+    }),
     logEntry: vi.fn(async (_id: string, action: string, outcome?: string) => {
       currentTask = {
         ...currentTask,
@@ -126,6 +136,13 @@ function createMutableStore(initialTask: Task, settings: Partial<Settings> = {},
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+    /*
+    FNXC:EngineTests 2026-07-20-23:40:
+    PROMPT hygiene finalization requires withTaskLock + readTaskForMove; without them
+    runIfStillPlanningUnderTaskLock fails closed before moveTask(todo).
+    */
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    readTaskForMove: vi.fn(async () => toDetail(currentTask)),
     on: vi.fn(),
     off: vi.fn(),
   } as unknown as TaskStore;
@@ -146,6 +163,29 @@ async function createRoot(taskId: string, draft?: string): Promise<string> {
     await writeFile(join(taskDir, "PROMPT.md"), draft, "utf8");
   }
   return rootDir;
+}
+
+/*
+FNXC:EngineTests 2026-07-20-23:55:
+Stuck planning recovery withholds release when the workflow requires step-heading
+parse-steps and the draft has neither executable steps nor **No commits expected**.
+Drafts that assert auto-recovery to todo must satisfy that gate.
+*/
+function executableDraft(taskId: string, mission: string, extra = ""): string {
+  return [
+    `# Task: ${taskId}`,
+    "",
+    "## Mission",
+    "",
+    mission,
+    "",
+    "## Steps",
+    "",
+    "### Step 0: Implement",
+    "- [ ] do the work",
+    "",
+    extra,
+  ].filter((line, i, arr) => !(line === "" && arr[i - 1] === "")).join("\n");
 }
 
 function mockSession() {
@@ -180,7 +220,7 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
   });
 
   it("recovers forward from a non-empty PROMPT.md draft after a stuck abort", async () => {
-    const draft = "# Task: FN-7173-T\n\n## Mission\n\nContinue from this already drafted plan.";
+    const draft = executableDraft("FN-7173-T", "Continue from this already drafted plan.");
     const task = createTask();
     rootDir = await createRoot(task.id, draft);
     const harness = createMutableStore(task);
@@ -223,7 +263,7 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
   });
 
   it("prefers PROMPT.md over the plan task document when both drafts exist", async () => {
-    const promptDraft = "# Prompt draft\n\n## Mission\n\nPrefer the executable prompt draft.";
+    const promptDraft = executableDraft("FN-7173-PROMPT-WINS", "Prefer the executable prompt draft.");
     const planDocument = "# Plan document draft\n\nThis older plan document should not be the seed.";
     const task = createTask({ id: "FN-7173-PROMPT-WINS" });
     rootDir = await createRoot(task.id, promptDraft);
@@ -269,7 +309,7 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
   });
 
   it("uses the same resume behavior for the outer catch stuck-abort path", async () => {
-    const draft = "# Task: FN-7173-CATCH\n\n## Mission\n\nCatch path draft.";
+    const draft = executableDraft("FN-7173-CATCH", "Catch path draft.");
     const task = createTask({ id: "FN-7173-CATCH" });
     rootDir = await createRoot(task.id, draft);
     const harness = createMutableStore(task);
@@ -287,7 +327,7 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
 
   it("bounds repeated stuck retries by maxStuckKills and pauses failed tasks", async () => {
     const task = createTask({ id: "FN-7173-BOUND", stuckKillCount: 1 });
-    rootDir = await createRoot(task.id, "# Task: FN-7173-BOUND\n\n## Mission\n\nDraft.");
+    rootDir = await createRoot(task.id, executableDraft("FN-7173-BOUND", "Draft."));
     const harness = createMutableStore(task, { maxStuckKills: 2 });
     const processor = new TriageProcessor(harness.store, rootDir);
 
@@ -309,7 +349,7 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
     });
     rootDir = await createRoot(
       task.id,
-      "# Task: FN-7173-APPROVED\n\n## Mission\n\nApproved draft.\n\n## File Scope\n\n- packages/engine/src/triage.ts\n",
+      executableDraft("FN-7173-APPROVED", "Approved draft.", "## File Scope\n\n- packages/engine/src/triage.ts\n"),
     );
     const harness = createMutableStore(task, { requirePlanApproval: false });
     const processor = new TriageProcessor(harness.store, rootDir);

@@ -106,3 +106,36 @@ test("handles null content gracefully", () => {
   const result = replaceVersionSection(null, "1.0.0", "Body.");
   assert.equal(result, null);
 });
+
+const withArchivePointer = `# Fusion changelog
+
+## 1.0.0
+
+### Highlights
+- One thing
+
+> Older releases (before 0.60.0) are archived in [\`CHANGELOG-archive.md\`](./CHANGELOG-archive.md).
+`;
+
+test("extractVersionNotes excludes trailing archive pointer from last section", () => {
+  const notes = extractVersionNotes(withArchivePointer, "1.0.0");
+  assert.match(notes, /### Highlights/);
+  assert.match(notes, /One thing/);
+  assert.doesNotMatch(notes, /Older releases/);
+  assert.doesNotMatch(notes, /CHANGELOG-archive/);
+});
+
+test("replaceVersionSection preserves trailing archive pointer after last version", () => {
+  const result = replaceVersionSection(
+    withArchivePointer,
+    "1.0.0",
+    "### New\n\n- Distilled only.",
+  );
+  assert.match(result, /### New/);
+  assert.match(result, /Distilled only\./);
+  assert.doesNotMatch(result, /One thing/);
+  assert.match(
+    result,
+    /Older releases \(before 0\.60\.0\) are archived in \[`CHANGELOG-archive\.md`\]\(\.\/CHANGELOG-archive\.md\)\./,
+  );
+});

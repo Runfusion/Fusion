@@ -23,10 +23,14 @@
  * line on prompt so the parse path completes cleanly.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_WORKFLOWS, type WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
+import type { PluginRunner } from "../plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
 import {
   createMockStore,
@@ -97,10 +101,50 @@ function captureSession(
   return holder;
 }
 
-function makeExecutor(store: ReturnType<typeof createMockStore>) {
+function makeExecutor(
+  store: ReturnType<typeof createMockStore>,
+  pluginRunner?: PluginRunner,
+) {
   const agentStore = { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() };
-  const executor = new TaskExecutor(store as any, "/tmp/test", { agentStore } as any);
+  const executor = new TaskExecutor(store as any, "/tmp/test", { agentStore, pluginRunner } as any);
   return { executor, agentStore };
+}
+
+const tempDirs: string[] = [];
+
+async function createPluginSkillFixture(skillName: string, body: string): Promise<{ pluginRoot: string; skillDir: string; skillFile: string }> {
+  const pluginRoot = await mkdtemp(join(tmpdir(), "workflow-step-plugin-skill-"));
+  tempDirs.push(pluginRoot);
+  const skillDir = join(pluginRoot, "skills", skillName);
+  const skillFile = join(skillDir, "SKILL.md");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(skillFile, `---\nname: ${skillName}\ndescription: Test plugin skill\n---\n\n${body}`, "utf-8");
+  return { pluginRoot, skillDir, skillFile };
+}
+
+async function expectCapturedSkillBody(
+  cap: ReturnType<typeof captureSession>,
+  projectRootDir: string,
+  agentDir: string,
+  skillName: string,
+  skillFile: string,
+  distinctiveBody: string,
+) {
+  const { DefaultResourceLoader } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent");
+  const { createSkillsOverrideFromSelection, resolveSessionSkills } = await vi.importActual<typeof import("../skill-resolver.js")>("../skill-resolver.js");
+  const requestedSkillNames = cap.last?.skillSelection?.requestedSkillNames;
+  const selection = resolveSessionSkills({ projectRootDir, requestedSkillNames, sessionPurpose: "executor" });
+  const loader = new DefaultResourceLoader({
+    cwd: projectRootDir,
+    agentDir,
+    additionalSkillPaths: cap.last?.additionalSkillPaths,
+    skillsOverride: createSkillsOverrideFromSelection(selection, { requestedSkillNames, sessionPurpose: "executor" }),
+  });
+  await loader.reload();
+
+  const skill = (loader.getSkills().skills as Array<{ name: string; filePath: string }>).find((candidate) => candidate.name === skillName);
+  expect(skill?.filePath).toBe(skillFile);
+  await expect(readFile(skillFile, "utf-8")).resolves.toContain(distinctiveBody);
 }
 
 function baseStepTask(overrides: Record<string, unknown> = {}) {
@@ -186,8 +230,13 @@ function quietGit() {
 }
 
 describe("CE workflow-step executor integration", () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
   beforeEach(() => {
     resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
     quietGit();
   });
 
@@ -1170,7 +1219,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       },
     );
 
-    it("warns loudly and does not set additionalSkillPaths when a skill step lacks FUSION_CE_SKILLS_DIR", async () => {
+    it("warns when the named CE skill has no viable multi-source discovery path", async () => {
       const store = createMockStore();
       const { executor } = makeExecutor(store);
       const cap = captureSession();
@@ -1189,8 +1238,98 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(requested).toContain("ce-work");
       expect(cap.last?.additionalSkillPaths).toBeUndefined();
       expect(skillLoadWarnings(store)).toEqual([
-        "[skill-load] Workflow step 'Execute' requests skill 'compound-engineering:ce-work' but FUSION_CE_SKILLS_DIR is unset — the skill cannot be discovered; the step runs with role-fallback skills only.",
+        "[skill-load] Workflow step 'Execute' requests skill 'compound-engineering:ce-work' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.",
       ]);
+    });
+
+    it("does not warn when the requested plugin skill body is discoverable without a CE directory", async () => {
+      const distinctiveBody = "Security scan methodology from the plugin fixture.";
+      const { pluginRoot, skillDir, skillFile } = await createPluginSkillFixture("security-scan", distinctiveBody);
+      const projectRootDir = await mkdtemp(join(tmpdir(), "workflow-step-project-"));
+      const agentDir = await mkdtemp(join(tmpdir(), "workflow-step-agent-"));
+      tempDirs.push(projectRootDir, agentDir);
+      await mkdir(join(projectRootDir, ".fusion"), { recursive: true });
+      mockedExistsSync.mockImplementation((path) => String(path) === skillFile);
+
+      const pluginRunner = {
+        getPluginSkills: vi.fn().mockReturnValue([
+          { pluginId: "plugin-security", pluginRoot, skill: { name: "security-scan" } },
+        ]),
+      } as unknown as PluginRunner;
+      const store = createMockStore();
+      const { executor } = makeExecutor(store, pluginRunner);
+      const cap = captureSession();
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask(),
+        makeStep({ name: "Security scan", skillName: "security-scan" }),
+        "/tmp/wt",
+        {},
+        {},
+        undefined,
+      );
+
+      expect(skillLoadWarnings(store)).toEqual([]);
+      expect(cap.last?.skillSelection?.requestedSkillNames).toContain("security-scan");
+      expect(cap.last?.additionalSkillPaths).toEqual([skillDir, dirname(skillDir)]);
+      await expectCapturedSkillBody(cap, projectRootDir, agentDir, "security-scan", skillFile, distinctiveBody);
+    });
+
+    it("still warns when only an unrelated plugin skill body is discoverable", async () => {
+      const { pluginRoot, skillDir, skillFile } = await createPluginSkillFixture("other-skill", "Unrelated plugin skill.");
+      mockedExistsSync.mockImplementation((path) => String(path) === skillFile);
+      const pluginRunner = {
+        getPluginSkills: vi.fn().mockReturnValue([
+          { pluginId: "plugin-other", pluginRoot, skill: { name: "other-skill" } },
+        ]),
+      } as unknown as PluginRunner;
+      const store = createMockStore();
+      const { executor } = makeExecutor(store, pluginRunner);
+      const cap = captureSession();
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask(),
+        makeStep({ name: "Security scan", skillName: "security-scan" }),
+        "/tmp/wt",
+        {},
+        {},
+        undefined,
+      );
+
+      expect(cap.last?.additionalSkillPaths).toEqual([skillDir, dirname(skillDir)]);
+      expect(skillLoadWarnings(store)).toHaveLength(1);
+    });
+
+    it("does not warn when a CE-namespaced skill has a plugin-delivered body", async () => {
+      const distinctiveBody = "CE work methodology delivered from a plugin fixture.";
+      const { pluginRoot, skillDir, skillFile } = await createPluginSkillFixture("ce-work", distinctiveBody);
+      const projectRootDir = await mkdtemp(join(tmpdir(), "workflow-step-project-"));
+      const agentDir = await mkdtemp(join(tmpdir(), "workflow-step-agent-"));
+      tempDirs.push(projectRootDir, agentDir);
+      await mkdir(join(projectRootDir, ".fusion"), { recursive: true });
+      mockedExistsSync.mockImplementation((path) => String(path) === skillFile);
+      const pluginRunner = {
+        getPluginSkills: vi.fn().mockReturnValue([
+          { pluginId: "plugin-ce", pluginRoot, skill: { name: "ce-work" } },
+        ]),
+      } as unknown as PluginRunner;
+      const store = createMockStore();
+      const { executor } = makeExecutor(store, pluginRunner);
+      const cap = captureSession();
+
+      await (executor as any).executeWorkflowStep(
+        baseStepTask(),
+        makeStep({ name: "CE work", skillName: "compound-engineering:ce-work" }),
+        "/tmp/wt",
+        {},
+        {},
+        undefined,
+      );
+
+      expect(skillLoadWarnings(store)).toEqual([]);
+      expect(cap.last?.skillSelection?.requestedSkillNames).toEqual(expect.arrayContaining(["compound-engineering:ce-work", "ce-work"]));
+      expect(cap.last?.additionalSkillPaths).toEqual([skillDir, dirname(skillDir)]);
+      await expectCapturedSkillBody(cap, projectRootDir, agentDir, "ce-work", skillFile, distinctiveBody);
     });
 
     it("a skill-less step contributes no skillName merge, no additionalSkillPaths, and no skill-load warning", async () => {

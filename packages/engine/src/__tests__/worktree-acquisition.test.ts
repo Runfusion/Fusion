@@ -40,6 +40,20 @@ vi.mock("../worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
+/*
+FNXC:EngineTests 2026-07-21-00:10:
+Pool unit tests use temp dirs that are not real git worktrees. installTaskWorktreeIdentityGuard
+resolves git paths and throws there, which the pool catch treats as prepare failure and falls
+through to fresh. No-op the guard so classification + pool wiring stay under test.
+*/
+vi.mock("../worktree-hooks.js", async () => {
+  const actual = await vi.importActual<any>("../worktree-hooks.js");
+  return {
+    ...actual,
+    installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 const cleanupPaths: string[] = [];
 function track(path: string): string {
   cleanupPaths.push(path);
@@ -79,6 +93,12 @@ describe("acquireTaskWorktree", () => {
   let store: any;
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:EngineTests 2026-07-20-23:55:
+    clearAllMocks wipes the hoisted classifyTaskWorktree mockResolvedValue({ ok: true }).
+    Re-arm it every test so pool acquisition does not treat undefined as unusable and fall through to fresh.
+    */
+    vi.mocked(classifyTaskWorktree).mockResolvedValue({ ok: true });
     vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mockResolvedValue({ removed: [], skipped: [], failures: [] });
     store = {
       updateTask: vi.fn().mockResolvedValue(undefined),
@@ -93,7 +113,7 @@ describe("acquireTaskWorktree", () => {
       rootDir: dirname(worktreePath),
       store,
       settings: {},
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
     expect(result.source).toBe("existing");
     expect(result.worktreePath).toBe(worktreePath);
@@ -119,7 +139,7 @@ describe("acquireTaskWorktree", () => {
       store,
       settings: {},
       audit,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
 
     expect(result.source).toBe("existing");
@@ -137,7 +157,7 @@ describe("acquireTaskWorktree", () => {
       rootDir: dirname(worktreePath),
       store,
       settings: {},
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
     expect(result.source).toBe("existing");
     expect(vi.mocked(branchConflicts.reanchorBranchToBase)).not.toHaveBeenCalled();
@@ -235,7 +255,7 @@ describe("acquireTaskWorktree", () => {
         prepareForTask,
         release,
       } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
     expect(release).not.toHaveBeenCalled();
     expect(result.source).toBe("pool");
@@ -267,7 +287,7 @@ describe("acquireTaskWorktree", () => {
         }),
         release,
       } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
 
     expect(release).toHaveBeenCalledWith("/tmp/pooled", "FN-1");
@@ -523,6 +543,7 @@ describe("acquireTaskWorktree", () => {
 
   it("invokes desktop artifact cleanup once for pooled acquisition", async () => {
     const runConfiguredCommand = vi.fn();
+    const pooledPath = track(mkdtempSync(join(tmpdir(), "fn-pooled-cleanup-")));
 
     await acquireTaskWorktree({
       task,
@@ -530,17 +551,17 @@ describe("acquireTaskWorktree", () => {
       store,
       settings: { recycleWorktrees: true, worktreeInitCommand: "pnpm install" } as any,
       pool: {
-        acquire: (_taskId: string) => "/tmp/pooled",
-        prepareForTask: vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath: "/tmp/pooled", reclaimed: false }),
+        acquire: (_taskId: string) => pooledPath,
+        prepareForTask: vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath: pooledPath, reclaimed: false }),
         release: vi.fn(),
       } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
       runConfiguredCommand,
       runInitCommand: true,
     });
 
     expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledTimes(1);
-    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/pooled", undefined);
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith(pooledPath, undefined);
     expect(runConfiguredCommand).not.toHaveBeenCalled();
   });
 
@@ -560,7 +581,7 @@ describe("acquireTaskWorktree", () => {
         prepareForTask: vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath, reclaimed: false }),
         release: vi.fn(),
       } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
 
     expect(result.source).toBe("pool");
@@ -579,7 +600,7 @@ describe("acquireTaskWorktree", () => {
       rootDir,
       store,
       settings: { worktreeCopyFiles: [".env"] } as any,
-      createWorktree: vi.fn(),
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "fusion/fn-1" }),
     });
 
     expect(result.source).toBe("existing");

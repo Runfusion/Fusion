@@ -73,19 +73,77 @@ export interface PlanningContinuationCandidate {
   task: Task | null | undefined;
 }
 
-/** FNXC:WorkflowScheduling 2026-07-21-12:30:
- * Select due planning continuations whose task remains dispatchable. */
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * A planning continuation is only dispatchable when its live task can still
+ * enter plan-review. Soft-deleted, archived, and done cards must be treated as
+ * non-dispatchable so their orphaned work items can be cancelled instead of
+ * blocking later due rows (FN-8470 tombstone starved FN-8471 plan-review).
+ */
+export function isPlanningContinuationTaskDispatchable(
+  task: Task | null | undefined,
+): task is Task {
+  if (task == null) return false;
+  if (task.paused === true || task.userPaused === true) return false;
+  if (task.deletedAt) return false;
+  if (task.column === "archived" || task.column === "done") return false;
+  return true;
+}
+
+/** Outcome of resolving one due work item for the planning-continuation drain. */
+export type PlanningContinuationResolution =
+  | { kind: "actionable"; item: WorkflowWorkItem; task: Task }
+  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" }
+  | {
+      kind: "orphan";
+      item: WorkflowWorkItem;
+      reason: "task-not-found" | "task-terminal";
+    };
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * Classify a due work item after a per-item task load. Lookup failures and
+ * terminal/missing tasks become orphans (cancel); paused planning items stay
+ * held without cancel; non-planning due rows are skipped by this drain.
+ */
+export function resolvePlanningContinuationCandidate(
+  item: WorkflowWorkItem,
+  task: Task | null | undefined,
+  opts?: { taskLookupFailed?: boolean },
+): PlanningContinuationResolution {
+  if (opts?.taskLookupFailed === true || task == null) {
+    return { kind: "orphan", item, reason: "task-not-found" };
+  }
+  if (task.deletedAt || task.column === "archived" || task.column === "done") {
+    return { kind: "orphan", item, reason: "task-terminal" };
+  }
+  if (item.waitReason !== "planning") {
+    return { kind: "skip", item, reason: "not-planning" };
+  }
+  if (task.paused === true || task.userPaused === true) {
+    return { kind: "skip", item, reason: "paused" };
+  }
+  if (!isPlanningContinuationTaskDispatchable(task)) {
+    return { kind: "skip", item, reason: "paused" };
+  }
+  return { kind: "actionable", item, task };
+}
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-12:30:
+ * Select due planning continuations whose task remains dispatchable.
+ *
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * Also exclude soft-deleted / archived / done tasks so archive-fallback rows
+ * returned by getTask cannot re-enter plan-review after the card left the board.
+ */
 export function selectActionablePlanningContinuations(
   candidates: readonly PlanningContinuationCandidate[],
 ): Array<{ item: WorkflowWorkItem; task: Task }> {
-  return candidates.filter(
-    (candidate): candidate is { item: WorkflowWorkItem; task: Task } =>
-      candidate.item.waitReason === "planning"
-      && candidate.task !== null
-      && candidate.task !== undefined
-      && candidate.task.paused !== true
-      && candidate.task.userPaused !== true,
-  );
+  return candidates.flatMap((candidate) => {
+    const resolved = resolvePlanningContinuationCandidate(candidate.item, candidate.task);
+    return resolved.kind === "actionable" ? [{ item: resolved.item, task: resolved.task }] : [];
+  });
 }
 
 export interface CliAgentAwaitingInputNotificationInfo {
@@ -1893,6 +1951,12 @@ export class InProcessRuntime
     FNXC:WorkflowScheduling 2026-07-21-12:20:
     A single runtime drain owns selection at a time. Concurrent wakeups collapse
     behind this guard and the recurring processor supplies the next bounded pass.
+
+    FNXC:WorkflowScheduling 2026-07-21-22:31:
+    Per-item task loads must not abort the pass. getTask throws for soft-deleted
+    rows without an archive snapshot; one orphan earlier in created_at FIFO used
+    to prevent every later planning continuation from dispatching (FN-8470 → FN-8471).
+    Cancel orphaned work items so they leave the due set and free the limit:20 window.
     */
     if (this.workflowContinuationDrainActive || this.status !== "active") return;
     this.workflowContinuationDrainActive = true;
@@ -1902,18 +1966,61 @@ export class InProcessRuntime
         states: ["runnable", "retrying"],
         limit: 20,
       });
-      const candidates: PlanningContinuationCandidate[] = [];
       for (const item of items) {
-        const task = await this.taskStore.getTask(item.taskId);
-        candidates.push({ item, task });
-      }
-      for (const { item, task } of selectActionablePlanningContinuations(candidates)) {
-        void this.executor.execute(task).catch((error) => {
-          runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
+        let task: Task | undefined;
+        let taskLookupFailed = false;
+        try {
+          task = await this.taskStore.getTask(item.taskId);
+        } catch (error) {
+          taskLookupFailed = true;
+          runtimeLog.warn(
+            `Workflow continuation ${item.id}: getTask(${item.taskId}) failed — treating as orphan: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed });
+        if (resolved.kind === "orphan") {
+          await this.cancelOrphanedWorkflowWorkItem(resolved.item, resolved.reason);
+          continue;
+        }
+        if (resolved.kind !== "actionable") continue;
+        void this.executor.execute(resolved.task).catch((error) => {
+          runtimeLog.error(`Workflow continuation ${resolved.item.id} failed:`, error);
         });
       }
     } finally {
       this.workflowContinuationDrainActive = false;
+    }
+  }
+
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-22:31:
+   * Terminalize a due work item whose task can no longer host graph work so the
+   * FIFO due poll no longer revisits it every 2s. Fail-soft: a transition race
+   * must not abort the rest of the drain.
+   */
+  private async cancelOrphanedWorkflowWorkItem(
+    item: WorkflowWorkItem,
+    reason: "task-not-found" | "task-terminal",
+  ): Promise<void> {
+    if (typeof this.taskStore.transitionWorkflowWorkItem !== "function") return;
+    try {
+      await this.taskStore.transitionWorkflowWorkItem(item.id, "cancelled", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: `orphaned-continuation:${reason}`,
+        blockedReason: reason,
+      });
+      runtimeLog.log(
+        `Cancelled orphaned workflow work item ${item.id} (task=${item.taskId}, node=${item.nodeId}, reason=${reason})`,
+      );
+    } catch (error) {
+      runtimeLog.warn(
+        `Failed to cancel orphaned workflow work item ${item.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 

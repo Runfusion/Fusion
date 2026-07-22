@@ -554,54 +554,27 @@ async function issueRelease(
     }
   }
 
-  // A concurrent sweep (or explicit promote) can win the move for this same card
-  // while we hold a reservation. The store serializes the move under a per-task
-  // lock and resolves a redundant same-column move to a silent no-op: it returns
-  // the card already at the target WITHOUT re-allocating a slot or emitting a
-  // `task:moved`. A snapshot/pre-read can't tell winner from loser (both reads
-  // race ahead of either commit on the per-task lock). Instead we attribute the
-  // transition by OBJECT IDENTITY: a real move emits `task:moved` with the very
-  // Task object it then returns, whereas a no-op returns a freshly-read object
-  // and emits nothing. So the call whose `moveTask` result IS the emitted task is
-  // the real mover; any other call that reserved performed a redundant no-op and
-  // must release the slot it grabbed (FN-1415).
-  const movedTaskObjects = new Set<object>();
-  let sawMovedEventForTask = false;
-  const onMoved = (data: { task: Task; to: string }): void => {
-    if (data.to === target && data.task.id === task.id) {
-      sawMovedEventForTask = true;
-      movedTaskObjects.add(data.task);
-    }
-  };
-  store.on?.("task:moved", onMoved);
-
   try {
     const originalColumn = task.column;
-    const result = await store.moveTask(task.id, target, {
-      moveSource: "scheduler",
-      allocateWorktree:
-        targetIsProcessing && deps.allocateWorktree
-          ? (reservedNames) => deps.allocateWorktree!(task, reservedNames)
-          : undefined,
-    });
     /*
-    FNXC:WorkflowScheduling 2026-06-23-21:57:
-    The cutover scheduler uses hold/release in tests and older embedded stores that may not expose task:moved events. Treat a returned task that clearly moved from the original column to the target as the committed release so minimal stores do not leak reservations or falsely report a racing same-column no-op.
-
-    FNXC:WorkflowScheduling 2026-06-23-22:39:
-    Eventless-release fallback is scoped to the current task. Other cards moving to the same target column during the same sweep must not disable this task's fallback and leak its reservation.
-
-    FNXC:WorkflowScheduling 2026-06-23-22:59:
-    Void-returning legacy stores are ambiguous: no event plus no returned task cannot prove the current task moved. Require a returned current-task row before keeping the reservation so same-column no-ops do not leak slots.
+    FNXC:UserPausedDispatch 2026-07-21-21:45:
+    Hold release must test the source column and both pause flags under the same task lock as the move. This makes an operator pause win atomically against scheduler dispatch and also replaces event-identity inference for concurrent release attempts.
     */
-    const returnedMovedTask = !sawMovedEventForTask
-      && result?.id === task.id
-      && result.column === target
-      && originalColumn !== target;
-    if (reservation && !movedTaskObjects.has(result) && !returnedMovedTask) {
-      // Same-column no-op: a racing sweep already moved this card to the target.
-      reservation.release();
-      schedulerLog.log(`Hold release for ${task.id} skipped — already at ${target} (racing sweep won)`);
+    const result = await store.moveTaskIf(
+      task.id,
+      target,
+      (live) => live.column === originalColumn && live.paused !== true && live.userPaused !== true,
+      {
+        moveSource: "scheduler",
+        allocateWorktree:
+          targetIsProcessing && deps.allocateWorktree
+            ? (reservedNames) => deps.allocateWorktree!(task, reservedNames)
+            : undefined,
+      },
+    );
+    if (!result.moved) {
+      reservation?.release();
+      schedulerLog.log(`Hold release for ${task.id} skipped — task became paused or left ${originalColumn}`);
       return false;
     }
     return true;
@@ -618,8 +591,6 @@ async function issueRelease(
       `Hold release for ${task.id} into ${target} failed: ${error instanceof Error ? error.message : String(error)}`,
     );
     return false;
-  } finally {
-    store.off?.("task:moved", onMoved);
   }
 }
 
@@ -647,6 +618,20 @@ export async function promoteHeldTask(
   }
   const target = resolveReleaseTarget(ir, task.column, true);
   if (!target) return { released: false, rejection: "no-release-target" };
+
+  /*
+  FNXC:WorkflowScheduling 2026-07-21-22:31:
+  Surface pre-release Plan Review / unplanned holds distinctly from true WIP
+  capacity. issueRelease returns a bare false for both; without this check the
+  promote API mislabeled FN-8471-style plan-review waits as capacity-exhausted.
+  */
+  const targetColumn = findColumn(ir, target);
+  const targetIsProcessing = targetColumn
+    ? resolveColumnFlags(targetColumn).countsTowardWip === true
+    : false;
+  if (targetIsProcessing && (await isUnplannedForExecution(store, task, ir))) {
+    return { released: false, rejection: "unplanned-for-execution", toColumn: target };
+  }
 
   const released = await issueRelease(
     store,

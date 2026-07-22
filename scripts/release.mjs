@@ -53,6 +53,12 @@ import {
   CHANGELOG_ARCHIVE_FILE,
   partitionVersionsByCutoff,
 } from "./lib/changelog-archive.mjs";
+import {
+  buildRootChangelogLines,
+  collectDistilledBodies,
+  normalizeChangelogLines,
+  parseChangelog,
+} from "./lib/changelog-sync.mjs";
 
 const argv = process.argv.slice(2);
 const args = new Set(argv);
@@ -158,6 +164,12 @@ function run(cmd, { capture = false, allowFail = false, cwd } = {}) {
  *
  * FNXC:ReleaseChangelog 2026-07-13-22:55:
  * Cutoff is CHANGELOG_ARCHIVE_CUTOFF (currently 0.60.0) from scripts/lib/changelog-archive.mjs.
+ *
+ * FNXC:ReleaseChangelog 2026-07-21-20:22:
+ * Preserve already-distilled version bodies from the existing root CHANGELOG.md
+ * (and archive) when regenerating. Distillation only rewrites the current
+ * version; without this, every prior release loses its Highlights/New/Fixed
+ * summary on the next release sync and falls back to the raw package aggregate.
  */
 function syncRootChangelog() {
   const pkgsDir = "packages";
@@ -191,12 +203,22 @@ function syncRootChangelog() {
     }
   }
 
+  // Prefer already-distilled bodies so historical releases keep their summary.
+  const existingCurrent = existsSync("CHANGELOG.md")
+    ? readFileSync("CHANGELOG.md", "utf8")
+    : "";
+  const existingArchive = existsSync(CHANGELOG_ARCHIVE_FILE)
+    ? readFileSync(CHANGELOG_ARCHIVE_FILE, "utf8")
+    : "";
+  const preservedBodies = collectDistilledBodies([existingCurrent, existingArchive]);
+
   const { current, archived } = partitionVersionsByCutoff(versionOrder);
   const currentLines = buildRootChangelogLines({
     title: "# Fusion changelog",
     banner: "User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.",
     parsed,
     versionOrder: current,
+    preservedBodies,
   });
 
   if (archived.length > 0) {
@@ -208,60 +230,11 @@ function syncRootChangelog() {
     banner: `Archived release notes before ${CHANGELOG_ARCHIVE_CUTOFF}. This file is auto-synced from each \`packages/*/CHANGELOG.md\` by \`scripts/release.mjs\` — do not edit by hand.`,
     parsed,
     versionOrder: archived,
+    preservedBodies,
   });
 
   writeFileSync("CHANGELOG.md", normalizeChangelogLines(currentLines));
   writeFileSync(CHANGELOG_ARCHIVE_FILE, normalizeChangelogLines(archiveLines));
-}
-
-function buildRootChangelogLines({ title, banner, parsed, versionOrder }) {
-  const lines = [title, "", banner, ""];
-
-  for (const version of versionOrder) {
-    lines.push(`## ${version}`, "");
-    // Sort packages alphabetically within a version for deterministic output.
-    const pkgsForVersion = parsed
-      .filter((p) => p.versions.has(version))
-      .sort((a, b) => a.pkgName.localeCompare(b.pkgName));
-    for (const p of pkgsForVersion) {
-      const body = p.versions.get(version).trim();
-      if (!body) continue;
-      lines.push(`### ${p.pkgName}`, "");
-      // Bump heading levels by one so package sub-sections nest cleanly.
-      const bumped = body.replace(/^(#{1,5}) /gm, (_m, hashes) => `${hashes}# `);
-      lines.push(bumped, "");
-    }
-  }
-
-  return lines;
-}
-
-function normalizeChangelogLines(lines) {
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
-}
-
-/**
- * Parse a changeset-format CHANGELOG into { versions, order }.
- * Splits on top-level `## ` headings; the version key is the heading text
- * verbatim (e.g. "0.2.5", or "0.4.0 (pre-release, unpublished)").
- */
-function parseChangelog(raw) {
-  const versions = new Map();
-  const order = [];
-  // Strip out the first-line title and any horizontal rules so they don't
-  // pollute the first version section.
-  const stripped = raw.replace(/^# [^\n]*\n?/, "").replace(/^---\s*$/gm, "");
-  const sections = stripped.split(/^## /m).slice(1); // drop pre-first-version preamble
-  for (const section of sections) {
-    const nl = section.indexOf("\n");
-    const key = (nl === -1 ? section : section.slice(0, nl)).trim();
-    const body = nl === -1 ? "" : section.slice(nl + 1).trim();
-    if (!versions.has(key)) {
-      versions.set(key, body);
-      order.push(key);
-    }
-  }
-  return { versions, order };
 }
 
 /** Compare two semver-ish version strings ("0.2.5", "0.4.0 (pre-release)"). */

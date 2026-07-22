@@ -62,8 +62,11 @@ function deriveExecutorState(
  * FNXC:ExecutorStatusBar 2026-07-21-14:30:
  * FN-8453 / #2359 requires footer capacity indicators to share the live top-level
  * agent predicate with admission: Waiting is trait-derived intake/hold membership,
- * Running excludes paused, idle, and terminal cards, and custom columns require
+ * Running is unpaused WIP plus live planners/reviewers, and custom columns require
  * task-scoped workflow flags rather than legacy column-id assumptions.
+ *
+ * FNXC:ExecutorStatusBar 2026-07-21-19:00:
+ * Do not require task.sessionFile for Running — it is not on board/listTasks rows.
  */
 export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
 

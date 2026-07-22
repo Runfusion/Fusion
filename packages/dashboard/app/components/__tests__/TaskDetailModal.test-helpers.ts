@@ -32,6 +32,8 @@ vi.mock("../../api", async (importOriginal) => {
     repairOverlapBlocker: vi.fn().mockResolvedValue({ repaired: true, statusCleared: false, reason: "repaired", message: "Repaired", task: makeTask() }),
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
+    // FNXC:DashboardTests 2026-07-19-01:20: FN-8296 TaskDetail polls verification request status.
+    fetchTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     fetchAgentLogs: vi.fn().mockResolvedValue([]),
     requestSpecRevision: vi.fn().mockResolvedValue({}),
     rebuildTaskSpec: vi.fn().mockResolvedValue(makeTask({ column: "triage", status: "needs-replan" })),
@@ -171,7 +173,7 @@ vi.mock("lucide-react", () => ({
   User: (props: any) => React.createElement("svg", { "data-testid": "user-icon", ...props }),
   /*
   FNXC:NativeStructureEmbed 2026-07-19-04:30:
-  FN-8291/8292/8293 mount NativeStructurePreview from chat/mail surfaces reachable via
+  FN-8288/FN-8291/8292/8293 mount NativeStructurePreview from chat/mail surfaces reachable via
   StandardChatSurface under TaskDetailModal. Keep Map/Lightbulb/BarChart3/Target/CircleAlert
   on this shared mock or every focused TaskDetailModal suite fails at import.
   */

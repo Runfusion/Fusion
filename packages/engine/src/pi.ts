@@ -1616,6 +1616,29 @@ function normalizeExistingPathForGitComparison(path: string): string {
   }
 }
 
+/**
+ * FNXC:SkillReadBoundary 2026-07-21-12:00:
+ * GitHub #2384 / FN-8466 requires the exact host-advertised additional skill
+ * roots to drive both pi discovery and the worktree Read boundary. Resolve and
+ * deduplicate once so the manifest cannot advertise a skill body the boundary
+ * rejects through a divergent raw-path list.
+ */
+export function normalizeAdditionalSkillPaths(paths?: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const normalizedPaths: string[] = [];
+
+  for (const path of paths ?? []) {
+    if (!path?.trim()) continue;
+    const normalizedPath = normalizeExistingPathForGitComparison(resolve(path));
+    if (!seen.has(normalizedPath)) {
+      seen.add(normalizedPath);
+      normalizedPaths.push(normalizedPath);
+    }
+  }
+
+  return normalizedPaths;
+}
+
 function isSameOrInsidePath(parentPath: string, childPath: string): boolean {
   const rel = relative(parentPath, childPath);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
@@ -1653,12 +1676,14 @@ async function assertValidWorktreeSession(cwd: string, projectRoot: string): Pro
  * - Task attachments under .fusion/tasks/N/attachments/ are allowed (for reading context files)
  * - Sibling task specs (.fusion/tasks/N/PROMPT.md and task.json) are allowed for
  *   read-only tools (read/glob/grep) so agents can consult dependency specs.
+ * - Host-advertised additional skill roots are allowed for read-only tools only.
  * - All other paths outside the worktree are rejected
  *
  * @param worktreePath - Absolute path to the worktree directory
  * @param projectRoot - Absolute path to the project root (derived from worktree)
  * @param requestedPath - The path being accessed
  * @param toolName - Tool making the request (controls read-only exceptions)
+ * @param readOnlyExtraRoots - Host-advertised roots readable by read-only tools
  * @returns true if allowed, false if rejected
  */
 function isWorktreeAllowedPath(
@@ -1666,6 +1691,7 @@ function isWorktreeAllowedPath(
   projectRoot: string,
   requestedPath: string,
   toolName?: string,
+  readOnlyExtraRoots: readonly string[] = [],
 ): boolean {
   // Normalize paths
   const worktreeResolved = resolve(worktreePath);
@@ -1707,12 +1733,25 @@ function isWorktreeAllowedPath(
   // into the worktree. `glob`/`grep` are narrow enough to allow as well so
   // the agent can discover them; writes and bash remain restricted.
   const readOnlyTools = new Set(["read", "glob", "grep"]);
-  if (
-    toolName &&
-    readOnlyTools.has(toolName) &&
-    projectRelativePaths.some((relPath) => /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relPath))
-  ) {
-    return true;
+  if (toolName && readOnlyTools.has(toolName)) {
+    if (projectRelativePaths.some((relPath) => /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relPath))) {
+      return true;
+    }
+
+    /*
+    FNXC:SkillReadBoundary 2026-07-21-12:00:
+    GitHub #2384 / FN-8466 lets agents Read only the specific additional skill
+    roots advertised by this session. Do not extend this exception to write,
+    edit, or bash: plugin skill bodies remain host-owned read-only context.
+    */
+    if (readOnlyExtraRoots.some((root) => {
+      const rootResolved = resolve(root);
+      const rootCanonical = normalizeExistingPathForGitComparison(rootResolved);
+      return isSameOrInsidePath(rootResolved, requestedResolved)
+        || isSameOrInsidePath(rootCanonical, requestedCanonical);
+    })) {
+      return true;
+    }
   }
 
   // All other paths outside the worktree are rejected
@@ -1726,6 +1765,7 @@ function isWorktreeAllowedPath(
  * @param tools - Array of tool definitions to wrap
  * @param worktreePath - Absolute path to the worktree directory (if applicable)
  * @param projectRoot - Absolute path to the project root (if applicable)
+ * @param readOnlyExtraRoots - Host-advertised roots readable by read/glob/grep only
  * @returns Wrapped tools with boundary validation
  */
 /**
@@ -1778,10 +1818,13 @@ export function wrapToolsWithBoundary(
   tools: ToolDefinition[],
   worktreePath: string | null,
   projectRoot: string | null,
+  readOnlyExtraRoots: readonly string[] = [],
 ): ToolDefinition[] {
   if (!worktreePath || !projectRoot) {
     return tools; // Not a worktree session, no wrapping needed
   }
+
+  const normalizedReadOnlyExtraRoots = normalizeAdditionalSkillPaths(readOnlyExtraRoots);
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
@@ -1804,13 +1847,13 @@ export function wrapToolsWithBoundary(
 
         // Check path argument for file operations
         const pathArg = params.path as string | undefined;
-        if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name)) {
+        if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name, normalizedReadOnlyExtraRoots)) {
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
             `Path "${relToProject}" is outside the worktree boundary. ` +
               `Coding agents can only modify files inside the current worktree. ` +
-              `Exceptions (read-only): .fusion/memory/, .fusion/tasks/*/attachments/, ` +
-              `and .fusion/tasks/*/{PROMPT.md,task.json} for dependency context.`,
+              `Existing exceptions include .fusion/memory/ and task attachments; ` +
+              `read-only tools may also access sibling task specs and host-advertised skill roots.`,
           );
         }
 
@@ -2314,6 +2357,15 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     });
   }
 
+  /*
+  FNXC:SkillReadBoundary 2026-07-21-12:00:
+  GitHub #2384 / FN-8466 requires one canonical additional-skill list for both
+  DefaultResourceLoader's manifest and the worktree boundary. A skill location
+  the loader advertises must be readable, while the boundary grants it only to
+  read/glob/grep rather than write/edit/bash.
+  */
+  const normalizedAdditionalSkillPaths = normalizeAdditionalSkillPaths(options.additionalSkillPaths);
+
   // `tools: "readonly"` MUST mean a hermetically sealed read-only session with
   // respect to host extension injection. Host extensions (`@runfusion/fusion`)
   // can register write tools like `fn_task_create`, so they are deliberately
@@ -2348,8 +2400,8 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         ? [options.systemPromptLayers.dynamic]
         : [],
     ...(effectiveExtensionPaths.length > 0 ? { additionalExtensionPaths: [...effectiveExtensionPaths] } : {}),
-    ...(options.additionalSkillPaths && options.additionalSkillPaths.length > 0
-      ? { additionalSkillPaths: [...options.additionalSkillPaths] }
+    ...(normalizedAdditionalSkillPaths.length > 0
+      ? { additionalSkillPaths: normalizedAdditionalSkillPaths }
       : {}),
     ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
@@ -2454,6 +2506,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       toolsWithActionGate,
       boundaryContext.worktreePath,
       boundaryContext.worktreeProjectRoot,
+      normalizedAdditionalSkillPaths,
     );
     // Sort tools alphabetically by name for deterministic ordering.
     // Prompt caching requires the tool list to be byte-identical across

@@ -1776,6 +1776,19 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const result = await promoteHeldTask(scopedStore, req.params.id, { allocateWorktree });
       if (!result.released) {
+        /*
+        FNXC:WorkflowScheduling 2026-07-21-22:31:
+        Pre-release Plan Review / unplanned holds are not capacity pressure.
+        Map them to a distinct API code so operators are not told the WIP column
+        is full when plan-review is still outstanding (FN-8471).
+        */
+        if (result.rejection === "unplanned-for-execution") {
+          throw new ApiError(409, "Task is not ready for execution (plan review or planning still outstanding)", {
+            code: "unplanned-for-execution",
+            messageKey: "board.rejection.unplannedForExecution",
+            retryable: true,
+          });
+        }
         if (result.rejection === "capacity-exhausted-or-no-slot") {
           throw new ApiError(409, "Downstream column is at capacity", {
             code: "capacity-exhausted",
