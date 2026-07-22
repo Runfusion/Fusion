@@ -5,7 +5,8 @@
  * the read sites.
  *
  * TWO-TIER MERGE (the parity-preserving rule):
- *  - a STORED workflow value ALWAYS overrides the base (the workflow tuned it);
+ *  - a STORED flat value ALWAYS overrides the base (workflow policy, or the
+ *    project workflow-model baseline);
  *  - a declaration-DEFAULT-only key (no stored value) only FILLS the base when the
  *    base lacks the key.
  *
@@ -13,7 +14,8 @@
  * project setting still present in the base is NOT clobbered by a declaration
  * default; only a real stored workflow value overrides it. After the hard-move the
  * base lacks the moved key, so the declaration default fills it. Absent-default
- * model lanes contribute nothing, so they never override a real project value.
+ * model lanes contribute nothing. Lower-precedence selected-workflow model lanes
+ * are retained separately for the centralized model resolver.
  *
  * `resolveEffectiveSettingsDetailed` never throws (degrades to declaration
  * defaults), so this helper is a thin store-coupled wrapper that also never throws.
@@ -22,6 +24,7 @@
 import {
   applyWorkflowSettingsOverlay,
   resolveEffectiveSettingsDetailed,
+  resolveProjectWorkflowModelLaneBaseline,
   type Settings,
   type TaskStore,
 } from "@fusion/core";
@@ -40,6 +43,7 @@ export interface EffectiveSettingsTask {
 export async function mergeEffectiveSettings<T extends Partial<Settings>>(
   store: Pick<
     TaskStore,
+    | "getDefaultWorkflowId"
     | "getTaskWorkflowSelection"
     | "getTaskWorkflowSelectionAsync"
     | "getWorkflowDefinition"
@@ -53,6 +57,29 @@ export async function mergeEffectiveSettings<T extends Partial<Settings>>(
     const detailed = await resolveEffectiveSettingsDetailed(
       store as Parameters<typeof resolveEffectiveSettingsDetailed>[0],
       task,
+    );
+    return applyWorkflowSettingsOverlay(base, detailed);
+  } catch {
+    return base;
+  }
+}
+
+/** Merge the Project Models workflow-lane baseline when no task-selected
+ * workflow exists, such as scheduled AI prompts and idle heartbeats. */
+export async function mergeProjectWorkflowModelLaneBaseline<T extends Partial<Settings>>(
+  store: Pick<
+    TaskStore,
+    | "getDefaultWorkflowId"
+    | "getWorkflowDefinition"
+    | "getWorkflowSettingValues"
+    | "getWorkflowSettingsProjectId"
+  >,
+  base: T,
+): Promise<T> {
+  try {
+    const detailed = await resolveProjectWorkflowModelLaneBaseline(
+      store as Parameters<typeof resolveProjectWorkflowModelLaneBaseline>[0],
+      store.getWorkflowSettingsProjectId(),
     );
     return applyWorkflowSettingsOverlay(base, detailed);
   } catch {

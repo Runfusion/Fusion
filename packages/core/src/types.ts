@@ -2955,6 +2955,13 @@ export interface ProjectSettings {
    *  caller does not specify enabledWorkflowSteps. Overridable per task. */
   defaultWorkflowId?: string;
   /**
+   * Runtime-only model lanes from the task's selected workflow. They are kept
+   * separate from the project baseline so model resolution can enforce task →
+   * project → global → workflow precedence. This field is never persisted as a
+   * project setting.
+   */
+  selectedWorkflowModelLanes?: Readonly<Record<string, unknown>>;
+  /**
    * FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
    * Workflow selected for AI-undo board tasks (`createAiUndoTask`, engine
    * `task-revert.ts`) — these tasks surgically reverse ALREADY-SHIPPED code

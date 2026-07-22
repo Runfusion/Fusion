@@ -568,6 +568,7 @@ export {
 export {
   resolveEffectiveSettings,
   resolveEffectiveSettingsDetailed,
+  resolveProjectWorkflowModelLaneBaseline,
   resolveEffectiveSettingsById,
   resolveOptionalReviewRevisionBudget,
   resolveEffectivePlannerOversightLevel,
@@ -1575,6 +1576,9 @@ export {
   isTestModeActive,
   resolveExecutionSettingsModel,
   resolveExecutorFallbackModel,
+  resolvePlanningFallbackModel,
+  resolveValidatorFallbackModel,
+  resolveSelectedWorkflowModelLane,
   resolveMergerFallbackModel,
   resolveMergerSettingsModel,
   resolvePhaseThinkingLevel,

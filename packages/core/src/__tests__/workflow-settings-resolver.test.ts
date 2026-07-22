@@ -43,6 +43,8 @@ function makeStore(opts: {
   valuesThrows?: boolean;
   projectId?: string;
   projectIdThrows?: boolean;
+  defaultWorkflowId?: string;
+  defaultWorkflowIdThrows?: boolean;
 }): WorkflowSettingsResolverStore {
   const store: WorkflowSettingsResolverStore = {
     getTaskWorkflowSelection: vi.fn((taskId: string) => {
@@ -57,6 +59,10 @@ function makeStore(opts: {
     getWorkflowSettingsProjectId: vi.fn(() => {
       if (opts.projectIdThrows) throw new Error("identity boom");
       return opts.projectId ?? PROJECT;
+    }),
+    getDefaultWorkflowId: vi.fn(async () => {
+      if (opts.defaultWorkflowIdThrows) throw new Error("default workflow boom");
+      return opts.defaultWorkflowId;
     }),
   };
   if (opts.asyncSelection) {
@@ -222,11 +228,150 @@ describe("resolveEffectiveSettings (per-task)", () => {
     expect(Object.keys(eff)).toHaveLength(0);
   });
 
-  it("new custom workflow with empty settings does NOT inherit another workflow's values", async () => {
+  it("inherits every project model lane from the active default workflow across custom workflows", async () => {
+    const projectModelLanes = {
+      executionProvider: "exec-provider",
+      executionModelId: "exec-model",
+      executionThinkingLevel: "high",
+      executionFallbackProvider: "exec-fallback-provider",
+      executionFallbackModelId: "exec-fallback-model",
+      executionFallbackThinkingLevel: "medium",
+      planningProvider: "plan-provider",
+      planningModelId: "plan-model",
+      planningThinkingLevel: "xhigh",
+      planningFallbackProvider: "plan-fallback-provider",
+      planningFallbackModelId: "plan-fallback-model",
+      planningFallbackThinkingLevel: "low",
+      validatorProvider: "review-provider",
+      validatorModelId: "review-model",
+      validatorThinkingLevel: "minimal",
+      validatorFallbackProvider: "review-fallback-provider",
+      validatorFallbackModelId: "review-fallback-model",
+      validatorFallbackThinkingLevel: "off",
+    };
     const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
       selection: { t1: { workflowId: "wf-new", stepIds: [] } },
       defs: { "wf-new": { ir: CUSTOM_NO_SETTINGS } },
-      // A different workflow has a customized value; the new one must not see it.
+      values: { "builtin:coding::proj-1": projectModelLanes },
+    });
+
+    const eff = await resolveEffectiveSettings(store, { id: "t1" });
+
+    expect(eff).toMatchObject(projectModelLanes);
+  });
+
+  it("keeps project model lanes ahead of selected-workflow values while retaining the workflow fallback", async () => {
+    const customWithModelLanes: WorkflowIr = {
+      ...CUSTOM_NO_SETTINGS,
+      settings: BUILTIN_WORKFLOW_SETTINGS.filter((setting) =>
+        ["executionProvider", "executionModelId", "executionThinkingLevel", "planningProvider", "planningModelId"].includes(setting.id)),
+    };
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      selection: { t1: { workflowId: "wf-custom", stepIds: [] } },
+      defs: { "wf-custom": { ir: customWithModelLanes } },
+      values: {
+        "builtin:coding::proj-1": {
+          executionProvider: "project-provider",
+          executionModelId: "project-model",
+          executionThinkingLevel: "medium",
+          planningProvider: "project-plan-provider",
+          planningModelId: "project-plan-model",
+        },
+        "wf-custom::proj-1": {
+          executionProvider: "workflow-provider",
+          executionModelId: "workflow-model",
+          executionThinkingLevel: "high",
+        },
+      },
+    });
+
+    const eff = await resolveEffectiveSettings(store, { id: "t1" });
+
+    expect(eff).toMatchObject({
+      executionProvider: "project-provider",
+      executionModelId: "project-model",
+      executionThinkingLevel: "medium",
+      planningProvider: "project-plan-provider",
+      planningModelId: "project-plan-model",
+      selectedWorkflowModelLanes: {
+        executionProvider: "workflow-provider",
+        executionModelId: "workflow-model",
+        executionThinkingLevel: "high",
+      },
+    });
+  });
+
+  it("applies a custom active-default model baseline to selection-less tasks", async () => {
+    const customDefaultWithModelLanes: WorkflowIr = {
+      ...CUSTOM_NO_SETTINGS,
+      settings: BUILTIN_WORKFLOW_SETTINGS.filter((setting) =>
+        ["validatorProvider", "validatorModelId", "validatorThinkingLevel"].includes(setting.id)),
+    };
+    const store = makeStore({
+      defaultWorkflowId: "wf-project-default",
+      selection: {},
+      defs: { "wf-project-default": { ir: customDefaultWithModelLanes } },
+      values: {
+        "wf-project-default::proj-1": {
+          validatorProvider: "project-review-provider",
+          validatorModelId: "project-review-model",
+          validatorThinkingLevel: "high",
+        },
+      },
+    });
+
+    const eff = await resolveEffectiveSettings(store, { id: "t-none" });
+
+    expect(eff).toMatchObject({
+      validatorProvider: "project-review-provider",
+      validatorModelId: "project-review-model",
+      validatorThinkingLevel: "high",
+    });
+  });
+
+  it("uses authoritative async values for both selected-workflow overrides and the project model baseline", async () => {
+    const customWithPlanningLane: WorkflowIr = {
+      ...CUSTOM_NO_SETTINGS,
+      settings: BUILTIN_WORKFLOW_SETTINGS.filter((setting) =>
+        ["planningProvider", "planningModelId"].includes(setting.id)),
+    };
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      selection: {},
+      values: {
+        "builtin:coding::proj-1": { planningProvider: "stale-project", planningModelId: "stale-project-model" },
+        "wf-custom::proj-1": { planningProvider: "stale-workflow", planningModelId: "stale-workflow-model" },
+      },
+      asyncSelection: { t1: { workflowId: "wf-custom", stepIds: [] } },
+      defs: { "wf-custom": { ir: customWithPlanningLane } },
+      asyncValues: {
+        "builtin:coding::proj-1": { planningProvider: "project-provider", planningModelId: "project-model" },
+        "wf-custom::proj-1": { planningProvider: "workflow-provider", planningModelId: "workflow-model" },
+      },
+    });
+
+    const eff = await resolveEffectiveSettings(store, { id: "t1" });
+
+    expect(eff).toMatchObject({
+      planningProvider: "project-provider",
+      planningModelId: "project-model",
+      selectedWorkflowModelLanes: {
+        planningProvider: "workflow-provider",
+        planningModelId: "workflow-model",
+      },
+    });
+    expect(store.getWorkflowSettingValues).not.toHaveBeenCalled();
+    expect(store.getWorkflowSettingValuesAsync).toHaveBeenCalledWith("builtin:coding", PROJECT);
+    expect(store.getWorkflowSettingValuesAsync).toHaveBeenCalledWith("wf-custom", PROJECT);
+  });
+
+  it("does not inherit non-model policy values from the active default workflow", async () => {
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      selection: { t1: { workflowId: "wf-new", stepIds: [] } },
+      defs: { "wf-new": { ir: CUSTOM_NO_SETTINGS } },
       values: { "builtin:coding::proj-1": { workflowStepTimeoutMs: 5_000 } },
     });
     const eff = await resolveEffectiveSettings(store, { id: "t1" });

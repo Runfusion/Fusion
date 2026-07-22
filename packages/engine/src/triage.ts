@@ -26,6 +26,8 @@ import {
   resolveTaskPlanningPrompt,
   resolveTaskSeamPrompt,
   resolvePersistAgentThinkingLog,
+  resolvePlanningFallbackModel,
+  resolveSelectedWorkflowModelLane,
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
@@ -1610,9 +1612,16 @@ export class TriageProcessor {
          * fallback === primary) and test mode are excluded so the single-swap,
          * no-loop invariant and the mock lane stay unchanged.
          */
-        const hasExplicitPlanningFallback = Boolean(settings.planningFallbackProvider && settings.planningFallbackModelId);
-        const hasExplicitGlobalFallback = Boolean(settings.fallbackProvider && settings.fallbackModelId);
-        const implicitPlanningFallback = (!hasExplicitPlanningFallback && !hasExplicitGlobalFallback)
+        const hasConfiguredPlanningFallback = Boolean(
+          (settings.planningFallbackProvider && settings.planningFallbackModelId)
+          || (settings.fallbackProvider && settings.fallbackModelId)
+          || (resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider")
+            && resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId")),
+        );
+        const planningFallback = hasConfiguredPlanningFallback
+          ? resolvePlanningFallbackModel(settings)
+          : { provider: undefined, modelId: undefined };
+        const implicitPlanningFallback = !hasConfiguredPlanningFallback
           ? resolveImplicitPlanningFallbackModel(
             settings,
             planningModel.provider,
@@ -1642,15 +1651,11 @@ export class TriageProcessor {
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
           ...planningSessionModelOptions,
-          fallbackProvider: hasExplicitPlanningFallback
-            ? settings.planningFallbackProvider
-            : (hasExplicitGlobalFallback ? settings.fallbackProvider : implicitPlanningFallback.provider),
-          fallbackModelId: hasExplicitPlanningFallback
-            ? settings.planningFallbackModelId
-            : (hasExplicitGlobalFallback ? settings.fallbackModelId : implicitPlanningFallback.modelId),
+          fallbackProvider: planningFallback.provider ?? implicitPlanningFallback.provider,
+          fallbackModelId: planningFallback.modelId ?? implicitPlanningFallback.modelId,
           /*
            * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
-           * Planning sessions honor the per-task planning override before the shared task thinking level, then the workflow-declared planning lane, global lane, and default thinking settings.
+           * Planning sessions honor the per-task planning override before the shared task thinking level, then the project lane, global lane, selected-workflow lane, and default thinking settings.
            */
           defaultThinkingLevel: resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel),
           runAuditor,

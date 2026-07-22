@@ -15,7 +15,9 @@ import {
   resolveAgentMemoryInclusionMode,
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
+  resolveSelectedWorkflowModelLane,
   resolveTaskSeamPrompt,
+  resolveValidatorFallbackModel,
 } from "@fusion/core";
 import { recordRetry } from "./retry-burned-logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -208,6 +210,13 @@ export async function reviewStep(
       // Fall back to the snapshot — better to spawn than crash on a transient store error.
     }
   }
+  if (options.store && options.taskId && liveSettings) {
+    try {
+      liveSettings = await mergeEffectiveSettings(options.store, { id: options.taskId }, liveSettings);
+    } catch {
+      // Keep the best available snapshot when task/workflow resolution fails.
+    }
+  }
   if (liveSettings?.globalPause || liveSettings?.enginePaused) {
     const reason = liveSettings.globalPause ? "Global pause" : "Engine paused";
     reviewerLog.log(
@@ -292,12 +301,32 @@ export async function reviewStep(
   const validatorProvider = reviewerModel.provider;
   const validatorModelId = reviewerModel.modelId;
 
-  const validatorFallbackProvider = options.projectValidatorFallbackProvider && options.projectValidatorFallbackModelId
-    ? options.projectValidatorFallbackProvider
-    : options.fallbackProvider;
-  const validatorFallbackModelId = options.projectValidatorFallbackProvider && options.projectValidatorFallbackModelId
-    ? options.projectValidatorFallbackModelId
-    : options.fallbackModelId;
+  const reviewerFallbackSettings: Partial<Settings> = {
+    ...reviewerModelSettings,
+    validatorFallbackProvider: effectiveSettings?.validatorFallbackProvider,
+    validatorFallbackModelId: effectiveSettings?.validatorFallbackModelId,
+    fallbackProvider: effectiveSettings?.fallbackProvider,
+    fallbackModelId: effectiveSettings?.fallbackModelId,
+  };
+  if (options.projectValidatorFallbackProvider && options.projectValidatorFallbackModelId) {
+    reviewerFallbackSettings.validatorFallbackProvider = options.projectValidatorFallbackProvider;
+    reviewerFallbackSettings.validatorFallbackModelId = options.projectValidatorFallbackModelId;
+  }
+  if (options.fallbackProvider && options.fallbackModelId) {
+    reviewerFallbackSettings.fallbackProvider = options.fallbackProvider;
+    reviewerFallbackSettings.fallbackModelId = options.fallbackModelId;
+  }
+  const hasConfiguredValidatorFallback = Boolean(
+    (reviewerFallbackSettings.validatorFallbackProvider && reviewerFallbackSettings.validatorFallbackModelId)
+    || (reviewerFallbackSettings.fallbackProvider && reviewerFallbackSettings.fallbackModelId)
+    || (resolveSelectedWorkflowModelLane(reviewerFallbackSettings, "validatorFallbackProvider")
+      && resolveSelectedWorkflowModelLane(reviewerFallbackSettings, "validatorFallbackModelId")),
+  );
+  const validatorFallback = hasConfiguredValidatorFallback
+    ? resolveValidatorFallbackModel(reviewerFallbackSettings)
+    : { provider: undefined, modelId: undefined };
+  const validatorFallbackProvider = validatorFallback.provider;
+  const validatorFallbackModelId = validatorFallback.modelId;
 
   let reviewerInstructions = "";
   if (options.agentStore && options.rootDir) {
@@ -661,21 +690,9 @@ export async function reviewStep(
   };
 
   const hasConfiguredFallback = Boolean(validatorFallbackProvider && validatorFallbackModelId);
-  // Merge per-task effective workflow settings (U3, KTD-3) over the base so the
-  // retry-budget reads (maxReviewerContextRetries / maxReviewerFallbackRetries via
-  // recordRetry) pick up workflow values. `liveSettings`/`options.settings` are the
-  // base; the merge is behavior-inert when nothing is customized. Resolved once
-  // here (all recordRetry sites share it).
-  const retrySettingsBase = liveSettings ?? options.settings;
-  let retrySettings = retrySettingsBase;
-  if (options.store && options.taskId && retrySettingsBase) {
-    try {
-      const retryTask = await options.store.getTask(options.taskId);
-      retrySettings = await mergeEffectiveSettings(options.store, retryTask, retrySettingsBase);
-    } catch {
-      // Keep the base snapshot on any store/resolve error (never-throw).
-    }
-  }
+  // The task-effective snapshot used for model selection also carries workflow
+  // retry-budget values, so every recordRetry site shares the same resolution.
+  const retrySettings = effectiveSettings;
 
   const resetReviewerFallbackRetryCount = async (): Promise<void> => {
     if (!options.store || !options.taskId || typeof options.store.updateTask !== "function") {

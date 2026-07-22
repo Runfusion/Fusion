@@ -213,6 +213,51 @@ describe("reviewStep — model settings threading", () => {
     expect(result.verdict).toBe("APPROVE");
   });
 
+  it("uses the selected workflow reviewer lane after project and global lanes fall through", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nWorkflow reviewer honored."),
+    );
+    const task = { id: "FN-100", column: "in-review", steps: [] } as any;
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({
+        defaultProvider: "default-provider",
+        defaultModelId: "default-model",
+      }),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-custom", stepIds: [] })),
+      getDefaultWorkflowId: vi.fn(async () => "builtin:coding"),
+      getWorkflowDefinition: vi.fn(async (workflowId: string) => workflowId === "wf-custom"
+        ? {
+            ir: {
+              version: "v2",
+              name: "Custom",
+              columns: [],
+              nodes: [],
+              edges: [],
+              settings: [
+                { id: "validatorProvider", name: "Validator provider", type: "string" },
+                { id: "validatorModelId", name: "Validator model", type: "string" },
+              ],
+            },
+          }
+        : undefined),
+      getWorkflowSettingValues: vi.fn((workflowId: string) => workflowId === "wf-custom"
+        ? { validatorProvider: "workflow-provider", validatorModelId: "workflow-model" }
+        : {}),
+      getWorkflowSettingsProjectId: vi.fn(() => "project-1"),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "code", "# prompt", "abc123",
+      { store: store as any, taskId: task.id, task },
+    );
+
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("workflow-provider");
+    expect(opts.defaultModelId).toBe("workflow-model");
+  });
+
   it("logs reviewer model rows with default thinking effort", async () => {
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),

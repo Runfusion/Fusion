@@ -40,7 +40,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         modelId: "planningModelId",
         thinkingId: "planningThinkingLevel",
         label: "Plan/Triage Model",
-        help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the workflow default.",
+        help: "Provider and model used when planning or triaging tasks. Leave unset to fall through to the global lane, then the selected workflow.",
     },
     {
         id: "planning-fallback",
@@ -56,7 +56,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         modelId: "executionModelId",
         thinkingId: "executionThinkingLevel",
         label: "Executor Model",
-        help: "Provider and model used while executing workflow steps. Leave unset to inherit from the workflow default.",
+        help: "Provider and model used while executing workflow steps. Leave unset to fall through to the global lane, then the selected workflow.",
     },
     {
         id: "execution-fallback",
@@ -72,7 +72,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         modelId: "validatorModelId",
         thinkingId: "validatorThinkingLevel",
         label: "Reviewer Model",
-        help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
+        help: "Provider and model used for workflow review or validation lanes. Leave unset to fall through to the global lane, then the selected workflow.",
     },
     {
         id: "validator-fallback",
@@ -574,12 +574,12 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           {agents.length === 0 && !agentsLoading ? (<small>{t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.")}</small>) : null}
         </div>)}
 
-      {/* --- Default workflow model lanes --- */}
+      {/* --- Project workflow model lanes --- */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
       <div className="settings-field-label-row">
-        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
+        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Project workflow model lanes")}</h4>
         <SettingsHelpTip settingKey="default-workflow-model-lanes">
-          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</SettingsHelpTip>
+          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) are stored on the active default workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " They apply as the project baseline for every workflow and take precedence over global and per-workflow values; task-specific selections still win. ")}</SettingsHelpTip>
       </div>
       {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
           {workflowModelPairs.map((pair) => {
@@ -600,8 +600,8 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
                 <div className="settings-model-lane-label-row">
                   <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
-                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}>
-                    {customized ? "Override (Project)" : "Inherited (Workflow)"}
+                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set as the project baseline" : "Inherited from global, workflow, or default settings"}>
+                    {customized ? "Project baseline" : "Inherited (Workflow)"}
                   </span>
                   {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
                   {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}

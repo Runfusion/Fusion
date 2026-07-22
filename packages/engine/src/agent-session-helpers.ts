@@ -20,6 +20,7 @@ import {
   resolveMergerSettingsModel,
   resolvePhaseThinkingLevel,
   resolveProjectDefaultModel,
+  resolveSelectedWorkflowModelLane,
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
@@ -225,7 +226,7 @@ function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined 
 
 /**
  * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
- * Model-lane thinking overrides must resolve through the same session option (`defaultThinkingLevel`) pi.ts already guards with the thinking/reasoning conflict fallback. Keep node/step thinking first when supplied by callers, then task, workflow lane, global lane, project default thinking override, and global default.
+ * Model-lane thinking overrides must resolve through the same session option (`defaultThinkingLevel`) pi.ts already guards with the thinking/reasoning conflict fallback. Keep node/step thinking first when supplied by callers, then task, project lane, global lane, selected-workflow lane, project default thinking override, and global default.
  */
 export function resolveExecutorThinkingLevel(
   taskThinkingLevel: ThinkingLevel | string | undefined,
@@ -292,6 +293,7 @@ export function resolveExecutorFallbackThinkingLevel(
   return firstThinkingLevel(
     settings?.executionFallbackThinkingLevel,
     settings?.fallbackThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, "executionFallbackThinkingLevel"),
     resolveExecutorThinkingLevel(taskThinkingLevel, settings),
   );
 }
@@ -303,6 +305,7 @@ export function resolvePlanningFallbackThinkingLevel(
   return firstThinkingLevel(
     settings?.planningFallbackThinkingLevel,
     settings?.fallbackThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, "planningFallbackThinkingLevel"),
     resolvePlanningThinkingLevel(settings, taskThinkingLevel),
   );
 }
@@ -314,6 +317,7 @@ export function resolveValidatorFallbackThinkingLevel(
   return firstThinkingLevel(
     settings?.validatorFallbackThinkingLevel,
     settings?.fallbackThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, "validatorFallbackThinkingLevel"),
     resolveValidatorThinkingLevel(taskThinkingLevel, settings),
   );
 }

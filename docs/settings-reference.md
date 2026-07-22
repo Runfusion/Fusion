@@ -268,12 +268,15 @@ Some knobs that used to live in this Settings reference as project settings are 
 *how* tasks execute, so the timeouts, review gates, and per-phase model lanes that
 govern that execution belong to the workflow.
 
-**Where to set them.** The common model lanes for a project's default workflow are
-available directly in **Settings → Project Models → Default workflow model lanes**:
-Plan/Triage, Executor, Reviewer, and the Planning/Reviewer fallback lanes declared
+**Where to set them.** The common model lanes for every workflow in a project are
+available directly in **Settings → Project Models → Project workflow model lanes**:
+Plan/Triage, Executor, Reviewer, and their fallback lanes declared
 by the default workflow. Primary Plan/Triage, Executor, Reviewer, and declared fallback rows show an inline Thinking Level control when the workflow declares the companion `*ThinkingLevel` setting; unset means inherit. Those dropdown controls use the shared model picker and are auto-saved by the Settings modal after an edit, which writes
-workflow setting values for the active project's default workflow; they do not
-restore the old project settings keys. The global **Fallback Model** remains in
+workflow setting values on the active project's default workflow. Those stored
+values are the project model baseline inherited by every selected workflow. The
+baseline wins over global and per-workflow values; task-specific selections win
+over the baseline. They do
+not restore the old project settings keys. The global **Fallback Model** remains in
 Settings → General Models and includes its own inline Thinking Level selector for `fallbackThinkingLevel`; workflow-specific fallbacks are also editable from
 the workflow editor Values tab. Title summarization is separate: set it in
 **Settings → Project Models → AI Title and Git Commit Message Summarization**,
@@ -398,10 +401,12 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 
 When `triageProactiveSubtaskSplittingEnabled` is `true` (the default), triage may proactively replace a large task with 2-5 child tasks when the size, step-count, package breadth, file-scope, or remediation-batch signals justify the coordination overhead. When it is `false`, those automatic oversized-task signals are advisory only for writing a realistic single-task spec; triage must not split solely because the task is large. The per-task `breakIntoSubtasks: true` flag is separate and remains mandatory: if a user explicitly asks for subtask breakdown, triage still evaluates and creates child tasks when the work is meaningfully decomposable.
 
-In the dashboard Settings modal, Project Models exposes Plan/Triage, Executor,
-Reviewer, and declared fallback dropdown controls for the default workflow. The
-Settings modal auto-save persists pending default-workflow model lane
-overrides; there is no separate workflow-model save button. The workflow editor's
+In the dashboard Settings modal, Project Models exposes project-baseline
+Plan/Triage, Executor, Reviewer, and declared fallback dropdown controls. The
+Settings modal auto-save persists pending model lane values on the active default
+workflow, and every workflow inherits those values. Task-specific selections win,
+while global and per-workflow values are lower-priority fallbacks; there is no
+separate workflow-model save button. The workflow editor's
 Settings → Values tab uses the same dropdown picker for declared provider/model
 pairs, including fallbacks. Former locations for advanced workflow policy still
 show a short redirect stub linking to the workflow editor (for one release).
@@ -1028,7 +1033,7 @@ Short-lived token bounds are enforced server-side:
 
 ## Model Selection Hierarchy
 
-Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes (auto-saved by the Settings modal) or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks. General-scope fallback selection remains the global Fallback Model picker in Settings -> General Models.
+Fusion resolves task models as task-specific selection -> project workflow-model baseline -> global lane -> selected-workflow value -> project/global default model. The project baseline is stored as setting values on the project's active default workflow and can be edited from Settings -> Project Models -> Project workflow model lanes (auto-saved by the Settings modal). Lower-priority per-workflow values remain editable from Workflow editor -> Settings -> Values for declared workflow lanes and fallbacks. General-scope fallback selection remains the global Fallback Model picker in Settings -> General Models.
 
 Direct-chat defaults are project-scoped and independent of task workflow lanes. Configure them in **Settings -> Project Models -> Chat**. `chatDefaultKind: "agent"` resolves only when `chatDefaultAgentId` is set; `chatDefaultKind: "model"` resolves only when both `chatDefaultModelProvider` and `chatDefaultModelId` are set, with optional `chatDefaultThinkingLevel`. If `chatNewSessionMode` is `"always-default"` and that target resolves, every New Chat entry point creates the session directly. If the target is incomplete, or the mode is unset/`"prompt"`, Fusion opens the New Chat dialog instead and preselects the resolved default when one exists. Chat Rooms additionally support a per-room `thinkingLevel` default that applies to every room responder; clearing it inherits the resolved project/global default.
 

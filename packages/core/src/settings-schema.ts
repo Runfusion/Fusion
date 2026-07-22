@@ -59,7 +59,7 @@ type MovedProjectSettingsKey =
   | "validatorFallbackModelId"
   | "validatorFallbackThinkingLevel";
 
-type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy";
+type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes";
 type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>; 
 
 /**
