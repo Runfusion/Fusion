@@ -3617,7 +3617,13 @@ Toast text must contrast its status background across every dashboard theme and 
     scroll-snap-type: x proximity;
     overflow-anchor: none;
     scroll-padding-inline: calc(50% - 150px);
-    scroll-behavior: smooth;
+    /*
+    FNXC:BoardNavigation 2026-07-22-14:20:
+    Mobile board column paging uses a short JS ease-out snap. CSS scroll-behavior:smooth
+    stacked with browser smooth scroll made settle feel laggy; keep auto so free-pan
+    inertia and the hook's animation stay snappy.
+    */
+    scroll-behavior: auto;
     scrollbar-width: none;
     padding: var(--space-md);
     padding-bottom: var(--space-md);
