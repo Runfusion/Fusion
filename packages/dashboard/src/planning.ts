@@ -1227,8 +1227,8 @@ async function getFirstQuestionFromAgent(
     throw new InvalidSessionStateError("AI agent not initialized");
   }
 
-  // Send message to agent
-  await session.agent.session.prompt(message);
+  // Send message to agent (context-limit aware — see promptPlanningAgent)
+  await promptPlanningAgent(session.agent.session, message);
 
   // Extract response text
   interface AgentMessage {
@@ -1292,7 +1292,8 @@ async function getFirstQuestionFromAgent(
 
       if (attempt < MAX_PARSE_RETRIES) {
         try {
-          await session.agent.session.prompt(
+          await promptPlanningAgent(
+            session.agent.session,
             "Your previous response could not be parsed as JSON. " +
             'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
             "No markdown, no explanation, just the JSON."
@@ -1378,7 +1379,8 @@ async function requestMandatoryFirstPlanningQuestion(
   abortSignal?: AbortSignal,
 ): Promise<{ type: "question"; data: PlanningQuestion }> {
   try {
-    await (session.agent!.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
+    await promptPlanningAgent(
+      session.agent!.session,
       'Before producing a plan, ask one clarifying question. Return ONLY valid JSON: {"type":"question","data":{...}}.',
       { signal: abortSignal },
     );
@@ -2003,7 +2005,7 @@ async function ensureSessionAgent(
     if (abortSignal.aborted) {
       throw createAbortError();
     }
-    await (session.agent!.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(contextMessage, {
+    await promptPlanningAgent(session.agent!.session, contextMessage, {
       signal: abortSignal,
     });
     if (abortSignal.aborted) {
@@ -2082,6 +2084,37 @@ function createAbortError(): Error {
   const error = new Error("Generation aborted");
   error.name = "AbortError";
   return error;
+}
+
+/*
+FNXC:PlanningContextCompaction 2026-07-22-22:40:
+Long planning interviews accumulate the whole Q/A history in one agent session and can hit the
+model's context window mid-interview. Planning previously called session.prompt() raw, so a
+context overflow surfaced as a terminal session error — and the auto-retry then replayed the
+FULL history into a fresh agent, overflowing again, unrecoverably. Every planning prompt now
+routes through the engine's promptWithFallback, which classifies context-limit errors and
+recovers via prompt/memory compaction and session.compact() before retrying. Test fakes that
+mock @fusion/engine without promptWithFallback fall back to the raw prompt unchanged.
+*/
+async function promptPlanningAgent(
+  agentSession: { prompt: (input: string, options?: { signal?: AbortSignal }) => Promise<void> },
+  message: string,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
+  let promptWithFallback: ((session: unknown, prompt: string, options?: unknown) => Promise<void>) | undefined;
+  try {
+    promptWithFallback = (engineModule as {
+      promptWithFallback?: (session: unknown, prompt: string, options?: unknown) => Promise<void>;
+    }).promptWithFallback;
+  } catch {
+    // vi.mock("@fusion/engine") proxies throw on undeclared exports; treat as unavailable.
+    promptWithFallback = undefined;
+  }
+  if (typeof promptWithFallback === "function") {
+    await promptWithFallback(agentSession, message, options);
+    return;
+  }
+  await agentSession.prompt(message, options);
 }
 
 function normalizeGenerationProgress(output: string): string {
@@ -2406,7 +2439,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       if (abortSignal.aborted) {
         throw createAbortError();
       }
-      await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(message, {
+      await promptPlanningAgent(session.agent.session, message, {
         signal: abortSignal,
       });
       if (abortSignal.aborted) {
@@ -2480,7 +2513,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
             if (abortSignal.aborted) {
               throw createAbortError();
             }
-            await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
+            await promptPlanningAgent(
+              session.agent.session,
               "Your previous response could not be parsed as JSON. " +
                 'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
                 'No markdown, no explanation, just the JSON.',
