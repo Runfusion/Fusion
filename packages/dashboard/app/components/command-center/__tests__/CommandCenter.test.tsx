@@ -463,6 +463,8 @@ function expectDailyActivityLineBeforeTrend() {
 }
 
 beforeEach(() => {
+  // FNXC:CommandCenter 2026-07-22-13:45: persisted tab/range state (R12) must not leak between tests.
+  localStorage.clear();
   apiMock.mockReset();
   subscribeSseMock.mockReset();
   subscribeSseMock.mockImplementation(() => () => undefined);
@@ -490,6 +492,35 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-controls")).toBeTruthy();
     expect(screen.queryByTestId("cc-controls-org-chart")).toBeNull();
     expect(screen.queryByTestId("cc-controls-heartbeat")).toBeNull();
+  });
+
+  /*
+  FNXC:CommandCenter 2026-07-22-13:45:
+  FN remount-churn fix R12: CommandCenter unmounts on navigation by design, so its active sub-tab and date range restore from per-project persisted state after an unmount round-trip, while a fresh project keeps the defaults.
+  */
+  it("restores the active sub-tab and date range after an unmount round-trip", async () => {
+    localStorage.clear();
+    const props = { projectId: "project-a", colorTheme: "default" as const, themeMode: "dark" as const, onColorThemeChange: vi.fn(), onThemeModeChange: vi.fn() };
+    const { unmount } = render(<CommandCenter {...props} />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-tokens"));
+    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
+    fireEvent.click(screen.getByTestId("cc-date-range-preset-30d"));
+
+    unmount();
+    render(<CommandCenter {...props} />);
+
+    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("cc-date-range-trigger").textContent).toContain("Last 30 days");
+  });
+
+  it("keeps defaults for a project with no persisted Command Center state", () => {
+    localStorage.clear();
+    render(<CommandCenter projectId="fresh-project" colorTheme="default" themeMode="dark" onColorThemeChange={vi.fn()} onThemeModeChange={vi.fn()} />);
+
+    expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("cc-date-range-trigger").textContent).toContain("Last 7 days");
   });
 
   it("does not retain a duplicate report entry on Overview", () => {
