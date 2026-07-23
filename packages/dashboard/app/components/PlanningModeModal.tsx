@@ -667,6 +667,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const planDocumentRef = useRef<HTMLDivElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const addCommentTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileAddCommentTriggerRef = useRef<HTMLButtonElement>(null);
+  const restoreCommentTriggerFocusRef = useRef(false);
+
+  const focusAddCommentTrigger = useCallback(() => {
+    const isMobile = window.matchMedia?.("(max-width: 768px)").matches ?? false;
+    (isMobile ? mobileAddCommentTriggerRef : addCommentTriggerRef).current?.focus();
+  }, []);
+
+  /*
+  FNXC:PlanningComments 2026-07-23-09:30:
+  Closing the conditional comment editor unmounts its trigger during the state transition. Restore focus only in the post-render effect, after Cancel or Add comment remounts the desktop or mobile trigger.
+  */
+  useEffect(() => {
+    if (!isCommentEditorOpen && restoreCommentTriggerFocusRef.current) {
+      restoreCommentTriggerFocusRef.current = false;
+      focusAddCommentTrigger();
+    }
+  }, [focusAddCommentTrigger, isCommentEditorOpen]);
 
   useEffect(() => {
     // A batch belongs to one visible session; never carry comments into another plan.
@@ -2617,10 +2635,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (!quote || !suggestion) return;
     setContextualComments((comments) => [...comments, { quote, suggestion }]);
     setCommentDraft("");
-    setSelectedPlanQuote(null);
+    // FNXC:PlanningComments 2026-07-23-09:30: Keep the quote while closing the editor so its conditional trigger remounts and can receive restored focus after adding a comment.
+    restoreCommentTriggerFocusRef.current = true;
     setIsCommentEditorOpen(false);
     window.getSelection()?.removeAllRanges();
-    addCommentTriggerRef.current?.focus();
   }, [commentDraft, selectedPlanQuote]);
 
   const handleSubmitContextualComments = useCallback(async () => {
@@ -2909,7 +2927,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             <button
               ref={addCommentTriggerRef}
               type="button"
-              className="btn planning-add-comment"
+              className="btn planning-add-comment planning-add-comment--document"
               onClick={() => setIsCommentEditorOpen(true)}
             >
               <MessageSquarePlus />
@@ -2924,7 +2942,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <textarea ref={commentInputRef} className="input" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} />
               </label>
               <div className="planning-refine-menu-actions">
-                <button type="button" className="btn" onClick={() => { setCommentDraft(""); setIsCommentEditorOpen(false); addCommentTriggerRef.current?.focus(); }}>{t("common.cancel", "Cancel")}</button>
+                <button type="button" className="btn" onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setIsCommentEditorOpen(false); }}>{t("common.cancel", "Cancel")}</button>
                 <button type="button" className="btn btn-primary" disabled={!commentDraft.trim()} onClick={handleAddContextualComment}>{t("planning.addComment", "Add comment")}</button>
               </div>
             </div>
@@ -2932,6 +2950,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         </article>
       </div>
       <div className="planning-actions planning-summary-actions planning-plan-actions" data-testid="planning-plan-actions">
+        {/*
+        FNXC:PlanningComments 2026-07-31-00:00:
+        FN-8533 keeps the selection-adjacent control at 769px and wider, but mobile's reachable
+        action rail owns its counterpart. The two variants share the same editor transition and
+        CSS makes exactly one visible/focusable; only established 768px/1024px breakpoint literals
+        are allowed here, while all other dimensions remain design-token based.
+        */}
+        {selectedPlanQuote && !isCommentEditorOpen && (
+          <button
+            ref={mobileAddCommentTriggerRef}
+            type="button"
+            className="btn planning-add-comment planning-add-comment--mobile"
+            onClick={() => setIsCommentEditorOpen(true)}
+          >
+            <MessageSquarePlus />
+            {t("planning.addComment", "Add comment to selection")}
+          </button>
+        )}
         {contextualComments.length > 0 && (
           <div className="planning-comment-tray" data-testid="planning-comment-tray">
             <ul>

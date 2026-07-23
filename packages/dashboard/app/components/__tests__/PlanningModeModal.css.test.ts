@@ -166,6 +166,16 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expectSomeRule(tabletCss, ".planning-plan-actions", /flex-wrap\s*:\s*nowrap\s*;/);
   });
 
+  it("shows exactly one contextual comment trigger in the mobile plan footer", () => {
+    const css = loadPlanningCss();
+    const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
+
+    expect(findRule(css, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*none\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*inline-flex\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/margin-top\s*:\s*0\s*;/);
+  });
+
   it("keeps the mobile sessions list scrolling above the bottom-pinned New session footer", () => {
     const css = loadPlanningCss();
     const mobileShellCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");

@@ -1774,6 +1774,10 @@ its established Refine and Proceed action hierarchy.
   margin-top: var(--space-lg);
 }
 
+.planning-add-comment--mobile {
+  display: none;
+}
+
 .planning-comment-editor,
 .planning-comment-tray {
   display: flex;
@@ -1880,6 +1884,22 @@ Refine/Proceed actions share one compact bottom baseline; equal footer/button he
 plan actions, and a token-sized bottom inset keep all three controls inline without extra space.
 */
 @media (max-width: 768px) {
+  /*
+  FNXC:PlanningComments 2026-07-31-00:00:
+  A selected quote needs a reachable mobile action beside Refine and Proceed, not a control lost
+  in the scrollable document. At 769px and above the selection-adjacent document trigger stays
+  canonical. These established 768px/1024px media boundaries are permitted; new dimensions use
+  only existing design tokens.
+  */
+  .planning-add-comment--document {
+    display: none;
+  }
+
+  .planning-add-comment--mobile {
+    display: inline-flex;
+    margin-top: 0;
+  }
+
   .planning-comment-tray li {
     grid-template-columns: minmax(0, 1fr) auto;
   }
