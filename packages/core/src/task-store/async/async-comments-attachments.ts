@@ -37,7 +37,7 @@ import {
   assertTaskDocumentPreconditions,
   taskDocumentContentHash,
   validateArchivedTaskDocumentAddition,
-} from "../task-document-concurrency.js";
+} from "../../task-document-concurrency.js";
 import type {
   Artifact,
   ArtifactCreateInput,
