@@ -1467,6 +1467,10 @@ export const missionFeatures = projectSchema.table("mission_features", {
   loopState: text("loop_state").notNull().default("idle"),
   implementationAttemptCount: integer("implementation_attempt_count").notNull().default(0),
   validatorAttemptCount: integer("validator_attempt_count").notNull().default(0),
+  // FNXC:MissionLineageBudget 2026-07-22-12:00: Stops are explicit so legacy blocked roots never receive an inferred operator resume.
+  implementationStopReason: text("implementation_stop_reason"),
+  implementationStoppedAt: text("implementation_stopped_at"),
+  implementationStopOrigin: text("implementation_stop_origin"),
   lastValidatorRunId: text("last_validator_run_id"),
   lastValidatorStatus: text("last_validator_status"),
   generatedFromFeatureId: text("generated_from_feature_id"),
@@ -2058,6 +2062,23 @@ export const missionFixFeatureLineage = projectSchema.table("mission_fix_feature
   index("idxFixLineageSourceFeatureId").on(t.sourceFeatureId),
   index("idxFixLineageFixFeatureId").on(t.fixFeatureId),
   index("idxFixLineageRunId").on(t.runId),
+]);
+
+/*
+FNXC:MissionLineageBudget 2026-07-22-12:00:
+A root identity can outlive its hierarchy. Keep intervention evidence outside
+cascading mission rows so deleting a generated fix cannot silently authorize a sibling.
+*/
+export const missionLineageStops = projectSchema.table("mission_lineage_stops", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  rootFeatureId: text("root_feature_id").notNull(),
+  missionId: text("mission_id"),
+  reason: text("reason").notNull(),
+  stoppedAt: text("stopped_at").notNull(),
+  origin: text("origin").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.rootFeatureId] }),
+  index("idxMissionLineageStopsMissionId").on(t.projectId, t.missionId),
 ]);
 
 export const verificationCache = projectSchema.table("verification_cache", {

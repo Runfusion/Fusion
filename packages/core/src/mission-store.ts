@@ -1371,6 +1371,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   /**
+   * FNXC:MissionLineageBudget 2026-07-22-12:00:
+   * The production PostgreSQL store owns durable lineage-stop classification.
+   * Keep the legacy synchronous facade API-compatible for callers that inject it
+   * in isolated tests; it has no PostgreSQL tombstone backend.
+   */
+  resumeMission(id: string): Mission {
+    return this.updateMission(id, { status: "active" });
+  }
+
+  /**
    * Delete a mission.
    * Cascades to delete all milestones, slices, and features.
    *

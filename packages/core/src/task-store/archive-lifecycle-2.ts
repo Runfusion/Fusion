@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId} from "../async-mission-store-queries.js";
+import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -151,6 +151,12 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
       */
       const linkedFeature = await getMissionFeatureByTaskId(tx, id);
       if (linkedFeature) {
+        /*
+        FNXC:MissionLineageBudget 2026-07-22-15:00:
+        Generated remediation task removal is operator intervention, recorded
+        before clearing the feature task edge in this same soft-delete transaction.
+        */
+        await recordGeneratedFixOperatorStop(tx, linkedFeature, "task-delete");
         await unlinkMissionFeatureFromTaskId(tx, linkedFeature.id);
       }
       // Soft-delete the task row.
@@ -248,6 +254,13 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
       result = await archiveParentTaskWithLineageGate(layer, id, entry, {
         removeLineageReferences: removeLineageRefs,
         now: archivedAt,
+        beforeArchive: async (tx) => {
+          const linkedFeature = await getMissionFeatureByTaskId(tx, id);
+          if (linkedFeature) {
+            await recordGeneratedFixOperatorStop(tx, linkedFeature, "task-archive");
+            await unlinkMissionFeatureFromTaskId(tx, linkedFeature.id);
+          }
+        },
       });
     } catch (error) {
       if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);

@@ -568,6 +568,78 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect((await m.getFeature(fix.id))?.loopState).toBe("needs_fix");
   });
 
+  it("shares the root retry budget across fix-of-fix lineage", async () => {
+    /* FNXC:MissionLineageBudget 2026-07-22-12:00: deterministic remediation chains must exhaust the original feature, never restart at each child. */
+    const m = missions();
+    const mission = await m.createMission({ title: "Root budget" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "F" });
+    let source = root;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await m.transitionLoopState(source.id, "implementing");
+      const run = await m.startValidatorRun(source.id, "scheduled");
+      await m.completeValidatorRun(run.id, "failed", "deterministic failure");
+      source = await m.createGeneratedFixFeature(source.id, run.id, [], "deterministic failure");
+      expect((await m.getFeature(root.id))?.implementationAttemptCount).toBe(attempt);
+    }
+    await m.transitionLoopState(source.id, "implementing");
+    const fourthRun = await m.startValidatorRun(source.id, "scheduled");
+    await m.completeValidatorRun(fourthRun.id, "failed", "deterministic failure");
+    await expect(m.createGeneratedFixFeature(source.id, fourthRun.id, [], "deterministic failure"))
+      .rejects.toThrow("MISSION_REMEDIATION_STOPPED: budget-exhausted");
+    expect(await m.getFeature(root.id)).toMatchObject({ loopState: "blocked", implementationStopReason: "budget-exhausted", implementationAttemptCount: 3 });
+  });
+
+  it("records generated-task archive as a durable root stop before unlinking", async () => {
+    /*
+    FNXC:MissionLineageBudget 2026-07-22-15:30:
+    Task archive is a supported removal surface. Its archive transaction must
+    retain the root stop even though it clears the generated feature's task link.
+    */
+    const m = missions();
+    const mission = await m.createMission({ title: "Generated task stop" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "F" });
+    const run = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(run.id, "failed", "repair");
+    const fix = await m.createGeneratedFixFeature(root.id, run.id, [], "repair");
+    const task = await h.store().createTask({ description: "Generated fix task" });
+    await m.linkFeatureToTask(fix.id, task.id);
+
+    await h.store().archiveTask(task.id, { cleanup: false });
+
+    expect(await m.getFeature(root.id)).toMatchObject({
+      loopState: "blocked",
+      implementationStopReason: "operator-intervention",
+    });
+    expect(await m.getFeature(fix.id)).toMatchObject({ taskId: undefined });
+    const stops = await h.layer().db.select().from(schema.project.missionLineageStops)
+      .where(sql`${schema.project.missionLineageStops.rootFeatureId} = ${root.id}`);
+    expect(stops).toMatchObject([{ reason: "operator-intervention", origin: "task-archive" }]);
+  });
+
+  it("records generated-feature deletion as a durable root stop and resumes only explicitly", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Operator stop" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "F" });
+    await m.transitionLoopState(root.id, "implementing");
+    const run = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(run.id, "failed", "repair");
+    const fix = await m.createGeneratedFixFeature(root.id, run.id, [], "repair");
+    await m.deleteFeature(fix.id);
+    expect(await m.getFeature(root.id)).toMatchObject({ loopState: "blocked", implementationStopReason: "operator-intervention", implementationAttemptCount: 1 });
+    const stops = await h.layer().db.select().from(schema.project.missionLineageStops)
+      .where(sql`${schema.project.missionLineageStops.rootFeatureId} = ${root.id}`);
+    expect(stops).toHaveLength(1);
+    await m.updateMission(mission.id, { status: "blocked" });
+    await expect(m.resumeMission(mission.id)).resolves.toMatchObject({ status: "active" });
+    expect(await m.getFeature(root.id)).toMatchObject({ loopState: "needs_fix", implementationAttemptCount: 1, implementationStopReason: undefined });
+  });
+
   it("allows startup recovery to move an interrupted validation back to implementing", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Interrupted validation" });
