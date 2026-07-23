@@ -193,7 +193,22 @@ function createMockGlobalSettingsStore() {
   };
 }
 
+/*
+FNXC:PlanningRouteTests 2026-07-23-08:10:
+Every TaskStore double passed to createApiRoutes must provide one stable, inert PluginStore.
+Project-context binding initializes and reads it before Planning handlers run; an empty async store
+keeps route tests deterministic while preserving the production project-scoped MCP provider contract.
+*/
+function createInertPluginStore() {
+  return {
+    init: vi.fn().mockResolvedValue(undefined),
+    listPlugins: vi.fn().mockResolvedValue([]),
+    getPlugin: vi.fn().mockResolvedValue(null),
+  };
+}
+
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  const pluginStore = createInertPluginStore();
   const branchGroups = new Map<string, {
     id: string;
     sourceType: "planning" | "mission" | "new-task";
@@ -251,6 +266,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    getPluginStore: vi.fn().mockReturnValue(pluginStore),
     ensureBranchGroupForSource: vi.fn(function (this: TaskStore, sourceType: "planning" | "mission" | "new-task", sourceId: string, init: { branchName: string; autoMerge?: boolean }) {
       const existing = this.getBranchGroupBySource(sourceType, sourceId);
       if (existing) {
@@ -622,7 +638,9 @@ describe("Planning Mode Routes", () => {
           { "Content-Type": "application/json" }
         );
 
+        // Regression: context binding must finish before this route assertion, not replace it with a plugin-store 500.
         expect(res.status).toBe(201);
+        expect(JSON.stringify(res.body)).not.toContain("getPluginStore is not a function");
         expect(res.body.sessionId).toBeDefined();
         expect(typeof res.body.sessionId).toBe("string");
         expect(res.body.firstQuestion).toBeDefined();
@@ -847,7 +865,7 @@ describe("Planning Mode Routes", () => {
         expect(streamRes.body).not.toContain("Generate this plan with AI");
       });
 
-      it("broadcasts a reviewable initial plan without an unsolicited question", async () => {
+      it("broadcasts a reviewable initial plan and its required validation question", async () => {
         const messages: Array<{ role: string; content: string }> = [];
         const responses = [
           JSON.stringify({ type: "complete", data: { title: "Reporting workflow plan", description: "A concrete reporting plan", proposedChanges: ["Update report generation"], acceptanceCriteria: ["Reports complete successfully"], keyDeliverables: ["Implement report generation"] } }),
@@ -877,7 +895,12 @@ describe("Planning Mode Routes", () => {
         await vi.waitFor(() => {
           const events = planningStreamManager.getBufferedEvents(res.body.sessionId, 0);
           expect(events.filter((event) => event.event === "summary")).toHaveLength(1);
-          expect(events.filter((event) => event.event === "question")).toHaveLength(0);
+          /*
+          FNXC:PlanningRouteTests 2026-07-23-08:35:
+          An AI-authored summary remains reviewable but is not complete until the operator
+          answers the validation checkpoint, so streaming must retain that question event.
+          */
+          expect(events.filter((event) => event.event === "question")).toHaveLength(1);
         });
         expect(messages).toHaveLength(2);
         expect(messages[0]?.content).toContain("Build a detailed reporting workflow");
@@ -1355,7 +1378,7 @@ describe("Planning Mode Routes", () => {
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
           expect(streamRes.body).toContain("event: summary");
-          expect(streamRes.body).not.toContain("event: question");
+          expect(streamRes.body).toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1408,7 +1431,7 @@ describe("Planning Mode Routes", () => {
           expect(streamRes.body).toContain("event: thinking");
           expect(streamRes.body).toContain("live first-turn reasoning");
           expect(streamRes.body).toContain("event: summary");
-          expect(streamRes.body).not.toContain("event: question");
+          expect(streamRes.body).toContain("event: question");
         } finally {
           vi.useRealTimers();
         }
@@ -1556,6 +1579,8 @@ describe("Planning Mode Routes", () => {
         };
         // @ts-expect-error - test setup mutates the in-memory active session.
         session!.summary = runningSummary;
+        // @ts-expect-error - test setup restores this as a settled persisted session.
+        session!.generationPurpose = undefined;
         // @ts-expect-error - test setup mutates the in-memory active session.
         session!.currentQuestion = nextQuestion;
 
@@ -1584,10 +1609,16 @@ describe("Planning Mode Routes", () => {
         expect(session).toBeDefined();
         // @ts-expect-error - test setup mutates the in-memory terminal session.
         session!.summary = { title: "Validated plan", description: "Ready", suggestedSize: "S", keyDeliverables: [] };
+        // @ts-expect-error - test setup restores this as a settled terminal session.
+        session!.generationPurpose = undefined;
+        // @ts-expect-error - test setup mutates the in-memory terminal session.
+        session!.currentQuestion = undefined;
         // @ts-expect-error - test setup mutates the in-memory terminal session.
         session!.validated = true;
 
-        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+        setTimeout(() => planningStreamManager.broadcast(sessionId, { type: "complete" }), 0);
+        const streamRes = await streamPromise;
 
         expect(streamRes.body).toContain("event: summary");
         expect(streamRes.body).toContain("event: complete");
@@ -1670,15 +1701,15 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(200);
-        expect(res.body.type).toBe("complete");
-        expect(res.body.data).toBeDefined();
+        expect(res.body.type).toBe("question");
+        expect(planningModule.getSummary(sessionId)).toBeDefined();
       });
 
       it("requires an explicit refine request before asking another question", async () => {
         const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
         const sessionId = startRes.body.sessionId;
         const answer = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
-        expect(answer.body).toMatchObject({ type: "complete" });
+        expect(answer.body).toMatchObject({ type: "question" });
 
         const refine = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { refine: true, focus: "security" } }), { "Content-Type": "application/json" });
         expect(refine.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
@@ -1734,10 +1765,8 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(checkpointRes.status).toBe(200);
-        expect(checkpointRes.body).toMatchObject({
-          type: "complete",
-          data: { title: "Malformed AI summary" },
-        });
+        expect(checkpointRes.body).toMatchObject({ type: "question" });
+        expect(planningModule.getSummary(sessionId)).toMatchObject({ title: "Malformed AI summary" });
         expect(planningModule.getSummary(sessionId)).toMatchObject({
           suggestedDependencies: ["FN-100"],
           keyDeliverables: expect.arrayContaining([
@@ -1813,7 +1842,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-one": "Make it responsive and tested" } }),
           { "Content-Type": "application/json" },
         );
-        expect(checkpointRes.body.type).toBe("complete");
+        expect(checkpointRes.body.type).toBe("question");
 
         const deepeningRes = await REQUEST(
           buildApp(),
@@ -1838,7 +1867,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-deeper": "Keyboard and touch interactions" } }),
           { "Content-Type": "application/json" },
         );
-        expect(secondCheckpointRes.body.type).toBe("complete");
+        expect(secondCheckpointRes.body.type).toBe("question");
       });
 
       it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
@@ -1892,7 +1921,7 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
           { "Content-Type": "application/json" },
         );
-        expect(interviewRes.body.type).toBe("complete");
+        expect(interviewRes.body.type).toBe("question");
 
         const deepeningRes = await REQUEST(
           buildApp(),
@@ -3705,8 +3734,8 @@ describe("Planning Mode Routes", () => {
         );
       });
 
-      it("returns 400 if session is not complete", async () => {
-        // Create a session but don't complete it
+      it("returns 400 if session has no reviewable summary", async () => {
+        // Create a session then remove its running summary to exercise the incomplete guard.
         const startRes = await REQUEST(
           buildApp(),
           "POST",
@@ -3715,6 +3744,10 @@ describe("Planning Mode Routes", () => {
           { "Content-Type": "application/json" }
         );
         const sessionId = startRes.body.sessionId;
+        const session = await planningModule.getSession(sessionId);
+        expect(session).toBeDefined();
+        // @ts-expect-error - fixture models an incomplete persisted session.
+        session!.summary = undefined;
 
         const res = await REQUEST(
           buildApp(),
@@ -3725,7 +3758,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(400);
-        expect(res.body.error).toContain("must be validated");
+        expect(res.body.error).toContain("not complete");
       });
 
       it("returns 404 for invalid session ID", async () => {
@@ -3961,7 +3994,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("complete");
+      expect(res.body.type).toBe("question");
     });
 
     /*
@@ -3998,7 +4031,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.type).toBe("complete");
+      expect(res.body.type).toBe("question");
       expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
