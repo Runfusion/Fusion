@@ -1042,7 +1042,13 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
                 </header>
                 <div className="task-chat-group-bubbles">
                   {segments.map((segment) => {
-                    const segmentKey = `${segment.kind}-${segment.startIndex}-${segment.entries.length}`;
+                    /*
+                    FNXC:TaskChatSegmentKey 2026-07-22-12:00:
+                    Segment identity is kind + startIndex only — never entries.length.
+                    Embedding the count remounted the actively streaming segment on every appended entry, collapsing an expanded thinking block mid-stream.
+                    A genuinely new segment always has a different startIndex, so identity stays correct without the volatile suffix.
+                    */
+                    const segmentKey = `${segment.kind}-${segment.startIndex}`;
                     return <TaskChatSegmentView key={segmentKey} segment={segment} defaultOpen={thinkingDefaultOpen} />;
                   })}
                 </div>
