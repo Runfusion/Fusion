@@ -255,6 +255,66 @@ export const taskPromoteParams = Type.Object({
   ),
 });
 
+export const taskArchiveParams = Type.Object({
+  id: Type.String({ description: "Task ID to archive from any live column (e.g. FN-001)." }),
+  removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before archiving, so a task still referenced as a lineage parent can be archived." })),
+});
+
+export const taskDeleteParams = Type.Object({
+  id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
+  allowResurrection: Type.Optional(Type.Boolean({ description: "When true, mark this tombstone as explicitly reusable for future recreation." })),
+  removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references before deleting." })),
+});
+
+export const taskUnarchiveParams = Type.Object({
+  id: Type.String({ description: "Task ID to unarchive (e.g. FN-001). Must be in 'archived' column." }),
+});
+
+export const taskRetryParams = Type.Object({
+  id: Type.String({ description: "Task ID to retry (e.g. FN-001)." }),
+});
+
+export const taskPauseParams = Type.Object({
+  id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+});
+
+export const taskUnpauseParams = Type.Object({
+  id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+});
+
+export const taskDuplicateParams = Type.Object({
+  id: Type.String({ description: "Source task ID to duplicate (e.g. FN-001)" }),
+});
+
+export const taskMergeParams = Type.Object({
+  task_id: Type.String({ description: "The task ID to merge into the current task." }),
+});
+
+export const taskAddDepParams = Type.Object({
+  task_id: Type.String({ description: "The ID of the task to depend on (e.g. \"KB-001\")" }),
+  confirm: Type.Optional(Type.Boolean({ description: "Set to true to confirm adding the dependency. Required because adding a dependency to an in-progress task will stop execution and discard current work." })),
+});
+
+export const STEP_STATUSES = ["pending", "in-progress", "done", "skipped"] as const;
+
+export const taskUpdateParams = Type.Object({
+  step: Type.Optional(Type.Number({ description: "Step number (0-indexed; matches the `### Step N:` numbers in PROMPT.md — Step 0 is Preflight). Omit when updating only custom_fields/dependencies." })),
+  status: Type.Optional(Type.Union(
+    STEP_STATUSES.map((s) => Type.Literal(s)),
+    { description: "New status: pending, in-progress, done, or skipped. Required when step is set." },
+  )),
+  dependencies: Type.Optional(Type.Array(Type.String(), {
+    description: "Optional task dependency array. Replaces existing dependencies. Pass ['FN-001', 'FN-002'] to set dependencies. Pass [] to clear all dependencies. Omit parameter to preserve existing dependencies.",
+  })),
+  custom_fields: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
+    description:
+      "Optional patch of workflow-defined custom field values, keyed by field id. " +
+      "Values are validated against the task's workflow field schema (type/enum membership); " +
+      "pass null for a field to clear it. Rejected writes return the offending field id and reason. " +
+      "Only fields declared by the task's workflow may be written.",
+  })),
+});
+
 export const workflowCreateParams = Type.Object({
   name: Type.String({ description: "Workflow name (required, non-empty)." }),
   description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
@@ -2820,6 +2880,250 @@ export function createTaskPromoteTool(store: TaskStore, currentTaskId: string): 
           details: {},
           isError: true,
         };
+      }
+    },
+  };
+}
+
+export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_archive",
+    label: "Archive Task",
+    description:
+      "Archive a task from any live column (move to archived). " +
+      "Archived tasks are preserved for historical reference but moved out of the main board view. " +
+      "If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed.",
+    parameters: taskArchiveParams,
+    execute: async (_id: string, params: Static<typeof taskArchiveParams>) => {
+      try {
+        const task = await store.archiveTask(params.id, {
+          removeLineageReferences: params.removeLineageReferences === true,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
+          details: { taskId: task.id, column: task.column },
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to archive task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_unarchive",
+    label: "Unarchive Task",
+    description:
+      "Unarchive an archived task (move from archived → its restore column). " +
+      "Restores to the pre-archive column when available, with active execution columns downgraded to todo.",
+    parameters: taskUnarchiveParams,
+    execute: async (_id: string, params: Static<typeof taskUnarchiveParams>) => {
+      try {
+        const task = await store.unarchiveTask(params.id);
+        return {
+          content: [{ type: "text" as const, text: `Unarchived ${task.id} → ${task.column}` }],
+          details: { taskId: task.id, column: task.column },
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unarchive task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_delete",
+    label: "Delete Task",
+    description:
+      "Soft-delete a task from active Fusion board views. " +
+      "The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. " +
+      "If the task is still referenced as a lineage parent by another task, deletion is rejected unless removeLineageReferences:true is passed.",
+    parameters: taskDeleteParams,
+    execute: async (_id: string, params: Static<typeof taskDeleteParams>) => {
+      try {
+        const task = await store.deleteTask(params.id, {
+          allowResurrection: params.allowResurrection === true,
+          removeLineageReferences: params.removeLineageReferences === true,
+          auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
+        });
+        return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskRetryTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_retry",
+    label: "Retry Task",
+    description: "Retry a failed task. Clears failure state and re-queues the task for execution.",
+    parameters: taskRetryParams,
+    execute: async (_id: string, params: Static<typeof taskRetryParams>) => {
+      try {
+        const task = await store.getTask(params.id);
+        if (task.status !== "failed" && task.status !== "stuck-killed") {
+          return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
+        }
+        await store.updateTask(params.id, { status: null, error: null } as any);
+        await store.moveTask(params.id, "todo");
+        await store.logEntry(params.id, "Retry requested via chat tool", "Task reset to todo for retry");
+        return { content: [{ type: "text" as const, text: `Retried ${params.id} → todo` }], details: { taskId: params.id, newColumn: "todo" } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskPauseTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_pause",
+    label: "Pause Task",
+    description: "Pause an active task so the executor will not pick it up on the next heartbeat.",
+    parameters: taskPauseParams,
+    execute: async (_id: string, params: Static<typeof taskPauseParams>) => {
+      try {
+        const task = await store.pauseTask(params.id, true);
+        return { content: [{ type: "text" as const, text: `Paused ${task.id}` }], details: { taskId: task.id, column: task.column } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to pause task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_unpause",
+    label: "Unpause Task",
+    description: "Resume a previously paused task so the executor can pick it up again.",
+    parameters: taskUnpauseParams,
+    execute: async (_id: string, params: Static<typeof taskUnpauseParams>) => {
+      try {
+        const task = await store.pauseTask(params.id, false);
+        return { content: [{ type: "text" as const, text: `Unpaused ${task.id}` }], details: { taskId: task.id, column: task.column } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unpause task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskDuplicateTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_duplicate",
+    label: "Duplicate Task",
+    description: "Duplicate an existing task, preserving its description, workflow, and dependencies.",
+    parameters: taskDuplicateParams,
+    execute: async (_id: string, params: Static<typeof taskDuplicateParams>) => {
+      try {
+        const task = await store.duplicateTask(params.id);
+        return { content: [{ type: "text" as const, text: `Duplicated to ${task.id}` }], details: { taskId: task.id } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to duplicate task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskMergeTool(store: TaskStore, currentTaskId: string): ToolDefinition {
+  return {
+    name: "fn_task_merge",
+    label: "Merge Task",
+    description:
+      "Merge a task into the current/parent task. The target task is closed and its work is rolled into the parent.",
+    parameters: taskMergeParams,
+    execute: async (_id: string, params: Static<typeof taskMergeParams>) => {
+      const targetId = params.task_id?.trim();
+      if (!targetId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };
+      try {
+        const result = await store.mergeTask(targetId);
+        const mergedInto = result?.task?.id ?? targetId;
+        return { content: [{ type: "text" as const, text: `Merged ${targetId} into ${mergedInto}` }], details: { targetId, mergedInto } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to merge task: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefinition {
+  return {
+    name: "fn_task_update",
+    label: "Update Step / Custom Fields / Dependencies",
+    description:
+      "Update a task step status, dependencies, or workflow custom fields without leaving chat. " +
+      "Use step+status to report progress, dependencies to rewire blockers, or custom_fields to set workflow-defined fields.",
+    parameters: taskUpdateParams,
+    execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
+      try {
+        if (params.custom_fields !== undefined) {
+          const res = await store.updateTaskCustomFields(taskId, params.custom_fields);
+          if (!res.ok) {
+            const r = res.rejection;
+            return {
+              content: [{ type: "text" as const, text: `ERROR: custom field '${r.fieldId}' rejected (${r.code}): ${r.detail}` }],
+              details: { fieldId: r.fieldId, code: r.code, detail: r.detail },
+              isError: true,
+            };
+          }
+        }
+        if (params.dependencies !== undefined) {
+          if (params.dependencies.includes(taskId)) {
+            return { content: [{ type: "text" as const, text: "ERROR: self-dependency not allowed." }], details: {}, isError: true };
+          }
+          const invalidIds: string[] = [];
+          for (const depId of params.dependencies) {
+            try { await store.getTask(depId); } catch { invalidIds.push(depId); }
+          }
+          if (invalidIds.length) {
+            return { content: [{ type: "text" as const, text: `ERROR: Unknown dependency task(s): ${invalidIds.join(", ")}` }], details: {}, isError: true };
+          }
+          await store.updateTask(taskId, { dependencies: params.dependencies });
+        }
+        if (params.step !== undefined && params.status !== undefined) {
+          const task = await store.updateStep(taskId, params.step, params.status as any);
+          return { content: [{ type: "text" as const, text: `Updated ${taskId}: step ${params.step} → ${params.status}` }], details: { taskId: task.id, step: params.step, status: params.status } };
+        }
+        if (params.custom_fields !== undefined || params.dependencies !== undefined) {
+          return { content: [{ type: "text" as const, text: "Updated." }], details: {} };
+        }
+        return { content: [{ type: "text" as const, text: "No-op: provide step+status, dependencies, or custom_fields." }], details: {} };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: ${err?.message ?? err}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefinition {
+  return {
+    name: "fn_task_add_dep",
+    label: "Add Task Dependency",
+    description:
+      "Add a dependency to the current task. Adding a dependency to an in-progress task will stop execution " +
+      "and discard current work. Confirm is required for in-progress tasks.",
+    parameters: taskAddDepParams,
+    execute: async (_id: string, params: Static<typeof taskAddDepParams>) => {
+      try {
+        const depId = params.task_id?.trim();
+        if (!depId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };
+        const task = await store.getTask(taskId);
+        if (task.column === "in-progress" && params.confirm !== true) {
+          return {
+            content: [{ type: "text" as const, text: "WARNING: adding a dependency to an in-progress task will stop execution and discard current work. Pass confirm:true to proceed." }],
+            details: { requiresConfirm: true, taskId },
+          };
+        }
+        if (depId === taskId) return { content: [{ type: "text" as const, text: "ERROR: cannot add self-dependency." }], details: {}, isError: true };
+        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] });
+        return { content: [{ type: "text" as const, text: `Added dependency ${depId} to ${taskId}` }], details: { taskId, dependency: depId } };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${err?.message ?? err}` }], details: {}, isError: true };
       }
     },
   };
