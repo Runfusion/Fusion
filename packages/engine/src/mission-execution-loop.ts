@@ -23,8 +23,9 @@ import type {
   Settings,
   Milestone,
   Mission,
+  ValidationDiagnostics,
 } from "@fusion/core";
-import { normalizeMissionAssertionType } from "@fusion/core";
+import { normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription } from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type VerificationOutcome } from "./mission-verification.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -93,10 +94,13 @@ export interface ValidationResult {
   /** Per-assertion results */
   assertions: Array<{
     assertionId: string;
+    /** Per-assertion outcome; `passed` remains for legacy judge responses. */
+    verdict: "pass" | "fail" | "blocked";
     passed: boolean;
     message?: string;
     expected?: string;
     actual?: string;
+    evidence?: Array<{ kind?: string; text?: string }>;
   }>;
   /** Summary message for overall result */
   summary: string;
@@ -794,6 +798,7 @@ export class MissionExecutionLoop extends EventEmitter {
           status: "error",
           assertions: assertions.map((a) => ({
             assertionId: a.id,
+            verdict: "fail",
             passed: false,
             message: `Validation error: ${message}`,
           })),
@@ -871,7 +876,7 @@ export class MissionExecutionLoop extends EventEmitter {
     let inconclusiveReason: string | undefined;
 
     const newAssertionResults = await Promise.all(
-      judgeResult.assertions.map(async (judged) => {
+      judgeResult.assertions.map(async (judged): Promise<ValidationResult["assertions"][number]> => {
         const type = typeById.get(judged.assertionId) ?? "static";
         if (type !== "behavioral") {
           // Static: keep judge verdict verbatim.
@@ -882,6 +887,7 @@ export class MissionExecutionLoop extends EventEmitter {
         if (!this.verificationCapability) {
           return {
             ...judged,
+            verdict: "fail",
             passed: false,
             message: "Behavioral assertion defaults to fail: no verification evidence (advisory judge verdict is not authoritative).",
             expected: judged.expected ?? "Behavior confirmed by a verification run",
@@ -904,27 +910,36 @@ export class MissionExecutionLoop extends EventEmitter {
           outcome = { verdict: "inconclusive", assertionId: judged.assertionId, reason: `verification error: ${message}` };
         }
 
+        // FNXC:MissionValidationDiagnostics 2026-07-23-12:30: Behavioral verification is an authoritative execution path, so its reason/detail must join judge evidence before the shared normalizer bounds and redacts it.
+        const behavioralEvidence = [{
+          kind: "behavioral-verification",
+          text: outcome.detail ? `${outcome.reason}\n${outcome.detail}` : outcome.reason,
+        }];
         if (outcome.verdict === "pass") {
-          return { ...judged, passed: true, message: outcome.reason };
+          return { ...judged, verdict: "pass", passed: true, message: outcome.reason, evidence: [...(judged.evidence ?? []), ...behavioralEvidence] };
         }
         if (outcome.verdict === "inconclusive") {
           sawInconclusive = true;
           inconclusiveReason = inconclusiveReason ?? outcome.reason;
           return {
             ...judged,
+            verdict: "blocked",
             passed: false,
             message: `Behavioral verification inconclusive: ${outcome.reason}`,
             expected: judged.expected ?? "Behavior confirmed by a verification run",
             actual: outcome.detail ?? "Verification could not conclude",
+            evidence: [...(judged.evidence ?? []), ...behavioralEvidence],
           };
         }
         // fail
         return {
           ...judged,
+          verdict: "fail",
           passed: false,
           message: outcome.reason,
           expected: judged.expected ?? "Behavior confirmed by a verification run",
           actual: outcome.detail ?? judged.actual ?? "Behavior not confirmed",
+          evidence: [...(judged.evidence ?? []), ...behavioralEvidence],
         };
       }),
     );
@@ -1175,14 +1190,8 @@ export class MissionExecutionLoop extends EventEmitter {
   private extractAssertionResults(
     parsed: Record<string, unknown>,
     assertions: MissionContractAssertion[],
-  ): Array<{ assertionId: string; passed: boolean; message?: string; expected?: string; actual?: string }> {
-    const results: Array<{
-      assertionId: string;
-      passed: boolean;
-      message?: string;
-      expected?: string;
-      actual?: string;
-    }> = [];
+  ): ValidationResult["assertions"] {
+    const results: ValidationResult["assertions"] = [];
 
     // If assertions array is provided in the response, use it
     if (Array.isArray(parsed.assertions)) {
@@ -1196,14 +1205,31 @@ export class MissionExecutionLoop extends EventEmitter {
                 ? assertionItem.id
                 : undefined;
 
-          const passed = typeof assertionItem.passed === "boolean" ? assertionItem.passed : false;
+          // FNXC:MissionValidationDiagnostics 2026-07-23-13:15: A validation
+          // run may fail while an individual assertion is blocked. Preserve that
+          // identity instead of collapsing every non-pass into a failed assertion.
+          const verdict = assertionItem.verdict === "pass" || assertionItem.verdict === "fail" || assertionItem.verdict === "blocked"
+            ? assertionItem.verdict
+            : assertionItem.passed === true ? "pass" : "fail";
+          const passed = verdict === "pass";
 
+          const evidence = Array.isArray(assertionItem.evidence)
+            ? assertionItem.evidence.flatMap((entry) => {
+              if (typeof entry !== "object" || entry === null) return [];
+              const candidate = entry as Record<string, unknown>;
+              const kind = typeof candidate.kind === "string" ? candidate.kind : undefined;
+              const text = typeof candidate.text === "string" ? candidate.text : undefined;
+              return kind || text ? [{ ...(kind ? { kind } : {}), ...(text ? { text } : {}) }] : [];
+            })
+            : undefined;
           results.push({
             assertionId: assertionId || "unknown",
+            verdict,
             passed,
             message: typeof assertionItem.message === "string" ? assertionItem.message : undefined,
             expected: typeof assertionItem.expected === "string" ? assertionItem.expected : undefined,
             actual: typeof assertionItem.actual === "string" ? assertionItem.actual : undefined,
+            ...(evidence ? { evidence } : {}),
           });
         }
       }
@@ -1220,6 +1246,7 @@ export class MissionExecutionLoop extends EventEmitter {
         if (seen.has(assertion.id)) continue;
         results.push({
           assertionId: assertion.id,
+          verdict: overallPassed ? "pass" : "fail",
           passed: overallPassed,
           message: overallPassed ? "Passed" : "Failed",
         });
@@ -1240,6 +1267,7 @@ export class MissionExecutionLoop extends EventEmitter {
       status: "error",
       assertions: assertions.map((a) => ({
         assertionId: a.id,
+        verdict: "fail",
         passed: false,
         message: errorMessage,
       })),
@@ -1278,10 +1306,12 @@ Respond with a JSON object in this format:
   "assertions": [
     {
       "assertionId": "CA-...",
+      "verdict": "pass|fail|blocked",
       "passed": true|false,
-      "message": "Explanation if failed",
+      "message": "Explanation for this verdict",
       "expected": "What was expected",
-      "actual": "What was observed"
+      "actual": "What was observed",
+      "evidence": [{ "kind": "file|command|test-output|other", "text": "Concise file, command, or test-output reference used for this verdict" }]
     }
   ],
   "summary": "Overall summary of validation",
@@ -1323,6 +1353,7 @@ Evaluation guidance:
 - "blocked" means you cannot evaluate due to missing/insufficient evidence or external constraints.
 - Partial satisfaction must be marked as failed with clear expected vs actual details.
 - Milestone acceptance criteria are validator-executed requirements, not informational context.
+- For every assertion, include the concrete evidence you considered. Evidence must identify the relevant file, command, or concise test output; do not include secrets or full unbounded command output.
 
 Response format: Return ONLY a JSON object (no additional text) with this structure:
 {
@@ -1333,7 +1364,8 @@ Response format: Return ONLY a JSON object (no additional text) with this struct
       "passed": true|false,
       "message": "Explanation of your evaluation",
       "expected": "What the assertion required",
-      "actual": "What you observed in the implementation"
+      "actual": "What you observed in the implementation",
+      "evidence": [{ "kind": "file|command|test-output|other", "text": "Concise file, command, or test-output reference used for this verdict" }]
     }
   ],
   "summary": "A concise summary of your overall evaluation",
@@ -1469,16 +1501,27 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
 
       loopLog.log(`Feature ${featureId} failed validation with ${failures.length} failures`);
 
-      // R6 — build an observed-vs-expected reason so the remediation agent sees
-      // what behavior was wrong, not just which assertion ids failed.
-      const failureReason = this.buildFailureReason(failures, result.summary);
-
-      // R16 — durable observability: a verification/validation failure is a
-      // persisted mission event, not just a log line.
-      await this.logFeatureMissionEvent(featureId, "error", "validation_failed", `Validation failed for feature ${featureId}: ${result.summary}`, {
-        runId: runId ?? null,
+      // FNXC:MissionValidationDiagnostics 2026-07-23-12:00: The normalized verdict—not an LLM summary—drives every persisted failure surface.
+      const diagnostics: ValidationDiagnostics = normalizeValidationDiagnostics({
+        runId: runId ?? "unknown",
+        sourceFeatureId: featureId,
+        outcome: "fail",
+        projectRoot: this.rootDir,
+        assertions: result.assertions.map((assertion) => ({
+          assertionId: assertion.assertionId,
+          verdict: assertion.verdict,
+          passed: assertion.passed,
+          message: assertion.message,
+          expected: assertion.expected,
+          actual: assertion.actual,
+          evidence: assertion.evidence,
+        })),
+      });
+      const failureReason = this.buildFailureReason(failures, "");
+      await this.logFeatureMissionEvent(featureId, "error", "validation_failed", renderValidationFailureDescription(diagnostics), {
+        validationDiagnostics: diagnostics,
+        runId: diagnostics.runId,
         failedAssertionIds: failures.map((f) => f.assertionId),
-        reason: failureReason,
         outcome: "fail",
       });
 
@@ -1489,11 +1532,23 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           runId || "unknown",
           failures.map((f) => f.assertionId),
           failureReason,
+          undefined,
+          diagnostics,
         );
         loopLog.log(`Created fix feature ${fixFeature.id} for ${featureId}`);
 
-        // Auto-triage the fix feature so the retry loop can continue
-        try {
+        // Auto-triage only a newly untriaged fix. createGeneratedFixFeature is
+        // deliberately idempotent and can return an existing in-progress fix;
+        // its durable task link is the canonical proof that triage already won.
+        // FNXC:MissionValidationDiagnostics 2026-07-23-12:35: Duplicate validator triggers must silently reuse a fix feature with a linked board task instead of surfacing a false triage failure.
+        const linkedFixTask = fixFeature.taskId ? await this.taskStore.getTask(fixFeature.taskId).catch(() => undefined) : undefined;
+        // FNXC:MissionValidationDiagnostics 2026-07-23-13:15: A stale task ID
+        // is not proof that remediation is live. Only an open, non-deleted task
+        // makes duplicate triage safe to suppress; otherwise persist an action.
+        const hasLiveFixTask = Boolean(linkedFixTask && !linkedFixTask.deletedAt && linkedFixTask.column !== "done" && linkedFixTask.column !== "archived" && linkedFixTask.status !== "failed");
+        if (hasLiveFixTask) {
+          loopLog.log(`Fix feature ${fixFeature.id} already has canonical task ${fixFeature.taskId}; skipping duplicate triage`);
+        } else try {
           await this.missionStore.triageFeature(fixFeature.id);
           loopLog.log(`Auto-triaged fix feature ${fixFeature.id}`);
         } catch (triageErr) {
@@ -1503,10 +1558,10 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           // logged. The branch-group-collision learning: silent triage stalls
           // are invisible mission deadlocks. The Fix Feature was created and can
           // be triaged manually, so we continue, but the failure is persisted.
-          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_triage_failed", `Auto-triage of fix feature ${fixFeature.id} failed: ${triageMessage}`, {
+          await this.logFeatureMissionEvent(featureId, "warning", "fix_feature_triage_needs_attention", `Fix feature ${fixFeature.id} was created but needs operator triage. Inspect the feature and retry triage.`, {
             runId: runId ?? null,
             fixFeatureId: fixFeature.id,
-            error: triageMessage,
+            state: "needs-triage",
           });
         }
 
@@ -1529,9 +1584,9 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         } else {
           loopLog.error(`Error creating fix feature for ${featureId}:`, message);
           // R16 — a swallowed Fix-Feature creation error is durably recorded.
-          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_failed", `Failed to create fix feature for ${featureId}: ${message}`, {
+          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_needs_attention", `Validation remediation could not be created for feature ${featureId}. Inspect the validator run and retry validation or triage.`, {
             runId: runId ?? null,
-            error: message,
+            state: "remediation-creation-failed",
           });
         }
       }

@@ -14,7 +14,7 @@
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
 import { fromJson, toJson, toJsonNullable } from "./db.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
 import type { Goal, GoalStatus } from "./goal-types.js";
 import type {
   Mission,
@@ -51,6 +51,7 @@ import type {
   MilestoneValidationState,
   ValidatorRunStatus,
   FeatureLoopState,
+  ValidationDiagnostics,
 } from "./mission-types.js";
 import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from "./duplicate-guard.js";
 import { resolveEntryPointBranchAssignment } from "./branch-assignment.js";
@@ -2978,6 +2979,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     failedAssertionIds: string[],
     failureReason?: string,
     title?: string,
+    diagnostics?: ValidationDiagnostics,
   ): MissionFeature {
     const sourceFeature = this.getFeature(sourceFeatureId);
     if (!sourceFeature) {
@@ -3039,9 +3041,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     // R6 — surface the observed-vs-expected reason to the remediation agent.
     const reasonText = failureReason?.trim();
-    const fixDescription = reasonText
-      ? `${sourceFeature.description ? `${sourceFeature.description}\n\n` : ""}## Verification failure detail\n${reasonText}`
-      : sourceFeature.description;
+    // FNXC:MissionValidationDiagnostics 2026-07-23-12:00: Generated remediation carries the same normalized cause as its event so operators and executors never need to reconstruct a validator failure.
+    const causeText = diagnostics ? renderValidationCause(diagnostics) : undefined;
+    const fixDescription = [sourceFeature.description, causeText ?? (reasonText ? `## Verification failure detail\n${reasonText}` : undefined)].filter(Boolean).join("\n\n") || undefined;
 
     const fixFeature: MissionFeature = {
       id: fixFeatureId,

@@ -1694,6 +1694,50 @@ describe("MissionExecutionLoop", () => {
       expectNoValidationBoardTaskMutation(taskStore);
     });
 
+    it("preserves judge-provided evidence references for normalized diagnostics", async () => {
+      const assertions = makeAssertions(1);
+      mockSessionHolder.session.state.messages = [{
+        role: "assistant",
+        content: JSON.stringify({
+          status: "fail",
+          assertions: [{
+            assertionId: "CA-1",
+            passed: false,
+            evidence: [{ kind: "test-output", text: "pnpm test: CA-1 failed" }],
+          }],
+          summary: "misleading summary",
+        }),
+      }];
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+
+      await expect((loop as any).parseValidationResult(mockSessionHolder.session, assertions)).resolves.toMatchObject({
+        assertions: [{ evidence: [{ kind: "test-output", text: "pnpm test: CA-1 failed" }] }],
+      });
+    });
+
+    it("preserves blocked assertion verdicts in mixed failed results", async () => {
+      const assertions = makeAssertions(2);
+      mockSessionHolder.session.state.messages = [{
+        role: "assistant",
+        content: JSON.stringify({
+          status: "fail",
+          assertions: [
+            { assertionId: "CA-1", verdict: "fail", passed: false, message: "Observed failure" },
+            { assertionId: "CA-2", verdict: "blocked", passed: false, message: "Service unavailable" },
+          ],
+          summary: "misleading fully satisfied summary",
+        }),
+      }];
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+
+      await expect((loop as any).parseValidationResult(mockSessionHolder.session, assertions)).resolves.toMatchObject({
+        assertions: [
+          { assertionId: "CA-1", verdict: "fail", passed: false },
+          { assertionId: "CA-2", verdict: "blocked", passed: false },
+        ],
+      });
+    });
+
     it("should handle malformed JSON gracefully", async () => {
       const assertions = makeAssertions(1);
       // Malformed JSON with trailing comma

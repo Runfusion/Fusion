@@ -5,7 +5,10 @@ import type {
   MissionEvent as CoreMissionEvent,
   MissionEventType as CoreMissionEventType,
   MissionHealth as CoreMissionHealth,
+  ValidationDiagnostics as CoreValidationDiagnostics,
 } from "@fusion/core";
+
+export type ValidationDiagnostics = CoreValidationDiagnostics;
 
 export type MissionStatus = "planning" | "active" | "blocked" | "complete" | "archived";
 export type MilestoneStatus = "planning" | "active" | "blocked" | "complete";

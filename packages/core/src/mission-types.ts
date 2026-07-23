@@ -10,6 +10,7 @@
  */
 
 import type { Goal } from "./goal-types.js";
+import { redactSecrets } from "./redact-secrets.js";
 
 // ── Status Enums ─────────────────────────────────────────────────────
 
@@ -53,6 +54,141 @@ export const FEATURE_LOOP_TRANSITIONS: Readonly<Record<FeatureLoopState, readonl
 /** Status values for a validator run */
 export const VALIDATOR_RUN_STATUSES = ["running", "passed", "failed", "blocked", "error"] as const;
 export type ValidatorRunStatus = (typeof VALIDATOR_RUN_STATUSES)[number];
+
+/**
+ * FNXC:MissionValidationDiagnostics 2026-07-23-12:00:
+ * Validator failures cross engine, both stores, and dashboard activity. This
+ * normalized contract is the only persisted diagnostic source so prose cannot
+ * drift from the verdict and unbounded/secret-bearing evidence cannot escape.
+ */
+export const VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION = 16;
+export const VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES = 4096;
+
+export type ValidationAssertionVerdict = "pass" | "fail" | "blocked";
+
+export interface ValidationEvidenceReference {
+  kind?: string;
+  text?: string;
+  /** True when text was bounded before persistence. */
+  truncated?: boolean;
+}
+
+export interface ValidationAssertionDiagnostic {
+  assertionId: string;
+  verdict: ValidationAssertionVerdict;
+  message?: string;
+  expected?: string;
+  actual?: string;
+  evidence: ValidationEvidenceReference[];
+  omittedEvidenceCount?: number;
+}
+
+export interface ValidationDiagnostics {
+  runId: string;
+  sourceFeatureId: string;
+  outcome: "pass" | "fail" | "blocked" | "error" | "inconclusive";
+  assertions: ValidationAssertionDiagnostic[];
+  nextAction: string;
+}
+
+export interface ValidationDiagnosticsInput {
+  runId: string;
+  sourceFeatureId: string;
+  outcome: ValidationDiagnostics["outcome"];
+  assertions: Array<{
+    assertionId: string;
+    verdict?: ValidationAssertionVerdict;
+    passed?: boolean;
+    message?: unknown;
+    expected?: unknown;
+    actual?: unknown;
+    evidence?: Array<{ kind?: unknown; text?: unknown }>;
+  }>;
+  projectRoot?: string;
+}
+
+function boundValidationText(value: unknown, projectRoot?: string): { value?: string; truncated?: boolean } {
+  if (typeof value !== "string") return {};
+  let text = redactSecrets(value);
+  // Paths from the project are useful evidence; disposable/external paths are not.
+  text = text.replace(/(?:[A-Za-z]:\\|\/)[^\s'"`]+/g, (path) => {
+    const normalizedRoot = projectRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normalizedPath = path.replace(/\\/g, "/");
+    return normalizedRoot && (normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`))
+      ? normalizedPath.slice(normalizedRoot.length).replace(/^\//, "") || "."
+      : "[external path omitted]";
+  });
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES) return { value: text };
+  const marker = "… [truncated]";
+  const limit = VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES - Buffer.byteLength(marker, "utf8");
+  let end = 0;
+  let used = 0;
+  for (const character of text) {
+    const size = Buffer.byteLength(character, "utf8");
+    if (used + size > limit) break;
+    used += size;
+    end += character.length;
+  }
+  return { value: `${text.slice(0, end)}${marker}`, truncated: true };
+}
+
+/** Normalize and redact validation evidence before any mission artifact persists it. */
+export function normalizeValidationDiagnostics(input: ValidationDiagnosticsInput): ValidationDiagnostics {
+  return {
+    runId: input.runId,
+    sourceFeatureId: input.sourceFeatureId,
+    outcome: input.outcome,
+    nextAction: input.outcome === "fail" ? "Review the failed assertions and triage the generated fix work." : "Review the validator run and retry or triage the feature when ready.",
+    assertions: input.assertions.map((assertion) => {
+      const evidence = (assertion.evidence ?? []).slice(0, VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION).map((item) => {
+        const bounded = boundValidationText(item.text, input.projectRoot);
+        return { ...(typeof item.kind === "string" ? { kind: item.kind } : {}), ...(bounded.value !== undefined ? { text: bounded.value } : {}), ...(bounded.truncated ? { truncated: true } : {}) };
+      });
+      const message = boundValidationText(assertion.message, input.projectRoot);
+      const expected = boundValidationText(assertion.expected, input.projectRoot);
+      const actual = boundValidationText(assertion.actual, input.projectRoot);
+      return {
+        assertionId: assertion.assertionId,
+        verdict: assertion.verdict ?? (assertion.passed ? "pass" : "fail"),
+        ...(message.value !== undefined ? { message: message.value } : {}),
+        ...(expected.value !== undefined ? { expected: expected.value } : {}),
+        ...(actual.value !== undefined ? { actual: actual.value } : {}),
+        evidence,
+        ...((assertion.evidence?.length ?? 0) > evidence.length ? { omittedEvidenceCount: (assertion.evidence?.length ?? 0) - evidence.length } : {}),
+      };
+    }),
+  };
+}
+
+/** Render failure prose from normalized data only; never from non-authoritative judge summaries. */
+export function renderValidationFailureDescription(diagnostics: ValidationDiagnostics): string {
+  const failed = diagnostics.assertions.filter((assertion) => assertion.verdict === "fail");
+  const blocked = diagnostics.assertions.filter((assertion) => assertion.verdict === "blocked");
+  const failedText = `${failed.length} assertion${failed.length === 1 ? "" : "s"} failed (${failed.map((assertion) => assertion.assertionId).join(", ") || "no assertion identity"})`;
+  const blockedText = blocked.length > 0
+    ? `; ${blocked.length} assertion${blocked.length === 1 ? " is" : "s are"} blocked (${blocked.map((assertion) => assertion.assertionId).join(", ")})`
+    : "";
+  return `Validation failed for feature ${diagnostics.sourceFeatureId}: ${failedText}${blockedText}. ${diagnostics.nextAction}`;
+}
+
+/** Stable remediation context used by both store implementations and their task descriptions. */
+export function renderValidationCause(diagnostics: ValidationDiagnostics): string {
+  const nonPassing = diagnostics.assertions.filter((assertion) => assertion.verdict !== "pass");
+  const failed = nonPassing.filter((assertion) => assertion.verdict === "fail");
+  const blocked = nonPassing.filter((assertion) => assertion.verdict === "blocked");
+  const lines = [
+    "## Validation cause",
+    `Source feature: ${diagnostics.sourceFeatureId}`,
+    `Validator run: ${diagnostics.runId}`,
+    `Failed assertions: ${failed.map((assertion) => assertion.assertionId).join(", ") || "none recorded"}`,
+    ...(blocked.length > 0 ? [`Blocked assertions: ${blocked.map((assertion) => assertion.assertionId).join(", ")}`] : []),
+  ];
+  for (const assertion of nonPassing) {
+    lines.push(`### ${assertion.assertionId} (${assertion.verdict})`, ...(assertion.expected ? [`Expected: ${assertion.expected}`] : []), ...(assertion.actual ? [`Observed: ${assertion.actual}`] : []), ...(assertion.message ? [`Details: ${assertion.message}`] : []), ...assertion.evidence.map((evidence) => `Evidence: ${evidence.text ?? evidence.kind ?? "recorded"}${evidence.truncated ? " (truncated)" : ""}`), ...(assertion.omittedEvidenceCount ? [`Additional evidence omitted: ${assertion.omittedEvidenceCount}`] : []));
+  }
+  return lines.join("\n");
+}
 
 /** Interview state for AI-assisted specification */
 export const INTERVIEW_STATES = ["not_started", "in_progress", "completed", "needs_update"] as const;

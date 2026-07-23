@@ -657,6 +657,23 @@ interface MissionAssertionFailureRecord {
 
 **Full state snapshots:** `MissionFeatureLoopSnapshot` captures complete loop state including all validator runs and lineage chains for post-mortem analysis.
 
+### Validation failure diagnostics
+
+A `validation_failed` Mission activity event includes `metadata.validationDiagnostics`, the typed source of truth for failure reporting. It contains the validator `runId`, `sourceFeatureId`, overall outcome, next action, and ordered per-assertion verdicts with expected, observed, message, and evidence references. The visible event text is derived from this object—not an AI summary—so a failed event always names failed assertion IDs and labels any separately blocked assertion IDs as blocked (never as failed).
+
+Evidence is secret-redacted before persistence. Each assertion retains at most 16 evidence entries and every message, expected, observed, and evidence text field is capped at 4,096 UTF-8 bytes. Bounded fields carry `truncated: true`, excess evidence is reported as `omittedEvidenceCount`, project paths become project-relative, and external or disposable absolute paths become `[external path omitted]`.
+
+Generated fix features and their triaged tasks include the same **Validation cause** section with source feature, validator run, failed assertion IDs, bounded observations, and evidence. SQLite `MissionStore` and PostgreSQL `AsyncMissionStore` use the shared renderer, so a retry does not produce backend-specific causes or duplicate sections. A fix that is already linked to a canonical task is an idempotent race; otherwise Mission activity tells the operator to inspect and retry triage rather than exposing internal exception/loop-state prose.
+
+The loop state is internal scheduling context, not an operator diagnosis. Its public meanings and actions are:
+
+| Public state | Meaning | Operator action |
+|---|---|---|
+| validating | A validator run is evaluating the landed implementation. | Inspect the run only if it remains active beyond the stale-run window. |
+| needs_fix | A validator found a remediable assertion failure. | Review the event’s Validation diagnostics and triage the generated Fix feature/task. |
+| blocked | Validation could not obtain sufficient proof, or retry budget is exhausted. | Resolve the stated external constraint or root cause, then retry/triage the feature. |
+| implementing | A task is carrying out the feature or its generated remediation. | Follow the linked task; duplicate validator triggers with a canonical task are ignored. |
+
 ### Operator Troubleshooting
 
 | Symptom | Diagnosis | Resolution |

@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
 import type {
   Mission,
   Milestone,
@@ -39,6 +39,7 @@ import type {
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
   FeatureLoopState,
+  ValidationDiagnostics,
 } from "./mission-types.js";
 import type { Goal } from "./goal-types.js";
 import {
@@ -1201,12 +1202,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     failedAssertionIds: string[],
     failureReason?: string,
     title?: string,
+    diagnostics?: ValidationDiagnostics,
   ): Promise<MissionFeature> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
     if (run.featureId !== sourceFeatureId) throw new Error(`Validator run ${runId} belongs to feature ${run.featureId}, expected ${sourceFeatureId}`);
     const now = new Date().toISOString();
     const reasonText = failureReason?.trim();
+    // FNXC:MissionValidationDiagnostics 2026-07-23-12:00: PostgreSQL remediation uses the identical shared cause renderer as SQLite to prevent backend-specific operator diagnostics.
+    const causeText = diagnostics ? renderValidationCause(diagnostics) : undefined;
     /*
     FNXC:MissionFixIdempotency 2026-07-14-18:45:
     Generated remediation is one source/run operation. Lock the source feature, re-check lineage/open fixes under that lock, and increment the retry counter in the same transaction so concurrent validator workers cannot create duplicates or consume two attempts.
@@ -1244,7 +1248,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         id: this.generateId("F"),
         sliceId: source.sliceId,
         title: title ?? `Fix: ${source.title}`,
-        description: reasonText ? `${source.description ? `${source.description}\n\n` : ""}## Verification failure detail\n${reasonText}` : source.description,
+        description: [source.description, causeText ?? (reasonText ? `## Verification failure detail\n${reasonText}` : undefined)].filter(Boolean).join("\n\n") || undefined,
         acceptanceCriteria: source.acceptanceCriteria,
         status: "defined",
         createdAt: now,

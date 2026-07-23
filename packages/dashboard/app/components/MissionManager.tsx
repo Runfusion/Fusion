@@ -55,6 +55,7 @@ import type {
   MilestoneValidationTelemetry,
   MissionFeatureLoopSnapshot,
   MissionValidatorRun,
+  ValidationDiagnostics,
 } from "./mission-types";
 import {
   fetchMissions,
@@ -543,6 +544,46 @@ function matchesEventFilter(
     default:
       return true;
   }
+}
+
+function getValidationDiagnostics(metadata: Record<string, unknown> | null): ValidationDiagnostics | undefined {
+  const candidate = metadata?.validationDiagnostics;
+  if (!candidate || typeof candidate !== "object") return undefined;
+  const diagnostics = candidate as Partial<ValidationDiagnostics>;
+  if (typeof diagnostics.runId !== "string" || typeof diagnostics.sourceFeatureId !== "string" || !Array.isArray(diagnostics.assertions)) {
+    return undefined;
+  }
+
+  // FNXC:MissionValidationDiagnostics 2026-07-23-13:15: Mission events are
+  // durable and can predate this contract. Normalize partial JSON at the UI
+  // boundary so malformed legacy metadata cannot crash activity on any viewport.
+  return {
+    runId: diagnostics.runId,
+    sourceFeatureId: diagnostics.sourceFeatureId,
+    outcome: diagnostics.outcome === "pass" || diagnostics.outcome === "fail" || diagnostics.outcome === "blocked" || diagnostics.outcome === "error" || diagnostics.outcome === "inconclusive" ? diagnostics.outcome : "error",
+    nextAction: typeof diagnostics.nextAction === "string" ? diagnostics.nextAction : "Review the validator run before retrying or triaging the feature.",
+    assertions: diagnostics.assertions.map((value, index) => {
+      const assertion = value && typeof value === "object" ? value as Partial<ValidationDiagnostics["assertions"][number]> : {};
+      const evidence = Array.isArray(assertion.evidence) ? assertion.evidence.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const reference = item as { kind?: unknown; text?: unknown; truncated?: unknown };
+        return [{
+          ...(typeof reference.kind === "string" ? { kind: reference.kind } : {}),
+          ...(typeof reference.text === "string" ? { text: reference.text } : {}),
+          ...(reference.truncated === true ? { truncated: true } : {}),
+        }];
+      }) : [];
+      return {
+        assertionId: typeof assertion.assertionId === "string" ? assertion.assertionId : `Assertion ${index + 1}`,
+        verdict: assertion.verdict === "pass" || assertion.verdict === "fail" || assertion.verdict === "blocked" ? assertion.verdict : "blocked",
+        ...(typeof assertion.message === "string" ? { message: assertion.message } : {}),
+        ...(typeof assertion.expected === "string" ? { expected: assertion.expected } : {}),
+        ...(typeof assertion.actual === "string" ? { actual: assertion.actual } : {}),
+        evidence,
+        ...(typeof assertion.omittedEvidenceCount === "number" && assertion.omittedEvidenceCount > 0 ? { omittedEvidenceCount: assertion.omittedEvidenceCount } : {}),
+      };
+    }),
+  };
 }
 
 function getEventTypeClassName(eventType: MissionEventType): string {
@@ -4260,6 +4301,21 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                             <span className="mission-event__timestamp">
                               {new Date(event.timestamp).toLocaleString()}
                             </span>
+                            {(() => {
+                              const diagnostics = getValidationDiagnostics(event.metadata);
+                              if (!diagnostics) return null;
+                              return <section className="mission-event__diagnostics" aria-label={t("missions.validationDiagnostics", "Validation diagnostics")}>
+                                <strong>{t("missions.validatorRun", "Validator run")}: {diagnostics.runId}</strong>
+                                <span>{t("missions.nextAction", "Next action")}: {diagnostics.nextAction}</span>
+                                {diagnostics.assertions.map((assertion) => <div className="mission-event__diagnostic" key={assertion.assertionId}>
+                                  <strong>{assertion.assertionId}: {assertion.verdict}</strong>
+                                  {assertion.expected && <span>{t("missions.expected", "Expected")}: {assertion.expected}</span>}
+                                  {assertion.actual && <span>{t("missions.observed", "Observed")}: {assertion.actual}</span>}
+                                  {assertion.evidence.map((evidence, index) => <span key={index}>{t("missions.evidence", "Evidence")}: {evidence.text ?? evidence.kind ?? t("missions.recorded", "recorded")}{evidence.truncated ? ` (${t("missions.truncated", "truncated")})` : ""}</span>)}
+                                  {assertion.omittedEvidenceCount ? <span>{t("missions.evidenceOmitted", "Additional evidence omitted")}: {assertion.omittedEvidenceCount}</span> : null}
+                                </div>)}
+                              </section>;
+                            })()}
                             {hasMetadata && (
                               <div className="mission-event__metadata">
                                 <button
