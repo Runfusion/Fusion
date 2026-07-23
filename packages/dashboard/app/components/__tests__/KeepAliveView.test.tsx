@@ -55,7 +55,8 @@ describe("KeepAliveView", () => {
     // Out-of-flow while hidden so the invisible box consumes no layout space beside the active view.
     expect(hiddenRule).toContain("position: absolute");
     expect(hiddenRule).toContain("inset: 0");
-    expect(hiddenRule).not.toContain("display: none");
-    expect(css).not.toContain("display: none");
+    expect(hiddenRule).not.toMatch(/\bdisplay\s*:\s*none\b/);
+    // Strip comments so prose like "(never display:none)" doesn't trip the declaration check.
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/\bdisplay\s*:\s*none\b/);
   });
 });

@@ -217,7 +217,7 @@ sequenceDiagram
 - **Goal:** Cheap UI state survives the unmount round-trip for the two remaining frequently-used heavy views without keeping them mounted.
 - **Requirements:** R12
 - **Dependencies:** none (parallel to U4–U7)
-- **Files:** `packages/dashboard/app/components/CommandCenter.tsx` (or its state hooks), `packages/dashboard/app/components/DevServerView.tsx`, a small persistence helper if none fits (check for an existing localStorage-backed hook first per the reuse rule), sibling tests
+- **Files:** `packages/dashboard/app/components/command-center/CommandCenter.tsx` (or its state hooks), `packages/dashboard/app/components/DevServerView.tsx`, a small persistence helper if none fits (check for an existing localStorage-backed hook first per the reuse rule), sibling tests
 - **Approach:** Lift `activeTab` + date range (CommandCenter) and selected script/task + command input (DevServerView) into persisted state (module-level ref or localStorage-backed hook, following the `useBoardScrollRestore` externalize-don't-keep-mounted approach and the planning-description `getPlanningDescription` localStorage precedent). Log pagination/scroll may use the boardScrollSnapshot-style ref pattern if cheap; otherwise defer.
 - **Test scenarios:**
   - CommandCenter: set sub-tab + range, unmount, remount — both restored; a fresh project/session gets defaults.
