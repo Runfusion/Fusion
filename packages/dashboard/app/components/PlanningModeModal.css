@@ -2646,6 +2646,31 @@ mobile and desktop offer the same View task / Return to sessions choices.
   }
 }
 
+/*
+FNXC:PlanningModeMobile 2026-07-23-12:00:
+Plan selection actions must be visible before document scrolling in phone portrait and width-independent short landscape. Keep this scoped to the review pane: its Markdown scroll sibling may shrink, but the existing action rail remains a non-shrinking, safe-area-padded footer in both embedded and dialog hosts.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .planning-plan-review,
+  .planning-plan-review > .planning-plan-pane {
+    min-height: 0;
+  }
+
+  .planning-plan-review > .planning-plan-pane {
+    flex: 1 1 0;
+  }
+
+  .planning-plan-pane > .planning-plan-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .planning-plan-pane > .planning-plan-actions {
+    flex: 0 0 auto;
+  }
+}
+
 /* === Planning & Breakdown Modal — Inline Style Replacements === */
 
 /* Icon color utilities */

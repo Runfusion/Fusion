@@ -110,13 +110,16 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     await page.close();
   }, 30_000);
 
-  async function verifyResponsiveWorkspace(viewport: { width: number; height: number }, mobile: boolean): Promise<void> {
+  async function verifyResponsiveWorkspace(viewport: { width: number; height: number }, mobile: boolean, presentation: "embedded" | "modal" = "embedded"): Promise<void> {
     const page = await browser.newPage({ viewport });
-    await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review&reset=1`);
+    await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review&presentation=${presentation}&reset=1`);
     if (mobile) await page.getByRole("tab", { name: "Plan preview" }).click();
     await expectVisible(page.locator("[data-testid='planning-plan-markdown'] h1"));
     if (!mobile) await expectVisible(page.getByText("Which user outcome matters most?"));
     await expectVisible(page.getByRole("button", { name: "Proceed with plan" }));
+    if (process.env.FUSION_CAPTURE_DIR && ((viewport.width === 390 && viewport.height === 844) || (viewport.width === 844 && viewport.height === 390))) {
+      await page.screenshot({ path: `${process.env.FUSION_CAPTURE_DIR}/planning-actions-${presentation}-${viewport.width}x${viewport.height}.png` });
+    }
 
     const layout = await page.evaluate(() => {
       const workspace = document.querySelector<HTMLElement>("[data-testid='planning-workspace']")!;
@@ -149,6 +152,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
           && Math.abs(actionsRect.bottom - questionActionsRect.bottom) <= 1,
         actionTopDelta: Math.round(Math.abs(actionsRect.top - questionActionsRect.top)),
         actionBottomDelta: Math.round(Math.abs(actionsRect.bottom - questionActionsRect.bottom)),
+        actionsInsideViewport: actionsRect.top >= 0 && actionsRect.bottom <= window.innerHeight,
+        refineVisible: [...actions.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Refine" && button.getBoundingClientRect().width > 0 && button.getBoundingClientRect().height > 0),
+        proceedVisible: [...actions.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Proceed with plan" && button.getBoundingClientRect().width > 0 && button.getBoundingClientRect().height > 0),
       };
     });
 
@@ -168,12 +174,22 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       desktopActionRowsAligned: mobile ? false : true,
       actionTopDelta: mobile ? expect.any(Number) : 0,
       actionBottomDelta: mobile ? expect.any(Number) : 0,
+      actionsInsideViewport: true,
+      refineVisible: true,
+      proceedVisible: true,
     });
     await page.close();
   }
 
   it("keeps the Markdown plan right of the question on desktop", () => verifyResponsiveWorkspace({ width: 1440, height: 900 }, false), 30_000);
   it("keeps the Markdown plan reachable through the mobile workspace tab", () => verifyResponsiveWorkspace({ width: 390, height: 568 }, true), 30_000);
+
+  it("keeps plan selection actions visible before scroll in portrait and short landscape across hosts", async () => {
+    for (const presentation of ["embedded", "modal"] as const) {
+      await verifyResponsiveWorkspace({ width: 390, height: 844 }, true, presentation);
+      await verifyResponsiveWorkspace({ width: 844, height: 390 }, false, presentation);
+    }
+  }, 30_000);
 
   async function selectPlanQuote(page: Page): Promise<void> {
     await page.evaluate(() => {
