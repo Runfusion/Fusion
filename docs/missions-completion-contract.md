@@ -18,27 +18,20 @@ Mission completion now uses an **all-criteria AI-run contract**:
    - `feature.description`
    - `Verify implementation of: {feature.title}`
 3. The mission validator must run for every feature completion trigger. Runtime validation may lazily call `ensureFeatureAssertionLinked(feature.id)` before starting the validator so legacy missing-link rows still become validator-backed.
-4. `milestone.acceptanceCriteria` is also part of the enforced gate by being threaded into the validator prompt for every feature in that milestone.
-5. Feature, slice, milestone, and mission advancement are gated by the validator result — **not** by an informational-only path.
+4. `milestone.acceptanceCriteria` is synchronized to one provenance-identified, milestone-scoped assertion and is evaluated only at milestone rollup time.
+5. Feature, slice, milestone, and mission advancement are gated by structured scoped assertion results — **not** by an informational-only path.
 
 ## Enforcement Model
 
 ### Feature-level enforcement
 
-A feature is autopilot-complete only when the validator passes after evaluating:
-
-- the feature's linked contract assertions, including its store-managed assertion, and
-- the parent milestone's `acceptanceCriteria` text when present.
+A feature is autopilot-complete only when every linked **feature-scoped** contract assertion passes. The validator ignores parent milestone prose, model aggregate prose, and unmapped behavioral evidence when deriving the feature verdict. Behavioral verification may change only the linked behavioral assertion it identifies.
 
 ### Milestone-level enforcement
 
-`milestone.acceptanceCriteria` is no longer informational-only. FN-5902 enforces it by threading the milestone pass-bar text into the validator prompt for each feature under that milestone.
+`milestone.acceptanceCriteria` is no longer informational-only. It is synchronized to one canonical `scope: "milestone"`, `origin: "derived_milestone_acceptance"` assertion. The derived origin is unique per `(project_id, milestone_id)`; independently authored, imported, and legacy milestone assertions remain non-unique and are never identified by title or text.
 
-This is intentionally **prompt-threading**, not per-feature milestone assertion row synthesis:
-
-- store-managed per-feature assertions remain the canonical feature assertion rows,
-- milestone acceptance text remains milestone-authored prose,
-- the validator sees both and must satisfy both.
+Milestone assertions require no feature link. The dedicated milestone evaluator may run only after every acceptance-bearing feature has at least one linked feature-scoped assertion and every feature-scoped assertion is linked and `passed`; pending, blocked, failed, unlinked, missing, and prose-only feature contracts are not ready. An all-feature-complete milestone with no acceptance-bearing features may evaluate its milestone assertions directly. Unmet parent scope cannot fail a completed feature or mint a feature-scoped fix.
 
 ### Legacy data and lazy repair
 
@@ -67,9 +60,9 @@ Instead, features are routed through validator execution after lazy assertion en
    - Result gates completion normally.
 
 2. **Feature has acceptance criteria and milestone acceptance criteria**
-   - Validator evaluates the linked feature assertion(s).
-   - Validator also evaluates the milestone acceptance text in the prompt.
-   - Feature passes only when both are satisfied.
+   - Feature validator evaluates only linked feature assertion(s).
+   - Milestone prose is represented by its canonical milestone assertion.
+   - A passing feature remains passed even if sibling milestone work is incomplete; the parent assertion gates the later milestone rollup.
 
 3. **Operator runs backfill on legacy data**
    - Backfill pre-restores missing managed assertions for visibility/reporting.
@@ -100,7 +93,7 @@ For any mission feature that reaches validation trigger points:
 
 - a validator run must occur,
 - the feature must not auto-pass due to missing assertion links,
-- milestone acceptance text must be visible to the validator when present,
+- parent milestone acceptance text must never affect a feature validator; it is evaluated only by the ready milestone rollup evaluator,
 - a behavioral/bug assertion must not pass on the read-only judge's advisory verdict alone — it requires a confirming non-mutating verification run,
 - a non-passing verification must resolve to `fail` or `inconclusive`, never a default pass,
 - advancement decisions must derive from validator outcomes only.

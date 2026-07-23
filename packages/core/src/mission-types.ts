@@ -723,6 +723,23 @@ export type MissionAssertionType = (typeof MISSION_ASSERTION_TYPES)[number];
 /** The conservative default assertion type (preserves legacy static judging). */
 export const DEFAULT_MISSION_ASSERTION_TYPE: MissionAssertionType = "static";
 
+/** Assertions belong either to an individual feature or to milestone rollup. */
+export const MISSION_ASSERTION_SCOPES = ["feature", "milestone"] as const;
+export type MissionAssertionScope = (typeof MISSION_ASSERTION_SCOPES)[number];
+
+/** Provenance separates the one store-managed milestone criterion from authored rows. */
+export const MISSION_ASSERTION_ORIGINS = ["authored", "imported", "derived_milestone_acceptance"] as const;
+export type MissionAssertionOrigin = (typeof MISSION_ASSERTION_ORIGINS)[number];
+
+export function normalizeMissionAssertionOrigin(value: unknown): MissionAssertionOrigin {
+  return value === "imported" || value === "derived_milestone_acceptance" ? value : "authored";
+}
+
+/** Normalize legacy rows to feature scope until explicitly migrated. */
+export function normalizeMissionAssertionScope(value: unknown): MissionAssertionScope {
+  return value === "milestone" ? "milestone" : "feature";
+}
+
 /** Normalize an arbitrary stored value to a valid assertion type, defaulting conservatively. */
 export function normalizeMissionAssertionType(value: unknown): MissionAssertionType {
   return value === "behavioral" ? "behavioral" : DEFAULT_MISSION_ASSERTION_TYPE;
@@ -764,6 +781,10 @@ export interface MissionContractAssertion {
   milestoneId: string;
   /** Feature ID when this assertion is store-managed for a specific feature */
   sourceFeatureId?: string;
+  /** Validation boundary; milestone assertions are never feature-link coverage. */
+  scope?: MissionAssertionScope;
+  /** Stable provenance; only the derived milestone origin is unique per milestone. */
+  origin?: MissionAssertionOrigin;
   /** Human-readable title describing the assertion */
   title: string;
   /** The behavioral specification or acceptance test content */
@@ -834,6 +855,10 @@ export interface ContractAssertionCreateInput {
   type?: MissionAssertionType;
   /** Feature ID when this assertion is store-managed for a specific feature */
   sourceFeatureId?: string;
+  /** Validation boundary; defaults to a feature assertion. */
+  scope?: MissionAssertionScope;
+  /** Origin defaults to independently authored. */
+  origin?: MissionAssertionOrigin;
 }
 
 /**

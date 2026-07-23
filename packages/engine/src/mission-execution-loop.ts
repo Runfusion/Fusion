@@ -441,6 +441,19 @@ export class MissionExecutionLoop extends EventEmitter {
               }
             }
           }
+
+          /*
+          FNXC:MissionValidation 2026-07-23-20:30:
+          A parent-only contract has no feature-completion event to enter the
+          rollup path. Recovery is also the milestone-completion trigger for
+          zero-feature and no-feature-assertion milestones, but the shared
+          readiness gate still requires all feature work to be done.
+          */
+          try {
+            await this.runMilestoneValidationForMilestoneIfReady(milestone);
+          } catch (err) {
+            loopLog.error(`Recovery failed to validate milestone ${milestone.id}:`, err);
+          }
         }
       }
 
@@ -548,8 +561,12 @@ export class MissionExecutionLoop extends EventEmitter {
         assertions = await this.missionStore.ensureFeatureAssertionLinked(feature.id);
       }
       if (assertions.length === 0) {
-        // FNXC:MissionValidation 2026-07-17-16:45: no-assertion features remain a valid completion path when linkage cannot derive an assertion.
+        // FNXC:MissionValidation 2026-07-23-18:00: A feature without a derivable
+        // contract can complete, but it must still trigger the direct milestone
+        // path. That path independently proves all sibling work is done before
+        // grading parent-only assertions; parent prose never becomes this feature's fail.
         await this.handleValidationPass(feature.id, undefined, "No assertions linked to feature");
+        await this.runMilestoneValidationIfReady(feature);
         return;
       }
 
@@ -565,9 +582,34 @@ export class MissionExecutionLoop extends EventEmitter {
 
       const { result, inspection } = await this.runValidation(feature, assertions, run);
 
+      // A fail is not durable evidence until its inspection root is trusted.
+      // Do this before mutating assertion state: a pre-merge or stale checkout
+      // must leave linked assertions pending for a later, trustworthy validator.
+      const premergeColumn = result.status === "fail"
+        ? await this.getPremergeTaskColumn(feature.taskId)
+        : null;
+      const deferredFail = result.status === "fail"
+        && (Boolean(premergeColumn) || inspection.workspaceStale || Boolean(inspection.inspectionUnavailableReason));
+
+      // Persist only authoritative results from a trusted inspection. The rollup
+      // readiness gate consumes these statuses instead of model summary prose.
+      const updateAssertion = (this.missionStore as unknown as {
+        updateContractAssertion?: (id: string, updates: { status: "passed" | "blocked" | "failed" }) => unknown;
+      }).updateContractAssertion;
+      if (!deferredFail && typeof updateAssertion === "function") {
+        for (const assertion of assertions) {
+          const verdict = result.assertions.find((entry) => entry.assertionId === assertion.id);
+          if (!verdict) continue;
+          await updateAssertion.call(this.missionStore, assertion.id, {
+            status: verdict.passed ? "passed" : verdict.verdict === "blocked" ? "blocked" : "failed",
+          });
+        }
+      }
+
       // Handle the result
       if (result.status === "pass") {
         await this.handleValidationPass(feature.id, run.id, result.summary);
+        await this.runMilestoneValidationIfReady(feature);
       } else if (result.status === "fail") {
         // A "fail" verdict is only trustworthy once the linked task's code has
         // actually landed (done/archived). If the task is still mid-pipeline
@@ -576,7 +618,6 @@ export class MissionExecutionLoop extends EventEmitter {
         // inconclusive outcome (R21, no Fix Feature) and let a later validation
         // judge the merged code. Missing task / unknown column falls through to
         // the normal fail handling (defer only on affirmative evidence).
-        const premergeColumn = await this.getPremergeTaskColumn(feature.taskId);
         if (premergeColumn) {
           await this.handleValidationInconclusive(
             feature.id,
@@ -666,13 +707,15 @@ export class MissionExecutionLoop extends EventEmitter {
     feature: MissionFeature,
     assertions: MissionContractAssertion[],
     _run: MissionValidatorRun,
+    scope: "feature" | "milestone" = "feature",
   ): Promise<ValidationExecution> {
     loopLog.log(`Running validation for feature ${feature.id} with ${assertions.length} assertions`);
 
-    const milestone = await this.resolveFeatureMilestone(feature);
-
-    // Build the validation prompt
-    const prompt = this.buildValidationPrompt(feature, assertions, milestone);
+    // FNXC:MissionValidation 2026-07-23-14:00:
+    // FN-8542 confines an individual feature verdict to its linked feature
+    // assertions. Parent milestone criteria are evaluated by the rollup lane,
+    // so they are deliberately not supplied to this feature-validation session.
+    const prompt = this.buildValidationPrompt(feature, assertions, scope);
 
     // Get task context for validation
     const task = feature.taskId ? await this.taskStore.getTask(feature.taskId) : null;
@@ -730,7 +773,7 @@ export class MissionExecutionLoop extends EventEmitter {
         runtimeHint: validationRuntimeHint,
         pluginRunner: this.pluginRunner,
         cwd: inspectionRoot,
-        systemPrompt: this.buildValidationSystemPrompt(feature, assertions, taskContext, milestone),
+        systemPrompt: this.buildValidationSystemPrompt(feature, assertions, taskContext, scope),
         tools: "readonly",
         defaultProvider: validationSessionModel.provider,
         defaultModelId: validationSessionModel.modelId,
@@ -865,10 +908,12 @@ export class MissionExecutionLoop extends EventEmitter {
       if (t === "behavioral") hasBehavioral = true;
     }
 
-    // Fast path: no behavioral assertions → existing static path is preserved
-    // exactly. This keeps every existing (untyped/static) test green.
+    // All parser outputs are canonicalized against the supplied linked assertion
+    // set before this posture runs, including static-only runs. The absence of a
+    // behavioral assertion merely avoids verification work; it must not restore
+    // trust in a model-provided aggregate status.
     if (!hasBehavioral) {
-      return judgeResult;
+      return this.deriveFeatureValidationStatus(judgeResult, false);
     }
 
     const textById = new Map(assertions.map((a) => [a.id, a.assertion]));
@@ -908,6 +953,20 @@ export class MissionExecutionLoop extends EventEmitter {
           const message = err instanceof Error ? err.message : String(err);
           loopLog.warn(`Verification capability threw for assertion ${judged.assertionId}: ${message}`);
           outcome = { verdict: "inconclusive", assertionId: judged.assertionId, reason: `verification error: ${message}` };
+        }
+
+        // A verifier must identify the same linked behavioral assertion it was
+        // asked to exercise. Unmapped evidence is inconclusive diagnostics, not
+        // permission to override another assertion or mint a feature fix.
+        if (outcome.assertionId !== judged.assertionId || !typeById.has(outcome.assertionId)) {
+          sawInconclusive = true;
+          inconclusiveReason = inconclusiveReason ?? "behavioral verification returned an unmapped assertion";
+          return {
+            ...judged,
+            verdict: "blocked",
+            passed: false,
+            message: "Behavioral verification returned unmapped evidence.",
+          };
         }
 
         // FNXC:MissionValidationDiagnostics 2026-07-23-12:30: Behavioral verification is an authoritative execution path, so its reason/detail must join judge evidence before the shared normalizer bounds and redacts it.
@@ -951,10 +1010,8 @@ export class MissionExecutionLoop extends EventEmitter {
     let status: ValidationResult["status"];
     if (sawInconclusive && !allPassed) {
       status = "inconclusive";
-    } else if (allPassed) {
-      status = "pass";
     } else {
-      status = "fail";
+      status = this.deriveFeatureValidationStatus({ ...judgeResult, assertions: newAssertionResults }, false).status;
     }
 
     const summary = status === "pass"
@@ -1075,12 +1132,12 @@ export class MissionExecutionLoop extends EventEmitter {
       const summary = typeof parsed.summary === "string" ? parsed.summary : `Validation ${status}`;
       const blockedReason = typeof parsed.blockedReason === "string" ? parsed.blockedReason : undefined;
 
-      return {
+      return this.deriveFeatureValidationStatus({
         status,
         assertions: assertionResults,
         summary,
         blockedReason,
-      };
+      }, true);
     } catch (err) {
       loopLog.error("Error parsing validation result", err);
       return this.createErrorValidationResult(`Error parsing validation: ${err}`, assertions);
@@ -1191,9 +1248,14 @@ export class MissionExecutionLoop extends EventEmitter {
     parsed: Record<string, unknown>,
     assertions: MissionContractAssertion[],
   ): ValidationResult["assertions"] {
-    const results: ValidationResult["assertions"] = [];
+    const byId = new Map<string, ValidationResult["assertions"][number]>();
+    const authoritativeIds = new Set(assertions.map((assertion) => assertion.id));
+    const duplicateIds = new Set<string>();
 
-    // If assertions array is provided in the response, use it
+    // FNXC:MissionValidation 2026-07-23-14:00:
+    // FN-8542 makes a contradictory aggregate structurally impossible. Only one
+    // result for every authoritative linked assertion participates; unknown IDs
+    // are ignored, duplicates and omissions are non-passing evidence.
     if (Array.isArray(parsed.assertions)) {
       for (const item of parsed.assertions) {
         if (typeof item === "object" && item !== null) {
@@ -1222,8 +1284,13 @@ export class MissionExecutionLoop extends EventEmitter {
               return kind || text ? [{ ...(kind ? { kind } : {}), ...(text ? { text } : {}) }] : [];
             })
             : undefined;
-          results.push({
-            assertionId: assertionId || "unknown",
+          if (!assertionId || !authoritativeIds.has(assertionId)) continue;
+          if (byId.has(assertionId)) {
+            duplicateIds.add(assertionId);
+            continue;
+          }
+          byId.set(assertionId, {
+            assertionId,
             verdict,
             passed,
             message: typeof assertionItem.message === "string" ? assertionItem.message : undefined,
@@ -1235,25 +1302,42 @@ export class MissionExecutionLoop extends EventEmitter {
       }
     }
 
-    // Backfill any linked assertions the judge omitted from its response. A
-    // partial judge response must not silently drop assertions: every linked
-    // assertion needs a result so behavioral assertions still reach
-    // verifyBehavioralAssertion and the aggregate is computed over the full set.
-    if (assertions.length > 0) {
-      const seen = new Set(results.map((r) => r.assertionId));
-      const overallPassed = parsed.status === "pass";
-      for (const assertion of assertions) {
-        if (seen.has(assertion.id)) continue;
-        results.push({
+    return assertions.map((assertion) => {
+      if (duplicateIds.has(assertion.id)) {
+        return {
           assertionId: assertion.id,
-          verdict: overallPassed ? "pass" : "fail",
-          passed: overallPassed,
-          message: overallPassed ? "Passed" : "Failed",
-        });
+          verdict: "fail" as const,
+          passed: false,
+          message: "Duplicate validator result for linked assertion.",
+        };
       }
-    }
+      return byId.get(assertion.id) ?? {
+        assertionId: assertion.id,
+        verdict: "fail" as const,
+        passed: false,
+        message: "Validator omitted linked assertion result.",
+      };
+    });
+  }
 
-    return results;
+  /**
+   * Derive an aggregate only from canonical linked assertion results.
+   * Model summary prose and its aggregate status are intentionally excluded.
+   */
+  private deriveFeatureValidationStatus(
+    result: ValidationResult,
+    preserveTerminal: boolean,
+  ): ValidationResult {
+    if (preserveTerminal && (result.status === "error" || result.status === "blocked")) return result;
+    if (result.assertions.some((assertion) => assertion.verdict === "blocked")) {
+      return { ...result, status: "blocked" };
+    }
+    return {
+      ...result,
+      status: result.assertions.length > 0 && result.assertions.every((assertion) => assertion.passed)
+        ? "pass"
+        : "fail",
+    };
   }
 
   /**
@@ -1281,24 +1365,21 @@ export class MissionExecutionLoop extends EventEmitter {
   private buildValidationPrompt(
     feature: MissionFeature,
     assertions: MissionContractAssertion[],
-    milestone?: Milestone,
+    scope: "feature" | "milestone" = "feature",
   ): string {
     const assertionTexts = assertions
       .map((a, i) => `${i + 1}. **${a.title}**: ${a.assertion}`)
       .join("\n");
-    const milestoneAcceptanceCriteria = milestone?.acceptanceCriteria?.trim();
-    const milestoneContext = milestoneAcceptanceCriteria
-      ? `\nMilestone acceptance criteria (must also be satisfied for this feature to pass):\n${milestoneAcceptanceCriteria}\n`
-      : "";
 
-    return `Evaluate the implementation for feature "${feature.title}" against the following contract assertions:
+    const subject = scope === "milestone" ? "milestone rollup" : `feature "${feature.title}"`;
+    const boundary = scope === "milestone" ? "milestone-scoped" : "linked feature";
+    return `Evaluate the implementation for ${subject} against only the following ${boundary} contract assertions:
 
-${assertionTexts}${milestoneContext}
+${assertionTexts}
 For each assertion:
 - Determine if the implementation satisfies the assertion (pass/fail/blocked)
 - If failed, explain what was expected vs what was actually observed
 - If blocked, explain what external factor prevented validation
-- Also verify that the implementation satisfies any milestone acceptance criteria provided above
 
 Respond with a JSON object in this format:
 {
@@ -1328,22 +1409,21 @@ Be thorough and objective. If any assertion fails, the overall status should be 
     _feature: MissionFeature,
     _assertions: MissionContractAssertion[],
     taskContext: string,
-    milestone?: Milestone,
+    scope: "feature" | "milestone" = "feature",
   ): string {
-    const milestoneAcceptanceCriteria = milestone?.acceptanceCriteria?.trim();
-    return `You are a validation agent responsible for evaluating whether an implementation satisfies its contract assertions.
+    const boundary = scope === "milestone" ? "milestone-scoped" : "linked feature";
+    return `You are a validation agent responsible for evaluating whether an implementation satisfies its ${boundary} contract assertions.
 
 You will receive:
 1. A feature description with its acceptance criteria
-2. Contract assertions to evaluate against
-3. Task context including the implementation details${milestoneAcceptanceCriteria ? `\n4. Milestone acceptance criteria text that also applies to this feature: ${milestoneAcceptanceCriteria}` : ""}
+2. ${boundary} contract assertions to evaluate against
+3. Task context including the implementation details
 
 Your job is to:
 1. Carefully review the implementation as described in the task context
-2. Evaluate each contract assertion objectively
-3. Determine if the implementation fully satisfies each assertion
-4. Verify the implementation also satisfies any milestone acceptance criteria provided for the parent milestone
-5. Return a structured JSON response with your findings
+2. Evaluate each supplied ${boundary} contract assertion objectively
+3. Determine if the implementation fully satisfies each supplied assertion
+4. Return a structured JSON response with your findings
 
 Be thorough and precise. A contract assertion represents a commitment made during planning - the implementation must fully satisfy it or it is considered failed.
 
@@ -1352,7 +1432,6 @@ Evaluation guidance:
 - "fail" means one or more assertions are unmet or only partially satisfied.
 - "blocked" means you cannot evaluate due to missing/insufficient evidence or external constraints.
 - Partial satisfaction must be marked as failed with clear expected vs actual details.
-- Milestone acceptance criteria are validator-executed requirements, not informational context.
 - For every assertion, include the concrete evidence you considered. Evidence must identify the relevant file, command, or concise test output; do not include secrets or full unbounded command output.
 
 Response format: Return ONLY a JSON object (no additional text) with this structure:
@@ -1394,6 +1473,81 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
       }
     }
     return lines.join("\n");
+  }
+
+  /*
+  FNXC:MissionValidation 2026-07-23-15:20:
+  Parent acceptance criteria are judged only after every feature assertion is
+  linked and terminal-passed. This separate rollup pass can update only
+  milestone assertions; it never routes parent failures through feature fixes.
+  */
+  private async runMilestoneValidationIfReady(feature: MissionFeature): Promise<void> {
+    const milestone = await this.resolveFeatureMilestone(feature);
+    if (!milestone) return;
+    await this.runMilestoneValidationForMilestoneIfReady(milestone, feature);
+  }
+
+  private async runMilestoneValidationForMilestoneIfReady(
+    milestone: Milestone,
+    contextFeature?: MissionFeature,
+  ): Promise<void> {
+    if (typeof this.missionStore.listContractAssertions !== "function"
+      || typeof this.missionStore.listFeaturesForAssertion !== "function"
+      || typeof this.missionStore.updateContractAssertion !== "function") return;
+    /*
+    FNXC:MissionValidation 2026-07-23-17:20:
+    A parent pass must wait for coverage of every acceptance-bearing sibling,
+    not merely the feature assertions that happened to exist when this feature
+    finished. Lazy-link those siblings before checking terminal feature scope.
+    */
+    const slices = await this.missionStore.listSlices(milestone.id);
+    const features = (await Promise.all(slices.map((slice) => this.missionStore.listFeatures(slice.id)))).flat();
+    for (const sibling of features) {
+      if ((sibling.acceptanceCriteria ?? "").trim()) {
+        const linked = await this.missionStore.ensureFeatureAssertionLinked(sibling.id);
+        if (linked.length === 0) return;
+      }
+    }
+
+    const assertions = await this.missionStore.listContractAssertions(milestone.id);
+    const featureAssertions = assertions.filter((assertion) => assertion.scope !== "milestone");
+    const milestoneAssertions = assertions.filter((assertion) => assertion.scope === "milestone");
+    if (milestoneAssertions.length === 0) return;
+
+    /*
+    FNXC:MissionValidation 2026-07-23-18:00:
+    Derived or authored parent assertions may be the only contract in a
+    milestone. Permit their direct rollup only after every feature's work is
+    done; otherwise an early no-assertion feature could grade parent scope.
+    */
+    if (featureAssertions.length === 0) {
+      if (!features.every((sibling) => sibling.status === "done")) return;
+    }
+
+    for (const assertion of featureAssertions) {
+      const linked = await this.missionStore.listFeaturesForAssertion(assertion.id);
+      if (linked.length === 0 || assertion.status !== "passed") return;
+    }
+
+    const validationFeature = contextFeature ?? features[0];
+    const rollupContext = validationFeature ?? {
+      id: `milestone:${milestone.id}`,
+      sliceId: slices[0]?.id ?? "",
+      title: milestone.title,
+      status: "done" as const,
+      loopState: "passed" as const,
+      implementationAttemptCount: 0,
+      validatorAttemptCount: 0,
+      createdAt: milestone.createdAt,
+      updatedAt: milestone.updatedAt,
+    };
+    const { result } = await this.runValidation(rollupContext, milestoneAssertions, {} as MissionValidatorRun, "milestone");
+    for (const assertion of milestoneAssertions) {
+      const verdict = result.assertions.find((entry) => entry.assertionId === assertion.id);
+      // Unknown, duplicate, omitted, or non-passing evidence remains non-passing.
+      const status = verdict?.passed ? "passed" : result.status === "blocked" ? "blocked" : "failed";
+      await this.missionStore.updateContractAssertion(assertion.id, { status });
+    }
   }
 
   private async resolveFeatureMilestone(feature: MissionFeature): Promise<Milestone | undefined> {

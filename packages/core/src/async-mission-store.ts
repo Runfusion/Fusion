@@ -640,6 +640,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     };
     const created = await createMilestone(handle, milestone);
     this.emit("milestone:created", created);
+    await this.synchronizeMilestoneAcceptanceAssertion(created);
     return created;
   }
 
@@ -664,8 +665,43 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     };
     await updateMilestone(this.db, updated);
     this.emit("milestone:updated", updated);
+    if (updates.acceptanceCriteria !== undefined) {
+      await this.synchronizeMilestoneAcceptanceAssertion(updated);
+    }
     await this.recomputeMissionStatus(updated.missionId);
     return updated;
+  }
+
+  /*
+  FNXC:MissionValidation 2026-07-23-14:30:
+  Acceptance prose has exactly one store-managed milestone assertion selected by
+  durable origin. Authored/imported rows are never selected by text or title and
+  survive criteria edits/removal unchanged.
+  */
+  private async synchronizeMilestoneAcceptanceAssertion(milestone: Milestone): Promise<void> {
+    const existing = (await listContractAssertions(this.db, milestone.id))
+      .find((assertion) => assertion.origin === "derived_milestone_acceptance");
+    const criteria = milestone.acceptanceCriteria?.trim();
+    if (!criteria) {
+      if (existing) await this.deleteContractAssertion(existing.id);
+      return;
+    }
+    if (!existing) {
+      await this.addContractAssertion(milestone.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        scope: "milestone",
+        origin: "derived_milestone_acceptance",
+      });
+      return;
+    }
+    if (existing.assertion !== criteria) {
+      await this.updateContractAssertion(existing.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        status: "pending",
+      });
+    }
   }
 
   async deleteMilestone(id: string, force = false): Promise<void> {
@@ -1594,13 +1630,25 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   async addContractAssertion(milestoneId: string, input: ContractAssertionCreateInput): Promise<MissionContractAssertion> {
     const milestone = await getMilestone(this.db, milestoneId);
     if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
-    const now = new Date().toISOString();
+    const origin = input.origin ?? "authored";
     const existing = await listContractAssertions(this.db, milestoneId);
+    if (origin === "derived_milestone_acceptance"
+      && existing.some((assertion) => assertion.origin === "derived_milestone_acceptance")) {
+      /*
+      FNXC:MissionValidation 2026-07-23-17:20:
+      Reject duplicate canonical provenance before insert; PostgreSQL also
+      enforces this at rest, while authored/imported rows stay non-unique.
+      */
+      throw new Error(`Milestone ${milestoneId} already has a derived milestone acceptance assertion`);
+    }
+    const now = new Date().toISOString();
     const orderIndex = existing.length > 0 ? Math.max(...existing.map((a) => a.orderIndex)) + 1 : 0;
     const assertion: MissionContractAssertion = {
       id: this.generateId("CA"),
       milestoneId,
       sourceFeatureId: input.sourceFeatureId,
+      scope: input.scope ?? "feature",
+      origin,
       title: input.title,
       assertion: input.assertion,
       status: input.status || "pending",
@@ -1663,6 +1711,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (!feature) throw new Error(`Feature ${featureId} not found`);
     const assertion = await getContractAssertion(this.db, assertionId);
     if (!assertion) throw new Error(`Assertion ${assertionId} not found`);
+    // FNXC:MissionValidation 2026-07-23-15:05: Rollup-owned assertions are never feature evidence.
+    if (assertion.scope === "milestone") {
+      throw new Error(`Milestone-scoped assertion ${assertionId} cannot be linked to feature ${featureId}`);
+    }
     if (await featureAssertionLinkExists(this.db, featureId, assertionId)) {
       throw new Error(`Feature ${featureId} is already linked to assertion ${assertionId}`);
     }
@@ -1802,7 +1854,9 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         case "blocked": blockedAssertions++; break;
         case "pending": pendingAssertions++; break;
       }
-      if (!linkedAssertionIds.has(assertion.id)) unlinkedAssertions++;
+      // Rollup assertions are milestone-owned and intentionally have no
+      // feature link; only feature-scoped assertions need coverage.
+      if (assertion.scope !== "milestone" && !linkedAssertionIds.has(assertion.id)) unlinkedAssertions++;
     }
 
     /*

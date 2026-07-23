@@ -14,7 +14,7 @@
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
 import { fromJson, toJson, toJsonNullable } from "./db.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
 import type { Goal, GoalStatus } from "./goal-types.js";
 import type {
   Mission,
@@ -282,6 +282,8 @@ interface AssertionRow {
   type: string | null;
   orderIndex: number;
   sourceFeatureId: string | null;
+  scope: string | null;
+  origin: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -398,6 +400,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   ) {
     super();
     this.setMaxListeners(100);
+    this.ensureMissionContractAssertionColumns();
     // Initialize sequence counter from existing events to ensure uniqueness across restarts
     const lastEvent = this.db.prepare(`
       SELECT seq FROM mission_events ORDER BY seq DESC LIMIT 1
@@ -407,6 +410,42 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
   private _eventSeq = 0;
   private _milestonesMissingStructuredAssertions = new Set<string>();
+
+  /*
+  FNXC:MissionValidation 2026-07-23-20:30:
+  Sync-store compatibility must add assertion scope and provenance before any
+  assertion query or write. Pre-FN-8542 rows have no reliable scope signal, so
+  preserve them as independently authored feature assertions; milestone sync
+  may later add its separate provenance-identified derived assertion.
+  */
+  private ensureMissionContractAssertionColumns(): void {
+    const schemaStatement = this.db.prepare("PRAGMA table_info(mission_contract_assertions)") as unknown as {
+      all?: () => Array<{ name?: string }>;
+    };
+    // The production runtime uses AsyncMissionStore. Keep lightweight sync test
+    // doubles usable when they do not implement SQLite statement iteration.
+    const columns = schemaStatement.all?.();
+    if (!Array.isArray(columns) || columns.length === 0) return;
+
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("scope")) {
+      this.db.prepare("ALTER TABLE mission_contract_assertions ADD COLUMN scope TEXT NOT NULL DEFAULT 'feature'").run();
+    }
+    if (!names.has("origin")) {
+      this.db.prepare("ALTER TABLE mission_contract_assertions ADD COLUMN origin TEXT NOT NULL DEFAULT 'authored'").run();
+    }
+
+    this.db.prepare(`
+      UPDATE mission_contract_assertions
+      SET scope = 'feature'
+      WHERE scope IS NULL OR scope NOT IN ('feature', 'milestone')
+    `).run();
+    this.db.prepare(`
+      UPDATE mission_contract_assertions
+      SET origin = 'authored'
+      WHERE origin IS NULL OR origin NOT IN ('authored', 'imported', 'derived_milestone_acceptance')
+    `).run();
+  }
 
   // ── Row-to-Object Converters ───────────────────────────────────────
 
@@ -502,6 +541,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       id: row.id,
       milestoneId: row.milestoneId,
       sourceFeatureId: row.sourceFeatureId || undefined,
+      scope: normalizeMissionAssertionScope(row.scope),
+      origin: normalizeMissionAssertionOrigin(row.origin),
       title: row.title,
       assertion: row.assertion,
       status: row.status as import("./mission-types.js").MissionAssertionStatus,
@@ -1523,6 +1564,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("milestone:created", milestone);
+    this.synchronizeMilestoneAcceptanceAssertion(milestone);
     return milestone;
   }
 
@@ -1605,11 +1647,50 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("milestone:updated", updated);
+    if (updates.acceptanceCriteria !== undefined) {
+      this.synchronizeMilestoneAcceptanceAssertion(updated);
+    }
 
     // Recompute mission status after milestone update
     this.recomputeMissionStatus(updated.missionId);
 
     return updated;
+  }
+
+  /*
+  FNXC:MissionValidation 2026-07-23-15:00:
+  Milestone prose is represented by exactly one durable derived assertion. Sync
+  storage selects it only by origin, preserving authored/imported rows even when
+  their text matches; blank prose retires only that derived contract.
+  */
+  private synchronizeMilestoneAcceptanceAssertion(milestone: Milestone): void {
+    const derived = this.listContractAssertions(milestone.id)
+      .filter((assertion) => assertion.origin === "derived_milestone_acceptance");
+    if (derived.length > 1) {
+      throw new Error(`Milestone ${milestone.id} has multiple derived acceptance assertions`);
+    }
+    const existing = derived[0];
+    const criteria = milestone.acceptanceCriteria?.trim();
+    if (!criteria) {
+      if (existing) this.deleteContractAssertion(existing.id);
+      return;
+    }
+    if (!existing) {
+      this.addContractAssertion(milestone.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        scope: "milestone",
+        origin: "derived_milestone_acceptance",
+      });
+      return;
+    }
+    if (existing.assertion !== criteria || existing.title !== "Milestone acceptance criteria") {
+      this.updateContractAssertion(existing.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        status: "pending",
+      });
+    }
   }
 
   /**
@@ -3406,6 +3487,18 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(`Milestone ${milestoneId} not found`);
     }
 
+    const origin = input.origin ?? "authored";
+    if (origin === "derived_milestone_acceptance"
+      && this.listContractAssertions(milestoneId).some((assertion) => assertion.origin === "derived_milestone_acceptance")) {
+      /*
+      FNXC:MissionValidation 2026-07-23-17:20:
+      The sync store has no PostgreSQL partial index, so it must reject a second
+      canonical milestone-prose assertion before inserting it. Authored and
+      imported assertions remain intentionally non-unique.
+      */
+      throw new Error(`Milestone ${milestoneId} already has a derived milestone acceptance assertion`);
+    }
+
     const now = new Date().toISOString();
     const id = this.generateAssertionId();
 
@@ -3419,6 +3512,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       id,
       milestoneId,
       sourceFeatureId: input.sourceFeatureId,
+      scope: input.scope ?? "feature",
+      origin,
       title: input.title,
       assertion: input.assertion,
       status: input.status || "pending",
@@ -3429,8 +3524,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, type, orderIndex, sourceFeatureId, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, type, orderIndex, sourceFeatureId, scope, origin, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       assertion.id,
       assertion.milestoneId,
@@ -3440,6 +3535,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       assertion.type,
       assertion.orderIndex,
       assertion.sourceFeatureId ?? null,
+      assertion.scope ?? "feature",
+      assertion.origin ?? "authored",
       assertion.createdAt,
       assertion.updatedAt,
     );
@@ -3610,6 +3707,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     if (!assertion) {
       throw new Error(`Assertion ${assertionId} not found`);
     }
+    if (assertion.scope === "milestone") {
+      throw new Error(`Milestone-scoped assertion ${assertionId} cannot be linked to feature ${featureId}`);
+    }
 
     // Check if link already exists
     const existing = this.db.prepare(
@@ -3672,7 +3772,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const rows = this.db.prepare(`
       SELECT ca.* FROM mission_contract_assertions ca
       INNER JOIN mission_feature_assertions fa ON ca.id = fa.assertionId
-      WHERE fa.featureId = ?
+      WHERE fa.featureId = ? AND ca.scope != 'milestone'
       ORDER BY ca.orderIndex ASC, ca.createdAt ASC, ca.id ASC
     `).all(featureId);
     return (rows as unknown as AssertionRow[]).map((row) => this.rowToAssertion(row));
@@ -3762,10 +3862,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           break;
       }
 
-      // Check if assertion is linked to any feature
-      const linkedFeatures = this.listFeaturesForAssertion(assertion.id);
-      if (linkedFeatures.length === 0) {
-        unlinkedAssertions++;
+      // Milestone-scoped assertions are evaluated at rollup and deliberately
+      // require no feature coverage. Only feature assertions participate in
+      // the coverage invariant.
+      if (assertion.scope !== "milestone") {
+        const linkedFeatures = this.listFeaturesForAssertion(assertion.id);
+        if (linkedFeatures.length === 0) unlinkedAssertions++;
       }
     }
 

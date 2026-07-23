@@ -1984,6 +1984,7 @@ export const missionContractAssertions = projectSchema.table("mission_contract_a
   orderIndex: integer("order_index").notNull().default(0),
   sourceFeatureId: text("source_feature_id"),
   scope: text("scope").notNull().default("feature"),
+  origin: text("origin").notNull().default("authored"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [

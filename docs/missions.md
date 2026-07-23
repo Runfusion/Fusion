@@ -446,6 +446,8 @@ interface MissionContractAssertion {
   id: string;              // e.g., "CA-A3B7CD-E9F2"
   milestoneId: string;     // Parent milestone
   sourceFeatureId?: string;// Store-managed feature assertion owner
+  scope: "feature" | "milestone";
+  origin: "authored" | "imported" | "derived_milestone_acceptance";
   title: string;           // Human-readable title
   assertion: string;       // Behavioral plan
   status: AssertionStatus; // pending | passed | failed | blocked
@@ -484,7 +486,9 @@ interface MilestoneValidationRollup {
 
 #### Completion Gate Contract
 
-Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, but mission autopilot enforcement runs through each feature's **linked contract assertions** (store-managed per-feature assertion plus any additive linked milestone assertions). `milestone.acceptanceCriteria` remains authored milestone pass-bar text for humans, while validator gating/advance decisions follow assertion linkage and outcomes; see [Mission Completion Gate Contract](./missions-completion-contract.md) for the authoritative enforced-vs-informational surface map and zero-assertion behavior.
+Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, and each feature validator derives its verdict only from its **linked feature-scoped assertions**. Model summary prose, milestone prose, and behavioral results that are not mapped to a linked behavioral assertion cannot override that verdict.
+
+Milestone prose is synchronized to one canonical milestone-scoped assertion with `origin: "derived_milestone_acceptance"`. PostgreSQL restricts uniqueness to that derived origin per project/milestone; authored, imported, and migrated legacy milestone assertions stay independent, are never inferred from title/text, and require no feature links. The rollup evaluates all milestone-scoped assertions after feature coverage and feature assertion passes are ready; unmet parent criteria therefore block milestone completion without failing an already-passing feature. See [Mission Completion Gate Contract](./missions-completion-contract.md).
 
 ### Phase 3: Feature Execution Loop
 
