@@ -21,6 +21,7 @@ import {
   __getChatDiagnostics,
   __setChatDiagnostics,
   CHAT_ASK_QUESTION_GUIDANCE,
+  CHAT_CODEBASE_ACCURACY_GUIDANCE,
 } from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
@@ -1873,6 +1874,7 @@ describe("ChatManager.sendMessage", () => {
     expect(customTools.map((tool: { name: string }) => tool.name)).toContain("fn_ask_question");
     expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_send_message");
     expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_read_messages");
+    expect(createOptions?.systemPrompt).toContain(CHAT_CODEBASE_ACCURACY_GUIDANCE);
     expect(createOptions?.systemPrompt).toContain(CHAT_ASK_QUESTION_GUIDANCE);
   });
 
