@@ -21,6 +21,18 @@ The Tasks tab empty state is a real compact task list, not a blank placeholder. 
 FNXC:RightDockTasks 2026-06-28-18:25:
 The compact right-dock Tasks list is an active-work queue by default. It hides completed work until the local Show Done toggle is enabled and never renders archived tasks, including in the expanded dock modal that reuses this component.
 */
+/*
+FNXC:RightDockTasks 2026-07-22-12:05:
+Row-key helper: the first occurrence of an id keys as the bare id (stable across reorders — no remount), later occurrences of the same id get an occurrence suffix so duplicate-id data never produces React duplicate-key warnings.
+*/
+function dockRowKey(taskId: string, index: number, list: Array<Task | TaskDetail>): string {
+  let occurrence = 0;
+  for (let i = 0; i < index; i += 1) {
+    if (list[i].id === taskId) occurrence += 1;
+  }
+  return occurrence === 0 ? taskId : `${taskId}--dup-${occurrence}`;
+}
+
 export function DockTaskList({
   tasks,
   projectId,
@@ -71,8 +83,14 @@ export function DockTaskList({
           <p className="dock-task-list__empty-title">{emptyTitle}</p>
           <p className="dock-task-list__empty-copy">{emptyCopy}</p>
         </div>
-      ) : visibleTasks.map((task, index) => (
-        <div key={`${task.id}-${index}`} className="dock-task-list__row" data-testid={`dock-task-list-row-${task.id}`}>
+      ) : visibleTasks.map((task, index, list) => (
+        /*
+        FNXC:RightDockTasks 2026-07-22-12:05:
+        Rows are keyed by task.id (with an occurrence suffix only for duplicate ids). The old `${task.id}-${index}` key remounted every surviving TaskCard on any reorder, filter toggle, or status change, discarding card-local state (open menus, edit drafts).
+        Keying by id also guarantees an instance never migrates between tasks, so no stale per-card oversight/authorization state can cross tasks; TaskCard's FN-8251 render guard covers within-instance prop switches.
+        Duplicate ids (a data anomaly this list deliberately tolerates) keep distinct identities without duplicate-key warnings via the occurrence count.
+        */
+        <div key={dockRowKey(task.id, index, list)} className="dock-task-list__row" data-testid={`dock-task-list-row-${task.id}`}>
           <TaskCard
             task={task as Task}
             projectId={projectId}

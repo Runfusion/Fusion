@@ -457,6 +457,29 @@ describe("TerminalModal", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:40:
+  FN remount-churn fix follow-up (PR #2420 review): kept-alive hosts keep isOpen=true and pass
+  active=false. The terminal must stay mounted (xterm + WS survive) while its auxiliary handlers —
+  here observable via the document Escape keydown — are suspended, then resume on reveal.
+  */
+  it("stays mounted but suspends auxiliary keydown handling while active=false, resuming on reveal", async () => {
+    const { rerender } = render(<TerminalModal isOpen={true} active={false} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    });
+
+    // Suspended: the hidden terminal must not swallow Escape or close itself.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(mockOnClose).not.toHaveBeenCalled();
+
+    // Reveal: the Escape handler re-registers and behaves exactly as before.
+    rerender(<TerminalModal isOpen={true} active={true} onClose={mockOnClose} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
   it("renders embedded mode in-flow without overlay chrome while keeping shell tabs", async () => {
     const { container } = render(
       <TerminalModal

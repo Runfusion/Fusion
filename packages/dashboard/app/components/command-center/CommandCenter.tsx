@@ -5,6 +5,7 @@ import type { ActivityAnalytics, ColorTheme, SignalsAnalytics, ThemeMode, TokenA
 import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
 import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
+import { getCommandCenterState, saveCommandCenterState } from "../../hooks/modalPersistence";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { TaskVerificationStatus } from "../TaskVerificationStatus";
 import { TokensArea } from "./areas/TokensArea";
@@ -571,9 +572,29 @@ export function CommandCenter({
 }: CommandCenterProps = {}) {
   const { t } = useTranslation("app");
   const subViews = useSubViews(nodesEnabled);
-  const [activeTab, setActiveTab] = useState<SubViewId>("overview");
+  /*
+  FNXC:CommandCenter 2026-07-22-13:40:
+  FN remount-churn fix R12: this view unmounts on navigation by design (no keep-alive), so the active sub-tab and date range restore from per-project persisted state on remount. Persisting follows the getPlanningDescription/GitHub-import precedent in modalPersistence.ts; a stored tab that no longer exists (e.g. nodes disabled) falls back to overview via the guard effect below.
+  */
+  const [activeTab, setActiveTab] = useState<SubViewId>(() => (getCommandCenterState(projectId)?.activeTab as SubViewId | undefined) ?? "overview");
 
-  const [range, setRange] = useState<DateRange>(() => rangeFromPreset(defaultPresets((_k, f) => f)[1]));
+  const [range, setRange] = useState<DateRange>(() => getCommandCenterState(projectId)?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
+
+  const persistedProjectRef = useRef(projectId);
+  useEffect(() => {
+    if (persistedProjectRef.current === projectId) return;
+    persistedProjectRef.current = projectId;
+    const stored = getCommandCenterState(projectId);
+    setActiveTab((stored?.activeTab as SubViewId | undefined) ?? "overview");
+    setRange(stored?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
+  }, [projectId]);
+  useEffect(() => {
+    if (persistedProjectRef.current !== projectId) return;
+    saveCommandCenterState({ activeTab, range }, projectId);
+  }, [activeTab, projectId, range]);
+  useEffect(() => {
+    if (!subViews.some((view) => view.id === activeTab)) setActiveTab("overview");
+  }, [activeTab, subViews]);
 
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 

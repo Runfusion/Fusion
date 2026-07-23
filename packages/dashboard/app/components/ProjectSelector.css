@@ -608,6 +608,11 @@
   min-width: 0;
   width: 100%;
   overflow: hidden;
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:30:
+  Containing block for kept-alive main views (KeepAliveView): their hidden state is position:absolute inset:0 so a hidden Planning subtree consumes no layout space while keeping a real (non-zero) box for xterm-safe geometry.
+  */
+  position: relative;
 }
 
 /**

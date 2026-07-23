@@ -1324,6 +1324,38 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
     });
 
+    /*
+    FNXC:TaskDetailTabKeepAlive 2026-07-22-13:05:
+    FN remount-churn fix R6: switching away from Planner chat must not destroy the composer draft or transcript — the tab body stays mounted inside an aria-hidden keep-alive wrapper and restores instantly on return.
+    */
+    it("keeps the planner chat mounted with its draft across tab switches", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent" })}
+          taskDetailChatFirst
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const composer = screen.getByLabelText("Message planner chat") as HTMLTextAreaElement;
+      fireEvent.change(composer, { target: { value: "unsent planner draft" } });
+      expect(screen.getByTestId("planner-chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      // Mounted-but-hidden: same instance, draft intact, wrapper inert for assistive tech.
+      expect(screen.getByTestId("planner-chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+      expect((screen.getByLabelText("Message planner chat") as HTMLTextAreaElement).value).toBe("unsent planner draft");
+
+      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      expect(screen.getByTestId("planner-chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+      expect((screen.getByLabelText("Message planner chat") as HTMLTextAreaElement).value).toBe("unsent planner draft");
+    });
+
     it("FN-6347 removes the chat body modifier while editing", () => {
       const { container } = render(
         <TaskDetailModal

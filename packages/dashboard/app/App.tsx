@@ -115,6 +115,7 @@ export {
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
+import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
 import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
 import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
@@ -673,6 +674,25 @@ function AppInner() {
   }, [currentProject?.id, quickChatOpen]);
 
   /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:30:
+  Planning Mode mounts only after its first open for the current project, then stays mounted-but-hidden across sidebar navigation so the interview survives round-trips (FN remount-churn fix R5). This mirrors Quick Chat's quickChatEverOpenedProjectId latch above: reset on project change so one project's kept-alive interview can never leak into another; the PlanningKeepAlive key supplies the matching React identity boundary.
+  */
+  const [planningEverOpenedProjectId, setPlanningEverOpenedProjectId] = useState<string | null>(null);
+  const planningLatchProjectIdRef = useRef<string | undefined>(undefined);
+  const planningViewActive = taskView === "planning";
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (planningLatchProjectIdRef.current !== projectId) {
+      planningLatchProjectIdRef.current = projectId;
+      setPlanningEverOpenedProjectId(planningViewActive && projectId ? projectId : null);
+      return;
+    }
+    if (planningViewActive && projectId) {
+      setPlanningEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, planningViewActive]);
+
+  /*
   FNXC:GitHubImportChat 2026-07-30-12:00:
   Import Tasks can hand a selected GitHub link to Quick Chat without creating a task. Keep the
   value and nonce at App scope so both modal and embedded imports seed every Chat presentation.
@@ -821,7 +841,10 @@ function AppInner() {
   }), [taskPopupsBoardListOnly, taskView]);
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible; navigating away unmounts scoped FloatingWindow shells without deleting their state.
+  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible.
+
+  FNXC:TaskPopupViewGating 2026-07-22-13:15:
+  FN remount-churn fix R7: this memo no longer drives the render list (all entries render; off-view windows hide via FloatingWindow `hidden`). It remains the "currently visible" set consumed by the Escape/back-navigation shortcut handler below, which must only dismiss windows the user can actually see.
   */
   const visiblePoppedOutTaskEntries = useMemo(
     () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
@@ -1561,7 +1584,6 @@ function AppInner() {
     isRemote,
     remoteData,
     tasks,
-    bgPlanningSessions,
     workflowSteps,
     subscribePluginEvents,
     openDetailTask,
@@ -1607,8 +1629,6 @@ function AppInner() {
     ingestCreatedTasks,
     nodesEnabled,
     openWorkflowEditorWithNav,
-    handlePlanningTaskCreated,
-    handlePlanningTasksCreated,
     handleGitHubImport,
     devServerEnabled,
     mainPanelDetailTask,
@@ -1862,6 +1882,25 @@ function AppInner() {
           className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
+          {/*
+          FNXC:PlanningKeepAlive 2026-07-22-12:30:
+          Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
+          */}
+          {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
+            <PlanningKeepAlive
+              key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
+              active={planningViewActive}
+              projectId={currentProject.id}
+              tasks={tasks}
+              bgPlanningSessions={bgPlanningSessions}
+              modalManager={modalManager}
+              handleChangeTaskView={handleTaskViewChange}
+              handlePlanningTaskCreated={handlePlanningTaskCreated}
+              handlePlanningTasksCreated={handlePlanningTasksCreated}
+              openBoardTaskDetail={openBoardTaskDetail}
+              openWorkflowEditorWithNav={openWorkflowEditorWithNav}
+            />
+          )}
         </div>
         {rightDock.dock}
       </div>
@@ -2028,18 +2067,20 @@ function AppInner() {
       moves either overlapping surface above the other. Other utility windows retain their separate,
       higher utility band and cannot be reordered by task-popup interaction.
 
-      FNXC:TaskPopupViewGating 2026-07-15-15:20:
-      Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
+      FNXC:TaskPopupViewGating 2026-07-22-13:15:
+      FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
+      {poppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
         const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
         const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
+        const popupVisible = taskPopupsVisibleOnCurrentView(originTaskView);
         return (
           <FloatingWindow
             key={popupKey}
             windowKey={`task-detail-${snapshot.id}-${originTaskView ?? "global"}`}
             title={liveTask.id}
+            hidden={!popupVisible}
             onClose={close}
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
@@ -2054,6 +2095,7 @@ function AppInner() {
               initialTab={initialTab}
               projectId={currentProject?.id}
               tasks={tasks}
+              active={popupVisible}
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
               onMoveTask={moveTask}

@@ -1214,6 +1214,59 @@ describe("TaskChatTab", () => {
     expect(thinkingBlocks[0].nextElementSibling).toBeNull();
   });
 
+  /*
+  FNXC:TaskChatSegmentKey 2026-07-22-12:00:
+  Segment keys must be kind + startIndex only. Embedding entries.length remounted the actively streaming segment on every appended entry, collapsing an expanded thinking block mid-stream.
+  */
+  it("keeps an expanded thinking block expanded while entries stream into the same segment", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "First streamed thought" }),
+    ]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
+
+    const thinking = screen.getByTestId("task-chat-thinking");
+    expect(thinking).not.toHaveAttribute("open");
+    await user.click(within(thinking).getByText("Thinking"));
+    expect(thinking).toHaveAttribute("open");
+
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "First streamed thought" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "Second streamed thought", timestamp: "2026-06-12T00:00:01.000Z" }),
+    ]);
+    rerender(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("task-chat-thinking")).toHaveAttribute("open");
+    expect(screen.getByText(/Second streamed thought/)).toBeVisible();
+  });
+
+  it("gives a genuinely new segment a fresh instance with defaultOpen applied", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Original reasoning" }),
+    ]);
+
+    const { rerender } = render(<TaskChatTab task={makeTask({ column: "in-progress" })} active addToast={vi.fn()} />);
+
+    const firstThinking = screen.getByTestId("task-chat-thinking");
+    expect(firstThinking).toHaveAttribute("open");
+    await user.click(within(firstThinking).getByText("Thinking"));
+    expect(firstThinking).not.toHaveAttribute("open");
+
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Original reasoning" }),
+      makeEntry({ agent: "executor", text: "interleaved response", timestamp: "2026-06-12T00:00:01.000Z" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "Later reasoning", timestamp: "2026-06-12T00:00:02.000Z" }),
+    ]);
+    rerender(<TaskChatTab task={makeTask({ column: "in-progress" })} active addToast={vi.fn()} />);
+
+    const thinkingBlocks = screen.getAllByTestId("task-chat-thinking");
+    expect(thinkingBlocks).toHaveLength(2);
+    expect(thinkingBlocks[0]).not.toHaveAttribute("open");
+    expect(thinkingBlocks[1]).toHaveAttribute("open");
+  });
+
   it("creates distinct tool segments when text or thinking entries are interleaved", () => {
     mockLogs([
       makeEntry({ agent: "executor", type: "tool", text: "first tool", detail: "first detail" }),
