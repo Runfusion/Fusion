@@ -2223,7 +2223,7 @@ If the endpoint is unavailable on the running dashboard build, the response will
 
 <!-- FNXC:PlanningMode 2026-07-20-01:00: Planning interviews are always infinite and user-validated. The former follow-up toggle cannot suppress questions or produce a final summary; the dashboard starts each interview in the full questioning mode. -->
 
-Planning Mode asks another focused question after every answer until you select **Validate plan**. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event and delivers a dashboard mailbox message that links the operator back to the Planning view. Mailbox delivery does not depend on ntfy configuration and is deduplicated by session/question across restarts.
+Planning Mode asks another focused question after every answer until you select **Validate plan**. For a vague, subjective, preference-style, or symptom-only opener, it first inspects the relevant repository surface and offers materially distinct, concrete directions plus **Other** instead of an abstract clarification question. Each selected direction, multi-selection, or verbatim Other response rebuilds the evolving plan around that accumulated decision; the next question then narrows the selected direction one consequential level further with concrete options. The provisional plan does not falsely commit to an unselected alternative, and only the operator can validate the finished plan. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event.
 
 ### Mobile footer quick actions
 

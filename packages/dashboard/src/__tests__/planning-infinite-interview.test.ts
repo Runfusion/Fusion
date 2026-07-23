@@ -102,6 +102,34 @@ const SECOND_QUESTION = {
   ],
 };
 
+const BACKGROUND_DIRECTIONS = {
+  id: "background-direction", type: "single_select", question: "Which background direction should the dashboard take?",
+  description: "Repository inspection found the dashboard's shared background tokens and visual-effects surface.",
+  options: [
+    { id: "change-color", label: "Change the background color", pros: ["Keeps rendering simple"], cons: ["Adds little depth"] },
+    { id: "add-effects", label: "Add effects to the background", pros: ["Creates a distinctive atmosphere"], cons: ["Needs performance guardrails"] },
+    { id: "other", label: "Other (write your own)", isOther: true },
+  ],
+};
+
+const EFFECT_TYPES = {
+  id: "effect-type", type: "single_select", question: "What type of background effects should we add?",
+  options: [
+    { id: "3d", label: "3D effects", pros: ["Adds spatial depth"], cons: ["Can increase GPU work"] },
+    { id: "light", label: "Light effects", pros: ["Keeps the interface subtle"], cons: ["May be less dramatic"] },
+    { id: "other", label: "Other (write your own)", isOther: true },
+  ],
+};
+
+const EFFECT_INTENSITY = {
+  id: "effect-intensity", type: "single_select", question: "How prominent should the selected light effects be?",
+  options: [
+    { id: "subtle", label: "Subtle ambient light", pros: ["Protects readability"], cons: ["Has a quieter visual impact"] },
+    { id: "expressive", label: "Expressive animated light", pros: ["Makes the background more visible"], cons: ["Needs motion safeguards"] },
+    { id: "other", label: "Other (write your own)", isOther: true },
+  ],
+};
+
 describe("reactive Planning Mode question contract", () => {
   beforeEach(() => {
     __resetPlanningState();
@@ -172,7 +200,7 @@ describe("reactive Planning Mode question contract", () => {
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/Proceed with plan serializes the plan as plan\.md/i);
   });
 
-  it("defines a collaborative planning contract rather than an execution-task specification", () => {
+  it("defines a collaborative selection-led narrowing contract rather than an execution-task specification", () => {
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/investigate relevant repository and active-board context/i);
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/assumptions, unknowns, constraints/i);
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/Compare viable approaches and their trade-offs/i);
@@ -181,6 +209,11 @@ describe("reactive Planning Mode question contract", () => {
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/not an executor-ready task specification/i);
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/do not automatically split work/i);
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/Do not produce task-specification bookkeeping.*commit guidance.*no-code-change caveats.*task-creation directives/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/vague, subjective, preference-based, or symptom-only/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/materially distinct actionable directions/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/durable decision/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/selected direction—not the original vague complaint or an unselected alternative—the central intended outcome/i);
+    expect(PLANNING_SYSTEM_PROMPT).toMatch(/narrows it one level further/i);
     expect(PLANNING_SYSTEM_PROMPT).toMatch(/respond only with JSON/i);
   });
 
@@ -485,6 +518,102 @@ describe("reactive Planning Mode question contract", () => {
     const finalPlan = await validateSession(created.sessionId);
     expect(finalPlan.description).toContain("Build a reviewed recovery workflow with audit coverage.");
     expect(await getSession(created.sessionId)).toMatchObject({ validated: true, currentQuestion: undefined });
+  });
+
+  it("rebuilds a non-streaming vague-background plan around successive selected directions", async () => {
+    installScriptedAgent([
+      payload({
+        ...BACKGROUND_DIRECTIONS,
+        runningPlan: {
+          title: "Improve dashboard background direction",
+          description: "Evaluate the inspected shared background surfaces before choosing a color change or visual effects.",
+          proposedChanges: ["Inspect shared background tokens and effects surfaces"],
+          acceptanceCriteria: ["The selected direction is reflected in the plan"],
+          keyDeliverables: ["Choose a background direction"],
+        },
+      }),
+      payload({
+        ...EFFECT_TYPES,
+        runningPlan: {
+          title: "Add effects to the dashboard background",
+          description: "Add visual effects to the dashboard background instead of changing its color.",
+          proposedChanges: ["Add performant background effects to the shared dashboard surface"],
+          acceptanceCriteria: ["The dashboard background renders the chosen effects without replacing its color strategy"],
+          keyDeliverables: ["Implement background effects", "Verify background-effect performance"],
+        },
+      }),
+      payload({
+        ...EFFECT_INTENSITY,
+        runningPlan: {
+          title: "Add light effects to the dashboard background",
+          description: "Add light effects to the dashboard background with the selected effects direction retained.",
+          proposedChanges: ["Add light-based background effects to the shared dashboard surface"],
+          acceptanceCriteria: ["Light effects render without a color-change implementation"],
+          keyDeliverables: ["Implement light background effects", "Verify light-effect performance"],
+        },
+      }),
+    ]);
+
+    const created = await createSession("127.0.0.31", "I don't like the black background", MOCK_TASK_STORE, "/tmp/project");
+    expect(created.firstQuestion).toMatchObject({ id: "background-direction" });
+    expect(created.firstQuestion.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Change the background color" }),
+      expect.objectContaining({ label: "Add effects to the background" }),
+    ]));
+    expect(created.summary.description).toContain("before choosing a color change or visual effects");
+
+    await submitResponse(created.sessionId, { "background-direction": "add-effects" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    let session = await getSession(created.sessionId);
+    expect(session?.summary).toMatchObject({
+      title: "Add effects to the dashboard background",
+      description: expect.stringContaining("instead of changing its color"),
+      proposedChanges: ["Add performant background effects to the shared dashboard surface"],
+      keyDeliverables: ["Implement background effects", "Verify background-effect performance"],
+    });
+    expect(session?.currentQuestion).toMatchObject({ id: "effect-type", question: expect.stringMatching(/type of background effects/i) });
+    expect(session?.currentQuestion?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "3D effects" }),
+      expect.objectContaining({ label: "Light effects" }),
+    ]));
+
+    await submitResponse(created.sessionId, { "effect-type": "light" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    session = await getSession(created.sessionId);
+    expect(session?.summary).toMatchObject({
+      title: "Add light effects to the dashboard background",
+      description: expect.stringContaining("selected effects direction retained"),
+      proposedChanges: ["Add light-based background effects to the shared dashboard surface"],
+    });
+    expect(session?.summary?.description).not.toContain("Change the background color");
+    expect(session?.history).toHaveLength(2);
+    expect(session?.currentQuestion).toMatchObject({ id: "effect-intensity" });
+    expect(session?.validated).toBe(false);
+  });
+
+  it("persists the same selected-direction plan through streaming session recreation", async () => {
+    installScriptedAgent([
+      payload({ ...BACKGROUND_DIRECTIONS, runningPlan: { title: "Improve dashboard background direction", description: "Choose a repository-grounded dashboard background direction.", keyDeliverables: ["Choose a background direction"] } }),
+      payload({ ...EFFECT_TYPES, runningPlan: { title: "Add effects to the dashboard background", description: "Add effects to the background after the operator selected that direction.", proposedChanges: ["Add background effects"], keyDeliverables: ["Implement background effects"] } }),
+    ]);
+    const sessionId = await createSessionWithAgent("127.0.0.32", "I don't like the black background", "/tmp/project", MOCK_TASK_STORE);
+    const initialQuestionReady = new Promise<void>((resolveQuestion) => {
+      planningStreamManager.subscribe(sessionId, (event) => {
+        if (event.type === "question") resolveQuestion();
+      });
+    });
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await initialQuestionReady;
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    await submitResponse(sessionId, { "background-direction": "add-effects" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+
+    const session = await getSession(sessionId);
+    expect(session?.summary).toMatchObject({
+      title: "Add effects to the dashboard background",
+      description: expect.stringContaining("operator selected that direction"),
+      proposedChanges: ["Add background effects"],
+    });
+    expect(session?.history).toEqual([expect.objectContaining({ response: { "background-direction": "add-effects" } })]);
+    expect(session?.currentQuestion).toMatchObject({ id: "effect-type" });
+    expect(agentSystemPrompts).toEqual([PLANNING_SYSTEM_PROMPT]);
   });
 
   it("uses a model-authored initial plan on the non-streaming first turn", async () => {
