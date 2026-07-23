@@ -2259,8 +2259,16 @@ export async function pushAfterMergeToRemote(input: {
     // The approved content is now on the target branch, so clean up the
     // temporary recovery ref. Deletion remains best-effort: a cleanup problem
     // must not turn a successful target push into a failed merge outcome.
+    // The create push above uses --force, so a restarted/concurrent attempt
+    // for this taskId can force-update the ref to a newer value; lease the
+    // delete to this attempt's localSha so an ownership change fails
+    // harmlessly here instead of destroying a newer safety copy.
     try {
-      await git(["push", remote, `:${recoveryRef}`], canonicalPushRoot, { timeout: 120_000 });
+      await git(
+        ["push", `--force-with-lease=${recoveryRef}:${localSha}`, remote, `:${recoveryRef}`],
+        canonicalPushRoot,
+        { timeout: 120_000 },
+      );
       await recordRecoveryBranch(
         "deleted",
         `Push after merge: deleted recovery branch ${remote}/${recoveryBranch} after the target push succeeded`,

@@ -5754,19 +5754,26 @@ FNXC:MergePush 2026-07-22-18:48:
 Tchori-Labs/Fusion#5 exposed that `REBASE_HEAD` can remain resolvable after `git rebase --continue` completed. Rebase state is defined by Git's worktree-specific state directories; checking those directories prevents a completed conflicting rebase from receiving a spurious second `--continue` and being reported as a failed push.
 
 FNXC:MergePush 2026-07-22-21:20:
-Resolved via `git rev-parse --git-path rebase-merge|rebase-apply` (worktree-specific, so it is correct for the linked clean-room worktree, not just the main root). Executed with the package-standard async exec + timeout rather than `execSync` since every caller awaits inside an async merge/finalize flow. Detection is fail-safe: any error (spawn failure, timeout) is swallowed to `false` — callers treat "no rebase in progress" as the safe default, skipping `--continue`/`--abort` cleanup rather than risking a spurious continue on an indeterminate state.
+Resolved via `git rev-parse --git-path rebase-merge|rebase-apply` (worktree-specific, so it is correct for the linked clean-room worktree, not just the main root). Executed with the package-standard async exec + timeout rather than `execSync` since every caller awaits inside an async merge/finalize flow.
+
+FNXC:MergePush 2026-07-23-00:00:
+Split into a strict probe and a best-effort wrapper because "swallow probe error to `false`" is only safe at the abort guards (where `false` means "skip `--abort`" and cleanup still removes the worktree). At the completion check inside `pullWithRebaseAndResolveConflicts`, `false` means "rebase resolved → return", which flows straight into the `HEAD:refs/heads/<branch>` push — so an errored probe during a still-in-progress rebase would push a partially-replayed HEAD and report success. `probeRebaseInProgress` surfaces the probe error so the completion site can fail cleanly (`{pushed:false}`) instead; `isRebaseInProgress` keeps the fail-safe-to-`false` semantics the two abort guards rely on.
 */
+async function probeRebaseInProgress(rootDir: string): Promise<boolean> {
+  const gitPath = async (name: "rebase-merge" | "rebase-apply") => {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--git-path", name], {
+      cwd: rootDir,
+      encoding: "utf-8",
+      timeout: PUSH_TIMEOUT_MS,
+    });
+    return resolve(rootDir, String(stdout).trim());
+  };
+  return existsSync(await gitPath("rebase-merge")) || existsSync(await gitPath("rebase-apply"));
+}
+
 export async function isRebaseInProgress(rootDir: string): Promise<boolean> {
   try {
-    const gitPath = async (name: "rebase-merge" | "rebase-apply") => {
-      const { stdout } = await execFileAsync("git", ["rev-parse", "--git-path", name], {
-        cwd: rootDir,
-        encoding: "utf-8",
-        timeout: PUSH_TIMEOUT_MS,
-      });
-      return resolve(rootDir, String(stdout).trim());
-    };
-    return existsSync(await gitPath("rebase-merge")) || existsSync(await gitPath("rebase-apply"));
+    return await probeRebaseInProgress(rootDir);
   } catch {
     return false;
   }
@@ -6018,7 +6025,11 @@ async function pullWithRebaseAndResolveConflicts(
 
       for (let attempt = 1; attempt <= 10; attempt++) {
         throwIfAborted(options?.signal, taskId);
-        if (!(await isRebaseInProgress(rootDir))) {
+        // Strict probe here: a swallowed probe error must not be read as
+        // "rebase resolved", because returning declares completion and pushes
+        // HEAD. A surfaced probe error propagates to the resolution catch and
+        // becomes a clean {pushed:false} instead of a partial-HEAD push.
+        if (!(await probeRebaseInProgress(rootDir))) {
           mergerLog.log(`${taskId}: rebase conflicts resolved`);
           return;
         }

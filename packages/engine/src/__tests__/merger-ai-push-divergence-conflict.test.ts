@@ -4,7 +4,7 @@ GitHub issue Tchori-Labs/Fusion#5 requires a real-git conflicting-divergence reg
 */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
@@ -153,8 +153,15 @@ function expectNoRebaseWorktree(repoDir: string): void {
     .filter((line) => line.startsWith("worktree "))
     .map((line) => line.slice("worktree ".length));
   for (const worktree of worktrees) {
-    expect(existsSync(join(worktree, ".git", "rebase-merge"))).toBe(false);
-    expect(existsSync(join(worktree, ".git", "rebase-apply"))).toBe(false);
+    for (const name of ["rebase-merge", "rebase-apply"] as const) {
+      // Linked worktrees keep `.git` as a file (`gitdir: ...` pointer), not a
+      // directory, so the rebase-state path must be resolved via git's
+      // worktree-specific git-path mechanism, matching isRebaseInProgress in
+      // merger.ts. `git rev-parse --git-path` may return an absolute or
+      // relative path, so `resolve` (not `join`) here mirrors that function.
+      const gitPath = execSync(`git rev-parse --git-path ${name}`, { cwd: worktree, encoding: "utf-8" }).trim();
+      expect(existsSync(resolve(worktree, gitPath))).toBe(false);
+    }
   }
 }
 
