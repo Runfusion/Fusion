@@ -91,4 +91,5 @@ docker run --rm \
 
 - The container runs as the non-root `node` user.
 - `git` must be available in the container runtime. The mounted project volume must preserve `.git` metadata and repository history for worktree operations; Fusion initializes missing repositories during project registration.
-- The root `Dockerfile` installs with `pnpm install --frozen-lockfile` before copying full source, so every workspace package/plugin manifest in `pnpm-workspace.yaml` must have a corresponding `COPY <path>/package.json` line in the builder stage.
+- The root `Dockerfile` installs with `pnpm install --frozen-lockfile` before copying full source, so every current workspace package/plugin manifest selected by `pnpm-workspace.yaml` must be covered by a builder-stage `COPY` before that install. Keep the manifest-only dependency-cache layer; the runner's intentionally filtered production install does not provide builder coverage.
+- `scripts/__tests__/dockerfile-workspace-manifests.test.mjs` expands the current workspace entries and rejects missing or duplicate builder pre-install COPY sources. Run it with `pnpm test:scripts -- scripts/__tests__/dockerfile-workspace-manifests.test.mjs` whenever workspace membership or Docker manifest copies change.
