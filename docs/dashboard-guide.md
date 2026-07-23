@@ -1963,6 +1963,79 @@ Command Center chart surfaces are a stricter token-only zone: `CommandCenter.css
 
 Non-Command-Center dashboard CSS uses `--text` as the canonical primary text token. The undefined `--text-primary` alias is forbidden outside `components/command-center/**` and guarded by `packages/dashboard/app/__tests__/text-token-canonicalization.test.ts`.
 
+### Stable theme token contract (integrators & plugins)
+
+The following curated tokens are the supported dashboard theming contract for integrations and plugin-rendered UI. Each token is defined by `styles.css`; use these names rather than depending on internal or theme-data-only variables.
+
+<!-- fusion-theme-token-contract:start -->
+| Token | Stable meaning |
+|---|---|
+| `--space-xs` | Extra-small spacing step |
+| `--space-sm` | Small spacing step |
+| `--space-md` | Medium spacing step |
+| `--space-lg` | Large spacing step |
+| `--space-xl` | Extra-large spacing step |
+| `--space-2xl` | Largest shared spacing step |
+| `--radius-sm` | Small corner radius |
+| `--radius-md` | Medium corner radius |
+| `--radius-lg` | Large corner radius |
+| `--radius-xl` | Extra-large corner radius |
+| `--radius-pill` | Pill-shaped corner radius |
+| `--font-primary` | Dashboard UI font stack |
+| `--font-mono` | Dashboard monospace font stack |
+| `--font-size-xs` | Caption and help text size |
+| `--font-size-base` | Default body text size |
+| `--shadow-sm` | Subtle elevation shadow |
+| `--shadow-md` | Standard elevation shadow |
+| `--shadow-lg` | High elevation shadow |
+| `--focus-ring` | Subtle focus indicator shadow |
+| `--focus-ring-strong` | Emphasized focus indicator shadow |
+| `--duration-instant` | Instant motion duration |
+| `--duration-fast` | Fast motion duration |
+| `--duration-normal` | Standard motion duration |
+| `--duration-slow` | Slow motion duration |
+| `--transition-instant` | Instant duration and easing shorthand |
+| `--transition-fast` | Fast duration and easing shorthand |
+| `--transition-normal` | Standard duration and easing shorthand |
+| `--transition-slow` | Slow duration and easing shorthand |
+| `--bg` | Primary application background |
+| `--surface` | Primary raised surface |
+| `--card` | Card surface |
+| `--card-hover` | Hovered card surface |
+| `--surface-hover` | Neutral hovered surface |
+| `--bg-secondary` | Secondary application background |
+| `--bg-tertiary` | Tertiary application background |
+| `--border` | Default border color |
+| `--border-subtle` | Low-contrast border color |
+| `--border-strong` | High-contrast border color |
+| `--text` | Primary text color |
+| `--text-muted` | Secondary text color |
+| `--text-dim` | De-emphasized text color |
+| `--triage` | Triage workflow status color |
+| `--todo` | To-do workflow status color |
+| `--in-progress` | In-progress workflow status color |
+| `--in-review` | In-review workflow status color |
+| `--done` | Done workflow status color |
+| `--color-success` | Semantic success color |
+| `--color-error` | Semantic error color |
+| `--color-warning` | Semantic warning color |
+| `--color-info` | Semantic informational color |
+| `--color-muted` | Semantic muted color |
+| `--fusion-max-z` | Live dashboard floating-layer ceiling |
+<!-- fusion-theme-token-contract:end -->
+
+Color tokens resolve to raw color strings (e.g. `#161b22`), not shadcn-style HSL triples, so a token can be used directly as a `color`, `background`, or `border` value without wrapping it in `hsl(...)`.
+
+#### Overlay layering contract
+
+`--fusion-max-z` is always at least as high as the dashboard-managed floating layers covered by this contract: the page overlay/popover band at 10000–10001, the session-monotonic floating-utility stack starting at 10100, the reserved toast/feedback ceiling at 10500, and the body-portaled model-combobox dropdown at 11000. Its CSS boot value is 11001, one above the tallest static layer. `floatingWindowStack.ts` raises the inline value on `document.documentElement` whenever the utility stack grows beyond that floor, and CSS `var()` references re-resolve automatically. The separate task-detail popup band starting at 220 is intentionally not a source for updates because it remains below the utility band.
+
+For the simplest integration, append overlay content to `#plugin-overlay-root`. This fixed, viewport-sized mount point uses `z-index: calc(var(--fusion-max-z) + 1)` and is click-through by default; interactive children must set `pointer-events: auto`. A plugin that owns another root stacking context can apply the same z-index expression directly.
+
+A static mount-point z-index would eventually be overtaken by the unbounded, session-monotonic utility counter. The live custom property is therefore the layering primitive; the mount point is an inert convenience consumer. When empty, it does not alter layout, scrolling, or pointer behavior.
+
+Tokens in the table are stable. Renaming or removing one requires a deprecation note and a changeset; `theme-token-contract-docs.test.ts` guards that every documented token still has a CSS definition.
+
 ### Theme system
 
 <!-- FNXC:DashboardTheming 2026-06-21-00:00: FN-6840 synced the user-facing theme docs to the shipped expanded Shadcn family, the Shadcn Custom color-picker preset, and the sidebar accent behavior that follows each theme's --accent token. -->

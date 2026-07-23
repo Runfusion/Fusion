@@ -223,6 +223,12 @@ html {
   --z-dropdown: 1000;
   --z-modal: 1100;
 
+  /*
+  FNXC:PluginOverlayLayering 2026-07-23-01:21:
+  Plugin overlays need a stable ceiling above the dashboard's 10000–10001 page-overlay band, 10100+ session-monotonic utility-window stack, the 10500 toast/feedback layer, and the 11000 body-portaled model-combobox dropdown. The 11001 boot floor is available before JavaScript runs; floatingWindowStack.ts raises an inline documentElement value when its utility counter grows past this floor.
+  */
+  --fusion-max-z: 11001;
+
   --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);
@@ -2823,6 +2829,17 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   font-size: 13px;
   color: var(--text-dim);
   padding: 12px 0;
+}
+
+/*
+FNXC:PluginOverlayLayering 2026-07-23-01:21:
+The supported plugin overlay mount spans the viewport in the root stacking context and follows the live dashboard ceiling through --fusion-max-z. It is empty and click-through by default, so existing layout and interactions remain unchanged; interactive plugin children must opt back into pointer events.
+*/
+#plugin-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--fusion-max-z, 11001) + 1);
+  pointer-events: none;
 }
 
 /* === Toasts === */
