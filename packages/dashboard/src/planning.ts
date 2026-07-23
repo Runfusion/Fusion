@@ -474,7 +474,12 @@ retrySession, startExistingSession, initializeAgent) must hold a reservation for
 so a concurrent entry is rejected with GenerationInProgressError instead of displacing a
 healthy in-flight generation.
 */
-const pendingTurnReservations = new Set<string>();
+interface PlanningTurnReservation {
+  done: Promise<void>;
+  resolveDone: () => void;
+}
+
+const pendingTurnReservations = new Map<string, PlanningTurnReservation>();
 
 function isPlanningTurnActive(sessionId: string): boolean {
   return activeGenerations.has(sessionId) || pendingTurnReservations.has(sessionId);
@@ -485,8 +490,45 @@ function reservePlanningTurn(sessionId: string): () => void {
   if (isPlanningTurnActive(sessionId)) {
     throw new GenerationInProgressError("Generation already in progress");
   }
-  pendingTurnReservations.add(sessionId);
-  return () => pendingTurnReservations.delete(sessionId);
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const reservation: PlanningTurnReservation = { done, resolveDone };
+  pendingTurnReservations.set(sessionId, reservation);
+  return () => {
+    if (pendingTurnReservations.get(sessionId) === reservation) {
+      pendingTurnReservations.delete(sessionId);
+    }
+    reservation.resolveDone();
+  };
+}
+
+/*
+FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+User-takes-control actions (rewind/edit) abort the in-flight generation and must then WAIT for
+that turn's owner to unwind and release its reservation before mutating session state.
+Deleting the active-generation record without waiting left both admission sets empty while the
+aborted turn was still unwinding, so a concurrent submit/retry could interleave with rewind's
+own awaits and corrupt question/history/agent state (review finding on PR #2417).
+*/
+async function waitForPlanningTurnRelease(sessionId: string, timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (isPlanningTurnActive(sessionId)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    const reservation = pendingTurnReservations.get(sessionId);
+    if (reservation) {
+      await Promise.race([
+        reservation.done,
+        new Promise((resolve) => setTimeout(resolve, Math.min(remaining, 50))),
+      ]);
+    } else {
+      // Active generation whose owner has not yet reached its release — brief yield.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  return true;
 }
 
 // ── AI Session Persistence ────────────────────────────────────────────────
@@ -1675,8 +1717,15 @@ export async function startExistingSession(
     return;
   }
 
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+  The duplicate-start guard and the initial-turn registration must be one synchronous block —
+  no await between them. With persistSession in between, two concurrent duplicate starts could
+  both pass the guard and the second registerInitialTurn threw "Initial planning turn already
+  registered" for a normal duplicate start (review finding on PR #2417). Registration IS the
+  claim; persistence follows it.
+  */
   beginPlanningGeneration(session, "initial_plan");
-  await persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
     initializeAgent(session, rootDir, store, modelProvider, modelId, session.draftThinkingLevel, promptOverrides, pluginRunner).catch((err) => {
@@ -1688,6 +1737,7 @@ export async function startExistingSession(
       });
     });
   });
+  await persistSession(session, "generating");
 }
 
 /**
@@ -3127,20 +3177,19 @@ export async function rewindSession(
     throw new InvalidSessionStateError("Planning session has no previous question to rewind to");
   }
 
-  const rewindIndex = questionId
-    ? session.history.findIndex((entry) => entry.question.id === questionId)
-    : session.history.length - 1;
-  if (rewindIndex < 0) {
-    throw new InvalidSessionStateError("Planning question to edit was not found");
-  }
-  const rewindEntry = session.history[rewindIndex]!;
-  if (!questionId) session.history.pop();
-
   /*
   FNXC:PlanningTurnAdmission 2026-07-22-21:00:
   Rewind/edit is a user-takes-control action. Cancel any in-flight generation through its own
   abort/teardown path (like validateSession) before disposing the agent, so the turn cannot
   keep running against a disposed session and surface "AI returned no valid JSON".
+
+  FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+  After the abort, WAIT for the cancelled turn's owner to unwind and release its reservation,
+  then hold the reservation for rewind's own span. Without this, both admission sets were
+  empty during rewind's awaits and a concurrent submit/retry could interleave and corrupt
+  question/history/agent state; the cancelled turn's post-prompt abort checks plus this
+  serialization keep a slow provider prompt from outliving the rewound state (PR #2417).
+  All state mutation (including history.pop) happens only after admission succeeds.
   */
   const activeGeneration = activeGenerations.get(session.id);
   if (activeGeneration) {
@@ -3150,30 +3199,49 @@ export async function rewindSession(
     activeGeneration.abortController.abort();
     activeGenerations.delete(session.id);
   }
-
-  disposeSessionAgentForRetry(session);
-
-  session.currentQuestion = rewindEntry.question;
-  session.editingQuestionId = questionId ? questionId : undefined;
-  // Re-derive from retained answers so an edit cannot revive a prior question as a deliverable.
-  session.summary = buildRunningSummary(session.initialPlan, session.history);
-  session.error = undefined;
-  session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
-  session.thinkingOutput = "";
-  session.updatedAt = new Date();
-
-  if (!session.agent && rootDir) {
-    await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+  if (!(await waitForPlanningTurnRelease(session.id))) {
+    throw new GenerationInProgressError("Generation already in progress");
   }
+  const releaseTurn = reservePlanningTurn(session.id);
 
-  persistSession(session, "awaiting_input");
-  planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
-  planningStreamManager.broadcast(session.id, { type: "question", data: rewindEntry.question });
+  try {
+    // Resolve the rewind target only after admission: a turn that completed while we
+    // waited may have appended to history, so an index computed earlier would be stale.
+    const rewindIndex = questionId
+      ? session.history.findIndex((entry) => entry.question.id === questionId)
+      : session.history.length - 1;
+    if (rewindIndex < 0) {
+      throw new InvalidSessionStateError("Planning question to edit was not found");
+    }
+    const rewindEntry = session.history[rewindIndex]!;
+    if (!questionId) session.history.pop();
 
-  return {
-    currentQuestion: rewindEntry.question,
-    history: [...session.history],
-  };
+    disposeSessionAgentForRetry(session);
+
+    session.currentQuestion = rewindEntry.question;
+    session.editingQuestionId = questionId ? questionId : undefined;
+    // Re-derive from retained answers so an edit cannot revive a prior question as a deliverable.
+    session.summary = buildRunningSummary(session.initialPlan, session.history);
+    session.error = undefined;
+    session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
+    session.thinkingOutput = "";
+    session.updatedAt = new Date();
+
+    if (!session.agent && rootDir) {
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+    }
+
+    persistSession(session, "awaiting_input");
+    planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+    planningStreamManager.broadcast(session.id, { type: "question", data: rewindEntry.question });
+
+    return {
+      currentQuestion: rewindEntry.question,
+      history: [...session.history],
+    };
+  } finally {
+    releaseTurn();
+  }
 }
 
 export function stopGeneration(sessionId: string): boolean {

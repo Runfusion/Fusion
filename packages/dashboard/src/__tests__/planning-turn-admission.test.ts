@@ -37,6 +37,7 @@ import {
   getSession,
   planningStreamManager,
   retrySession,
+  rewindSession,
   setAiSessionStore,
   startExistingSession,
   submitResponse,
@@ -203,6 +204,59 @@ describe("planning single-turn admission", () => {
     const session = await getSession(sessionId);
     expect(session?.error).toBeUndefined();
     expect(scripted.agent.session.dispose).not.toHaveBeenCalled();
+  });
+
+  it("resolves two concurrent duplicate starts without an initial-turn registration error", async () => {
+    const scripted = createScriptedAgent();
+    __setCreateFnAgent(vi.fn(async () => scripted.agent) as never);
+
+    scripted.holdNextPrompt();
+    const sessionId = await createSessionWithAgent(
+      "10.0.9.9",
+      "Plan something small",
+      "/tmp/project",
+      MOCK_TASK_STORE,
+    );
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await waitFor(() => scripted.agent.session.prompt.mock.calls.length > 0);
+
+    // Two racing duplicate starts must BOTH be quiet no-ops — the pre-fix code let the
+    // second reach registerInitialTurn and throw "Initial planning turn already registered".
+    const results = await Promise.allSettled([
+      startExistingSession(sessionId, "/tmp/project", MOCK_TASK_STORE),
+      startExistingSession(sessionId, "/tmp/project", MOCK_TASK_STORE),
+    ]);
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(planningStreamManager.hasPendingInitialTurn(sessionId)).toBe(false);
+
+    scripted.releasePrompt();
+    await waitFor(async () => Boolean((await getSession(sessionId))?.currentQuestion));
+    expect((await getSession(sessionId))?.error).toBeUndefined();
+  });
+
+  it("rewind waits for the cancelled turn to release before mutating state", async () => {
+    const scripted = createScriptedAgent();
+    const sessionId = await startSessionAwaitingInput(scripted);
+    const question = (await getSession(sessionId))!.currentQuestion!;
+
+    scripted.holdNextPrompt();
+    const submit = submitResponse(sessionId, { [question.id]: "option-1" });
+    await waitFor(() => scripted.agent.session.prompt.mock.calls.length > 1);
+
+    // Rewind aborts the in-flight turn, waits for its owner to release the turn slot,
+    // then republishes the answered question as awaiting input.
+    const rewound = await rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE);
+    expect(rewound.currentQuestion.id).toBe(question.id);
+
+    // Late-resolving provider prompt from the cancelled turn must not corrupt the
+    // rewound state (its post-prompt abort checks bail out).
+    scripted.releasePrompt();
+    await submit;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const session = await getSession(sessionId);
+    expect(session?.currentQuestion?.id).toBe(question.id);
+    expect(session?.error).toBeUndefined();
   });
 
   it("emits the retryable parse error without a doubled period", async () => {
