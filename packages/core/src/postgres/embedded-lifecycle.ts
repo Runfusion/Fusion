@@ -1035,6 +1035,40 @@ export function readPortFromPostmasterPid(dataDir: string): number | null {
   }
 }
 
+/** Read the postmaster OS pid from line 1 (index 0) of postmaster.pid, or null. */
+export function readPidFromPostmasterPid(dataDir: string): number | null {
+  try {
+    const lines = readFileSync(join(dataDir, "postmaster.pid"), "utf-8").split("\n");
+    const pid = parseInt((lines[0] ?? "").trim(), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-11:50:
+Issue #2411 (stale-pid gap): a hard host crash (SIGKILL, power loss) leaves
+postmaster.pid behind with no postmaster. The optimistic join then handed back
+a URL to a dead port on EVERY subsequent boot, so the dashboard could never
+start again without a manual pid-file delete — the "a plain relaunch just
+repeats the failure" dead shell. Probe the recorded pid: signal 0 raises ESRCH
+for a dead process (dead → the lock is stale and an owned start may proceed —
+PostgreSQL itself re-validates and reclaims a stale lock file on startup, so
+this stays safe even against pid recycling: a recycled live pid keeps today's
+join-then-fail behavior, and a genuinely live postmaster makes our start fail
+with the lock collision we already handle). EPERM means the process exists but
+is not signalable (foreign user) — treat as alive, fail-closed to the join.
+*/
+function isPostmasterProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+  }
+}
+
 /**
  * Check whether an embedded PG is already running for the given data dir.
  * Uses both the in-process registry AND a probe of the postmaster.pid file
@@ -1143,14 +1177,33 @@ function waitForPostmasterPidReread(): Promise<void> {
  * small bounded number of times; if its port remains unreadable, fail closed
  * instead of turning parser-null into the double-boot collision that exhausts
  * extension TaskStore's caller budget.
+ *
+ * FNXC:PostgresEmbedded 2026-07-23-11:50:
+ * Issue #2411 (stale-pid gap): the live-lock presumption is rebutted when the
+ * recorded pid is provably dead (see isPostmasterProcessAlive) — then the file
+ * is a crash leftover, joining it can only ever fail, and an owned start (whose
+ * postmaster re-validates the lock itself) is the correct recovery. A readable
+ * pid that is alive-or-unknowable keeps every prior behavior, including the
+ * fail-closed unreadable-port error below.
  */
-async function isAlreadyRunning(dataDir: string): Promise<{ port: number; database: string } | null> {
+async function isAlreadyRunning(
+  dataDir: string,
+  onLog?: (message: string) => void,
+): Promise<{ port: number; database: string } | null> {
   // Check in-process registry first.
   const cached = runningInstances.get(dataDir);
   if (cached) return cached;
 
   const pidPath = join(dataDir, "postmaster.pid");
   if (!existsSync(pidPath)) return null;
+
+  const pid = readPidFromPostmasterPid(dataDir);
+  if (pid !== null && !isPostmasterProcessAlive(pid)) {
+    onLog?.(
+      `embedded postgres: postmaster.pid in ${dataDir} records pid ${pid}, which is not running (stale lock from a crash); starting an owned postmaster — PostgreSQL reclaims the stale lock file itself`,
+    );
+    return null;
+  }
 
   for (let attempt = 0; attempt < POSTMASTER_PID_READ_ATTEMPTS; attempt += 1) {
     const port = readPortFromPostmasterPid(dataDir);
@@ -1366,7 +1419,7 @@ export class EmbeddedPostgresLifecycle {
 
     // FNXC:PostgresCutover 2026-06-27-11:05:
     // Check if PG is already running for this data dir. If so, reuse it.
-    const existing = await isAlreadyRunning(this.options.dataDir);
+    const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
     if (existing) {
       this.options.onLog(
         `embedded postgres: already running on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`,
@@ -1542,7 +1595,7 @@ export class EmbeddedPostgresLifecycle {
       and orphan a live postmaster nothing would ever stop. See isPostgresLockCollisionError.
       */
       if (!isPostgresLockCollisionError(error)) throw error;
-      const existing = await isAlreadyRunning(this.options.dataDir);
+      const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
       if (!existing) throw error;
 
       /*
