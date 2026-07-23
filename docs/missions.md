@@ -586,9 +586,9 @@ interface MissionFixFeatureLineage {
 }
 ```
 
-An authorized fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
+The fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments the **canonical root feature's** `implementationAttemptCount`; generated fixes never receive a fresh budget. With the default retry budget of 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`), requests 1–3 mint one remediation each and request 4 mints nothing, records `budget-exhausted`, and blocks the root.
 
-**Default retry budget:** 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`). When `implementationAttemptCount >= maxRetryBudget`, the feature transitions to `blocked`.
+Missing, cyclic, or legacy blocked lineage fails closed. A pre-migration blocked root without an explicit stop reason cannot mint remediation and cannot be implicitly resumed.
 
 ### Phase 6: Blocked Handoff
 
@@ -601,6 +601,8 @@ A feature transitions to `blocked` when:
 - Autopilot stops advancing the slice containing the blocked feature
 - `MilestoneValidationRollup.state` reflects `blocked` assertions
 - The feature remains in `blocked` state until operator intervention
+- Deleting a generated fix, or archiving/deleting its generated task, records a durable root-scoped `operator-intervention` stop in the same transaction as unlink/removal. Recovery, duplicate delivery, unarchive, task/root recreation, and relinking cannot mint a sibling. The stop remains even if a hierarchy cascade removes root and lineage rows.
+- `POST /api/missions/:missionId/resume` is the sole resume seam. It atomically clears only operator-intervention stops, preserves attempt counts, moves extant roots to `needs_fix`, and activates the mission. If any root is budget-exhausted or legacy-unknown, it returns a typed `MISSION_RESUME_CONFLICT` with canonical root IDs/reason categories and changes no root, tombstone, counter, or mission state.
 
 On engine restart, `recoverActiveMissions()` re-enqueues features in `validating` or `needs_fix` states, ensuring no validation work is lost. It also re-triggers `implementing` features whose linked task is already `done`/`archived` and whose assertion validation has not passed yet. When the stale-run reaper has already converted an abandoned validator run into `needs_fix`, `processTaskOutcome()` promotes the feature back through `implementing` and re-validates instead of skipping it. The same recovery path is replayed during periodic self-heal maintenance, so historically stranded `implementing` features can self-heal without requiring an engine restart.
 

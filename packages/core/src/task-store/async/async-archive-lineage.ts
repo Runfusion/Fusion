@@ -256,7 +256,7 @@ export async function archiveParentTaskWithLineageGate(
   layer: AsyncDataLayer,
   taskId: string,
   entry: ArchivedTaskEntry,
-  options: { removeLineageReferences?: boolean; now?: string } = {},
+  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void> } = {},
 ): Promise<{ archived: true } | { archived: false; liveChildIds: string[] }> {
   const now = options.now ?? new Date().toISOString();
 
@@ -271,6 +271,14 @@ export async function archiveParentTaskWithLineageGate(
     if (liveChildIds.length > 0 && options.removeLineageReferences) {
       await removeLineageReferences(tx, taskId, liveChildIds, now, layer.projectId);
     }
+
+    /*
+    FNXC:MissionLineageBudget 2026-07-22-15:00:
+    Cross-store intervention recording must happen after the lineage gate but
+    before archival clears the task from live mission recovery. It is part of
+    this transaction, so an archive rollback cannot leave a phantom stop.
+    */
+    await options.beforeArchive?.(tx);
 
     // 3. Archive snapshot to cold storage (VAL-CROSS-015 — preserves for restore).
     // FNXC:MultiProjectIsolation 2026-07-12: stamped with the bound project.

@@ -106,7 +106,7 @@ export type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 FNXC:MissionProjectIsolation 2026-07-14-21:35:
 Mission data lives in the shared PostgreSQL project schema, so every mission-owned insert and predicate must use the session's authoritative project partition even when an administrative connection bypasses row-level security. An unbound maintenance session is confined to the explicit legacy quarantine rather than becoming a cross-project reader.
 */
-function missionProjectId(): SQL<string> {
+export function missionProjectId(): SQL<string> {
   return sql<string>`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`;
 }
 
@@ -178,6 +178,9 @@ interface FeatureRow {
   loopState: string | null;
   implementationAttemptCount: number | null;
   validatorAttemptCount: number | null;
+  implementationStopReason: string | null;
+  implementationStoppedAt: string | null;
+  implementationStopOrigin: string | null;
   lastValidatorRunId: string | null;
   lastValidatorStatus: string | null;
   generatedFromFeatureId: string | null;
@@ -335,6 +338,9 @@ const featureColumns = {
   loopState: schema.project.missionFeatures.loopState,
   implementationAttemptCount: schema.project.missionFeatures.implementationAttemptCount,
   validatorAttemptCount: schema.project.missionFeatures.validatorAttemptCount,
+  implementationStopReason: schema.project.missionFeatures.implementationStopReason,
+  implementationStoppedAt: schema.project.missionFeatures.implementationStoppedAt,
+  implementationStopOrigin: schema.project.missionFeatures.implementationStopOrigin,
   lastValidatorRunId: schema.project.missionFeatures.lastValidatorRunId,
   lastValidatorStatus: schema.project.missionFeatures.lastValidatorStatus,
   generatedFromFeatureId: schema.project.missionFeatures.generatedFromFeatureId,
@@ -496,6 +502,9 @@ function rowToFeature(row: FeatureRow): MissionFeature {
     loopState: (row.loopState as FeatureLoopState) || "idle",
     implementationAttemptCount: row.implementationAttemptCount ?? 0,
     validatorAttemptCount: row.validatorAttemptCount ?? 0,
+    implementationStopReason: (row.implementationStopReason ?? undefined) as MissionFeature["implementationStopReason"],
+    implementationStoppedAt: row.implementationStoppedAt ?? undefined,
+    implementationStopOrigin: row.implementationStopOrigin ?? undefined,
     lastValidatorRunId: row.lastValidatorRunId ?? undefined,
     lastValidatorStatus: (row.lastValidatorStatus as ValidatorRunStatus) ?? undefined,
     generatedFromFeatureId: row.generatedFromFeatureId ?? undefined,
@@ -941,6 +950,9 @@ export async function createFeature(handle: QueryHandle, feature: MissionFeature
     loopState: feature.loopState ?? "idle",
     implementationAttemptCount: feature.implementationAttemptCount ?? 0,
     validatorAttemptCount: feature.validatorAttemptCount ?? 0,
+    implementationStopReason: feature.implementationStopReason ?? null,
+    implementationStoppedAt: feature.implementationStoppedAt ?? null,
+    implementationStopOrigin: feature.implementationStopOrigin ?? null,
     lastValidatorRunId: feature.lastValidatorRunId ?? null,
     lastValidatorStatus: feature.lastValidatorStatus ?? null,
     generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
@@ -1036,6 +1048,9 @@ export async function updateFeature(handle: QueryHandle, feature: MissionFeature
       loopState: feature.loopState ?? "idle",
       implementationAttemptCount: feature.implementationAttemptCount ?? 0,
       validatorAttemptCount: feature.validatorAttemptCount ?? 0,
+      implementationStopReason: feature.implementationStopReason ?? null,
+      implementationStoppedAt: feature.implementationStoppedAt ?? null,
+      implementationStopOrigin: feature.implementationStopOrigin ?? null,
       lastValidatorRunId: feature.lastValidatorRunId ?? null,
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
@@ -1054,6 +1069,74 @@ export async function deleteFeature(handle: QueryHandle, id: string): Promise<bo
     .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, id)))
     .returning({ id: schema.project.missionFeatures.id });
   return result.length > 0;
+}
+
+/**
+ * FNXC:MissionLineageBudget 2026-07-22-14:30:
+ * Removal of a generated remediation is explicit operator intervention for its
+ * canonical root. This transaction-scoped helper records that fact before any
+ * feature/task unlink or hierarchy cascade can erase the ancestry needed to
+ * resolve the root; its standalone stop row deliberately survives root removal.
+ */
+export async function recordGeneratedFixOperatorStop(
+  handle: QueryHandle,
+  feature: MissionFeature,
+  origin: "feature-delete" | "task-archive" | "task-delete",
+): Promise<boolean> {
+  if (!feature.generatedFromFeatureId) return false;
+
+  const seen = new Set<string>();
+  let root = feature;
+  while (root.generatedFromFeatureId) {
+    if (seen.has(root.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
+    seen.add(root.id);
+    const parent = await getFeature(handle, root.generatedFromFeatureId);
+    if (!parent) throw new Error("MISSION_LINEAGE_UNRESOLVED: missing generated-fix ancestor");
+    root = parent;
+  }
+  if (seen.has(root.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
+
+  /*
+  FNXC:MissionLineageBudget 2026-08-03-00:00:
+  Deletion/archive must acquire the same project-scoped canonical-root lock as
+  generated-fix creation before recording its durable stop. This serializes an
+  intervention with remediation admission, so a waiting creator re-reads the
+  committed stop instead of minting a child from a stale no-stop observation.
+  */
+  const rootLocked = await handle
+    .select({ id: schema.project.missionFeatures.id })
+    .from(schema.project.missionFeatures)
+    .where(and(
+      missionProjectScope(schema.project.missionFeatures.projectId),
+      eq(schema.project.missionFeatures.id, root.id),
+    ))
+    .for("update");
+  if (rootLocked.length !== 1) {
+    throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+  }
+  const lockedRoot = await getFeature(handle, root.id);
+  if (!lockedRoot) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+
+  const slice = await getSlice(handle, lockedRoot.sliceId);
+  const milestone = slice ? await getMilestone(handle, slice.milestoneId) : undefined;
+  const now = new Date().toISOString();
+  await handle.insert(schema.project.missionLineageStops).values({
+    projectId: missionProjectId(),
+    rootFeatureId: root.id,
+    missionId: milestone?.missionId ?? null,
+    reason: "operator-intervention",
+    stoppedAt: now,
+    origin,
+  }).onConflictDoNothing();
+  await updateFeature(handle, {
+    ...lockedRoot,
+    loopState: "blocked",
+    implementationStopReason: "operator-intervention",
+    implementationStoppedAt: now,
+    implementationStopOrigin: origin,
+    updatedAt: now,
+  });
+  return true;
 }
 
 /** Return a different feature already using the task, if one exists. */
@@ -1914,6 +1997,9 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
       loopState: feature.loopState ?? "idle",
       implementationAttemptCount: feature.implementationAttemptCount ?? 0,
       validatorAttemptCount: feature.validatorAttemptCount ?? 0,
+      implementationStopReason: feature.implementationStopReason ?? null,
+      implementationStoppedAt: feature.implementationStoppedAt ?? null,
+      implementationStopOrigin: feature.implementationStopOrigin ?? null,
       lastValidatorRunId: feature.lastValidatorRunId ?? null,
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
@@ -1934,6 +2020,9 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
         loopState: sql`excluded.loop_state`,
         implementationAttemptCount: sql`excluded.implementation_attempt_count`,
         validatorAttemptCount: sql`excluded.validator_attempt_count`,
+        implementationStopReason: sql`excluded.implementation_stop_reason`,
+        implementationStoppedAt: sql`excluded.implementation_stopped_at`,
+        implementationStopOrigin: sql`excluded.implementation_stop_origin`,
         lastValidatorRunId: sql`excluded.last_validator_run_id`,
         lastValidatorStatus: sql`excluded.last_validator_status`,
         generatedFromFeatureId: sql`excluded.generated_from_feature_id`,

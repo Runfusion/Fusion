@@ -25,7 +25,7 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
-import { normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription } from "@fusion/core";
+import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription } from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type VerificationOutcome } from "./mission-verification.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "../pi.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
@@ -1747,14 +1747,26 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           });
         } catch (fixErr) {
         const message = fixErr instanceof Error ? fixErr.message : String(fixErr);
-        if (message.includes("retry budget exhausted") || message.includes("exhausted its retry budget")) {
-          loopLog.warn(`Feature ${featureId} retry budget exhausted; marking as blocked`);
-          // completeValidatorRun already handles the blocked transition when budget is exhausted
-          terminalStatus = "blocked";
-          await this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
-            runId: runId ?? null,
-          });
-          this.emit("validation:budget_exhausted", { featureId, runId });
+        if (fixErr instanceof MissionRemediationStoppedError) {
+          /*
+          FNXC:MissionLineageBudget 2026-07-22-15:15:
+          The root-budget store result is typed: every durable stop prevents
+          further triage, while only exhaustion enters the Blocked Handoff.
+          Never infer lifecycle state by matching implementation error prose.
+          */
+          if (fixErr.reason === "budget-exhausted") {
+            loopLog.warn(`Feature ${featureId} retry budget exhausted; marking as blocked`);
+            terminalStatus = "blocked";
+            await this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
+              runId: runId ?? null,
+            });
+            this.emit("validation:budget_exhausted", { featureId, runId });
+          } else {
+            await this.logFeatureMissionEvent(featureId, "warning", "remediation_stopped_by_operator", "Validation remediation is stopped pending explicit mission resume.", {
+              runId: runId ?? null,
+              reason: fixErr.reason,
+            });
+          }
         } else {
           loopLog.error(`Error creating fix feature for ${featureId}:`, message);
           // R16 — a swallowed Fix-Feature creation error is durably recorded.

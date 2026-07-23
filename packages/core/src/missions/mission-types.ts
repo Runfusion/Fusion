@@ -409,6 +409,8 @@ export interface ResearchFeatureProvenance {
   sourceUrls: string[];
 }
 
+export type ImplementationStopReason = "budget-exhausted" | "operator-intervention";
+
 export interface MissionFeature {
   /** Unique identifier (e.g., "F-J6K9AB-G7H3") */
   id: string;
@@ -436,6 +438,11 @@ export interface MissionFeature {
   implementationAttemptCount?: number;
   /** Number of validation attempts made for this feature */
   validatorAttemptCount?: number;
+  /** Why this root remediation loop was terminally stopped; absent legacy values fail closed. */
+  implementationStopReason?: ImplementationStopReason;
+  /** Timestamp and authority that recorded the terminal stop. */
+  implementationStoppedAt?: string;
+  implementationStopOrigin?: string;
   /** ID of the last validator run for this feature */
   lastValidatorRunId?: string;
   /** Status of the last validator run (passed, failed, blocked, error) */

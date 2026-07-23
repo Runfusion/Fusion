@@ -19,6 +19,7 @@ import {
   resolvePlanningSettingsModel,
   AgentStore,
   THINKING_LEVELS,
+  MissionResumeConflictError,
   TerminalTaskReconciliationError,
 } from "@fusion/core";
 import type { Goal, Settings, ThinkingLevel } from "@fusion/core";
@@ -2960,7 +2961,18 @@ export function createMissionRouter(
         throw badRequest("Mission is not paused (status must be 'blocked' to resume)");
       }
 
-      await missionStore.updateMission(missionId, { status: "active" }, { actor: DASHBOARD_MISSION_ACTOR });
+// FNXC:MissionLineageBudget 2026-07-22-15:45: resumeMission performs the all-or-nothing root-stop classification; generic activation must not clear a lineage stop.
+      try {
+        await missionStore.resumeMission(missionId);
+      } catch (error) {
+        if (error instanceof MissionResumeConflictError) {
+          throw conflict("Mission has non-resumable lineage stops", {
+            code: "MISSION_RESUME_CONFLICT",
+            blockers: error.blockers,
+          });
+        }
+        throw error;
+      }
 
       // Re-engage autopilot if enabled and autopilot instance is available.
       // The autopilot may have been stopped or the mission unwatched during

@@ -67,6 +67,7 @@ export * from "./async-mission-store-queries.js";
 import {
   DEFAULT_IMPLEMENTATION_RETRY_BUDGET,
   missionBranchStrategyDefaults,
+  missionProjectId,
   QueryHandle,
   AssertionRow,
   assertionColumns,
@@ -150,6 +151,7 @@ import {
   setTaskMissionLinkage,
   clearTaskMissionLinkage,
   listFailedTaskIds,
+  recordGeneratedFixOperatorStop,
 } from "./async-mission-store-queries.js";
 
 // ════════════════════════════════════════════════════════════════════
@@ -200,6 +202,22 @@ export class TerminalTaskReconciliationError extends Error {
   ) {
     super(message);
     this.name = "TerminalTaskReconciliationError";
+  }
+}
+
+/** Typed no-mint result used by the execution loop instead of parsing errors. */
+export class MissionRemediationStoppedError extends Error {
+  constructor(public readonly reason: "budget-exhausted" | "operator-intervention" | "legacy-unknown-stop") {
+    super(`MISSION_REMEDIATION_STOPPED: ${reason}`);
+    this.name = "MissionRemediationStoppedError";
+  }
+}
+
+/** Stable mission-wide conflict payload for the sole explicit lineage-stop resume seam. */
+export class MissionResumeConflictError extends Error {
+  constructor(public readonly blockers: Array<{ id: string; reason: string }>) {
+    super("Mission resume is blocked by non-resumable lineage stops");
+    this.name = "MissionResumeConflictError";
   }
 }
 
@@ -599,8 +617,60 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   async deleteMission(id: string): Promise<void> {
     const mission = await getMission(this.db, id);
     if (!mission) throw new Error(`Mission ${id} not found`);
-    await deleteMission(this.db, id);
+    const features: MissionFeature[] = [];
+    for (const milestone of await listMilestones(this.db, id)) {
+      for (const slice of await listSlices(this.db, milestone.id)) features.push(...await listFeatures(this.db, slice.id));
+    }
+    await this.layer.transactionImmediate(async (tx) => {
+      /* FNXC:MissionLineageBudget 2026-07-22-14:55: Mission-level cascades retain generated-fix stops even though every hierarchy row is about to disappear. */
+      for (const feature of features) {
+        if (feature.generatedFromFeatureId) await recordGeneratedFixOperatorStop(tx, feature, "feature-delete");
+      }
+      await deleteMission(tx, id);
+    });
     this.emit("mission:deleted", id);
+  }
+
+  /**
+   * FNXC:MissionLineageBudget 2026-07-22-12:00:
+   * Resume is the only seam that clears operator intervention. Classify every
+   * stopped root before mutating so a budget or unknown legacy root cannot
+   * partially reactivate a mission.
+   */
+  async resumeMission(id: string): Promise<Mission> {
+    const result = await this.layer.transactionImmediate(async (tx) => {
+      const mission = await getMission(tx, id);
+      if (!mission) throw new Error(`Mission ${id} not found`);
+      const allFeatures = await listAllFeatures(tx);
+      const featureMission = new Map<string, string>();
+      for (const feature of allFeatures) {
+        const slice = await getSlice(tx, feature.sliceId);
+        const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+        if (milestone) featureMission.set(feature.id, milestone.missionId);
+      }
+      const stops = await tx.select().from(schema.project.missionLineageStops)
+        .where(and(eq(schema.project.missionLineageStops.projectId, missionProjectId()), eq(schema.project.missionLineageStops.missionId, id))).for("update");
+      const roots = allFeatures.filter((feature) => featureMission.get(feature.id) === id && !feature.generatedFromFeatureId && feature.loopState === "blocked");
+      const stopIds = new Set(stops.map((stop) => stop.rootFeatureId));
+      const blockers = roots.filter((root) => root.implementationStopReason !== "operator-intervention")
+        .map((root) => ({ id: root.id, reason: root.implementationStopReason ?? "legacy-unknown-stop" }));
+      for (const stop of stops) if (stop.reason !== "operator-intervention") blockers.push({ id: stop.rootFeatureId, reason: stop.reason });
+      if (blockers.length > 0) {
+        const stable = blockers.sort((a, b) => a.id.localeCompare(b.id));
+        throw new MissionResumeConflictError(stable);
+      }
+      for (const root of roots) {
+        if (root.implementationStopReason === "operator-intervention" || stopIds.has(root.id)) {
+          await updateFeature(tx, { ...root, loopState: "needs_fix", implementationStopReason: undefined, implementationStoppedAt: undefined, implementationStopOrigin: undefined, updatedAt: new Date().toISOString() });
+        }
+      }
+      if (stops.length > 0) await tx.delete(schema.project.missionLineageStops).where(and(eq(schema.project.missionLineageStops.projectId, missionProjectId()), eq(schema.project.missionLineageStops.missionId, id)));
+      const updated = { ...mission, status: "active" as MissionStatus, updatedAt: new Date().toISOString() };
+      await updateMission(tx, updated);
+      return updated;
+    });
+    this.emit("mission:updated", result);
+    return result;
   }
 
   async updateMissionInterviewState(id: string, state: InterviewState): Promise<Mission> {
@@ -767,13 +837,19 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         `Milestone ${id} has features linked to live tasks: ${blockingLinks.map((link) => `${link.featureId}->${link.taskId}`).join(", ")}; pass force to delete anyway`,
       );
     }
-    if (force) {
-      for (const link of blockingLinks) {
-        await unlinkFeatureFromTaskId(this.db, link.featureId);
-        await clearTaskMissionLinkage(this.db, link.taskId);
+    await this.layer.transactionImmediate(async (tx) => {
+      /* FNXC:MissionLineageBudget 2026-07-22-14:50: Cascade deletion records every generated descendant's root stop before FK cascades erase lineage. */
+      for (const feature of features) {
+        if (feature.generatedFromFeatureId) await recordGeneratedFixOperatorStop(tx, feature, "feature-delete");
       }
-    }
-    await deleteMilestone(this.db, id);
+      if (force) {
+        for (const link of blockingLinks) {
+          await unlinkFeatureFromTaskId(tx, link.featureId);
+          await clearTaskMissionLinkage(tx, link.taskId);
+        }
+      }
+      await deleteMilestone(tx, id);
+    });
     this.emit("milestone:deleted", id);
     await this.recomputeMissionStatus(missionId);
   }
@@ -863,13 +939,19 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         `Slice ${id} has features linked to live tasks: ${blockingLinks.map((link) => `${link.featureId}->${link.taskId}`).join(", ")}; pass force to delete anyway`,
       );
     }
-    if (force) {
-      for (const link of blockingLinks) {
-        await unlinkFeatureFromTaskId(this.db, link.featureId);
-        await clearTaskMissionLinkage(this.db, link.taskId);
+    await this.layer.transactionImmediate(async (tx) => {
+      /* FNXC:MissionLineageBudget 2026-07-22-14:50: Cascade deletion records every generated descendant's root stop before FK cascades erase lineage. */
+      for (const feature of features) {
+        if (feature.generatedFromFeatureId) await recordGeneratedFixOperatorStop(tx, feature, "feature-delete");
       }
-    }
-    await deleteSlice(this.db, id);
+      if (force) {
+        for (const link of blockingLinks) {
+          await unlinkFeatureFromTaskId(tx, link.featureId);
+          await clearTaskMissionLinkage(tx, link.taskId);
+        }
+      }
+      await deleteSlice(tx, id);
+    });
     this.emit("slice:deleted", id);
     await this.recomputeMilestoneStatus(milestoneId);
   }
@@ -1001,15 +1083,24 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const sliceId = feature.sliceId;
     const slice = await getSlice(this.db, sliceId);
     const milestoneId = slice?.milestoneId;
-    if (force && feature.taskId) {
-      await unlinkFeatureFromTaskId(this.db, id);
-      await clearTaskMissionLinkage(this.db, feature.taskId);
-    }
-    if (milestoneId) {
-      const managed = (await listContractAssertions(this.db, milestoneId)).find((a) => a.sourceFeatureId === feature.id);
-      if (managed) await this.deleteContractAssertion(managed.id);
-    }
-    await deleteFeature(this.db, id);
+    await this.layer.transactionImmediate(async (tx) => {
+      /*
+      FNXC:MissionLineageBudget 2026-07-22-14:45:
+      Feature removal and its durable intervention record share one transaction.
+      Force-unlinking and assertion cleanup therefore cannot leave a deletion
+      committed after the generated-fix ancestry has been discarded.
+      */
+      if (feature.generatedFromFeatureId) await recordGeneratedFixOperatorStop(tx, feature, "feature-delete");
+      if (force && feature.taskId) {
+        await unlinkFeatureFromTaskId(tx, id);
+        await clearTaskMissionLinkage(tx, feature.taskId);
+      }
+      if (milestoneId) {
+        const managed = (await listContractAssertions(tx, milestoneId)).find((a) => a.sourceFeatureId === feature.id);
+        if (managed) await deleteContractAssertion(tx, managed.id);
+      }
+      await deleteFeature(tx, id);
+    });
     this.emit("feature:deleted", id);
     await this.recomputeSliceStatus(sliceId);
   }
@@ -1453,6 +1544,31 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return ids.map((id) => featuresById.get(id)).find((feature) => feature && feature.status !== "done" && feature.status !== "blocked");
   }
 
+  /**
+   * FNXC:MissionLineageBudget 2026-07-22-12:00:
+   * A generated fix is never a new budget owner. Resolve its parent chain while
+   * the caller transaction is open; missing or cyclic evidence fails closed.
+   */
+  private async resolveFixRoot(handle: QueryHandle, feature: MissionFeature): Promise<MissionFeature> {
+    const seen = new Set<string>();
+    let current = feature;
+    while (current.generatedFromFeatureId) {
+      if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
+      seen.add(current.id);
+      const parent = await getFeature(handle, current.generatedFromFeatureId);
+      if (!parent) throw new Error("MISSION_LINEAGE_UNRESOLVED: missing generated-fix ancestor");
+      current = parent;
+    }
+    if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
+    return current;
+  }
+
+  private async getRootStop(handle: QueryHandle, rootFeatureId: string) {
+    const rows = await handle.select().from(schema.project.missionLineageStops)
+      .where(and(eq(schema.project.missionLineageStops.projectId, missionProjectId()), eq(schema.project.missionLineageStops.rootFeatureId, rootFeatureId)));
+    return rows[0];
+  }
+
   async createGeneratedFixFeature(
     sourceFeatureId: string,
     runId: string,
@@ -1476,15 +1592,34 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       | { kind: "existing"; feature: MissionFeature }
       | { kind: "created"; feature: MissionFeature }
       | { kind: "exhausted" }
+      | { kind: "stopped"; reason: string }
     > => {
       const locked = await tx
         .select({ id: schema.project.missionFeatures.id })
         .from(schema.project.missionFeatures)
-        .where(eq(schema.project.missionFeatures.id, sourceFeatureId))
+        .where(and(
+          eq(schema.project.missionFeatures.projectId, missionProjectId()),
+          eq(schema.project.missionFeatures.id, sourceFeatureId),
+        ))
         .for("update");
       if (locked.length === 0) throw new Error(`Feature ${sourceFeatureId} not found`);
       const source = await getFeature(tx, sourceFeatureId);
       if (!source) throw new Error(`Feature ${sourceFeatureId} not found`);
+      const root = await this.resolveFixRoot(tx, source);
+      // Lock the canonical owner, not the generated child that happened to fail.
+      const rootLocked = await tx.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
+        .where(and(
+          eq(schema.project.missionFeatures.projectId, missionProjectId()),
+          eq(schema.project.missionFeatures.id, root.id),
+        )).for("update");
+      if (rootLocked.length !== 1) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+      const lockedRoot = await getFeature(tx, root.id);
+      if (!lockedRoot) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+      const durableStop = await this.getRootStop(tx, root.id);
+      if (durableStop) return { kind: "stopped", reason: durableStop.reason };
+      if (lockedRoot.loopState === "blocked") {
+        return { kind: "stopped", reason: lockedRoot.implementationStopReason ?? "legacy-unknown-stop" };
+      }
 
       const exactId = await findFixFeatureId(tx, sourceFeatureId, runId);
       if (exactId) {
@@ -1496,8 +1631,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const open = openFeatures.find((candidate) => candidate.status !== "done" && candidate.status !== "blocked");
       if (open) return { kind: "existing", feature: open };
 
-      if ((source.implementationAttemptCount ?? 0) >= DEFAULT_IMPLEMENTATION_RETRY_BUDGET) {
-        await updateFeature(tx, { ...source, loopState: "blocked", updatedAt: now });
+      if ((lockedRoot.implementationAttemptCount ?? 0) >= DEFAULT_IMPLEMENTATION_RETRY_BUDGET) {
+        await updateFeature(tx, {
+          ...lockedRoot,
+          loopState: "blocked",
+          implementationStopReason: "budget-exhausted",
+          implementationStoppedAt: now,
+          implementationStopOrigin: "retry-budget",
+          updatedAt: now,
+        });
         return { kind: "exhausted" };
       }
 
@@ -1526,18 +1668,26 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           updatedAt: now,
         })
         .where(and(
-          eq(schema.project.missionFeatures.id, sourceFeatureId),
+          eq(schema.project.missionFeatures.projectId, missionProjectId()),
+          eq(schema.project.missionFeatures.id, root.id),
           sql`${schema.project.missionFeatures.implementationAttemptCount} < ${DEFAULT_IMPLEMENTATION_RETRY_BUDGET}`,
         ))
         .returning({ id: schema.project.missionFeatures.id });
-      if (bumped.length !== 1) throw new Error(`Feature ${sourceFeatureId} retry budget changed while creating its generated fix`);
+      if (bumped.length !== 1) throw new Error(`Feature ${root.id} retry budget changed while creating its generated fix`);
       return { kind: "created", feature };
     });
     if (outcome.kind === "existing") return outcome.feature;
     if (outcome.kind === "exhausted") {
       const updatedSource = await getFeature(this.db, sourceFeatureId);
       if (updatedSource) this.emit("feature:updated", updatedSource);
-      throw new Error(`Feature ${sourceFeatureId} has exhausted its retry budget (${DEFAULT_IMPLEMENTATION_RETRY_BUDGET} attempts). Transitioning to 'blocked' state.`);
+      throw new MissionRemediationStoppedError("budget-exhausted");
+    }
+    if (outcome.kind === "stopped") {
+      throw new MissionRemediationStoppedError(
+        outcome.reason === "budget-exhausted" || outcome.reason === "operator-intervention"
+          ? outcome.reason
+          : "legacy-unknown-stop",
+      );
     }
     const feature = outcome.feature;
     this.emit("feature:created", feature);
