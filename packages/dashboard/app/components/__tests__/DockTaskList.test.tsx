@@ -1,20 +1,32 @@
+import { useEffect } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Task, TaskDetail } from "@fusion/core";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DockTaskList } from "../DockTaskList";
 
+/*
+FNXC:RightDockTasks 2026-07-22-12:05:
+The mock records each TaskCard mount so tests can assert row identity stability: reorders, filter toggles, and status changes must not remount surviving cards (the old `${id}-${index}` key did).
+*/
+const { taskCardMountLog } = vi.hoisted(() => ({ taskCardMountLog: [] as string[] }));
+
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail, onDeleteTask, disableDrag }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; disableDrag?: boolean }) => (
-    <button
-      type="button"
-      data-testid={`mock-task-card-${task.id}`}
-      data-disable-drag={String(disableDrag)}
-      data-has-delete={String(Boolean(onDeleteTask))}
-      onClick={() => onOpenDetail(task)}
-    >
-      {task.title ?? task.id}
-    </button>
-  ),
+  TaskCard: ({ task, onOpenDetail, onDeleteTask, disableDrag }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; disableDrag?: boolean }) => {
+    useEffect(() => {
+      taskCardMountLog.push(task.id);
+    }, []);
+    return (
+      <button
+        type="button"
+        data-testid={`mock-task-card-${task.id}`}
+        data-disable-drag={String(disableDrag)}
+        data-has-delete={String(Boolean(onDeleteTask))}
+        onClick={() => onOpenDetail(task)}
+      >
+        {task.title ?? task.id}
+      </button>
+    );
+  },
 }));
 
 /*
@@ -24,6 +36,45 @@ DockTaskList must route TaskCard's own open action to the dock snapshot setter. 
 const makeTask = (id: string, title: string, column: string) => ({ id, title, column }) as Task;
 
 describe("DockTaskList", () => {
+  beforeEach(() => {
+    taskCardMountLog.length = 0;
+  });
+
+  /*
+  FNXC:RightDockTasks 2026-07-22-12:05:
+  Regression coverage for the `${id}-${index}` volatile-key bug: any reorder, membership change, or status change remounted every surviving card.
+  */
+  it("keeps TaskCard identity across list reorders and status changes", () => {
+    const first = makeTask("FN-1", "First task", "todo");
+    const second = makeTask("FN-2", "Second task", "in-progress");
+
+    const { rerender } = render(<DockTaskList tasks={[first, second]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+    expect(taskCardMountLog).toEqual(["FN-1", "FN-2"]);
+
+    rerender(<DockTaskList tasks={[makeTask("FN-2", "Second task", "in-review"), first]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.getAllByTestId(/dock-task-list-row-/).map((row) => row.getAttribute("data-testid"))).toEqual([
+      "dock-task-list-row-FN-2",
+      "dock-task-list-row-FN-1",
+    ]);
+    expect(taskCardMountLog).toEqual(["FN-1", "FN-2"]);
+  });
+
+  it("keeps surviving TaskCard identity when membership changes via the Show Done toggle", () => {
+    const active = makeTask("FN-ACTIVE", "Active task", "todo");
+    const done = makeTask("FN-DONE", "Done task", "done");
+
+    render(<DockTaskList tasks={[active, done]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+    expect(taskCardMountLog).toEqual(["FN-ACTIVE"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Done" }));
+    expect(taskCardMountLog).toEqual(["FN-ACTIVE", "FN-DONE"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Done" }));
+    expect(screen.queryByTestId("dock-task-list-row-FN-DONE")).toBeNull();
+    expect(taskCardMountLog).toEqual(["FN-ACTIVE", "FN-DONE"]);
+  });
+
   /*
   FNXC:TaskDeletion 2026-07-12-00:00:
   The reported inert delete localized to the right-dock Tasks list host: it rendered TaskCard without onDeleteTask, so that surface could not enter the shared confirm→delete flow while board/list/detail hosts were wired.
