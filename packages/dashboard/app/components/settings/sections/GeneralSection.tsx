@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type ReportActionType, type ReportTarget, type WorkflowDefinition } from "@fusion/core";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/board/mobile-nav-primary-items";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";

@@ -1,5 +1,5 @@
 import type { TaskDetail, TaskTokenUsagePerModel } from "@fusion/core";
-import { costFor, type CostResult, type ModelPricingOverrides } from "../../../core/src/model-pricing";
+import { costFor, type CostResult, type ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 
 export interface TokenCostRow {
   key: string;

@@ -1,7 +1,7 @@
 import "./TaskCostTab.css";
 import { useTranslation } from "react-i18next";
 import type { TaskDetail } from "@fusion/core";
-import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
+import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { ProviderIcon } from "./ProviderIcon";
 import { inferProviderIconKey } from "../utils/providerIconKey";
 import { buildTokenCostRows, formatCost, formatCount, totalCostForRows } from "../utils/taskTokenCost";

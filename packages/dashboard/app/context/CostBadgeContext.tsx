@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
+import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 
 export interface CostBadgeContextValue {
   enabled: boolean;

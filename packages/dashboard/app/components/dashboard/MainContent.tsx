@@ -22,7 +22,7 @@ import { HeaderWorkflowSwitcherSlot } from "../HeaderWorkflowSwitcherSlot";
 import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
 import { isPluginViewId } from "../../plugins/pluginViewRegistry";
-import { isNearDuplicateCanonicalInactive } from "../../../../core/src/near-duplicate-canonical";
+import { isNearDuplicateCanonicalInactive } from "../../../../core/src/duplicates/near-duplicate-canonical";
 import { fetchMission, fetchMissions, fetchInsights, fetchTaskDetail, listEvals } from "../../api";
 import type { DetailTaskTab } from "../../hooks/useModalManager";
 import type { SectionId } from "../SettingsModal";

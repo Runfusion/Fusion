@@ -199,7 +199,7 @@ Root-level File Scope files are dropped.
 ## Repro (unit-level)
 
 \`\`\`ts
-import { extractEffectiveWriteScopeFromPrompt } from "packages/core/src/file-scope-classification";
+import { extractEffectiveWriteScopeFromPrompt } from "packages/core/src/tasks/file-scope-classification";
 
 const prompt = \`
 ## File Scope

@@ -38,7 +38,7 @@ import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
-import { resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/mobile-nav-primary-items";
+import { resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;

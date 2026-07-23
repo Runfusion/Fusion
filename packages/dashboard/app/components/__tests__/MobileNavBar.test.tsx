@@ -3,7 +3,7 @@ import { resolve } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
-import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/mobile-nav-primary-items";
+import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/board/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 
 vi.mock("../../api", () => ({

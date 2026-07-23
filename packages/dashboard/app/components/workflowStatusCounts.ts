@@ -3,7 +3,7 @@ import type { Task } from "@fusion/core";
 FNXC:MergeQueue 2026-07-15-10:40:
 Vite aliases `@fusion/core` to types.ts only in the dashboard app build; import the active-merge predicate from its source module (same pattern as resolveEffectiveAutoMerge).
 */
-import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
+import { isActiveMergeStatus } from "../../../core/src/merge/active-merge-status";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload } from "../api";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 

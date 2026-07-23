@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchConfig, fetchSettings, updateSettings, updateGlobalSettings } from "../api";
 import type { GlobalSettings, ProjectSettings } from "@fusion/core";
-import { resolveMobileNavPrimaryItems } from "../../../core/src/mobile-nav-primary-items";
-import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
+import { resolveMobileNavPrimaryItems } from "../../../core/src/board/mobile-nav-primary-items";
+import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { setAutoReloadEnabled } from "../versionCheck";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 

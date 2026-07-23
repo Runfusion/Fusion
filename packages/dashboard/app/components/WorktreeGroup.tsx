@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail, MergeResult, GithubIssueAction, ColumnId } from "@fusion/core";
-import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
+import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";

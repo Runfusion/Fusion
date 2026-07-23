@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ColumnId, GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
-import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
+import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
