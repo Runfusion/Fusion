@@ -121,8 +121,16 @@ function normalizeDiagnosticObject(value: string): string | null {
   return /[0-9@./_-]/.test(normalized) ? normalized : null;
 }
 
+/*
+FNXC:TaskCreationDeduplication 2026-07-22-15:20:
+A distinctive slug must have at least one non-hex segment. Dates ("2026-07-22") and
+UUIDs are hyphen-shaped but identify WHEN/WHICH RUN, not WHAT is broken: two unrelated
+failure reports quoting the same date must not silently converge into one task, and a
+date must never outrank a real file-path anchor in the sorted-first object pick.
+*/
 function isDistinctiveSlug(value: string): boolean {
-  return /^[a-z0-9]+(?:-[a-z0-9]+){2,}$/.test(value);
+  return /^[a-z0-9]+(?:-[a-z0-9]+){2,}$/.test(value)
+    && value.split("-").some((segment) => !/^[0-9a-f]+$/.test(segment));
 }
 
 function normalizeDiagnosticPath(value: string): string {

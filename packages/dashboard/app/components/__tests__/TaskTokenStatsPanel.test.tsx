@@ -311,6 +311,16 @@ describe("TaskTokenStatsPanel", () => {
       .toHaveAttribute("href", "https://github.com/Runfusion/Fusion/issues/2356");
   });
 
+  it("renders a non-http issueUrl as plain text, never as a link", () => {
+    render(<TaskTokenStatsPanel loading={false} tokenUsage={undefined} task={makeTask({
+      sourceType: "api",
+      sourceMetadata: { issueUrl: "javascript:alert(1)" },
+    })} />);
+
+    expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "javascript:alert(1)" })).toBeNull();
+  });
+
   it("omits the provenance section when the task has no recorded source", () => {
     render(<TaskTokenStatsPanel loading={false} tokenUsage={undefined} task={makeTask()} />);
 

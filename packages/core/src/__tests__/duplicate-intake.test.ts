@@ -180,6 +180,24 @@ describe("findSameAgentDuplicates", () => {
     expect(first).toBe(second);
   });
 
+  it("never anchors on dates or UUIDs, and a date never outranks a file-path anchor", () => {
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Fix nightly build failure observed on 2026-07-22 in the settings modal",
+    })).toBeNull();
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Fix failed run d3be2cd6-9221-4e1d-a27a-c5fbe04f9200 stuck in merge",
+    })).toBeNull();
+
+    const withDate = computeCrossParentDiagnosticClaimId({
+      description: "Fix typecheck error in packages/core/src/store.ts since 2026-07-22",
+    });
+    const withoutDate = computeCrossParentDiagnosticClaimId({
+      description: "Fix typecheck error in packages/core/src/store.ts",
+    });
+    expect(withDate).not.toBeNull();
+    expect(withDate).toBe(withoutDate);
+  });
+
   it("does not claim ordinary work that merely names a file path", () => {
     expect(computeCrossParentDiagnosticClaimId({
       description: "Add caching to packages/core/src/store.ts for faster board loads",

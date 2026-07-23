@@ -306,13 +306,23 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
                 <dd>{task.sourceAgentId}</dd>
               </div>
             ) : null}
+            {/*
+            FNXC:TaskStatsProvenance 2026-07-22-15:20:
+            sourceMetadata is writable through the task-creation API, so issueUrl is untrusted:
+            only http(s) URLs may render as a link (blocks javascript:-scheme injection);
+            anything else renders as plain text.
+            */}
             {typeof task.sourceMetadata?.issueUrl === "string" ? (
               <div className="task-token-stats-panel__detail-row">
                 <dt>{t("taskDetail.provenance.importedFrom", "Imported from")}</dt>
                 <dd>
-                  <a href={task.sourceMetadata.issueUrl} target="_blank" rel="noreferrer">
-                    {task.sourceMetadata.issueUrl}
-                  </a>
+                  {/^https?:\/\//i.test(task.sourceMetadata.issueUrl) ? (
+                    <a href={task.sourceMetadata.issueUrl} target="_blank" rel="noreferrer">
+                      {task.sourceMetadata.issueUrl}
+                    </a>
+                  ) : (
+                    task.sourceMetadata.issueUrl
+                  )}
                 </dd>
               </div>
             ) : null}
