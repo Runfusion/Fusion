@@ -740,7 +740,15 @@ export function TaskDetailContent({
   );
   const [verificationRequest, setVerificationRequest] = useState<TaskVerificationRequest | null>(null);
 
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:20:
+  Kept-alive hidden popups (active=false) must not keep polling the verification endpoint every 5s —
+  with several hidden popups mounted this multiplied into constant background requests. Suspend the
+  interval while hidden; the effect re-runs on reveal, so an immediate refresh plus a fresh interval
+  resume exactly the visible behavior. Visible hosts (active defaults true) are unchanged.
+  */
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const refresh = () => void fetchTaskVerificationRequest(task.id, projectId)
       .then((request) => { if (!cancelled) setVerificationRequest(request); })
@@ -748,7 +756,7 @@ export function TaskDetailContent({
     refresh();
     const timer = window.setInterval(refresh, 5_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [task.id, projectId]);
+  }, [task.id, projectId, active]);
 
   useEffect(() => {
     // If the prop already has a prompt field, it's a full TaskDetail
@@ -3120,7 +3128,15 @@ export function TaskDetailContent({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [uploadFile]);
 
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:20:
+  The document-level image-paste listener must not stay registered while this detail is a kept-alive
+  hidden popup (active=false): pasting an image anywhere in the app would silently attach it to every
+  hidden task. Gate registration on `active`; visible hosts (active defaults true) are unchanged and
+  the listener re-registers on reveal.
+  */
   useEffect(() => {
+    if (!active) return;
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -3138,7 +3154,7 @@ export function TaskDetailContent({
     };
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
-  }, [uploadFile]);
+  }, [uploadFile, active]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -6269,6 +6285,15 @@ export function TaskDetailContent({
                 <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loadingInteractive", "Loading interactive terminal…")} /></div>}>
                   <LazyTerminalModal
                     isOpen={true}
+                    /*
+                    FNXC:TaskPopupViewGating 2026-07-23-10:20:
+                    Keep-alive contract for the worktree terminal: isOpen stays true so xterm and the
+                    terminal WebSocket survive hidden popups and tab flips, while `active` (popup
+                    visible AND this tab selected — same composition as SessionTerminal above)
+                    suspends only auxiliary work: visual-viewport/keyboard listeners, resize
+                    observers, refit rAF loops, and keydown handlers. See TerminalModal `active`.
+                    */
+                    active={active && activeTab === "worktree-terminal"}
                     onClose={() => setActiveTab("definition")}
                     embedded
                     defaultCwd={taskWorktreeCwd}

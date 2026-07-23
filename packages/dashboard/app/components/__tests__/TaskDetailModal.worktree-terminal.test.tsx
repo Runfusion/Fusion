@@ -26,7 +26,7 @@ import {
   noopOpenDetail,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
-import { TaskDetailModal } from "../TaskDetailModal";
+import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 import * as dashboardApi from "../../api";
 
 setupTaskDetailModalHooks();
@@ -240,5 +240,55 @@ describe("TaskDetailModal worktree terminal tab", () => {
       expect(screen.queryByTestId("worktree-terminal-keep-alive")).toBeNull();
       expect(screen.queryByTestId("mock-worktree-terminal")).toBeNull();
     });
+  });
+
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:35:
+  FN remount-churn fix follow-up (PR #2420 review): the kept-alive worktree terminal keeps
+  isOpen=true (xterm + WS survive) but must receive active=false whenever it is not the front
+  surface — behind another tab, or inside a hidden off-view popup (TaskDetailContent active=false) —
+  so its viewport listeners, resize observers, and refit loops suspend.
+  */
+  it("suspends the kept-alive worktree terminal (active=false, isOpen=true) behind another tab and resumes on return", async () => {
+    renderDetail(undefined, "worktree-terminal");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Terminal" }));
+    await screen.findByTestId("mock-worktree-terminal");
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByTestId("mock-worktree-terminal")).toBeInTheDocument();
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: true }));
+  });
+
+  it("suspends the worktree terminal while the whole detail is a hidden kept-alive popup", async () => {
+    const task = makeTask({ id: "FN-7813", worktree: "/repo/.worktrees/FN-7813" });
+    const contentProps = {
+      task,
+      projectId: "proj-123",
+      onMoveTask: noopMove,
+      onDeleteTask: noopDelete,
+      onMergeTask: noopMerge,
+      onOpenDetail: noopOpenDetail,
+      addToast: noop,
+      initialTab: "worktree-terminal" as const,
+    };
+    const { rerender } = render(<TaskDetailContent {...contentProps} active />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Terminal" }));
+    await screen.findByTestId("mock-worktree-terminal");
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: true }));
+
+    // Popup hidden on another view: terminal stays mounted with the WS-preserving isOpen=true, aux work suspended.
+    rerender(<TaskDetailContent {...contentProps} active={false} />);
+    expect(screen.getByTestId("mock-worktree-terminal")).toBeInTheDocument();
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: false }));
+
+    // Reveal resumes auxiliary work.
+    rerender(<TaskDetailContent {...contentProps} active />);
+    expect(mockEmbeddedTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ isOpen: true, active: true }));
   });
 });
