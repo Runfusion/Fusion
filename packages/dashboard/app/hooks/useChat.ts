@@ -445,6 +445,10 @@ export function useChat(
   const activeSessionRef = useRef(activeSession);
   const messagesRef = useRef(messages);
   const isStreamingRef = useRef(isStreaming);
+  // Incremented for every selection, including A → B → A. Session ids alone cannot
+  // distinguish an old A refresh from the newly re-entered A thread.
+  const activeSessionSelectionRef = useRef(0);
+  const authoritativeSelectionRefreshRef = useRef<{ sessionId: string; version: number } | null>(null);
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
   messagesRef.current = messages;
@@ -731,7 +735,30 @@ export function useChat(
       return true;
     }
 
+    const pendingRefresh = authoritativeSelectionRefreshRef.current;
+    if (
+      pendingRefresh?.sessionId === sessionId
+      && pendingRefresh.version === activeSessionSelectionRef.current
+    ) {
+      /*
+      FNXC:ChatStreaming 2026-07-22-19:05:
+      An SSE list update can arrive between selection and its authoritative session read.
+      Do not let that potentially stale row claim stream ownership: the authoritative snapshot
+      owns the cursor and must seed the restored bubble before any attach path can continue.
+      */
+      return false;
+    }
+
     cancelledByUserRef.current = false;
+    /*
+    FNXC:ChatStreaming 2026-07-20-18:45:
+    A closed stream can still deliver terminal callbacks. Bind each attachment to the selected
+    session incarnation so completion or errors from a departed thread cannot clear the restored
+    bubble, Stop control, or transcript of a thread re-entered afterward.
+    */
+    const attachmentSelectionVersion = activeSessionSelectionRef.current;
+    const ownsAttachedSession = () =>
+      activeSessionSelectionRef.current === attachmentSelectionVersion && activeSessionRef.current?.id === sessionId;
     const currentMessages = messagesRef.current;
     const needsPriorThreadLoad = currentMessages.length === 0 || currentMessages[0]?.sessionId !== sessionId;
     lastAttachedGenerationRef.current = {
@@ -758,6 +785,13 @@ export function useChat(
       setStreamingThinking(inFlightGeneration.streamingThinking);
       setStreamingToolCalls(inFlightGeneration.toolCalls);
     }
+    /*
+    FNXC:ChatStreaming 2026-07-22-19:20:
+    Re-entry must expose Working atomically to same-tick SSE and transcript callbacks. React has
+    not committed setIsStreaming when attachChatStream replays, so synchronize the ownership ref
+    before attaching; otherwise an empty stale transcript can erase the restored prior thread.
+    */
+    isStreamingRef.current = true;
     setIsStreaming(true);
 
     const { handlers } = createChatStreamHandlers({
@@ -779,6 +813,7 @@ export function useChat(
         setActiveSession((prev) => prev && prev.id === fallbackSessionId ? { ...prev, ...nextModel } : prev);
       },
       onDone: () => {
+        if (!ownsAttachedSession()) return;
         setStreamingText("");
         setStreamingThinking("");
         setStreamingToolCalls([]);
@@ -790,6 +825,7 @@ export function useChat(
         flushPendingMessage();
       },
       onError: (data) => {
+        if (!ownsAttachedSession()) return;
         setStreamingText("");
         setStreamingThinking("");
         setStreamingToolCalls([]);
@@ -831,14 +867,16 @@ export function useChat(
       if (id && currentActiveSessionId === id && !sessionOverride) {
         return;
       }
-      // Close any existing stream
+      const selectionVersion = ++activeSessionSelectionRef.current;
+      authoritativeSelectionRefreshRef.current = id ? { sessionId: id, version: selectionVersion } : null;
+      // Close any existing stream before its transient state is reset.
       if (streamRef.current) {
         streamRef.current.close();
         streamRef.current = null;
       }
       lastAttachedGenerationRef.current = null;
 
-      // Find and set active session
+      // Find and set active session while its authoritative state hydrates.
       const session = sessionOverride ?? sessions.find((s) => s.id === id);
       setActiveSession(session || null);
       activeSessionRef.current = session || null;
@@ -846,62 +884,86 @@ export function useChat(
       if (id) {
         void fetchChatSession(id, projectId)
           .then(({ session: refreshedSession }) => {
-            if (!refreshedSession.isGenerating) {
-              return;
-            }
-            // Only act if the user hasn't navigated away from this session
-            // while the authoritative refresh was in flight.
-            if (activeSessionRef.current?.id !== id) {
-              return;
-            }
-            setActiveSession((prev) => {
-              if (!prev || prev.id !== id) {
-                return prev;
+            if (
+              refreshedSession.id !== id
+              || activeSessionSelectionRef.current !== selectionVersion
+              || activeSessionRef.current?.id !== id
+            ) {
+              if (
+                refreshedSession.id !== id
+                && authoritativeSelectionRefreshRef.current?.version === selectionVersion
+              ) {
+                authoritativeSelectionRefreshRef.current = null;
+                if (session?.isGenerating && !streamRef.current) {
+                  attachIfGenerating(id, session.inFlightGeneration, { silent: true });
+                }
               }
-              return {
-                ...prev,
-                ...refreshedSession,
-              };
-            });
+              return;
+            }
+            if (typeof refreshedSession.isGenerating !== "boolean") {
+              /*
+              FNXC:ChatStreaming 2026-07-20-19:20:
+              An omitted generation enrichment is not an authoritative idle verdict. Preserve
+              legacy cached recovery only for that malformed/older response; current responses
+              must include the boolean and therefore cannot bypass snapshot reconciliation.
+              */
+              authoritativeSelectionRefreshRef.current = null;
+              if (session?.isGenerating && !streamRef.current) {
+                attachIfGenerating(id, session.inFlightGeneration, { silent: true });
+              }
+              return;
+            }
+            const authoritativeSession = { ...activeSessionRef.current, ...refreshedSession };
+            authoritativeSelectionRefreshRef.current = null;
+            setActiveSession(authoritativeSession);
+
             /*
-            FNXC:ChatStreaming 2026-07-07-00:00:
-            FN-7656: returning to a session with an in-flight generation must restore the
-            working/"Thinking…" indicator immediately, even before the first response delta.
-            The local `sessions` cache's `isGenerating` flag is often stale (chat:session:updated
-            SSE payloads lack the route-level isGenerating/inFlightGeneration enrichment), and
-            early in a generation the server reports isGenerating:true with inFlightGeneration
-            still null (no delta emitted yet). Reattach on isGenerating alone via this
-            authoritative fetchChatSession refresh rather than requiring inFlightGeneration too;
-            attachIfGenerating already handles a null inFlightGeneration snapshot gracefully and
-            guards against double-attach via streamRef.current.
+            FNXC:ChatStreaming 2026-07-20-19:15:
+            Re-entry must wait for the authoritative session snapshot before opening a stream.
+            A cached list row can carry an older cursor/text/tool snapshot; attaching from it
+            prevents the newer refresh from reseeding or replaying correctly. The selection
+            incarnation guards A → B → A, while the resolved snapshot atomically supplies the
+            working state (including null pre-first-delta snapshots) and replay cursor.
             */
-            if (!streamRef.current) {
+            if (refreshedSession.isGenerating && !streamRef.current) {
+              /*
+              FNXC:ChatStreaming 2026-07-22-19:25:
+              The selection transcript request can resolve empty or stale before its authoritative
+              generation snapshot arrives. Reattach reloads the persisted thread so re-entry keeps
+              prior messages visible rather than leaving a restored streaming bubble by itself.
+              */
               attachIfGenerating(id, refreshedSession.inFlightGeneration, { silent: true });
             }
           })
           .catch(() => {
-            // Ignore stale-cache recovery fetch failures.
+            const pendingRefresh = authoritativeSelectionRefreshRef.current;
+            if (
+              pendingRefresh?.sessionId !== id
+              || pendingRefresh.version !== selectionVersion
+              || activeSessionSelectionRef.current !== selectionVersion
+              || activeSessionRef.current?.id !== id
+            ) {
+              return;
+            }
+
+            authoritativeSelectionRefreshRef.current = null;
+            // A transport failure is not an idle verdict. Retain the prior recovery behavior,
+            // but only for this still-current selection incarnation.
+            if (session?.isGenerating && !streamRef.current) {
+              attachIfGenerating(id, session.inFlightGeneration, { silent: true });
+            }
           });
       }
 
-      // Reset transient state
       resetTransientComposerState();
       setHasMoreMessages(false);
 
-      // Load messages for this session
+      // Load messages for this session while the authoritative request is pending.
       if (id) {
         hydrateMessagesFromCache(id);
         loadMessages(id);
       } else {
         setMessages([]);
-      }
-
-      // Recover streaming state if the server reports an active generation.
-      // After a reload/HMR, the server keeps generating but the UI loses
-      // all streaming state. Showing "Working…" immediately tells the
-      // user the AI is still processing the request.
-      if (session?.isGenerating) {
-        attachIfGenerating(session.id, session.inFlightGeneration, { priorThreadLoadAlreadyStarted: true });
       }
 
       // Persist active session to localStorage
@@ -1642,6 +1704,13 @@ export function useChat(
     if (!activeSession?.id || activeSession.isGenerating !== true || streamRef.current) {
       return;
     }
+    const pendingRefresh = authoritativeSelectionRefreshRef.current;
+    if (
+      pendingRefresh?.sessionId === activeSession.id
+      && pendingRefresh.version === activeSessionSelectionRef.current
+    ) {
+      return;
+    }
 
     const replayFromEventId = typeof activeSession.inFlightGeneration?.replayFromEventId === "number"
       ? activeSession.inFlightGeneration.replayFromEventId
@@ -1658,6 +1727,13 @@ export function useChat(
   // until generation finishes and messages can be reloaded.
   useEffect(() => {
     if (!activeSessionRef.current?.isGenerating) return;
+    const pendingRefresh = authoritativeSelectionRefreshRef.current;
+    if (
+      pendingRefresh?.sessionId === activeSessionRef.current.id
+      && pendingRefresh.version === activeSessionSelectionRef.current
+    ) {
+      return;
+    }
 
     if (!streamRef.current) {
       attachIfGenerating(activeSessionRef.current.id, activeSessionRef.current.inFlightGeneration);
@@ -1766,8 +1842,13 @@ export function useChat(
         const updated = prev.map((s) => (s.id === updatedSession.id ? updatedSession : s));
         return sortChatSessions(updated);
       });
-      // If this is the active session, update it too
-      if (activeSessionRef.current?.id === updatedSession.id) {
+      // If this is the active session, update it too unless selection is still awaiting
+      // its authoritative session snapshot. The list/SSE payload may have an older cursor.
+      const pendingRefresh = authoritativeSelectionRefreshRef.current;
+      const awaitingAuthoritativeSnapshot =
+        pendingRefresh?.sessionId === updatedSession.id
+        && pendingRefresh.version === activeSessionSelectionRef.current;
+      if (activeSessionRef.current?.id === updatedSession.id && !awaitingAuthoritativeSnapshot) {
         setActiveSession(updatedSession);
         if (updatedSession.isGenerating && !streamRef.current) {
           attachIfGenerating(updatedSession.id, updatedSession.inFlightGeneration);
