@@ -167,7 +167,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   /*
   FNXC:SettingsDefaults 2026-07-17-13:55:
   FN-8335 restores FN-7505 default-value parity for the surfaced embeddedPostgresMaxConnections
-  control. The English locale description is the canonical rendered SettingsHelpTip copy and states Default: 500.
+  control. Issue #2411 made the schema default undefined (server resolves win32 150 / else 500),
+  so the canonical English copy now uses unset phrasing ("Unset by default — Fusion picks …")
+  and must not make a concrete "Default:" colon claim.
   */
   embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
