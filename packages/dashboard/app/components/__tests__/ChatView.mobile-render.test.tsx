@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatView } from "../ChatView";
 import { loadAllAppCss } from "../../test/cssFixture";
 import * as useChatModule from "../../hooks/useChat";
@@ -198,6 +198,24 @@ describe("FN-5997 mobile chat message pane rendering", () => {
     _resetInitialViewportHeight();
     setupChat();
     setupRooms();
+  });
+
+  it("keeps the direct mobile composer file-capable for a supported text attachment", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession });
+      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const attachButton = screen.getByTestId("chat-attach-btn");
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [new File(["note"], "mobile.txt", { type: "text/plain" })] } });
+
+      expect(attachButton).toBeInTheDocument();
+      expect(screen.getByText("mobile.txt")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-attachment-remove-0")).toHaveAccessibleName("Remove mobile.txt");
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
   });
 
   it("lets the direct-thread mobile empty states span the message pane without mobile card chrome while preserving other states", async () => {

@@ -136,8 +136,15 @@ export interface UseChatReturn {
   deleteSession: (id: string) => Promise<void>;
 
   // Message operations
-  /** Send a message, optionally with file attachments to upload with the prompt. */
-  sendMessage: (content: string, attachments?: File[]) => void;
+  /**
+   * Send a message, optionally with file attachments to upload with the prompt. Attachment
+   * callbacks distinguish a rejected upload from a server-accepted turn whose reply later fails.
+   */
+  sendMessage: (
+    content: string,
+    attachments?: File[],
+    callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+  ) => void;
   /**
    * FNXC:ChatMessageEdit 2026-07-07-09:00:
    * Edit an earlier user message: truncates local + persisted history from that message onward
@@ -1263,7 +1270,11 @@ export function useChat(
    * @param content Message text content to send.
    * @param attachments Optional files to upload with the message in the same request.
    */
-  const sendMessageRef = useRef<(content: string, attachments?: File[]) => void>(() => {
+  const sendMessageRef = useRef<(
+    content: string,
+    attachments?: File[],
+    callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+  ) => void>(() => {
     // no-op until sendMessage is defined
   });
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -1306,8 +1317,15 @@ export function useChat(
   }, [attachIfGenerating, loadMessages, projectId, refreshSessions]);
 
   const sendMessage = useCallback(
-    (content: string, attachments?: File[]) => {
-      if (!activeSession) return;
+    (
+      content: string,
+      attachments?: File[],
+      callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+    ) => {
+      if (!activeSession) {
+        callbacks?.onFailed?.();
+        return;
+      }
 
       if (isStreamingRef.current) {
         const trimmedContent = content.trim();
@@ -1396,6 +1414,7 @@ export function useChat(
           isStreamingRef.current = false;
           streamRef.current = null;
           lastAttachedGenerationRef.current = null;
+          callbacks?.onDelivered?.();
 
           // Clean up tracked ID after a short delay (SSE event should arrive quickly)
           setTimeout(() => {
@@ -1411,6 +1430,18 @@ export function useChat(
           const suspensionMessage = typeof data === "string" ? data : failureInfo.summary;
           const shouldSuppressSuspensionError = isLikelyTabSuspensionError(suspensionMessage);
           const acceptedByServer = meta?.requestAccepted === true;
+
+          /*
+          FNXC:ChatAttachments 2026-08-03-00:00:
+          A direct composer owns its staged File objects and preview URLs until the server accepts
+          the multipart turn. Tell it to retain those files on pre-delivery/upload failure, but
+          release them after an accepted turn even when the provider cannot produce a reply.
+          */
+          if (acceptedByServer) {
+            callbacks?.onDelivered?.();
+          } else {
+            callbacks?.onFailed?.();
+          }
 
           /*
           FNXC:ChatReliability 2026-07-01-00:00:

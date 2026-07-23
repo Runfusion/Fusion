@@ -3450,15 +3450,15 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("image attachments", () => {
+  describe("task attachments", () => {
     it("shows an icon-only Attach control when expanded", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
       const attachButton = screen.getByTestId("quick-entry-attach");
       expect(attachButton).toBeInTheDocument();
-      expect(attachButton).toHaveAccessibleName("Attach images");
-      expect(attachButton).toHaveAttribute("title", "Attach images");
+      expect(attachButton).toHaveAccessibleName("Attach photos or files");
+      expect(attachButton).toHaveAttribute("title", "Attach photos or files");
       expect(attachButton.textContent).not.toContain("Attach");
       expect(attachButton.querySelector("svg")).toBeTruthy();
       expect(attachButton.classList.contains("btn-icon")).toBe(true);
@@ -3476,7 +3476,7 @@ describe("QuickEntryBox", () => {
       expect(clickSpy).toHaveBeenCalled();
     });
 
-    it("adds a preview when an image is pasted", () => {
+    it("adds an image preview when an image is pasted", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
@@ -3552,8 +3552,8 @@ describe("QuickEntryBox", () => {
       fireEvent.change(fileInput, { target: { files: [file] } });
 
       const attachButton = screen.getByTestId("quick-entry-attach");
-      expect(attachButton).toHaveAccessibleName("Attach images (1 pending)");
-      expect(attachButton).toHaveAttribute("title", "Attach images (1 pending)");
+      expect(attachButton).toHaveAccessibleName("Attach photos or files (1 pending)");
+      expect(attachButton).toHaveAttribute("title", "Attach photos or files (1 pending)");
       expect(attachButton.textContent).toBe("1");
       expect(attachButton.textContent).not.toContain("Attach");
     });
@@ -3581,7 +3581,7 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
 
       fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [] } });
-      expect(screen.getByTestId("quick-entry-drop-target")).toHaveTextContent("Drop images to attach");
+      expect(screen.getByTestId("quick-entry-drop-target")).toHaveTextContent("Drop photos or files to attach");
       expect(box.classList.contains("quick-entry-box--drag-over")).toBe(true);
 
       fireEvent.dragLeave(box, { dataTransfer: { types: ["Files"], files: [] } });
@@ -3605,7 +3605,7 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-drop-target")).toBeInTheDocument();
     });
 
-    it("adds previews for supported dropped images and rejects unsupported dropped files", () => {
+    it("accepts mixed supported drops as an image preview and accessible file chip", () => {
       renderQuickEntryBox({});
       const box = screen.getByTestId("quick-entry-box");
       const image = new File(["image"], "dropped.png", { type: "image/png" });
@@ -3616,7 +3616,48 @@ describe("QuickEntryBox", () => {
 
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
       expect(screen.getByRole("button", { name: "Open image dropped.png" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Open image notes.txt" })).toBeNull();
+      expect(screen.getByTestId("quick-entry-preview-file-1")).toHaveTextContent("notes.txt");
+      expect(screen.queryByTestId("quick-entry-preview-open-1")).toBeNull();
+    });
+
+    it("accepts supported picker and paste files, preserves duplicate names, and ignores unsupported MIME types", () => {
+      renderQuickEntryBox({});
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const textarea = screen.getByTestId("quick-entry-input");
+      const firstJson = new File(["{}"], "data.json", { type: "application/json" });
+      const duplicateJson = new File(["{}"], "data.json", { type: "application/json" });
+      const unsupported = new File(["binary"], "archive.bin", { type: "application/octet-stream" });
+
+      expect(fileInput).toHaveAttribute("accept", expect.stringContaining("video/mp4"));
+      fireEvent.change(fileInput, { target: { files: [firstJson, unsupported] } });
+      fireEvent.paste(textarea, { clipboardData: { files: [duplicateJson] } });
+      fireEvent.change(fileInput, { target: { files: [] } });
+
+      expect(screen.getByTestId("quick-entry-preview-file-0")).toHaveTextContent("data.json");
+      expect(screen.getByTestId("quick-entry-preview-file-1")).toHaveTextContent("data.json");
+      expect(screen.queryByText("archive.bin")).toBeNull();
+      expect(screen.getByTestId("quick-entry-attach")).toHaveAccessibleName("Attach photos or files (2 pending)");
+    });
+
+    it("uploads supported mixed attachments sequentially and reports partial failures after creation", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      const addToast = vi.fn();
+      const photo = new File(["photo"], "photo.png", { type: "image/png" });
+      const note = new File(["note"], "note.txt", { type: "text/plain" });
+      vi.mocked(uploadAttachment)
+        .mockResolvedValueOnce({} as any)
+        .mockRejectedValueOnce(new Error("upload failed"));
+      renderQuickEntryBox({ onCreate, addToast });
+      const textarea = screen.getByTestId("quick-entry-input");
+      const fileInput = screen.getByTestId("quick-entry-file-input");
+
+      fireEvent.change(fileInput, { target: { files: [photo, note] } });
+      fireEvent.change(textarea, { target: { value: "Create with mixed attachments" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(2));
+      expect(uploadAttachment.mock.calls.map((call) => call[1])).toEqual([photo, note]);
+      expect(addToast).toHaveBeenCalledWith("Failed to upload: note.txt", "error");
     });
 
     it("uploads images added by dropping files after task creation", async () => {

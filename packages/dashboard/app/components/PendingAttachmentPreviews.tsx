@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FloatingWindow } from "./FloatingWindow";
-import "./PendingImagePreviews.css";
+import "./PendingAttachmentPreviews.css";
 
-export interface PendingImagePreviewItem {
+export interface PendingAttachmentPreviewItem {
   file: File;
-  previewUrl: string;
+  /** Present only for images, which can be opened in the floating image viewer. */
+  previewUrl?: string;
 }
 
-interface PendingImagePreviewsProps {
-  images: PendingImagePreviewItem[];
+interface PendingAttachmentPreviewsProps {
+  attachments: PendingAttachmentPreviewItem[];
   onRemove: (index: number) => void;
   disabled?: boolean;
   removeLabel: string;
@@ -16,20 +17,22 @@ interface PendingImagePreviewsProps {
 }
 
 /*
-FNXC:QuickAddAttachments 2026-07-16-00:00:
-QuickEntryBox, TaskForm, and InlineCreateCard must expose identical pending-image open and remove controls. Keeping the floating preview here prevents keyboard dismissal, focus restoration, and blob-URL removal behavior from drifting between task-creation surfaces.
+FNXC:QuickAddAttachments 2026-08-03-00:00:
+Task creation surfaces share one pending-attachment renderer so photos retain the established
+floating preview while non-image task-store attachments have only an actionable filename and
+remove control. Never render an image-open button without a preview URL.
 */
-export function PendingImagePreviews({
-  images,
+export function PendingAttachmentPreviews({
+  attachments,
   onRemove,
   disabled = false,
   removeLabel,
   testIdPrefix,
-}: PendingImagePreviewsProps) {
+}: PendingAttachmentPreviewsProps) {
   const [selectedPreviewUrl, setSelectedPreviewUrl] = useState<string | null>(null);
   const returnFocusRef = useRef<HTMLButtonElement | null>(null);
   const selectedImage = selectedPreviewUrl
-    ? images.find((image) => image.previewUrl === selectedPreviewUrl) ?? null
+    ? attachments.find((attachment) => attachment.previewUrl === selectedPreviewUrl) ?? null
     : null;
 
   const closePreview = useCallback((restoreFocus = true) => {
@@ -60,39 +63,48 @@ export function PendingImagePreviews({
     setSelectedPreviewUrl(previewUrl);
   }, []);
 
-  const handleRemove = useCallback((index: number, previewUrl: string) => {
-    if (selectedPreviewUrl === previewUrl) {
+  const handleRemove = useCallback((index: number, previewUrl?: string) => {
+    if (previewUrl && selectedPreviewUrl === previewUrl) {
       closePreview(false);
     }
     onRemove(index);
   }, [closePreview, onRemove, selectedPreviewUrl]);
 
-  if (images.length === 0) return null;
+  if (attachments.length === 0) return null;
 
   return (
     <>
       <div className="inline-create-previews">
-        {images.map((image, index) => (
-          <div key={image.previewUrl} className="inline-create-preview">
-            <button
-              type="button"
-              className="pending-image-preview__open"
-              onClick={(event) => openPreview(image.previewUrl, event.currentTarget)}
-              aria-label={`Open image ${image.file.name}`}
-              data-testid={`${testIdPrefix}-open-${index}`}
-            >
-              <img src={image.previewUrl} alt="" />
-            </button>
+        {attachments.map((attachment, index) => (
+          <div
+            key={attachment.previewUrl || `${attachment.file.name}-${index}`}
+            className={`inline-create-preview${attachment.previewUrl ? "" : " inline-create-preview--file"}`}
+          >
+            {attachment.previewUrl ? (
+              <button
+                type="button"
+                className="pending-image-preview__open"
+                onClick={(event) => openPreview(attachment.previewUrl!, event.currentTarget)}
+                aria-label={`Open image ${attachment.file.name}`}
+                data-testid={`${testIdPrefix}-open-${index}`}
+              >
+                <img src={attachment.previewUrl} alt="" />
+              </button>
+            ) : (
+              <span className="pending-attachment-preview__file" data-testid={`${testIdPrefix}-file-${index}`}>
+                {attachment.file.name}
+              </span>
+            )}
             <button
               type="button"
               className="inline-create-preview-remove"
               onClick={(event) => {
                 event.stopPropagation();
-                handleRemove(index, image.previewUrl);
+                handleRemove(index, attachment.previewUrl);
               }}
               disabled={disabled}
               title={removeLabel}
-              aria-label={removeLabel}
+              aria-label={`${removeLabel}: ${attachment.file.name}`}
               data-testid={`${testIdPrefix}-remove-${index}`}
             >
               ×
@@ -100,7 +112,7 @@ export function PendingImagePreviews({
           </div>
         ))}
       </div>
-      {selectedImage && (
+      {selectedImage?.previewUrl && (
         <FloatingWindow
           title={selectedImage.file.name}
           onClose={closePreview}

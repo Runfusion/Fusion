@@ -553,6 +553,23 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     expect(addToast).toHaveBeenCalledWith("POST failed", "error");
   });
 
+  it("preserves staged room attachments when the upload request fails", async () => {
+    const sendRoomMessage = vi.fn().mockRejectedValueOnce(new Error("POST failed"));
+    setup({}, { sendRoomMessage, activeRoom: roomA });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const file = new File(["note"], "retry.txt", { type: "text/plain" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    await userEvent.type(textarea, "Retry attachment{enter}");
+
+    await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledWith("Retry attachment", { files: [file] }));
+    await waitFor(() => expect(textarea.value).toBe("Retry attachment"));
+    expect(screen.getByText("retry.txt")).toBeInTheDocument();
+  });
+
   it("clears room composer on Enter when room send succeeds", async () => {
     const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
     setup({}, { sendRoomMessage, activeRoom: roomA });
@@ -857,7 +874,10 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
 
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-    expect(sendMessage).toHaveBeenCalledWith("Direct second", []);
+    expect(sendMessage).toHaveBeenCalledWith("Direct second", [], expect.objectContaining({
+      onDelivered: expect.any(Function),
+      onFailed: expect.any(Function),
+    }));
     expect(sendRoomMessage).toHaveBeenCalledTimes(1);
     mediaSpy.mockRestore();
   });
@@ -1232,7 +1252,10 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     const textarea = screen.getByTestId("chat-input");
     await userEvent.type(textarea, "Direct hello{enter}");
 
-    expect(sendMessage).toHaveBeenCalledWith("Direct hello", []);
+    expect(sendMessage).toHaveBeenCalledWith("Direct hello", [], expect.objectContaining({
+      onDelivered: expect.any(Function),
+      onFailed: expect.any(Function),
+    }));
     expect(sendRoomMessage).not.toHaveBeenCalled();
     expect(addToast).not.toHaveBeenCalled();
   });

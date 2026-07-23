@@ -13,7 +13,7 @@ import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTra
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
-import { PendingImagePreviews } from "./PendingImagePreviews";
+import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
   if (status === "online") return t("taskForm.nodeStatusOnline", "Online");
@@ -1201,8 +1201,8 @@ export function TaskForm({
       {/* Attachments */}
       <div className="form-group">
         <label>{t("taskForm.attachmentsLabel", "Attachments")}</label>
-        <PendingImagePreviews
-          images={pendingImages}
+        <PendingAttachmentPreviews
+          attachments={pendingImages}
           onRemove={removeImage}
           disabled={disabled}
           removeLabel={t("taskForm.removeImage", "Remove image")}
