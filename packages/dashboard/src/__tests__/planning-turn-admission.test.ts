@@ -264,6 +264,52 @@ describe("planning single-turn admission", () => {
     expect(session?.error).toBeUndefined();
   });
 
+  it("ignores late streaming callbacks from a disposed agent after rewind", async () => {
+    /*
+    FNXC:PlanningTurnAdmission 2026-07-23-10:40:
+    A provider that ignores cancellation beyond rewind's bounded settle-wait can keep
+    streaming into its onThinking/onText callbacks after the agent was disposed. Those late
+    deltas must be inert — no thinkingOutput mutation, no broadcast — or they would corrupt
+    the state published after the rewound question (PR #2417 review finding).
+    */
+    const scripted = createScriptedAgent();
+    const capturedOnThinking: Array<(delta: string) => void> = [];
+    __setCreateFnAgent(vi.fn(async (options: { onThinking?: (delta: string) => void }) => {
+      if (options?.onThinking) capturedOnThinking.push(options.onThinking);
+      return scripted.agent;
+    }) as never);
+
+    const sessionId = await createSessionWithAgent(
+      "10.0.9.9",
+      "Plan something small",
+      "/tmp/project",
+      MOCK_TASK_STORE,
+    );
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await waitFor(async () => Boolean((await getSession(sessionId))?.currentQuestion));
+    const question = (await getSession(sessionId))!.currentQuestion!;
+
+    scripted.holdNextPrompt();
+    const submit = submitResponse(sessionId, { [question.id]: "option-1" });
+    await waitFor(() => scripted.agent.session.prompt.mock.calls.length > 1);
+
+    const rewindPromise = rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE);
+    scripted.releasePrompt();
+    await rewindPromise;
+    await submit;
+
+    // The first (disposed) agent's streaming callback fires late — it must be a no-op.
+    const staleEvents: unknown[] = [];
+    const unsubscribe = planningStreamManager.subscribe(sessionId, (event) => staleEvents.push(event));
+    expect(capturedOnThinking.length).toBeGreaterThan(0);
+    capturedOnThinking[0]("stale delta after dispose");
+    unsubscribe();
+
+    const session = await getSession(sessionId);
+    expect(session?.thinkingOutput).toBe("");
+    expect(staleEvents).toHaveLength(0);
+  });
+
   it("emits the retryable parse error without a doubled period", async () => {
     const scripted = createScriptedAgent();
     const sessionId = await startSessionAwaitingInput(scripted);

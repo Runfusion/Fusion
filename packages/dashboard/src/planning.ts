@@ -371,6 +371,15 @@ interface Session {
   ip: string;
   initialPlan: string;
   title: string;
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-23-10:40:
+  Monotonic in-memory epoch for streaming-callback invalidation. Bumped every time the
+  session's agent is disposed/replaced; agent onThinking/onText closures capture the epoch at
+  agent creation and no-op when it has moved on. Closes the residual PR #2417 window where a
+  provider that ignores cancellation beyond rewind's bounded settle-wait could persist or
+  broadcast stale thinking deltas after the rewound state was published. Never persisted.
+  */
+  agentCallbackEpoch?: number;
   projectId?: string;
   /** Workflow selected at session start, retained for agent reconstruction. */
   workflowId?: string;
@@ -1991,6 +2000,16 @@ async function createPlanningAgent(
   const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
 
   /*
+  FNXC:PlanningTurnAdmission 2026-07-23-10:40:
+  Capture the callback epoch at agent creation. A provider that ignores cancellation beyond
+  rewind's bounded settle-wait can keep streaming after this agent is disposed; the epoch
+  check makes those late deltas inert (no thinkingOutput mutation, no persist, no broadcast)
+  instead of letting them corrupt the state published after the agent was replaced.
+  */
+  const callbackEpoch = session.agentCallbackEpoch ?? 0;
+  const callbacksInvalidated = (): boolean => (session.agentCallbackEpoch ?? 0) !== callbackEpoch;
+
+  /*
   FNXC:PlanningSkills 2026-06-17-19:33:
   Streaming planning sessions share the executor skill contract because custom planning/workflow tools can benefit from agent-declared skills and enabled plugin skills exactly like task execution.
   */
@@ -2019,6 +2038,7 @@ async function createPlanningAgent(
       : {}),
     ...(thinkingLevel ? { defaultThinkingLevel: thinkingLevel } : {}),
     onThinking: (delta: string) => {
+      if (callbacksInvalidated()) return;
       markPlanningGenerationProgress(session.id, delta);
       session.thinkingOutput += delta;
       persistThinking(session.id, session.thinkingOutput);
@@ -2031,6 +2051,7 @@ async function createPlanningAgent(
       // Capture AI response text — will be parsed at end of turn. Also
       // surface it through the same stream so non-thinking models (which
       // never emit thinking_delta) still show streaming output in the UI.
+      if (callbacksInvalidated()) return;
       markPlanningGenerationProgress(session.id, delta);
       session.thinkingOutput += delta;
       persistThinking(session.id, session.thinkingOutput);
@@ -3444,6 +3465,9 @@ function coerceResponseRecord(question: PlanningQuestion, response: unknown): Re
 }
 
 function disposeSessionAgentForRetry(session: Session): void {
+  // FNXC:PlanningTurnAdmission 2026-07-23-10:40: invalidate the disposed agent's streaming
+  // callbacks even when the provider keeps running past dispose — see Session.agentCallbackEpoch.
+  session.agentCallbackEpoch = (session.agentCallbackEpoch ?? 0) + 1;
   if (!session.agent) {
     return;
   }
