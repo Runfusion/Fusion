@@ -57,6 +57,7 @@ import { BranchGroupCard } from "./BranchGroupCard";
 import { PluginSlot } from "./PluginSlot";
 import { ProviderIcon } from "./ProviderIcon";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { KeepAliveView } from "./KeepAliveView";
 import { subscribeSse } from "../sse-bus";
 import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTerminal";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
@@ -701,6 +702,22 @@ export function TaskDetailContent({
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [plannerChatExpanded, setPlannerChatExpanded] = useState(false);
+
+  /*
+  FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
+  FN remount-churn fix R6: the Terminal, Worktree-terminal, and Planner-chat tab bodies previously lived in the mutually-exclusive activeTab ternary, so every tab flip disposed the xterm instance, closed the terminal WebSocket, and discarded the planner composer/scroll. After a tab's first open (per-tab latch, mirroring Quick Chat's everOpened gate) its body stays mounted as a hidden KeepAliveView sibling of the ternary. The latches are scoped to one task id: switching tasks (or closing the detail) resets them so terminals fully unmount and dispose exactly as before — keep-alive covers tab switching within ONE open task detail only (R10).
+  */
+  const [keepAliveTabs, setKeepAliveTabs] = useState({ taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false });
+  if (keepAliveTabs.taskId !== task.id) {
+    setKeepAliveTabs({ taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false });
+  } else if (activeTab === "planner-chat" && !keepAliveTabs.plannerChat) {
+    setKeepAliveTabs({ ...keepAliveTabs, plannerChat: true });
+  } else if (activeTab === "terminal" && !keepAliveTabs.terminal) {
+    setKeepAliveTabs({ ...keepAliveTabs, terminal: true });
+  } else if (activeTab === "worktree-terminal" && !keepAliveTabs.worktreeTerminal) {
+    setKeepAliveTabs({ ...keepAliveTabs, worktreeTerminal: true });
+  }
+  const keepAliveForCurrentTask = keepAliveTabs.taskId === task.id ? keepAliveTabs : { taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false };
 
   // ── CLI agent session (U11) ────────────────────────────────────────────────
   const [cliSession, setCliSession] = useState<CliSessionSummaryRecord | null>(null);
@@ -5090,18 +5107,8 @@ export function TaskDetailContent({
               <TaskCostTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
           ) : activeTab === "planner-chat" ? (
-            <div className="detail-section detail-section--planner-chat">
-              <TaskPlannerChatTab
-                task={workingTask}
-                projectId={projectId}
-                active={activeTab === "planner-chat"}
-                expanded={isPlannerChatExpanded}
-                onExpandedChange={setPlannerChatExpanded}
-                planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
-                addToast={addToast}
-                onTaskUpdated={onTaskUpdated}
-              />
-            </div>
+            /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary; null here prevents fall-through to Definition. */
+            null
           ) : activeTab === "chat" ? (
             <div className={`detail-section detail-section--activity${activitySegment === "current" || isActivityExpanded ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
               {/*
@@ -5410,39 +5417,11 @@ export function TaskDetailContent({
               />
             </div>
           ) : activeTab === "terminal" ? (
-            <div className="detail-section detail-section--terminal">
-              {cliSession && cliTabVisibility.kind !== "hidden" ? (
-                <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loading", "Loading terminal…")} /></div>}>
-                  <LazySessionTerminal
-                    sessionId={cliSession.id}
-                    projectId={projectId}
-                    posture={cliPosture}
-                    readOnly={
-                      cliTabVisibility.kind === "replay" ||
-                      (cliTabVisibility.kind === "live" && cliTabVisibility.readOnly)
-                    }
-                    mode={cliTabVisibility.mode}
-                    showConfirmAdvance={
-                      cliTabVisibility.kind === "live" && cliTabVisibility.showConfirmAdvance
-                    }
-                    onConfirmAdvance={handleConfirmAdvance}
-                  />
-                </Suspense>
-              ) : null}
-            </div>
+            /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary. */
+            null
           ) : activeTab === "worktree-terminal" && showWorktreeTerminalTab ? (
-            <div className="detail-section detail-section--worktree-terminal">
-              <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loadingInteractive", "Loading interactive terminal…")} /></div>}>
-                <LazyTerminalModal
-                  isOpen={true}
-                  onClose={() => setActiveTab("definition")}
-                  embedded
-                  defaultCwd={taskWorktreeCwd}
-                  scopeId={task.id}
-                  projectId={projectId}
-                />
-              </Suspense>
-            </div>
+            /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary. */
+            null
           ) : (
           <>
           {/* FNXC:TaskDetailSummaryTab 2026-07-29-00:00: FN-8197 keeps Definition focused on plan, retry, and source metadata; completed merge metadata renders exclusively in the done-only Summary tab. */}
@@ -6225,6 +6204,71 @@ export function TaskDetailContent({
           )}
           </>
           )}
+          {/*
+          FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
+          Kept-alive tab bodies (mounted after each tab's first open for this task, hidden via KeepAliveView's out-of-flow visibility contract while another tab is active):
+          - Planner chat keeps its composer draft and scroll; `active` closes its useAgentLogs EventSource while hidden (R8).
+          - Terminal keeps the WebSocket and xterm scrollback alive intentionally; `active` drives SessionTerminal's reveal refit + dead-socket recovery (R9).
+          - Worktree terminal keeps the embedded TerminalModal shell session alive across tab flips.
+          Task switch or modal close resets the latches, so terminals dispose exactly as before keep-alive (R10).
+          */}
+          {keepAliveForCurrentTask.plannerChat ? (
+            <KeepAliveView hidden={activeTab !== "planner-chat"} testId="planner-chat-keep-alive">
+              <div className="detail-section detail-section--planner-chat">
+                <TaskPlannerChatTab
+                  task={workingTask}
+                  projectId={projectId}
+                  active={activeTab === "planner-chat"}
+                  expanded={isPlannerChatExpanded}
+                  onExpandedChange={setPlannerChatExpanded}
+                  planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
+                  addToast={addToast}
+                  onTaskUpdated={onTaskUpdated}
+                />
+              </div>
+            </KeepAliveView>
+          ) : null}
+          {keepAliveForCurrentTask.terminal ? (
+            <KeepAliveView hidden={activeTab !== "terminal"} testId="terminal-keep-alive">
+              <div className="detail-section detail-section--terminal">
+                {cliSession && cliTabVisibility.kind !== "hidden" ? (
+                  <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loading", "Loading terminal…")} /></div>}>
+                    <LazySessionTerminal
+                      sessionId={cliSession.id}
+                      projectId={projectId}
+                      posture={cliPosture}
+                      active={activeTab === "terminal"}
+                      readOnly={
+                        cliTabVisibility.kind === "replay" ||
+                        (cliTabVisibility.kind === "live" && cliTabVisibility.readOnly)
+                      }
+                      mode={cliTabVisibility.mode}
+                      showConfirmAdvance={
+                        cliTabVisibility.kind === "live" && cliTabVisibility.showConfirmAdvance
+                      }
+                      onConfirmAdvance={handleConfirmAdvance}
+                    />
+                  </Suspense>
+                ) : null}
+              </div>
+            </KeepAliveView>
+          ) : null}
+          {keepAliveForCurrentTask.worktreeTerminal && showWorktreeTerminalTab ? (
+            <KeepAliveView hidden={activeTab !== "worktree-terminal"} testId="worktree-terminal-keep-alive">
+              <div className="detail-section detail-section--worktree-terminal">
+                <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loadingInteractive", "Loading interactive terminal…")} /></div>}>
+                  <LazyTerminalModal
+                    isOpen={true}
+                    onClose={() => setActiveTab("definition")}
+                    embedded
+                    defaultCwd={taskWorktreeCwd}
+                    scopeId={task.id}
+                    projectId={projectId}
+                  />
+                </Suspense>
+              </div>
+            </KeepAliveView>
+          ) : null}
         </div>
         {task.column === "in-review" && (
           <PrCreateModal

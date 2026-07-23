@@ -100,6 +100,11 @@ Task detail workflow badges share the board badge's slight token-based icon-to-l
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
   flex: 1;
+  /*
+  FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
+  Containing block for kept-alive tab bodies (KeepAliveView): their hidden state is position:absolute inset:0, so a hidden terminal/planner-chat body consumes no layout space beside the active tab while keeping a real box for xterm-safe geometry.
+  */
+  position: relative;
 }
 
 .detail-body::-webkit-scrollbar {

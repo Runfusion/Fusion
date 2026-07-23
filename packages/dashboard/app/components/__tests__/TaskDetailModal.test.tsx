@@ -160,7 +160,12 @@ describe("TaskDetailModal planner Chat tab", () => {
     await user.click(screen.getByRole("button", { name: "Activity" }));
 
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
+    /*
+    FNXC:TaskDetailTabKeepAlive 2026-07-22-13:05:
+    The planner chat body is now kept alive across tab switches (FN remount-churn fix R6): the assertion moved from "not in DOM" to "hidden and inert" so the tab's intent (planner chat is not visible/interactive on Activity) still holds.
+    */
+    expect(screen.getByTestId("planner-chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
   });
 
   it("preserves Summary as the default for done tasks while keeping Chat then Activity order", () => {

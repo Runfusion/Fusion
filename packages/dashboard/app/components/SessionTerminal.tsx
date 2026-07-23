@@ -147,6 +147,11 @@ export interface SessionTerminalProps {
   showConfirmAdvance?: boolean;
   /** Settings deep link for the posture chip tooltip. */
   onOpenAdapterSettings?: () => void;
+  /*
+  FNXC:TaskDetailTerminalKeepAlive 2026-07-22-12:50:
+  Keep-alive visibility gate (FN remount-churn fix R6/R9). The task-detail Terminal tab keeps SessionTerminal mounted-but-hidden across tab switches so the WebSocket and scrollback survive. While hidden the box stays real (visibility-based hiding), so xterm geometry never collapses; on the hidden -> active transition we refit + force a font remeasure, and if the WebSocket died while hidden we re-run the whole attach lifecycle (fresh ticket + xterm) instead of revealing a dead terminal. Defaults to true so standalone mounts are unaffected.
+  */
+  active?: boolean;
 }
 
 interface AttachTicketResponse {
@@ -189,6 +194,7 @@ export function SessionTerminal({
   onConfirmAdvance,
   showConfirmAdvance = false,
   onOpenAdapterSettings,
+  active = true,
 }: SessionTerminalProps) {
   const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -390,6 +396,33 @@ export function SessionTerminal({
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [applyLiveTerminalPreferences]);
+
+  /*
+  FNXC:TaskDetailTerminalKeepAlive 2026-07-22-12:50:
+  Reveal handling for the kept-alive hidden state (R9 + dead-socket recovery):
+  - Refit on reveal: the hidden visibility-based box keeps real geometry, but its size can change while hidden; mirror the init sequence (fit -> resize frame -> forced font remeasure -> refresh) because a same-value font reassignment is a no-op against xterm's OptionsService (docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md).
+  - Dead-socket recovery: keep-alive intentionally leaves the WS open while hidden, but if the server closed it in the meantime, bump reattachEpoch so the main lifecycle effect re-runs the full attach (fresh ticket, fresh xterm) instead of revealing a dead terminal.
+  */
+  const [reattachEpoch, setReattachEpoch] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const term = xtermRef.current;
+    const fitAddon = fitAddonRef.current as unknown as { fit?: () => void } | null;
+    if (term && fitAddon?.fit) {
+      try {
+        fitAddon.fit();
+        sendResizeMessage(term.cols, term.rows);
+        forceTerminalFontRemeasure(term, String(term.options.fontFamily ?? ""));
+        term.refresh(0, Math.max(0, term.rows - 1));
+      } catch {
+        /* ignore transient measure failures on reveal */
+      }
+    }
+    const ws = wsRef.current;
+    if (ws && ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING) {
+      setReattachEpoch((epoch) => epoch + 1);
+    }
+  }, [active, sendResizeMessage]);
 
   // ── xterm lifecycle + WS bridge ──────────────────────────────────────────
   useEffect(() => {
@@ -704,7 +737,8 @@ export function SessionTerminal({
       }
       fitAddonRef.current = null;
     };
-  }, [sessionId, readOnly, mode, projectId, sendResizeMessage]);
+    // FNXC:TaskDetailTerminalKeepAlive 2026-07-22-12:50: reattachEpoch re-runs this whole lifecycle when a reveal finds the WS dead (single-effect teardown semantics preserved).
+  }, [sessionId, readOnly, mode, projectId, sendResizeMessage, reattachEpoch]);
 
   const replayLabel = useMemo(() => {
     if (mode === "idle") return t("cliTerminal.replayIdle", "Session idle");

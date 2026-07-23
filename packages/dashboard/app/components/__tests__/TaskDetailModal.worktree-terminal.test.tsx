@@ -191,4 +191,54 @@ describe("TaskDetailModal worktree terminal tab", () => {
     expect(await screen.findByRole("button", { name: "Session" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
   });
+
+  /*
+  FNXC:TaskDetailTabKeepAlive 2026-07-22-13:05:
+  FN remount-churn fix R6/R10: the worktree Terminal tab body stays mounted-but-hidden across tab flips (no shell teardown), while a task switch still fully unmounts it.
+  */
+  it("keeps the worktree terminal mounted-but-hidden across tab switches", async () => {
+    renderDetail(undefined, "worktree-terminal");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Terminal" }));
+    expect(await screen.findByTestId("mock-worktree-terminal")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    // Mounted-but-hidden: the embedded terminal survives inside the aria-hidden keep-alive wrapper.
+    expect(screen.getByTestId("mock-worktree-terminal")).toBeInTheDocument();
+    expect(screen.getByTestId("worktree-terminal-keep-alive")).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.getByTestId("mock-worktree-terminal")).toBeInTheDocument();
+    expect(screen.getByTestId("worktree-terminal-keep-alive")).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("fully unmounts the kept-alive worktree terminal when the task changes", async () => {
+    const { rerender } = renderDetail(undefined, "worktree-terminal");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Terminal" }));
+    expect(await screen.findByTestId("mock-worktree-terminal")).toBeInTheDocument();
+
+    // Hide the terminal behind another tab, then switch tasks: the per-task latch must reset.
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByTestId("worktree-terminal-keep-alive")).toBeInTheDocument();
+
+    rerender(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-OTHER", worktree: "/repo/.worktrees/FN-OTHER" })}
+        projectId="proj-123"
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    // Keep-alive is scoped to one open task: the latch resets on task switch, so the terminal disposes exactly as before.
+    await waitFor(() => {
+      expect(screen.queryByTestId("worktree-terminal-keep-alive")).toBeNull();
+      expect(screen.queryByTestId("mock-worktree-terminal")).toBeNull();
+    });
+  });
 });

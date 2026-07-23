@@ -775,6 +775,50 @@ describe("SessionTerminal", () => {
     await waitFor(() => expect(onConfirmAdvance).toHaveBeenCalledWith("not-yet"));
     await waitFor(() => expect(screen.queryByText("Not yet")).toBeNull());
   });
+
+  /*
+  FNXC:TaskDetailTerminalKeepAlive 2026-07-22-13:00:
+  FN remount-churn fix R6/R9: kept-alive hidden terminals must NOT close the WS or dispose xterm; reveal refits and recovers a socket that died while hidden.
+  */
+  describe("keep-alive active gating", () => {
+    it("keeps the WebSocket open and xterm alive across hide/reveal, refitting on reveal", async () => {
+      const { rerender } = render(<SessionTerminal sessionId="s1" active />);
+      await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+      const ws = FakeWS.instances[0];
+
+      rerender(<SessionTerminal sessionId="s1" active={false} />);
+      expect(ws.readyState).toBe(1);
+      expect(mockTerm.dispose).not.toHaveBeenCalled();
+
+      mockFitAddon.fit.mockClear();
+      ws.sent.length = 0;
+      rerender(<SessionTerminal sessionId="s1" active />);
+
+      expect(mockTerm.dispose).not.toHaveBeenCalled();
+      expect(FakeWS.instances.length).toBe(1);
+      expect(apiMock).toHaveBeenCalledTimes(1);
+      // Reveal refit: fit + resize frame so the grid matches any size change that happened while hidden.
+      await waitFor(() => expect(mockFitAddon.fit).toHaveBeenCalled());
+      expect(ws.sent.some((frame) => (JSON.parse(frame) as { type?: string }).type === "resize")).toBe(true);
+    });
+
+    it("re-runs the full attach lifecycle when the WS died while hidden", async () => {
+      const { rerender } = render(<SessionTerminal sessionId="s1" active />);
+      await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+      const ws = FakeWS.instances[0];
+
+      rerender(<SessionTerminal sessionId="s1" active={false} />);
+      // Server closes the socket while the tab is hidden.
+      ws.readyState = 3;
+
+      rerender(<SessionTerminal sessionId="s1" active />);
+
+      // Dead-socket recovery: fresh ticket, fresh WS, old xterm disposed by the lifecycle teardown.
+      await waitFor(() => expect(FakeWS.instances.length).toBe(2));
+      expect(apiMock).toHaveBeenCalledTimes(2);
+      expect(mockTerm.dispose).toHaveBeenCalled();
+    });
+  });
 });
 
 /*
