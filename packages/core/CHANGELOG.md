@@ -1,5 +1,7 @@
 # @fusion/core
 
+## 0.73.0-beta.3
+
 ## 0.73.0-beta.2
 
 ## 0.73.0-beta.1
