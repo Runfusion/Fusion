@@ -54,7 +54,11 @@ export interface SectionKeyEntry {
  * save-split.ts for the project-models lane overrides instead of duplicating
  * them.
  */
-const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
+/*
+FNXC:UiMetadataApi 2026-07-14-00:00:
+Expose project reset-registry ids for the no-drift contract test so a reset-owning section cannot exist without discoverable Settings metadata. This is read-only inspection and does not change reset ownership or behavior.
+*/
+export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> = {
   general: [
     "allowAbsoluteFileBrowserPaths",
     "capacityRiskBannerEnabled",

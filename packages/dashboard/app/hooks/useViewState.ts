@@ -4,67 +4,21 @@ import type { ProjectInfo } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getPluginViewId, isPluginViewId, isPluginViewRegistered } from "../plugins/pluginViewRegistry";
 import { recordActivity } from "../utils/report-capture";
+import { DASHBOARD_VIEWS, type BuiltInTaskView } from "../../src/shared/dashboard-views";
 
+export type { BuiltInTaskView } from "../../src/shared/dashboard-views";
 export type ViewMode = "overview" | "project";
-/*
-FNXC:ViewState 2026-06-22-00:00:
-Workflows, Import Tasks, and Automations are promoted to top-level main-content task views (left-sidebar destinations) instead of modal-only overlays, so they render in the main panel like Command Center.
-*/
-export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "ideation" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests" | "workflows" | "import-tasks" | "automations" | "settings" | "task-detail";
 export type PluginTaskView = `plugin:${string}:${string}`;
 export type TaskView = BuiltInTaskView | PluginTaskView;
 
-const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
-  "board",
-  "list",
-  "graph",
-  "agents",
-  "missions",
-  "chat",
-  "documents",
-  "research",
-  "evals",
-  /*
-  FNXC:Navigation 2026-08-01-00:00:
-  FN-8352 promotes Ideation from a Command Center tab to a persisted,
-  default-off experimental top-level view.
-  */
-  "ideation",
-  "goalsView",
-  /*
-  FNXC:ViewState 2026-06-21-09:14:
-  FN-6829 promotes project Todos from modal-only state into the persisted built-in task-view registry so dashboard navigation can dock it in the right content area.
-  */
-  "todos",
-  /*
-  FNXC:Navigation 2026-06-21-00:00:
-  FN-6886 promotes Planning Mode into a persisted top-level docked task view instead of treating it as a modal-only overlay.
-  */
-  "planning",
-
-  "skills",
-  "mailbox",
-  "insights",
-  "memory",
-  "command-center",
-  "secrets",
-  "devserver",
-  "dev-server",
-  "pull-requests",
-  "workflows",
-  "import-tasks",
-  "automations",
-  /*
-  FNXC:ViewState 2026-06-22-00:00:
-  Settings is promoted from a modal-only overlay into a top-level main-content task view so the header/sidebar Settings entry points dock it in the main panel like Command Center, while preserving deep-link section navigation.
-  */
-  "settings",
-  /*
-  FNXC:Navigation 2026-06-22-00:00:
-  Clicking a task card on the Board opens its detail as a full main-content view ("Full main panel (replaces board)") with a Back-to-board button, instead of the TaskDetailModal overlay. The detail is hosted under this registered `task-detail` task view so navigation/persistence treat it like any other docked main-panel destination.
-  */
-  "task-detail",
-];
+/*
+FNXC:UiMetadataApi 2026-07-14-00:00:
+Persisted task-view validation includes every canonical shared view id and each declared legacy alias. This preserves the existing devserver migration while making the same registry authoritative for dashboard navigation and GET /api/views.
+*/
+export const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = DASHBOARD_VIEWS.flatMap((view) => [
+  ...(view.aliases ?? []),
+  view.id,
+] as BuiltInTaskView[]);
 
 function isBuiltInTaskView(value: string | null): value is BuiltInTaskView {
   return value !== null && BUILT_IN_TASK_VIEWS.includes(value as BuiltInTaskView);

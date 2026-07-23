@@ -62,6 +62,7 @@ import { registerSettingsSyncRoutes } from "./routes/register-settings-sync-rout
 import { registerSecretsSyncRoutes } from "./routes/register-secrets-sync-routes.js";
 import { registerMeshRoutes } from "./routes/register-mesh-routes.js";
 import { registerDiscoveryRoutes } from "./routes/register-discovery-routes.js";
+import { registerUiMetadataRoutes } from "./routes/register-ui-metadata-routes.js";
 import { registerSettingsSyncInboundRoutes } from "./routes/register-settings-sync-inbound-routes.js";
 import { registerSecretsSyncInboundRoutes } from "./routes/register-secrets-sync-inbound-routes.js";
 import { registerAgentCoreListCreateRoutes, registerAgentCoreRoutes } from "./routes/register-agent-core-routes.js";
@@ -1985,6 +1986,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // ── Node Discovery Routes (mDNS / DNS-SD) ────────────────────────────────
 
   registrarMounter.mount("registerDiscoveryRoutes", () => registerDiscoveryRoutes(routeContext));
+  registrarMounter.mount("registerUiMetadataRoutes", () => registerUiMetadataRoutes(routeContext));
 
   // ── Inbound Settings/Auth Sync Routes ─────────────────────────────────────
 

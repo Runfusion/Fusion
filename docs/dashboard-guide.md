@@ -26,6 +26,9 @@ Never copy worktree files into the reported checkout, rebuild an unmerged branch
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->
 Use **Search settings** at the top of Settings to find the section that contains a setting by name or keyword. The same search works in the Settings modal and embedded Settings page, filters both the desktop section list and mobile section picker, and only searches sections currently visible for enabled feature flags.
 
+<!-- FNXC:UiMetadataApi 2026-07-14-00:00: External dashboard integrations need the same view and Settings-section registry that the UI renders, exposed without duplicating labels or search terms. -->
+Plugin and command-palette authors can discover the dashboard's registered view ids through `GET /api/views` and selectable Settings sections through `GET /api/settings/sections`. These authenticated, read-only endpoints return static metadata; see the [Plugin Authoring Guide](./PLUGIN_AUTHORING.md#ui-metadata-endpoints) for response fields and examples.
+
 <!-- FNXC:Settings 2026-07-09-12:00: FN-7751 keeps FN-7713's collapsed mobile search row but moves the toggle inline beside the section dropdown so mobile Settings exposes one compact section/search control row; desktop/tablet keep the row always visible with no toggle. -->
 On mobile, the search row starts collapsed behind a compact toggle icon beside the **Settings Section** dropdown to save vertical space; tap it to reveal the search input and tap again to hide it. An in-progress search query is preserved across collapse/expand. Desktop and tablet always show the search row with no toggle.
 
